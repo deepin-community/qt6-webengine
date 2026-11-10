@@ -6,12 +6,16 @@
 
 #include <cstddef>
 #include <sstream>
+#include <string>
 
 #include "absl/algorithm/container.h"
 #include "absl/base/macros.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "quiche/quic/platform/api/quic_expect_bug.h"
 #include "quiche/quic/platform/api/quic_flags.h"
 #include "quiche/quic/platform/api/quic_test.h"
+#include "quiche/common/platform/api/quiche_fuzztest.h"
 
 namespace quic {
 namespace test {
@@ -101,12 +105,10 @@ TEST(QuicVersionsTest, Features) {
 }
 
 TEST(QuicVersionsTest, ParseQuicVersionLabel) {
-  static_assert(SupportedVersions().size() == 5u,
+  static_assert(SupportedVersions().size() == 4u,
                 "Supported versions out of sync");
   EXPECT_EQ(ParsedQuicVersion::Q046(),
             ParseQuicVersionLabel(MakeVersionLabel('Q', '0', '4', '6')));
-  EXPECT_EQ(ParsedQuicVersion::Q050(),
-            ParseQuicVersionLabel(MakeVersionLabel('Q', '0', '5', '0')));
   EXPECT_EQ(ParsedQuicVersion::Draft29(),
             ParseQuicVersionLabel(MakeVersionLabel(0xff, 0x00, 0x00, 0x1d)));
   EXPECT_EQ(ParsedQuicVersion::RFCv1(),
@@ -128,15 +130,12 @@ TEST(QuicVersionsTest, ParseQuicVersionLabel) {
 }
 
 TEST(QuicVersionsTest, ParseQuicVersionString) {
-  static_assert(SupportedVersions().size() == 5u,
+  static_assert(SupportedVersions().size() == 4u,
                 "Supported versions out of sync");
   EXPECT_EQ(ParsedQuicVersion::Q046(),
             ParseQuicVersionString("QUIC_VERSION_46"));
   EXPECT_EQ(ParsedQuicVersion::Q046(), ParseQuicVersionString("46"));
   EXPECT_EQ(ParsedQuicVersion::Q046(), ParseQuicVersionString("Q046"));
-  EXPECT_EQ(ParsedQuicVersion::Q050(), ParseQuicVersionString("Q050"));
-  EXPECT_EQ(ParsedQuicVersion::Q050(), ParseQuicVersionString("50"));
-  EXPECT_EQ(ParsedQuicVersion::Q050(), ParseQuicVersionString("h3-Q050"));
 
   EXPECT_EQ(UnsupportedQuicVersion(), ParseQuicVersionString(""));
   EXPECT_EQ(UnsupportedQuicVersion(), ParseQuicVersionString("Q 46"));
@@ -166,48 +165,45 @@ TEST(QuicVersionsTest, ParseQuicVersionString) {
 
 TEST(QuicVersionsTest, ParseQuicVersionVectorString) {
   ParsedQuicVersion version_q046 = ParsedQuicVersion::Q046();
-  ParsedQuicVersion version_q050 = ParsedQuicVersion::Q050();
   ParsedQuicVersion version_draft_29 = ParsedQuicVersion::Draft29();
 
   EXPECT_THAT(ParseQuicVersionVectorString(""), IsEmpty());
 
-  EXPECT_THAT(ParseQuicVersionVectorString("QUIC_VERSION_50"),
-              ElementsAre(version_q050));
-  EXPECT_THAT(ParseQuicVersionVectorString("h3-Q050"),
-              ElementsAre(version_q050));
-  EXPECT_THAT(ParseQuicVersionVectorString("h3-Q050, h3-29"),
-              ElementsAre(version_q050, version_draft_29));
-  EXPECT_THAT(ParseQuicVersionVectorString("h3-29,h3-Q050,h3-29"),
-              ElementsAre(version_draft_29, version_q050));
-  EXPECT_THAT(ParseQuicVersionVectorString("h3-29,h3-Q050, h3-29"),
-              ElementsAre(version_draft_29, version_q050));
-  EXPECT_THAT(ParseQuicVersionVectorString("h3-29, h3-Q050"),
-              ElementsAre(version_draft_29, version_q050));
-  EXPECT_THAT(ParseQuicVersionVectorString("QUIC_VERSION_50,h3-29"),
-              ElementsAre(version_q050, version_draft_29));
-  EXPECT_THAT(ParseQuicVersionVectorString("h3-29,QUIC_VERSION_50"),
-              ElementsAre(version_draft_29, version_q050));
-  EXPECT_THAT(ParseQuicVersionVectorString("QUIC_VERSION_50, h3-29"),
-              ElementsAre(version_q050, version_draft_29));
-  EXPECT_THAT(ParseQuicVersionVectorString("h3-29, QUIC_VERSION_50"),
-              ElementsAre(version_draft_29, version_q050));
-  EXPECT_THAT(ParseQuicVersionVectorString("QUIC_VERSION_50,QUIC_VERSION_46"),
-              ElementsAre(version_q050, version_q046));
-  EXPECT_THAT(ParseQuicVersionVectorString("QUIC_VERSION_46,QUIC_VERSION_50"),
-              ElementsAre(version_q046, version_q050));
+  EXPECT_THAT(ParseQuicVersionVectorString("QUIC_VERSION_46"),
+              ElementsAre(version_q046));
+  EXPECT_THAT(ParseQuicVersionVectorString("h3-Q046"),
+              ElementsAre(version_q046));
+  EXPECT_THAT(ParseQuicVersionVectorString("h3-Q046, h3-29"),
+              ElementsAre(version_q046, version_draft_29));
+  EXPECT_THAT(ParseQuicVersionVectorString("h3-29,h3-Q046,h3-29"),
+              ElementsAre(version_draft_29, version_q046));
+  EXPECT_THAT(ParseQuicVersionVectorString("h3-29, h3-Q046"),
+              ElementsAre(version_draft_29, version_q046));
+  EXPECT_THAT(ParseQuicVersionVectorString("QUIC_VERSION_46,h3-29"),
+              ElementsAre(version_q046, version_draft_29));
+  EXPECT_THAT(ParseQuicVersionVectorString("h3-29,QUIC_VERSION_46"),
+              ElementsAre(version_draft_29, version_q046));
+  EXPECT_THAT(ParseQuicVersionVectorString("QUIC_VERSION_46, h3-29"),
+              ElementsAre(version_q046, version_draft_29));
+  EXPECT_THAT(ParseQuicVersionVectorString("h3-29, QUIC_VERSION_46"),
+              ElementsAre(version_draft_29, version_q046));
+  EXPECT_THAT(ParseQuicVersionVectorString("h3-29,QUIC_VERSION_46"),
+              ElementsAre(version_draft_29, version_q046));
+  EXPECT_THAT(ParseQuicVersionVectorString("QUIC_VERSION_46,h3-29"),
+              ElementsAre(version_q046, version_draft_29));
 
   // Regression test for https://crbug.com/1044952.
-  EXPECT_THAT(ParseQuicVersionVectorString("QUIC_VERSION_50, QUIC_VERSION_50"),
-              ElementsAre(version_q050));
-  EXPECT_THAT(ParseQuicVersionVectorString("h3-Q050, h3-Q050"),
-              ElementsAre(version_q050));
-  EXPECT_THAT(ParseQuicVersionVectorString("h3-Q050, QUIC_VERSION_50"),
-              ElementsAre(version_q050));
+  EXPECT_THAT(ParseQuicVersionVectorString("QUIC_VERSION_46, QUIC_VERSION_46"),
+              ElementsAre(version_q046));
+  EXPECT_THAT(ParseQuicVersionVectorString("h3-Q046, h3-Q046"),
+              ElementsAre(version_q046));
+  EXPECT_THAT(ParseQuicVersionVectorString("h3-Q046, QUIC_VERSION_46"),
+              ElementsAre(version_q046));
   EXPECT_THAT(ParseQuicVersionVectorString(
-                  "QUIC_VERSION_50, h3-Q050, QUIC_VERSION_50, h3-Q050"),
-              ElementsAre(version_q050));
-  EXPECT_THAT(ParseQuicVersionVectorString("QUIC_VERSION_50, h3-29, h3-Q050"),
-              ElementsAre(version_q050, version_draft_29));
+                  "QUIC_VERSION_46, h3-Q046, QUIC_VERSION_46, h3-Q046"),
+              ElementsAre(version_q046));
+  EXPECT_THAT(ParseQuicVersionVectorString("QUIC_VERSION_46, h3-29, h3-Q046"),
+              ElementsAre(version_q046, version_draft_29));
 
   EXPECT_THAT(ParseQuicVersionVectorString("99"), IsEmpty());
   EXPECT_THAT(ParseQuicVersionVectorString("70"), IsEmpty());
@@ -220,10 +216,9 @@ TEST(QuicVersionsTest, ParseQuicVersionVectorString) {
 // CreateQuicVersionLabel() uses MakeVersionLabel() internally,
 // in case it has a bug.
 TEST(QuicVersionsTest, CreateQuicVersionLabel) {
-  static_assert(SupportedVersions().size() == 5u,
+  static_assert(SupportedVersions().size() == 4u,
                 "Supported versions out of sync");
   EXPECT_EQ(0x51303436u, CreateQuicVersionLabel(ParsedQuicVersion::Q046()));
-  EXPECT_EQ(0x51303530u, CreateQuicVersionLabel(ParsedQuicVersion::Q050()));
   EXPECT_EQ(0xff00001du, CreateQuicVersionLabel(ParsedQuicVersion::Draft29()));
   EXPECT_EQ(0x00000001u, CreateQuicVersionLabel(ParsedQuicVersion::RFCv1()));
   EXPECT_EQ(0x6b3343cfu, CreateQuicVersionLabel(ParsedQuicVersion::RFCv2()));
@@ -241,12 +236,10 @@ TEST(QuicVersionsTest, CreateQuicVersionLabel) {
 }
 
 TEST(QuicVersionsTest, QuicVersionLabelToString) {
-  static_assert(SupportedVersions().size() == 5u,
+  static_assert(SupportedVersions().size() == 4u,
                 "Supported versions out of sync");
   EXPECT_EQ("Q046", QuicVersionLabelToString(
                         CreateQuicVersionLabel(ParsedQuicVersion::Q046())));
-  EXPECT_EQ("Q050", QuicVersionLabelToString(
-                        CreateQuicVersionLabel(ParsedQuicVersion::Q050())));
   EXPECT_EQ("ff00001d", QuicVersionLabelToString(CreateQuicVersionLabel(
                             ParsedQuicVersion::Draft29())));
   EXPECT_EQ("00000001", QuicVersionLabelToString(CreateQuicVersionLabel(
@@ -277,11 +270,10 @@ TEST(QuicVersionsTest, QuicVersionLabelToString) {
 }
 
 TEST(QuicVersionsTest, ParseQuicVersionLabelString) {
-  static_assert(SupportedVersions().size() == 5u,
+  static_assert(SupportedVersions().size() == 4u,
                 "Supported versions out of sync");
   // Explicitly test known QUIC version label strings.
   EXPECT_EQ(ParsedQuicVersion::Q046(), ParseQuicVersionLabelString("Q046"));
-  EXPECT_EQ(ParsedQuicVersion::Q050(), ParseQuicVersionLabelString("Q050"));
   EXPECT_EQ(ParsedQuicVersion::Draft29(),
             ParseQuicVersionLabelString("ff00001d"));
   EXPECT_EQ(ParsedQuicVersion::RFCv1(),
@@ -340,7 +332,6 @@ TEST(QuicVersionsTest, QuicVersionToString) {
 TEST(QuicVersionsTest, ParsedQuicVersionToString) {
   EXPECT_EQ("0", ParsedQuicVersionToString(ParsedQuicVersion::Unsupported()));
   EXPECT_EQ("Q046", ParsedQuicVersionToString(ParsedQuicVersion::Q046()));
-  EXPECT_EQ("Q050", ParsedQuicVersionToString(ParsedQuicVersion::Q050()));
   EXPECT_EQ("draft29", ParsedQuicVersionToString(ParsedQuicVersion::Draft29()));
   EXPECT_EQ("RFCv1", ParsedQuicVersionToString(ParsedQuicVersion::RFCv1()));
   EXPECT_EQ("RFCv2", ParsedQuicVersionToString(ParsedQuicVersion::RFCv2()));
@@ -364,6 +355,23 @@ TEST(QuicVersionsTest, ParsedQuicVersionToString) {
   std::ostringstream os;
   os << versions_vector;
   EXPECT_EQ("0,Q046", os.str());
+}
+
+void ParseSerializeParseIdentityProperty(absl::string_view input) {
+  ParsedQuicVersionVector parsed = ParseQuicVersionVectorString(input);
+  std::string serialized = ParsedQuicVersionVectorToString(parsed);
+  ParsedQuicVersionVector parsed2 = ParseQuicVersionVectorString(serialized);
+  EXPECT_EQ(parsed, parsed2);
+}
+FUZZ_TEST(QuicVersionsFuzzTest, ParseSerializeParseIdentityProperty);
+
+// Regression test for an invalid enum cast to `QuicTransportVersion` in
+// `ParseQuicVersionString()`, detected by UndefinedBehaviorSanitizer.
+TEST(QuicVersionsTest, ParseSerializeParseIdentityPropertyRegression) {
+  static constexpr int kInvalidVersion = 99999;
+  static_assert(kInvalidVersion > QuicTransportVersion::QUIC_VERSION_MAX_VALUE);
+  EXPECT_EQ(UnsupportedQuicVersion(),
+            ParseQuicVersionString(absl::StrCat(kInvalidVersion)));
 }
 
 TEST(QuicVersionsTest, FilterSupportedVersionsAllVersions) {
@@ -410,20 +418,18 @@ TEST(QuicVersionsTest, LookUpParsedVersionByIndex) {
 // yet a typo was made in doing the #defines and it was caught
 // only in some test far removed from here... Better safe than sorry.
 TEST(QuicVersionsTest, CheckTransportVersionNumbersForTypos) {
-  static_assert(SupportedVersions().size() == 5u,
+  static_assert(SupportedVersions().size() == 4u,
                 "Supported versions out of sync");
   EXPECT_EQ(QUIC_VERSION_46, 46);
-  EXPECT_EQ(QUIC_VERSION_50, 50);
   EXPECT_EQ(QUIC_VERSION_IETF_DRAFT_29, 73);
   EXPECT_EQ(QUIC_VERSION_IETF_RFC_V1, 80);
   EXPECT_EQ(QUIC_VERSION_IETF_RFC_V2, 82);
 }
 
 TEST(QuicVersionsTest, AlpnForVersion) {
-  static_assert(SupportedVersions().size() == 5u,
+  static_assert(SupportedVersions().size() == 4u,
                 "Supported versions out of sync");
   EXPECT_EQ("h3-Q046", AlpnForVersion(ParsedQuicVersion::Q046()));
-  EXPECT_EQ("h3-Q050", AlpnForVersion(ParsedQuicVersion::Q050()));
   EXPECT_EQ("h3-29", AlpnForVersion(ParsedQuicVersion::Draft29()));
   EXPECT_EQ("h3", AlpnForVersion(ParsedQuicVersion::RFCv1()));
   EXPECT_EQ("h3", AlpnForVersion(ParsedQuicVersion::RFCv2()));
@@ -508,8 +514,7 @@ TEST(QuicVersionsTest, CurrentSupportedHttp3Versions) {
 TEST(QuicVersionsTest, ObsoleteSupportedVersions) {
   ParsedQuicVersionVector obsolete_versions = ObsoleteSupportedVersions();
   EXPECT_EQ(quic::ParsedQuicVersion::Q046(), obsolete_versions[0]);
-  EXPECT_EQ(quic::ParsedQuicVersion::Q050(), obsolete_versions[1]);
-  EXPECT_EQ(quic::ParsedQuicVersion::Draft29(), obsolete_versions[2]);
+  EXPECT_EQ(quic::ParsedQuicVersion::Draft29(), obsolete_versions[1]);
 }
 
 TEST(QuicVersionsTest, IsObsoleteSupportedVersion) {

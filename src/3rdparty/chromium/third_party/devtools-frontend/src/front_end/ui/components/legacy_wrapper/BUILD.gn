@@ -10,10 +10,8 @@ devtools_module("legacy_wrapper") {
   sources = [ "LegacyWrapper.ts" ]
   deps = [
     "../../../ui/legacy:bundle",
-    "../../../ui/lit-html:bundle",
+    "../../../ui/lit:bundle",
   ]
-
-  visibility = [ "../../../../test/unittests/front_end/ui/components" ]
 }
 
 devtools_entrypoint("bundle") {

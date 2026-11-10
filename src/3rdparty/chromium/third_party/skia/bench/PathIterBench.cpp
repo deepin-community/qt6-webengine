@@ -7,21 +7,22 @@
 #include "bench/Benchmark.h"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
-#include "include/core/SkColorPriv.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkPath.h"
 #include "include/core/SkShader.h"
 #include "include/core/SkString.h"
 #include "src/base/SkRandom.h"
+#include "src/core/SkColorPriv.h"
 #include "src/core/SkPathPriv.h"
 
 enum class PathIterType {
     kIter,
     kRaw,
     kEdge,
+    kPathRaw,
 };
 const char* gPathIterNames[] = {
-    "iter", "raw", "edge"
+    "iter", "raw", "edge", "pathraw",
 };
 
 static int rand_pts(SkRandom& rand, SkPoint pts[4]) {
@@ -69,7 +70,7 @@ public:
     }
 
     bool isSuitableFor(Backend backend) override {
-        return backend == kNonRendering_Backend;
+        return backend == Backend::kNonRendering;
     }
 
 protected:
@@ -112,6 +113,14 @@ protected:
                     }
                 }
                 break;
+            case PathIterType::kPathRaw:
+                for (int i = 0; i < loops; ++i) {
+                    auto iter = SkPathPriv::Raw(fPath).iter();
+                    while (auto r = iter.next()) {
+                        handle((int)r->vrb, r->pts.data());
+                    }
+                }
+                break;
         }
     }
 
@@ -123,4 +132,5 @@ private:
 
 DEF_BENCH( return new PathIterBench(PathIterType::kIter); )
 DEF_BENCH( return new PathIterBench(PathIterType::kRaw); )
+DEF_BENCH( return new PathIterBench(PathIterType::kPathRaw); )
 DEF_BENCH( return new PathIterBench(PathIterType::kEdge); )

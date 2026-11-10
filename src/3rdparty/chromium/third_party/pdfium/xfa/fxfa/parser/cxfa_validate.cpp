@@ -62,7 +62,7 @@ XFA_AttributeValue CXFA_Validate::GetFormatTest() {
 }
 
 void CXFA_Validate::SetNullTest(const WideString& wsValue) {
-  absl::optional<XFA_AttributeValue> item =
+  std::optional<XFA_AttributeValue> item =
       XFA_GetAttributeValueByName(wsValue.AsStringView());
   JSObject()->SetEnum(
       XFA_Attribute::NullTest,
@@ -80,17 +80,20 @@ XFA_AttributeValue CXFA_Validate::GetScriptTest() {
 WideString CXFA_Validate::GetMessageText(const WideString& wsMessageType) {
   CXFA_Message* pNode =
       JSObject()->GetProperty<CXFA_Message>(0, XFA_Element::Message);
-  if (!pNode)
+  if (!pNode) {
     return WideString();
+  }
 
   for (CXFA_Node* pItemNode = pNode->GetFirstChild(); pItemNode;
        pItemNode = pItemNode->GetNextSibling()) {
-    if (pItemNode->GetElementType() != XFA_Element::Text)
+    if (pItemNode->GetElementType() != XFA_Element::Text) {
       continue;
+    }
 
     WideString wsName = pItemNode->JSObject()->GetCData(XFA_Attribute::Name);
-    if (wsName.IsEmpty() || wsName == wsMessageType)
+    if (wsName.IsEmpty() || wsName == wsMessageType) {
       return pItemNode->JSObject()->GetContent(false);
+    }
   }
   return WideString();
 }
@@ -123,13 +126,15 @@ void CXFA_Validate::SetMessageText(const WideString& wsMessageType,
                                    const WideString& wsMessage) {
   CXFA_Message* pNode =
       JSObject()->GetOrCreateProperty<CXFA_Message>(0, XFA_Element::Message);
-  if (!pNode)
+  if (!pNode) {
     return;
+  }
 
   for (CXFA_Node* pItemNode = pNode->GetFirstChild(); pItemNode;
        pItemNode = pItemNode->GetNextSibling()) {
-    if (pItemNode->GetElementType() != XFA_Element::Text)
+    if (pItemNode->GetElementType() != XFA_Element::Text) {
       continue;
+    }
 
     WideString wsName = pItemNode->JSObject()->GetCData(XFA_Attribute::Name);
     if (wsName.IsEmpty() || wsName == wsMessageType) {

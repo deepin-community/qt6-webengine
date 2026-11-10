@@ -12,16 +12,16 @@
 #define RTC_BASE_PLATFORM_THREAD_H_
 
 #include <functional>
-#include <string>
-#if !defined(WEBRTC_WIN)
-#include <pthread.h>
-#endif
+#include <optional>
 
 #include "absl/strings/string_view.h"
-#include "absl/types/optional.h"
-#include "rtc_base/platform_thread_types.h"
+#include "rtc_base/platform_thread_types.h"  // IWYU pragma: keep
 
-namespace rtc {
+#if !defined(WEBRTC_WIN)
+#include <pthread.h>  // IWYU pragma: keep
+#endif
+
+namespace webrtc {
 
 enum class ThreadPriority {
   kLow = 1,
@@ -70,7 +70,7 @@ class PlatformThread final {
   // For a PlatformThread that's been spawned joinable, the destructor suspends
   // the calling thread until the created thread exits unless the thread has
   // already exited.
-  virtual ~PlatformThread();
+  ~PlatformThread();
 
   // Finalizes any allocated resources.
   // For a PlatformThread that's been spawned joinable, Finalize() suspends
@@ -97,7 +97,7 @@ class PlatformThread final {
       ThreadAttributes attributes = ThreadAttributes());
 
   // Returns the base platform thread handle of this thread.
-  absl::optional<Handle> GetHandle() const;
+  std::optional<Handle> GetHandle() const;
 
 #if defined(WEBRTC_WIN)
   // Queue a Windows APC function that runs when the thread is alertable.
@@ -111,10 +111,11 @@ class PlatformThread final {
                                     ThreadAttributes attributes,
                                     bool joinable);
 
-  absl::optional<Handle> handle_;
+  std::optional<Handle> handle_;
   bool joinable_ = false;
 };
 
-}  // namespace rtc
+}  //  namespace webrtc
+
 
 #endif  // RTC_BASE_PLATFORM_THREAD_H_

@@ -10,14 +10,14 @@ import * as IconButton from '../../ui/components/icon_button/icon_button.js';
 import {ApplicationPanelTreeElement} from './ApplicationPanelTreeElement.js';
 import * as ApplicationComponents from './components/components.js';
 import {ReportingApiView} from './ReportingApiView.js';
-import {type ResourcesPanel} from './ResourcesPanel.js';
+import type {ResourcesPanel} from './ResourcesPanel.js';
 
 const UIStrings = {
   /**
    *@description Label for an item in the Application Panel Sidebar of the Application panel
    */
   reportingApi: 'Reporting API',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/application/ReportingApiTreeElement.ts', UIStrings);
 export const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
@@ -25,7 +25,7 @@ export class ReportingApiTreeElement extends ApplicationPanelTreeElement {
   private view?: ReportingApiView;
 
   constructor(storagePanel: ResourcesPanel) {
-    super(storagePanel, i18nString(UIStrings.reportingApi), false);
+    super(storagePanel, i18nString(UIStrings.reportingApi), false, 'reporting-api');
     const icon = IconButton.Icon.create('document');
     this.setLeadingIcons([icon]);
   }
@@ -40,7 +40,7 @@ export class ReportingApiTreeElement extends ApplicationPanelTreeElement {
       this.view = new ReportingApiView(new ApplicationComponents.EndpointsGrid.EndpointsGrid());
     }
     this.showView(this.view);
-    Host.userMetrics.panelShown(Host.UserMetrics.PanelCodes[Host.UserMetrics.PanelCodes.reporting_api]);
+    Host.userMetrics.panelShown('reporting-api');
     return false;
   }
 }

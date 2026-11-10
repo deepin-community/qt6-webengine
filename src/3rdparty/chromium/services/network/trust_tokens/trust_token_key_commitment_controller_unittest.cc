@@ -19,7 +19,6 @@
 #include "net/url_request/url_request_context_builder.h"
 #include "net/url_request/url_request_test_util.h"
 #include "services/network/public/cpp/url_loader_completion_status.h"
-#include "services/network/public/mojom/trust_tokens.mojom-forward.h"
 #include "services/network/public/mojom/trust_tokens.mojom.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
@@ -175,10 +174,8 @@ TEST_F(TrustTokenKeyCommitmentControllerTest,
           IssuerURLRequest(),
           url::Origin::Create(GURL("https://toplevel.com")));
 
-  std::string origin_from_header;
-  EXPECT_TRUE(request->headers.GetHeader(net::HttpRequestHeaders::kOrigin,
-                                         &origin_from_header));
-  EXPECT_EQ(origin_from_header, "https://toplevel.com");
+  EXPECT_THAT(request->headers.GetHeader(net::HttpRequestHeaders::kOrigin),
+              Optional(std::string("https://toplevel.com")));
 }
 
 // On network error, the key commitment controller should

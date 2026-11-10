@@ -74,11 +74,16 @@
 #if LIBGAV1_ASAN
 #include <sanitizer/asan_interface.h>
 #else
-#define ASAN_POISON_MEMORY_REGION(addr, size) \
-  (static_cast<void>(addr), static_cast<void>(size))
-#define ASAN_UNPOISON_MEMORY_REGION(addr, size) \
-  (static_cast<void>(addr), static_cast<void>(size))
+#define ASAN_POISON_MEMORY_REGION(addr, size) ((void)(addr), (void)(size))
+#define ASAN_UNPOISON_MEMORY_REGION(addr, size) ((void)(addr), (void)(size))
 #endif
+
+//------------------------------------------------------------------------------
+// MemorySanitizer support.
+
+#if LIBGAV1_MSAN
+#include <sanitizer/msan_interface.h>
+#endif  // LIBGAV1_MSAN
 
 //------------------------------------------------------------------------------
 // Function attributes.

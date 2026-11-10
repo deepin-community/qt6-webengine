@@ -14,10 +14,19 @@
 
 #include <limits>
 
+#define USE_SYSTEM_ZLIB
+#include "compression_utils_portable.h"
+
 namespace gl
 {
 namespace
 {
+bool IsStencilWriteMaskedOut(GLuint stencilWritemask, GLuint framebufferStencilSize)
+{
+    const GLuint framebufferMask = angle::BitMask<GLuint>(framebufferStencilSize);
+    return (stencilWritemask & framebufferMask) == 0;
+}
+
 bool IsStencilNoOp(GLenum stencilFunc,
                    GLenum stencilFail,
                    GLenum stencilPassDepthFail,
@@ -92,38 +101,6 @@ bool operator!=(const RasterizerState &a, const RasterizerState &b)
     return !(a == b);
 }
 
-BlendState::BlendState()
-{
-    memset(this, 0, sizeof(BlendState));
-
-    blend              = false;
-    sourceBlendRGB     = GL_ONE;
-    sourceBlendAlpha   = GL_ONE;
-    destBlendRGB       = GL_ZERO;
-    destBlendAlpha     = GL_ZERO;
-    blendEquationRGB   = GL_FUNC_ADD;
-    blendEquationAlpha = GL_FUNC_ADD;
-    colorMaskRed       = true;
-    colorMaskGreen     = true;
-    colorMaskBlue      = true;
-    colorMaskAlpha     = true;
-}
-
-BlendState::BlendState(const BlendState &other)
-{
-    memcpy(this, &other, sizeof(BlendState));
-}
-
-bool operator==(const BlendState &a, const BlendState &b)
-{
-    return memcmp(&a, &b, sizeof(BlendState)) == 0;
-}
-
-bool operator!=(const BlendState &a, const BlendState &b)
-{
-    return !(a == b);
-}
-
 DepthStencilState::DepthStencilState()
 {
     memset(this, 0, sizeof(DepthStencilState));
@@ -162,21 +139,20 @@ bool DepthStencilState::isDepthMaskedOut() const
     return !depthMask;
 }
 
-bool DepthStencilState::isStencilMaskedOut() const
+bool DepthStencilState::isStencilMaskedOut(GLuint framebufferStencilSize) const
 {
-    return (stencilMask & stencilWritemask) == 0;
+    return IsStencilWriteMaskedOut(stencilWritemask, framebufferStencilSize);
 }
 
-bool DepthStencilState::isStencilNoOp() const
+bool DepthStencilState::isStencilNoOp(GLuint framebufferStencilSize) const
 {
-    return isStencilMaskedOut() ||
+    return isStencilMaskedOut(framebufferStencilSize) ||
            IsStencilNoOp(stencilFunc, stencilFail, stencilPassDepthFail, stencilPassDepthPass);
 }
 
-bool DepthStencilState::isStencilBackNoOp() const
+bool DepthStencilState::isStencilBackNoOp(GLuint framebufferStencilSize) const
 {
-    const bool isStencilBackMaskedOut = (stencilBackMask & stencilBackWritemask) == 0;
-    return isStencilBackMaskedOut ||
+    return IsStencilWriteMaskedOut(stencilBackWritemask, framebufferStencilSize) ||
            IsStencilNoOp(stencilBackFunc, stencilBackFail, stencilBackPassDepthFail,
                          stencilBackPassDepthPass);
 }
@@ -987,30 +963,10 @@ void Box::extend(const Box &other)
     depth  = z1 - z0;
 }
 
-bool operator==(const Offset &a, const Offset &b)
-{
-    return a.x == b.x && a.y == b.y && a.z == b.z;
-}
-
-bool operator!=(const Offset &a, const Offset &b)
-{
-    return !(a == b);
-}
-
-bool operator==(const Extents &lhs, const Extents &rhs)
-{
-    return lhs.width == rhs.width && lhs.height == rhs.height && lhs.depth == rhs.depth;
-}
-
-bool operator!=(const Extents &lhs, const Extents &rhs)
-{
-    return !(lhs == rhs);
-}
-
-bool ValidateComponentTypeMasks(unsigned long outputTypes,
-                                unsigned long inputTypes,
-                                unsigned long outputMask,
-                                unsigned long inputMask)
+bool ValidateComponentTypeMasks(uint64_t outputTypes,
+                                uint64_t inputTypes,
+                                uint64_t outputMask,
+                                uint64_t inputMask)
 {
     static_assert(IMPLEMENTATION_MAX_DRAW_BUFFERS <= kMaxComponentTypeMaskIndex,
                   "Output/input masks should fit into 16 bits - 1 bit per draw buffer. The "
@@ -1067,6 +1023,98 @@ GLsizeiptr GetBoundBufferAvailableSize(const OffsetBindingPointer<Buffer> &bindi
    //
 namespace angle
 {
+bool CompressBlob(const size_t cacheSize, const uint8_t *cacheData, MemoryBuffer *compressedData)
+{
+    uLong uncompressedSize       = static_cast<uLong>(cacheSize);
+    uLong expectedCompressedSize = zlib_internal::GzipExpectedCompressedSize(uncompressedSize);
+    uLong actualCompressedSize   = expectedCompressedSize;
+
+    // Clear previous contents and reserve enough memory.
+    if (!compressedData->clearAndReserve(expectedCompressedSize))
+    {
+        ERR() << "Failed to allocate memory for compression";
+        return false;
+    }
+
+    int zResult = zlib_internal::GzipCompressHelper(compressedData->data(), &actualCompressedSize,
+                                                    cacheData, uncompressedSize, nullptr, nullptr);
+
+    if (zResult != Z_OK)
+    {
+        ERR() << "Failed to compress cache data: " << zResult;
+        return false;
+    }
+
+    // Trim to actual size.
+    ASSERT(actualCompressedSize <= expectedCompressedSize);
+    compressedData->setSize(actualCompressedSize);
+
+    return true;
+}
+
+bool DecompressBlob(const uint8_t *compressedData,
+                    const size_t compressedSize,
+                    size_t maxUncompressedDataSize,
+                    MemoryBuffer *uncompressedData)
+{
+    // Call zlib function to decompress.
+    uint32_t uncompressedSize =
+        zlib_internal::GetGzipUncompressedSize(compressedData, compressedSize);
+
+    if (uncompressedSize == 0)
+    {
+        ERR() << "Decompressed data size is zero. Wrong or corrupted data? (compressed size is: "
+              << compressedSize << ")";
+        return false;
+    }
+
+    if (uncompressedSize > maxUncompressedDataSize)
+    {
+        ERR() << "Decompressed data size is larger than the maximum supported (" << uncompressedSize
+              << " vs " << maxUncompressedDataSize << ")";
+        return false;
+    }
+
+    // Clear previous contents and reserve enough memory.
+    if (!uncompressedData->clearAndReserve(uncompressedSize))
+    {
+        ERR() << "Failed to allocate memory for decompression";
+        return false;
+    }
+
+    uLong destLen = uncompressedSize;
+    int zResult   = zlib_internal::GzipUncompressHelper(
+        uncompressedData->data(), &destLen, compressedData, static_cast<uLong>(compressedSize));
+
+    if (zResult != Z_OK)
+    {
+        WARN() << "Failed to decompress data: " << zResult << "\n";
+        return false;
+    }
+
+    // Trim to actual size.
+    ASSERT(destLen <= uncompressedSize);
+    uncompressedData->setSize(destLen);
+
+    return true;
+}
+
+uint32_t GenerateCRC32(const uint8_t *data, size_t size)
+{
+    return UpdateCRC32(InitCRC32(), data, size);
+}
+
+uint32_t InitCRC32()
+{
+    // To get required initial value for the crc, need to pass nullptr into buf.
+    return static_cast<uint32_t>(crc32_z(0u, nullptr, 0u));
+}
+
+uint32_t UpdateCRC32(uint32_t prevCrc32, const uint8_t *data, size_t size)
+{
+    return static_cast<uint32_t>(crc32_z(static_cast<uLong>(prevCrc32), data, size));
+}
+
 UnlockedTailCall::UnlockedTailCall() = default;
 
 UnlockedTailCall::~UnlockedTailCall()

@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "media/remoting/stream_provider.h"
+
 #include <vector>
 
 #include "base/containers/circular_deque.h"
@@ -21,7 +22,7 @@
 #include "media/cast/openscreen/remoting_proto_utils.h"
 #include "media/mojo/common/mojo_decoder_buffer_converter.h"
 #include "media/remoting/receiver_controller.h"
-#include "third_party/openscreen/src/cast/streaming/rpc_messenger.h"
+#include "third_party/openscreen/src/cast/streaming/public/rpc_messenger.h"
 
 using openscreen::cast::RpcMessenger;
 
@@ -180,7 +181,7 @@ void StreamProvider::MediaStream::OnReceivedRpc(
       OnReadUntilCallback(std::move(message));
       break;
     default:
-      VLOG(3) << __func__ << "Unknow RPC message.";
+      VLOG(3) << __func__ << "Unknown RPC message.";
   }
 }
 
@@ -498,26 +499,16 @@ int64_t StreamProvider::GetMemoryUsage() const {
   return 0;
 }
 
-absl::optional<container_names::MediaContainerName>
+std::optional<container_names::MediaContainerName>
 StreamProvider::GetContainerForMetrics() const {
-  return absl::optional<container_names::MediaContainerName>();
+  return std::optional<container_names::MediaContainerName>();
 }
 
-void StreamProvider::OnEnabledAudioTracksChanged(
-    const std::vector<MediaTrack::Id>& track_ids,
-    base::TimeDelta curr_time,
-    TrackChangeCB change_completed_cb) {
-  std::vector<DemuxerStream*> streams;
-  std::move(change_completed_cb).Run(DemuxerStream::AUDIO, streams);
-  DVLOG(1) << "Track changes are not supported.";
-}
-
-void StreamProvider::OnSelectedVideoTrackChanged(
-    const std::vector<MediaTrack::Id>& track_ids,
-    base::TimeDelta curr_time,
-    TrackChangeCB change_completed_cb) {
-  std::vector<DemuxerStream*> streams;
-  std::move(change_completed_cb).Run(DemuxerStream::VIDEO, streams);
+void StreamProvider::OnTracksChanged(DemuxerStream::Type track_type,
+                                     std::optional<MediaTrack::Id> track_id,
+                                     base::TimeDelta curr_time,
+                                     TrackChangeCB change_completed_cb) {
+  std::move(change_completed_cb).Run(nullptr);
   DVLOG(1) << "Track changes are not supported.";
 }
 
@@ -554,6 +545,11 @@ void StreamProvider::OnAcquireDemuxer(
     std::unique_ptr<openscreen::cast::RpcMessage> message) {
   DCHECK(media_task_runner_->RunsTasksInCurrentSequence());
   DCHECK(message->has_acquire_demuxer_rpc());
+
+  if (audio_stream_ || video_stream_) {
+    VLOG(1) << __func__ << " Demuxer streams already acquired, ignoring.";
+    return;
+  }
 
   int32_t audio_demuxer_handle =
       message->acquire_demuxer_rpc().audio_demuxer_handle();
@@ -639,13 +635,14 @@ void StreamProvider::CompleteInitialize() {
   std::move(init_done_callback_).Run(PIPELINE_OK);
 }
 
-std::vector<raw_ptr<DemuxerStream, VectorExperimental>>
-StreamProvider::GetAllStreams() {
-  std::vector<raw_ptr<DemuxerStream, VectorExperimental>> streams;
-  if (audio_stream_)
+std::vector<DemuxerStream*> StreamProvider::GetAllStreams() {
+  std::vector<DemuxerStream*> streams;
+  if (audio_stream_) {
     streams.push_back(audio_stream_.get());
-  if (video_stream_)
+  }
+  if (video_stream_) {
     streams.push_back(video_stream_.get());
+  }
   return streams;
 }
 

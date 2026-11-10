@@ -13,13 +13,16 @@
 
 #if defined(WEBRTC_INCLUDE_INTERNAL_AUDIO_DEVICE)
 
-#include <stdint.h>
-
+#include <cstdint>
 #include <memory>
 
+#include "absl/base/nullability.h"
+#include "api/audio/audio_device.h"
+#include "api/audio/audio_device_defines.h"
+#include "api/environment/environment.h"
+#include "api/scoped_refptr.h"
 #include "api/task_queue/task_queue_factory.h"
 #include "modules/audio_device/audio_device_buffer.h"
-#include "modules/audio_device/include/audio_device.h"
 
 namespace webrtc {
 
@@ -42,9 +45,9 @@ class AudioDeviceModuleImpl : public AudioDeviceModuleForTest {
     kPlatformFuchsia = 7,
   };
 
-  int32_t CheckPlatform();
-  int32_t CreatePlatformSpecificObjects();
-  int32_t AttachAudioBuffer();
+  static absl_nullable scoped_refptr<AudioDeviceModuleImpl> Create(
+      const Environment& env,
+      AudioLayer audio_layer);
 
   AudioDeviceModuleImpl(AudioLayer audio_layer,
                         TaskQueueFactory* task_queue_factory);
@@ -55,6 +58,10 @@ class AudioDeviceModuleImpl : public AudioDeviceModuleForTest {
                         TaskQueueFactory* task_queue_factory,
                         bool create_detached);
   ~AudioDeviceModuleImpl() override;
+
+  int32_t CheckPlatform();
+  int32_t CreatePlatformSpecificObjects(const Environment& env);
+  int32_t AttachAudioBuffer();
 
   // Retrieve the currently utilized audio layer
   int32_t ActiveAudioLayer(AudioLayer* audioLayer) const override;
@@ -159,8 +166,8 @@ class AudioDeviceModuleImpl : public AudioDeviceModuleForTest {
 
   int RestartPlayoutInternally() override { return -1; }
   int RestartRecordingInternally() override { return -1; }
-  int SetPlayoutSampleRate(uint32_t sample_rate) override { return -1; }
-  int SetRecordingSampleRate(uint32_t sample_rate) override { return -1; }
+  int SetPlayoutSampleRate(uint32_t /* sample_rate */) override { return -1; }
+  int SetRecordingSampleRate(uint32_t /* sample_rate */) override { return -1; }
 
  private:
   PlatformType Platform() const;

@@ -5,7 +5,9 @@
 #include "qpdfview.h"
 #include "qpdfview_p.h"
 
+#include <QtPdf/qpdflink.h>
 #include "qpdfpagerenderer.h"
+#include <QtPdf/private/qtpdfglobal_p.h>
 
 #include <QGuiApplication>
 #include <QLoggingCategory>
@@ -19,7 +21,7 @@
 
 QT_BEGIN_NAMESPACE
 
-Q_LOGGING_CATEGORY(qLcWLink, "qt.pdf.widgets.links")
+Q_PDF_LOGGING_CATEGORY(qLcWLink, "qt.pdf.widgets.links")
 //#define DEBUG_LINKS
 
 static const QColor SearchResultHighlight("#80B0C4DE");
@@ -51,9 +53,10 @@ void QPdfViewPrivate::init()
     m_pageRenderer->setRenderMode(QPdfPageRenderer::RenderMode::MultiThreaded);
 }
 
-void QPdfViewPrivate::documentStatusChanged()
+void QPdfViewPrivate::documentStatusChanged(QPdfDocument::Status status)
 {
-    updateDocumentLayout();
+    if (status == QPdfDocument::Status::Ready)
+        updateDocumentLayout();
     invalidatePageCache();
 }
 
@@ -68,6 +71,12 @@ void QPdfViewPrivate::currentPageChanged(int currentPage)
 
     if (m_pageMode == QPdfView::PageMode::SinglePage)
         invalidateDocumentLayout();
+}
+
+void QPdfViewPrivate::currentZoomChanged(qreal currentZoom)
+{
+    Q_Q(QPdfView);
+    q->setZoomFactor(currentZoom);
 }
 
 void QPdfViewPrivate::calculateViewport()
@@ -135,6 +144,58 @@ void QPdfViewPrivate::updateScrollBars()
     q->horizontalScrollBar()->setPageStep(p.width());
     q->verticalScrollBar()->setRange(0, v.height() - p.height());
     q->verticalScrollBar()->setPageStep(p.height());
+}
+
+/*! \internal
+    Scroll lazily (the minimal distance) such that \a link's destination
+    becomes completely visible within the viewport.
+*/
+void QPdfViewPrivate::scrollTo(const QPdfLink &link)
+{
+    Q_Q(QPdfView);
+
+    // If the link represents a search result, we will scroll to show its beginning.
+    // If the link has a destination location, scroll there instead.
+    const QRect subRect = link.location().isNull() ? link.rectangles().constFirst().toRect()
+                                                   : QRect(link.location().toPoint(), QSize(1, 1));
+    const auto &pageGeometryAndScale = m_documentLayout.pageGeometryAndScale.value(link.page());
+    const QRect scaledSubRect(subRect.topLeft() * pageGeometryAndScale.second,
+                              subRect.size() * pageGeometryAndScale.second);
+    const QRect oldViewport = m_viewport;
+
+    // If the region we want to show is already fully visible in the m_viewport, there's nothing to do.
+    if (m_viewport.contains(scaledSubRect))
+        return;
+
+    // Calculate new scrollbar positions that move the minimum amount
+    // to get scaledSubRect to be fully visible, if possible.
+    int sx = -1;
+    int sy = -1;
+    if (scaledSubRect.left() < m_viewport.left())
+        sx = scaledSubRect.left();
+    else if (scaledSubRect.right() > m_viewport.right())
+        sx = scaledSubRect.right();
+    if (scaledSubRect.top() < m_viewport.top())
+        sy = scaledSubRect.top();
+    else if (scaledSubRect.bottom() > m_viewport.bottom())
+        sy = scaledSubRect.bottom();
+
+    // In multi-page mode, assume that the view is already aligned
+    // at the top-left corner of the page (because mouseReleaseEvent()
+    // called QPdfPageNavigator::jump() first), and scroll down from there.
+    if (m_pageMode == QPdfView::PageMode::MultiPage) {
+        sx = m_viewport.x() + (sx >= 0 ? sx : 0);
+        sy = m_viewport.y() + (sy >= 0 ? sy : 0);
+    }
+
+    if (sx >= 0)
+        q->horizontalScrollBar()->setValue(sx);
+    if (sy >= 0)
+        q->verticalScrollBar()->setValue(sy);
+
+    qCDebug(qLcWLink) << "scrolled to page" << link.page() << "@" << link.location()
+                      << "scaled target region" << scaledSubRect << "scrollbars" << sx << sy
+                      << "viewport" << oldViewport << "->" << m_viewport;
 }
 
 void QPdfViewPrivate::pageRendered(int pageNumber, QSize imageSize, const QImage &image, quint64 requestId)
@@ -254,6 +315,22 @@ qreal QPdfViewPrivate::yPositionForPage(int pageNumber) const
     return (*it).first.y();
 }
 
+QPdfLink QPdfViewPrivate::pagePosition(const QPointF &viewPosition)
+{
+    for (auto it = m_documentLayout.pageGeometryAndScale.cbegin();
+         it != m_documentLayout.pageGeometryAndScale.cend(); ++it) {
+        const int page = it.key();
+        const QTransform screenInvTransform = screenScaleTransform(page).inverted();
+        const QRect pageGeometry = it.value().first;
+        if (pageGeometry.contains(viewPosition.toPoint())) {
+            QPointF posInPoints = screenInvTransform.map(viewPosition - pageGeometry.topLeft()
+                                                         + m_viewport.topLeft());
+            return QPdfLink(page, posInPoints, 1);
+        }
+    }
+    return {}; // invalid: not found
+}
+
 QTransform QPdfViewPrivate::screenScaleTransform(int page) const
 {
     qreal scale = m_screenResolution * m_zoomFactor;
@@ -301,6 +378,8 @@ QPdfView::QPdfView(QWidget *parent)
 
     connect(d->m_pageNavigator, &QPdfPageNavigator::currentPageChanged, this,
             [d](int page){ d->currentPageChanged(page); });
+    connect(d->m_pageNavigator, &QPdfPageNavigator::currentZoomChanged,
+            this, &QPdfView::setZoomFactor);
 
     connect(d->m_pageRenderer, &QPdfPageRenderer::pageRendered, this,
             [d](int pageNumber, QSize imageSize, const QImage &image, QPdfDocumentRenderOptions, quint64 requestId) {
@@ -341,12 +420,13 @@ void QPdfView::setDocument(QPdfDocument *document)
     if (d->m_document)
         d->m_documentStatusChangedConnection =
                 connect(d->m_document.data(), &QPdfDocument::statusChanged, this,
-                        [d](){ d->documentStatusChanged(); });
+                        [d](QPdfDocument::Status s){ d->documentStatusChanged(s); });
 
     d->m_pageRenderer->setDocument(d->m_document);
     d->m_linkModel.setDocument(d->m_document);
 
-    d->documentStatusChanged();
+    const auto docStatus = document ? document->status() : QPdfDocument::Status::Null;
+    d->documentStatusChanged(docStatus);
 }
 
 QPdfDocument *QPdfView::document() const
@@ -625,17 +705,25 @@ void QPdfView::paintEvent(QPaintEvent *event)
             }
 #endif
             if (d->m_searchModel) {
+                // Don't cover the text below
+                const auto w = CurrentSearchResultWidth / 2;
+                QMargins highlightRectOffset(w, w, w, w);
+
                 for (const QPdfLink &result : d->m_searchModel->resultsOnPage(page)) {
-                    for (const QRectF &rect : result.rectangles())
-                        painter.fillRect(scaleTransform.mapRect(rect).translated(pageGeometry.topLeft()), SearchResultHighlight);
+                    for (const QRectF &rect : result.rectangles()) {
+                        const auto r = rect.marginsAdded(highlightRectOffset);
+                        painter.fillRect(scaleTransform.mapRect(r).translated(pageGeometry.topLeft()), SearchResultHighlight);
+                    }
                 }
 
                 if (d->m_currentSearchResultIndex >= 0 && d->m_currentSearchResultIndex < d->m_searchModel->rowCount({})) {
                     const QPdfLink &cur = d->m_searchModel->resultAtIndex(d->m_currentSearchResultIndex);
                     if (cur.page() == page) {
                         painter.setPen({CurrentSearchResultHighlight, CurrentSearchResultWidth});
-                        for (const auto &rect : cur.rectangles())
-                            painter.drawRect(scaleTransform.mapRect(rect).translated(pageGeometry.topLeft()));
+                        for (const auto &rect : cur.rectangles()) {
+                            const auto r = rect.marginsAdded(highlightRectOffset);
+                            painter.drawRect(scaleTransform.mapRect(r).translated(pageGeometry.topLeft()));
+                        }
                     }
                 }
             }
@@ -670,41 +758,70 @@ void QPdfView::mousePressEvent(QMouseEvent *event)
 void QPdfView::mouseMoveEvent(QMouseEvent *event)
 {
     Q_D(QPdfView);
-    for (auto it = d->m_documentLayout.pageGeometryAndScale.cbegin();
-         it != d->m_documentLayout.pageGeometryAndScale.cend(); ++it) {
-        const int page = it.key();
-        const QTransform screenInvTransform = d->screenScaleTransform(page).inverted();
-        const QRect pageGeometry = it.value().first;
-        if (pageGeometry.contains(event->position().toPoint())) {
-            const QPointF posInPoints = screenInvTransform.map(event->position() - pageGeometry.topLeft());
-            d->m_linkModel.setPage(page);
-            auto dest = d->m_linkModel.linkAt(posInPoints);
-            setCursor(dest.isValid() ? Qt::PointingHandCursor : Qt::ArrowCursor);
-            if (dest.isValid())
-                qCDebug(qLcWLink) << event->position() << ":" << posInPoints << "pt ->" << dest;
-        }
+    auto pagePos = d->pagePosition(event->position());
+    if (pagePos.isValid()) {
+        d->m_linkModel.setPage(pagePos.page());
+        auto dest = d->m_linkModel.linkAt(pagePos.location());
+        setCursor(dest.isValid() ? Qt::PointingHandCursor : Qt::ArrowCursor);
+        if (dest.isValid())
+            qCDebug(qLcWLink) << event->position() << ":" << pagePos.location() << "pt ->" << dest;
     }
 }
 
 void QPdfView::mouseReleaseEvent(QMouseEvent *event)
 {
     Q_D(QPdfView);
-    for (auto it = d->m_documentLayout.pageGeometryAndScale.cbegin();
-         it != d->m_documentLayout.pageGeometryAndScale.cend(); ++it) {
-        const int page = it.key();
-        const QTransform screenInvTransform = d->screenScaleTransform(page).inverted();
-        const QRect pageGeometry = it.value().first;
-        if (pageGeometry.contains(event->position().toPoint())) {
-            const QPointF posInPoints = screenInvTransform.map(event->position() - pageGeometry.topLeft());
-            d->m_linkModel.setPage(page);
-            auto dest = d->m_linkModel.linkAt(posInPoints);
-            if (dest.isValid()) {
-                qCDebug(qLcWLink) << event << ": jumping to" << dest;
-                d->m_pageNavigator->jump(dest.page(), dest.location(), dest.zoom());
-                // TODO scroll and zoom to where the link tells us to
-            }
+    auto pagePos = d->pagePosition(event->position());
+    if (pagePos.isValid()) {
+        d->m_linkModel.setPage(pagePos.page());
+        auto dest = d->m_linkModel.linkAt(pagePos.location());
+        if (dest.isValid()) {
+            qCDebug(qLcWLink) << event << ": jumping to" << dest;
+            d->m_pageNavigator->jump(dest.page(), dest.location(), dest.zoom());
+            d->scrollTo(dest);
+        }
+    }
+}
+
+void QPdfView::wheelEvent(QWheelEvent* event)
+{
+    if (event->modifiers() & Qt::ControlModifier) {
+        int delta = event->angleDelta().y();
+
+        if (delta == 0) {
+            event->ignore();
             return;
         }
+
+        Q_D(QPdfView);
+        auto calculateZoomStep = [](qreal currentZoomFactor, int sign) {
+            constexpr qreal baseStep = 0.1;
+            constexpr qreal ceilStep = 0.9;
+
+            const auto factor = std::ceil(currentZoomFactor + sign * baseStep);
+            return qMin(baseStep * factor, ceilStep);
+        };
+        qreal currentZoom = zoomFactor();
+        qreal stepSize = calculateZoomStep(currentZoom, (delta > 0) ? +1 : -1);
+
+        qreal zoomChange = (delta > 0) ? stepSize : -stepSize;
+        qreal newZoomFactor = qBound(0.1, currentZoom + zoomChange, 10.0);
+        const auto cursorPageAndPos = d->pagePosition(event->position());
+
+        setZoomFactor(newZoomFactor);
+
+        // After zoom, scroll so as to keep the same document position under the cursor
+        if (cursorPageAndPos.isValid()) {
+            const QRect newPageGeometry = d->m_documentLayout.pageGeometryAndScale.value(cursorPageAndPos.page()).first;
+            const QPointF newPosInDoc = newPageGeometry.topLeft() +
+                    d->screenScaleTransform(cursorPageAndPos.page()).map(cursorPageAndPos.location());
+            horizontalScrollBar()->setValue(qRound(newPosInDoc.x() - event->position().x()));
+            verticalScrollBar()->setValue(qRound(newPosInDoc.y() - event->position().y()));
+        }
+
+        event->accept();
+    } else {
+        QAbstractScrollArea::wheelEvent(event);
     }
 }
 

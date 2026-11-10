@@ -13,3 +13,13 @@ rhel # flaky
 
 [setCursorOnEmbeddedView]
 macos # QTest::mousemove is not reliable
+
+[keyboardFocusAfterPopup]
+wayland
+
+[datalist]
+wayland
+
+# QTBUG-144178
+[contextMenu:defaultContextMenu]
+wayland

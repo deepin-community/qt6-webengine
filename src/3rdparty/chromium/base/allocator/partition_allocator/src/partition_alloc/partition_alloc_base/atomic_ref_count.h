@@ -2,11 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 // This is a low level implementation of atomic semantics for reference
 // counting.  Please use base/memory/ref_counted.h directly instead.
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_ATOMIC_REF_COUNT_H_
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_ATOMIC_REF_COUNT_H_
+#ifndef PARTITION_ALLOC_PARTITION_ALLOC_BASE_ATOMIC_REF_COUNT_H_
+#define PARTITION_ALLOC_PARTITION_ALLOC_BASE_ATOMIC_REF_COUNT_H_
 
 #include <atomic>
 
@@ -66,4 +71,4 @@ class AtomicRefCount {
 
 }  // namespace partition_alloc::internal::base
 
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_ATOMIC_REF_COUNT_H_
+#endif  // PARTITION_ALLOC_PARTITION_ALLOC_BASE_ATOMIC_REF_COUNT_H_

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "storage/browser/file_system/file_system_operation_impl.h"
 
 #include <stddef.h>
@@ -264,8 +269,7 @@ class FileSystemOperationImplTest : public testing::Test {
   void GrantQuotaForCurrentUsage() {
     int64_t usage;
     GetUsageAndQuota(&usage, nullptr);
-    quota_manager()->SetQuota(sandbox_file_system_.storage_key(),
-                              sandbox_file_system_.storage_type(), usage);
+    quota_manager()->SetQuota(sandbox_file_system_.storage_key(), usage);
   }
 
   int64_t GetUsage() {
@@ -278,7 +282,6 @@ class FileSystemOperationImplTest : public testing::Test {
     int64_t quota;
     GetUsageAndQuota(nullptr, &quota);
     quota_manager()->SetQuota(sandbox_file_system_.storage_key(),
-                              sandbox_file_system_.storage_type(),
                               quota + quota_delta);
   }
 
@@ -543,7 +546,7 @@ TEST_F(FileSystemOperationImplTest, TestMoveSuccessSrcFileAndOverwrite) {
       Move(src_file, dest_file, FileSystemOperation::CopyOrMoveOptionSet()));
   EXPECT_TRUE(FileExists("dest"));
 
-  EXPECT_EQ(1, change_observer()->get_and_reset_modify_file_count());
+  EXPECT_EQ(1, change_observer()->get_and_reset_create_file_from_count());
   EXPECT_EQ(1, change_observer()->get_and_reset_remove_file_count());
   EXPECT_TRUE(change_observer()->HasNoChange());
 
@@ -1145,7 +1148,7 @@ TEST_F(FileSystemOperationImplTest, TestTruncateFailureByQuota) {
   EXPECT_EQ(10, GetFileSize("dir/file"));
 }
 
-// TODO(https://crbug.com/702990): Remove this test once last_access_time has
+// TODO(crbug.com/40511450): Remove this test once last_access_time has
 // been removed after PPAPI has been deprecated. Fuchsia does not support touch,
 // which breaks this test that relies on it. Since PPAPI is being deprecated,
 // this test is excluded from the Fuchsia build.

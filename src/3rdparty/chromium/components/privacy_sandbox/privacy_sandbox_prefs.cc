@@ -11,9 +11,6 @@
 namespace privacy_sandbox {
 
 void RegisterProfilePrefs(PrefRegistrySimple* registry) {
-  registry->RegisterBooleanPref(
-      prefs::kPrivacySandboxApisEnabled, true,
-      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterBooleanPref(prefs::kPrivacySandboxM1ConsentDecisionMade,
                                 false);
   registry->RegisterBooleanPref(prefs::kPrivacySandboxM1EEANoticeAcknowledged,
@@ -49,7 +46,8 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
   registry->RegisterBooleanPref(
       prefs::kPrivacySandboxDisabledInsufficientConfirmation, false);
   registry->RegisterBooleanPref(
-      prefs::kPrivacySandboxFirstPartySetsDataAccessAllowedInitialized, false);
+      prefs::kPrivacySandboxRelatedWebsiteSetsDataAccessAllowedInitialized,
+      false);
   registry->RegisterBooleanPref(
       prefs::kPrivacySandboxRelatedWebsiteSetsEnabled, true,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
@@ -64,6 +62,11 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
   registry->RegisterStringPref(
       prefs::kPrivacySandboxTopicsConsentTextAtLastUpdate, "");
 
+  registry->RegisterBooleanPref(
+      prefs::kPrivacySandboxAllowNoticeFor3PCBlockedTrial, false);
+#if BUILDFLAG(IS_ANDROID)
+  registry->RegisterListPref(prefs::kPrivacySandboxActivityTypeRecord2);
+#endif
   // Register prefs for tracking protection.
   tracking_protection::RegisterProfilePrefs(registry);
 }

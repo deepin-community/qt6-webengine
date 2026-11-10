@@ -4,15 +4,16 @@
 
 #include "components/webauthn/core/browser/test_passkey_model.h"
 
+#include <algorithm>
 #include <iterator>
+#include <optional>
 
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "base/rand_util.h"
-#include "base/ranges/algorithm.h"
+#include "base/time/time.h"
 #include "components/sync/protocol/webauthn_credential_specifics.pb.h"
 #include "components/webauthn/core/browser/passkey_model_change.h"
 #include "components/webauthn/core/browser/passkey_model_utils.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace webauthn {
 
@@ -32,10 +33,18 @@ void TestPasskeyModel::RemoveObserver(Observer* observer) {
   observers_.RemoveObserver(observer);
 }
 
-base::WeakPtr<syncer::ModelTypeControllerDelegate>
-TestPasskeyModel::GetModelTypeControllerDelegate() {
+base::WeakPtr<syncer::DataTypeControllerDelegate>
+TestPasskeyModel::GetDataTypeControllerDelegate() {
   NOTIMPLEMENTED();
   return nullptr;
+}
+
+bool TestPasskeyModel::IsReady() const {
+  return true;
+}
+
+bool TestPasskeyModel::IsEmpty() const {
+  return credentials_.empty();
 }
 
 base::flat_set<std::string> TestPasskeyModel::GetAllSyncIds() const {
@@ -51,22 +60,22 @@ TestPasskeyModel::GetAllPasskeys() const {
   return credentials_;
 }
 
-absl::optional<sync_pb::WebauthnCredentialSpecifics>
+std::optional<sync_pb::WebauthnCredentialSpecifics>
 TestPasskeyModel::GetPasskeyByCredentialId(
     const std::string& rp_id,
     const std::string& credential_id) const {
   std::vector<sync_pb::WebauthnCredentialSpecifics> rp_passkeys;
-  base::ranges::copy_if(
+  std::ranges::copy_if(
       credentials_, std::back_inserter(rp_passkeys),
       [&rp_id](const auto& passkey) { return passkey.rp_id() == rp_id; });
   rp_passkeys = passkey_model_utils::FilterShadowedCredentials(rp_passkeys);
   std::vector<sync_pb::WebauthnCredentialSpecifics> result;
-  base::ranges::copy_if(rp_passkeys, std::back_inserter(result),
-                        [&credential_id](const auto& passkey) {
-                          return passkey.credential_id() == credential_id;
-                        });
+  std::ranges::copy_if(rp_passkeys, std::back_inserter(result),
+                       [&credential_id](const auto& passkey) {
+                         return passkey.credential_id() == credential_id;
+                       });
   if (result.empty()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   CHECK_EQ(result.size(), 1u);
   return result.front();
@@ -75,7 +84,7 @@ TestPasskeyModel::GetPasskeyByCredentialId(
 std::vector<sync_pb::WebauthnCredentialSpecifics>
 TestPasskeyModel::GetPasskeysForRelyingPartyId(const std::string& rp_id) const {
   std::vector<sync_pb::WebauthnCredentialSpecifics> passkeys;
-  base::ranges::copy_if(
+  std::ranges::copy_if(
       credentials_, std::back_inserter(passkeys),
       [&rp_id](const auto& passkey) { return passkey.rp_id() == rp_id; });
   return passkey_model_utils::FilterShadowedCredentials(passkeys);
@@ -89,7 +98,8 @@ sync_pb::WebauthnCredentialSpecifics TestPasskeyModel::CreatePasskey(
     std::vector<uint8_t>* public_key_spki_der_out) {
   auto [specifics, public_key_spki_der] =
       webauthn::passkey_model_utils::GeneratePasskeyAndEncryptSecrets(
-          rp_id, user_entity, trusted_vault_key, trusted_vault_key_version);
+          rp_id, user_entity, trusted_vault_key, trusted_vault_key_version,
+          /*extension_input_data=*/{}, /*extension_output_data=*/nullptr);
 
   AddShadowedCredentialIdsToNewPasskey(specifics);
   credentials_.push_back(specifics);
@@ -119,12 +129,13 @@ std::string TestPasskeyModel::AddNewPasskeyForTesting(
   return credentials_.back().credential_id();
 }
 
-bool TestPasskeyModel::DeletePasskey(const std::string& credential_id) {
+bool TestPasskeyModel::DeletePasskey(const std::string& credential_id,
+                                     const base::Location& location) {
   // Don't implement the shadow chain deletion logic. Instead, remove the
   // credential with the matching id.
   const auto credential_it =
-      base::ranges::find(credentials_, credential_id,
-                         &sync_pb::WebauthnCredentialSpecifics::credential_id);
+      std::ranges::find(credentials_, credential_id,
+                        &sync_pb::WebauthnCredentialSpecifics::credential_id);
   if (credential_it == credentials_.end()) {
     return false;
   }
@@ -135,18 +146,72 @@ bool TestPasskeyModel::DeletePasskey(const std::string& credential_id) {
   return true;
 }
 
-bool TestPasskeyModel::UpdatePasskey(const std::string& credential_id,
-                                     PasskeyUpdate change) {
+bool TestPasskeyModel::SetPasskeyHidden(const std::string& credential_id,
+                                        bool hidden) {
   const auto credential_it =
-      base::ranges::find(credentials_, credential_id,
-                         &sync_pb::WebauthnCredentialSpecifics::credential_id);
+      std::ranges::find(credentials_, credential_id,
+                        &sync_pb::WebauthnCredentialSpecifics::credential_id);
   if (credential_it == credentials_.end()) {
+    return false;
+  }
+  credential_it->set_hidden(hidden);
+  NotifyPasskeysChanged({PasskeyModelChange(
+      PasskeyModelChange::ChangeType::UPDATE, *credential_it)});
+  return true;
+}
+
+void TestPasskeyModel::DeleteAllPasskeys() {
+  credentials_.clear();
+}
+
+bool TestPasskeyModel::UpdatePasskey(const std::string& credential_id,
+                                     PasskeyUpdate change,
+                                     bool updated_by_user) {
+  const auto credential_it =
+      std::ranges::find(credentials_, credential_id,
+                        &sync_pb::WebauthnCredentialSpecifics::credential_id);
+  if (credential_it == credentials_.end()) {
+    return false;
+  }
+  if (credential_it->edited_by_user() && !updated_by_user) {
     return false;
   }
   credential_it->set_user_name(std::move(change.user_name));
   credential_it->set_user_display_name(std::move(change.user_display_name));
+  credential_it->set_edited_by_user(updated_by_user);
   NotifyPasskeysChanged({PasskeyModelChange(
       PasskeyModelChange::ChangeType::UPDATE, *credential_it)});
+  return true;
+}
+
+bool TestPasskeyModel::UpdatePasskeyTimestamp(const std::string& credential_id,
+                                              base::Time last_used_time) {
+  const auto credential_it =
+      std::ranges::find(credentials_, credential_id,
+                        &sync_pb::WebauthnCredentialSpecifics::credential_id);
+  if (credential_it == credentials_.end()) {
+    return false;
+  }
+
+  credential_it->set_last_used_time_windows_epoch_micros(
+      last_used_time.ToDeltaSinceWindowsEpoch().InMicroseconds());
+  NotifyPasskeysChanged({PasskeyModelChange(
+      PasskeyModelChange::ChangeType::UPDATE, *credential_it)});
+  return true;
+}
+
+bool TestPasskeyModel::UpdatePasskeyEncryptedBlob(
+    const std::string& credential_id,
+    const std::string& new_encrypted_blob) {
+  auto it =
+      std::ranges::find(credentials_, credential_id,
+                        &sync_pb::WebauthnCredentialSpecifics::credential_id);
+  if (it == credentials_.end()) {
+    return false;
+  }
+  it->set_encrypted(new_encrypted_blob);
+  NotifyPasskeysChanged(
+      {PasskeyModelChange(PasskeyModelChange::ChangeType::UPDATE, *it)});
   return true;
 }
 

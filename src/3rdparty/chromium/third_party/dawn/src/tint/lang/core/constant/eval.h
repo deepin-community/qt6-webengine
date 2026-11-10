@@ -28,14 +28,10 @@
 #ifndef SRC_TINT_LANG_CORE_CONSTANT_EVAL_H_
 #define SRC_TINT_LANG_CORE_CONSTANT_EVAL_H_
 
-#include <stddef.h>
-#include <algorithm>
-#include <string>
-
-#include "src/tint/lang/core/number.h"
 #include "src/tint/lang/core/type/type.h"
 #include "src/tint/utils/containers/vector.h"
-#include "src/tint/utils/result/result.h"
+#include "src/tint/utils/diagnostic/diagnostic.h"
+#include "src/tint/utils/result.h"
 
 // Forward declarations
 namespace tint {
@@ -55,8 +51,6 @@ namespace tint::core::constant {
 class Eval {
   public:
     /// The failure type used by the methods of this class.
-    /// TODO(bclayton): Use Failure, and bubble up the error diagnostics instead of writing directly
-    /// to the diagnostic list.
     struct Error {};
 
     /// A value of the type Error.
@@ -92,13 +86,6 @@ class Eval {
     /// @param args the input arguments
     /// @return the constructed value, or null if the value cannot be calculated
     Result ArrayOrStructCtor(const core::type::Type* ty, VectorRef<const Value*> args);
-
-    /// @param ty the target type
-    /// @param value the value being converted
-    /// @param source the source location
-    /// @return the bit-cast of the given expression to the given type, or null if the value cannot
-    ///         be calculated
-    Result Bitcast(const core::type::Type* ty, const Value* value, const Source& source);
 
     /// @param obj the object being indexed. May be null, in which case Index() will still validate
     /// the index is in bounds for the type.
@@ -458,6 +445,13 @@ class Eval {
     /// @return the result value, or null if the value cannot be calculated
     Result atan2(const core::type::Type* ty, VectorRef<const Value*> args, const Source& source);
 
+    /// bitcast builtin
+    /// @param ty the expression type
+    /// @param args the input arguments
+    /// @param source the source location
+    /// @return the result value, or null if the value cannot be calculated
+    Result bitcast(const core::type::Type* ty, VectorRef<const Value*> args, const Source& source);
+
     /// ceil builtin
     /// @param ty the expression type
     /// @param args the input arguments
@@ -697,6 +691,7 @@ class Eval {
     /// @param args the input arguments
     /// @param source the source location
     /// @return the result value, or null if the value cannot be calculated
+    // NOLINTNEXTLINE(build/include_what_you_use) This isn't std::max ...
     Result max(const core::type::Type* ty, VectorRef<const Value*> args, const Source& source);
 
     /// min builtin
@@ -1025,14 +1020,14 @@ class Eval {
                          const Source& source);
 
   private:
-    /// Adds the given error message to the diagnostics
-    void AddError(const std::string& msg, const Source& source) const;
+    /// @returns a new error diagnostic
+    diag::Diagnostic& AddError(const Source& source) const;
 
-    /// Adds the given warning message to the diagnostics
-    void AddWarning(const std::string& msg, const Source& source) const;
+    /// @returns a new warning diagnostic
+    diag::Diagnostic& AddWarning(const Source& source) const;
 
-    /// Adds the given note message to the diagnostics
-    void AddNote(const std::string& msg, const Source& source) const;
+    /// @returns a new note diagnostic
+    diag::Diagnostic& AddNote(const Source& source) const;
 
     /// CreateScalar constructs and returns a constant::Scalar<T>.
     /// @param source the source location

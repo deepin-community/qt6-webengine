@@ -4,14 +4,17 @@
 
 #include "components/webapps/browser/android/shortcut_info.h"
 
+#include <optional>
 #include <string>
 
+#include "base/android/build_info.h"
 #include "base/feature_list.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/android_buildflags.h"
 #include "components/webapps/browser/android/webapps_icon_utils.h"
 #include "components/webapps/browser/features.h"
 #include "shortcut_info.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/manifest/manifest_icon_selector.h"
 #include "third_party/blink/public/common/manifest/manifest_util.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom.h"
@@ -34,22 +37,22 @@ bool IsWebApkDisplayMode(blink::mojom::DisplayMode display_mode) {
 
 using blink::mojom::DisplayMode;
 
-ShareTargetParamsFile::ShareTargetParamsFile() {}
+ShareTargetParamsFile::ShareTargetParamsFile() = default;
 
 ShareTargetParamsFile::ShareTargetParamsFile(
     const ShareTargetParamsFile& other) = default;
 
-ShareTargetParamsFile::~ShareTargetParamsFile() {}
+ShareTargetParamsFile::~ShareTargetParamsFile() = default;
 
-ShareTargetParams::ShareTargetParams() {}
+ShareTargetParams::ShareTargetParams() = default;
 
 ShareTargetParams::ShareTargetParams(const ShareTargetParams& other) = default;
 
-ShareTargetParams::~ShareTargetParams() {}
+ShareTargetParams::~ShareTargetParams() = default;
 
-ShareTarget::ShareTarget() {}
+ShareTarget::ShareTarget() = default;
 
-ShareTarget::~ShareTarget() {}
+ShareTarget::~ShareTarget() = default;
 
 ShortcutInfo::ShortcutInfo(const GURL& shortcut_url)
     : url(shortcut_url),
@@ -78,34 +81,36 @@ std::unique_ptr<ShortcutInfo> ShortcutInfo::CreateShortcutInfo(
   return shortcut_info;
 }
 
-std::vector<WebappIcon> ShortcutInfo::GetWebApkIcons() {
-  std::vector<WebappIcon> icons;
-  icons.emplace_back(best_primary_icon_url, is_primary_icon_maskable,
-                     webapk::Image::PRIMARY_ICON);
+std::map<GURL, std::unique_ptr<WebappIcon>> ShortcutInfo::GetWebApkIcons()
+    const {
+  std::map<GURL, std::unique_ptr<WebappIcon>> icons;
+  if (best_primary_icon_url.is_valid()) {
+    icons.emplace(best_primary_icon_url,
+                  std::make_unique<WebappIcon>(best_primary_icon_url,
+                                               is_primary_icon_maskable,
+                                               webapk::Image::PRIMARY_ICON));
+  }
 
-  if (!splash_image_url.is_empty()) {
-    auto it = std::find_if(icons.begin(), icons.end(), [&](auto& icon) {
-      return icon.url() == splash_image_url;
-    });
-    if (it == icons.end()) {
-      icons.emplace_back(splash_image_url, is_splash_image_maskable,
-                         webapk::Image::SPLASH_ICON);
+  if (splash_image_url.is_valid()) {
+    auto it = icons.find(splash_image_url);
+    if (it != icons.end()) {
+      it->second->AddUsage(webapk::Image::SPLASH_ICON);
     } else {
-      it->AddUsage(webapk::Image::SPLASH_ICON);
+      icons.emplace(splash_image_url,
+                    std::make_unique<WebappIcon>(splash_image_url,
+                                                 is_splash_image_maskable,
+                                                 webapk::Image::SPLASH_ICON));
     }
   }
 
   for (const auto& shortcut_icon_url : best_shortcut_icon_urls) {
-    if (shortcut_icon_url.is_valid()) {
-      auto it = std::find_if(icons.begin(), icons.end(), [&](auto& icon) {
-        return icon.url() == shortcut_icon_url;
-      });
-      if (it == icons.end()) {
-        icons.emplace_back(shortcut_icon_url, false,
-                           webapk::Image::SHORTCUT_ICON);
-      } else {
-        it->AddUsage(webapk::Image::SHORTCUT_ICON);
-      }
+    auto it = icons.find(shortcut_icon_url);
+    if (it != icons.end()) {
+      it->second->AddUsage(webapk::Image::SHORTCUT_ICON);
+    } else {
+      icons.emplace(shortcut_icon_url,
+                    std::make_unique<WebappIcon>(shortcut_icon_url, false,
+                                                 webapk::Image::SHORTCUT_ICON));
     }
   }
 
@@ -203,13 +208,13 @@ void ShortcutInfo::UpdateFromManifest(const blink::mojom::Manifest& manifest) {
 
   // Set the theme color based on the manifest value, if any.
   theme_color = manifest.has_theme_color
-                    ? absl::make_optional(manifest.theme_color)
-                    : absl::nullopt;
+                    ? std::make_optional(manifest.theme_color)
+                    : std::nullopt;
 
   // Set the background color based on the manifest value, if any.
   background_color = manifest.has_background_color
-                         ? absl::make_optional(manifest.background_color)
-                         : absl::nullopt;
+                         ? std::make_optional(manifest.background_color)
+                         : std::nullopt;
 
   // Set the icon urls based on the icons in the manifest, if any.
   icon_urls.clear();
@@ -263,14 +268,14 @@ void ShortcutInfo::UpdateFromManifest(const blink::mojom::Manifest& manifest) {
 
   // Set the dark theme color based on the manifest value, if any.
   dark_theme_color = manifest.has_dark_theme_color
-                         ? absl::make_optional(manifest.dark_theme_color)
-                         : absl::nullopt;
+                         ? std::make_optional(manifest.dark_theme_color)
+                         : std::nullopt;
 
   // Set the dark background color based on the manifest value, if any.
   dark_background_color =
       manifest.has_dark_background_color
-          ? absl::make_optional(manifest.dark_background_color)
-          : absl::nullopt;
+          ? std::make_optional(manifest.dark_background_color)
+          : std::nullopt;
 }
 
 void ShortcutInfo::UpdateBestSplashIcon(
@@ -280,15 +285,14 @@ void ShortcutInfo::UpdateBestSplashIcon(
   minimum_splash_image_size_in_px =
       WebappsIconUtils::GetMinimumSplashImageSizeInPx();
 
-  if (WebappsIconUtils::DoesAndroidSupportMaskableIcons()) {
-    splash_image_url = blink::ManifestIconSelector::FindBestMatchingSquareIcon(
-        manifest.icons, ideal_splash_image_size_in_px,
-        minimum_splash_image_size_in_px,
-        blink::mojom::ManifestImageResource_Purpose::MASKABLE);
-    is_splash_image_maskable = true;
-  }
-  // If did not fetch maskable icon for splash image, or can not find a best
+  // Try fetcing maskable icon for splash image first, if can not find a best
   // match, fallback to ANY icon.
+  splash_image_url = blink::ManifestIconSelector::FindBestMatchingSquareIcon(
+      manifest.icons, ideal_splash_image_size_in_px,
+      minimum_splash_image_size_in_px,
+      blink::mojom::ManifestImageResource_Purpose::MASKABLE);
+  is_splash_image_maskable = true;
+
   if (!splash_image_url.is_valid()) {
     splash_image_url = blink::ManifestIconSelector::FindBestMatchingSquareIcon(
         manifest.icons, ideal_splash_image_size_in_px,
@@ -299,10 +303,6 @@ void ShortcutInfo::UpdateBestSplashIcon(
 }
 
 void ShortcutInfo::UpdateDisplayMode(bool webapk_compatible) {
-  if (!base::FeatureList::IsEnabled(features::kUniversalInstallManifest)) {
-    return;
-  }
-
   if (webapk_compatible) {
     if (!IsWebApkDisplayMode(display)) {
       display = DisplayMode::kMinimalUi;

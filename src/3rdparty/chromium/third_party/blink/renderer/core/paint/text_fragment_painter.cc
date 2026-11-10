@@ -11,11 +11,10 @@
 #include "third_party/blink/renderer/core/editing/markers/text_match_marker.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/layout/geometry/logical_rect.h"
+#include "third_party/blink/renderer/core/layout/inline/fit_text_scale.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_cursor.h"
 #include "third_party/blink/renderer/core/layout/inline/offset_mapping.h"
 #include "third_party/blink/renderer/core/layout/layout_counter.h"
-#include "third_party/blink/renderer/core/layout/layout_ruby_column.h"
-#include "third_party/blink/renderer/core/layout/layout_ruby_text.h"
 #include "third_party/blink/renderer/core/layout/layout_text_combine.h"
 #include "third_party/blink/renderer/core/layout/list/list_marker.h"
 #include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
@@ -23,24 +22,25 @@
 #include "third_party/blink/renderer/core/layout/text_decoration_offset.h"
 #include "third_party/blink/renderer/core/mobile_metrics/mobile_friendliness_checker.h"
 #include "third_party/blink/renderer/core/paint/box_model_object_painter.h"
-#include "third_party/blink/renderer/core/paint/document_marker_painter.h"
-#include "third_party/blink/renderer/core/paint/line_relative_rect.h"
 #include "third_party/blink/renderer/core/paint/highlight_painter.h"
 #include "third_party/blink/renderer/core/paint/inline_paint_context.h"
-#include "third_party/blink/renderer/core/paint/text_decoration_painter.h"
-#include "third_party/blink/renderer/core/paint/text_painter.h"
+#include "third_party/blink/renderer/core/paint/line_relative_rect.h"
 #include "third_party/blink/renderer/core/paint/object_painter.h"
 #include "third_party/blink/renderer/core/paint/paint_auto_dark_mode.h"
 #include "third_party/blink/renderer/core/paint/paint_info.h"
 #include "third_party/blink/renderer/core/paint/selection_bounds_recorder.h"
-#include "third_party/blink/renderer/core/paint/text_painter_base.h"
+#include "third_party/blink/renderer/core/paint/text_decoration_painter.h"
+#include "third_party/blink/renderer/core/paint/text_painter.h"
 #include "third_party/blink/renderer/core/style/applied_text_decoration.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/svg/svg_element.h"
 #include "third_party/blink/renderer/platform/fonts/character_range.h"
+#include "third_party/blink/renderer/platform/fonts/text_fragment_paint_info.h"
+#include "third_party/blink/renderer/platform/geometry/path_builder.h"
 #include "third_party/blink/renderer/platform/graphics/dom_node_id.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context_state_saver.h"
 #include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
+#include "third_party/blink/renderer/platform/transforms/affine_transform.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 
 namespace blink {
@@ -49,7 +49,7 @@ namespace {
 
 inline const DisplayItemClient& AsDisplayItemClient(const InlineCursor& cursor,
                                                     bool for_selection) {
-  if (UNLIKELY(for_selection)) {
+  if (for_selection) [[unlikely]] {
     if (const auto* selection_client =
             cursor.Current().GetSelectionDisplayItemClient())
       return *selection_client;
@@ -88,7 +88,7 @@ inline PhysicalRect PhysicalBoxRect(const InlineCursor& cursor,
 
 inline const InlineCursor& InlineCursorForBlockFlow(
     const InlineCursor& cursor,
-    absl::optional<InlineCursor>* storage) {
+    std::optional<InlineCursor>* storage) {
   if (*storage)
     return **storage;
   *storage = cursor;
@@ -97,94 +97,80 @@ inline const InlineCursor& InlineCursorForBlockFlow(
 }
 
 // Check if text-emphasis and ruby annotation text are on different sides.
-// See InlineTextBox::GetEmphasisMarkPosition().
 //
 // TODO(layout-dev): The current behavior is compatible with the legacy layout.
 // However, the specification asks to draw emphasis marks over ruby annotation
 // text.
 // https://drafts.csswg.org/css-text-decor-4/#text-emphasis-position-property
+// > If emphasis marks are applied to characters for which ruby is drawn in the
+// > same position as the emphasis mark, the emphasis marks are placed outside
+// > the ruby.
 bool ShouldPaintEmphasisMark(const ComputedStyle& style,
-                             const LayoutObject& layout_object) {
+                             const LayoutObject& layout_object,
+                             const FragmentItem& text_item) {
   if (style.GetTextEmphasisMark() == TextEmphasisMark::kNone)
     return false;
   // Note: We set text-emphasis-style:none for combined text and we paint
   // emphasis mark at left/right side of |LayoutTextCombine|.
   DCHECK(!IsA<LayoutTextCombine>(layout_object.Parent()));
-  const LayoutObject* containing_block = layout_object.ContainingBlock();
-  if (!containing_block || !containing_block->IsRubyBase())
-    return true;
-  const LayoutObject* parent = containing_block->Parent();
-  if (!parent || !parent->IsRubyColumn()) {
-    return true;
+
+  if (text_item.IsEllipsis()) {
+    return false;
   }
-  const auto* ruby_text = To<LayoutRubyColumn>(parent)->RubyText();
-  if (!ruby_text)
-    return true;
-  if (!InlineCursor(*ruby_text)) {
-    return true;
+
+  if (style.GetTextEmphasisLineLogicalSide() == LineLogicalSide::kOver) {
+    return !text_item.HasOverAnnotation();
   }
-  const LineLogicalSide ruby_logical_side =
-      parent->StyleRef().GetRubyPosition() == RubyPosition::kBefore
-          ? LineLogicalSide::kOver
-          : LineLogicalSide::kUnder;
-  return ruby_logical_side != style.GetTextEmphasisLineLogicalSide();
+  return !text_item.HasUnderAnnotation();
 }
 
-enum class DisclosureOrientation { kLeft, kRight, kUp, kDown };
-
-DisclosureOrientation GetDisclosureOrientation(const ComputedStyle& style,
-                                               bool is_open) {
-  // TODO(layout-dev): Sideways-lr and sideways-rl are not yet supported.
-  const auto mode = style.GetWritingMode();
-  DCHECK_NE(mode, WritingMode::kSidewaysRl);
-  DCHECK_NE(mode, WritingMode::kSidewaysLr);
-
-  if (is_open) {
-    if (blink::IsHorizontalWritingMode(mode)) {
-      return DisclosureOrientation::kDown;
-    }
-    return IsFlippedBlocksWritingMode(mode) ? DisclosureOrientation::kLeft
-                                            : DisclosureOrientation::kRight;
-  }
-  if (blink::IsHorizontalWritingMode(mode)) {
-    return style.IsLeftToRightDirection() ? DisclosureOrientation::kRight
-                                          : DisclosureOrientation::kLeft;
-  }
-  return style.IsLeftToRightDirection() ? DisclosureOrientation::kDown
-                                        : DisclosureOrientation::kUp;
+PhysicalDirection GetDisclosureOrientation(const ComputedStyle& style,
+                                           bool is_open) {
+  const auto direction_mode = style.GetWritingDirection();
+  return is_open ? direction_mode.BlockEnd() : direction_mode.InlineEnd();
 }
 
-Path CreatePath(const gfx::PointF* path) {
-  Path result;
-  result.MoveTo(gfx::PointF(path[0].x(), path[0].y()));
-  for (int i = 1; i < 4; ++i) {
-    result.AddLineTo(gfx::PointF(path[i].x(), path[i].y()));
+base::span<const gfx::PointF, 3> GetDisclosurePathPoints(
+    PhysicalDirection direction) {
+  static constexpr gfx::PointF kLeftPoints[3] = {
+      {1.0f, 0.0f}, {0.14f, 0.5f}, {1.0f, 1.0f}};
+  static constexpr gfx::PointF kRightPoints[3] = {
+      {0.0f, 0.0f}, {0.86f, 0.5f}, {0.0f, 1.0f}};
+  static constexpr gfx::PointF kUpPoints[3] = {
+      {0.0f, 0.93f}, {0.5f, 0.07f}, {1.0f, 0.93f}};
+  static constexpr gfx::PointF kDownPoints[3] = {
+      {0.0f, 0.07f}, {0.5f, 0.93f}, {1.0f, 0.07f}};
+
+  switch (direction) {
+    case PhysicalDirection::kLeft:
+      return kLeftPoints;
+    case PhysicalDirection::kRight:
+      return kRightPoints;
+    case PhysicalDirection::kUp:
+      return kUpPoints;
+    case PhysicalDirection::kDown:
+      return kDownPoints;
   }
-  return result;
 }
 
-Path GetCanonicalDisclosurePath(const ComputedStyle& style, bool is_open) {
-  constexpr gfx::PointF kLeftPoints[4] = {
-      {1.0f, 0.0f}, {0.14f, 0.5f}, {1.0f, 1.0f}, {1.0f, 0.0f}};
-  constexpr gfx::PointF kRightPoints[4] = {
-      {0.0f, 0.0f}, {0.86f, 0.5f}, {0.0f, 1.0f}, {0.0f, 0.0f}};
-  constexpr gfx::PointF kUpPoints[4] = {
-      {0.0f, 0.93f}, {0.5f, 0.07f}, {1.0f, 0.93f}, {0.0f, 0.93f}};
-  constexpr gfx::PointF kDownPoints[4] = {
-      {0.0f, 0.07f}, {0.5f, 0.93f}, {1.0f, 0.07f}, {0.0f, 0.07f}};
+Path GetCanonicalDisclosurePath(const ComputedStyle& style,
+                                const gfx::RectF& bounding_box,
+                                bool is_open) {
+  auto points =
+      GetDisclosurePathPoints(GetDisclosureOrientation(style, is_open));
+  auto map_unit_point = [&bounding_box](const gfx::PointF& p) {
+    return gfx::ScalePoint(p, bounding_box.size().width(),
+                           bounding_box.size().height()) +
+           bounding_box.OffsetFromOrigin();
+  };
 
-  switch (GetDisclosureOrientation(style, is_open)) {
-    case DisclosureOrientation::kLeft:
-      return CreatePath(kLeftPoints);
-    case DisclosureOrientation::kRight:
-      return CreatePath(kRightPoints);
-    case DisclosureOrientation::kUp:
-      return CreatePath(kUpPoints);
-    case DisclosureOrientation::kDown:
-      return CreatePath(kDownPoints);
+  PathBuilder result;
+  result.MoveTo(map_unit_point(points[0]));
+  for (size_t i = 1; i < points.size(); ++i) {
+    result.LineTo(map_unit_point(points[i]));
   }
-
-  return Path();
+  result.Close();
+  return result.Finalize();
 }
 
 }  // namespace
@@ -212,29 +198,25 @@ void TextFragmentPainter::PaintSymbol(const LayoutObject* layout_object,
   Color color(layout_object->ResolveColor(GetCSSPropertyColor()));
   if (BoxModelObjectPainter::ShouldForceWhiteBackgroundForPrintEconomy(
           layout_object->GetDocument(), style)) {
-    color = TextPainterBase::TextColorForWhiteBackground(color);
+    color = TextPainter::TextColorForWhiteBackground(color);
   }
   // Apply the color to the list marker text.
   context.SetFillColor(color);
   context.SetStrokeColor(color);
-  context.SetStrokeStyle(kSolidStroke);
-  context.SetStrokeThickness(1.0f);
   const gfx::Rect snapped_rect = ToPixelSnappedRect(marker_rect);
   AutoDarkMode auto_dark_mode(
       PaintAutoDarkMode(style, DarkModeFilter::ElementRole::kListSymbol));
   if (type == keywords::kDisc) {
     context.FillEllipse(gfx::RectF(snapped_rect), auto_dark_mode);
   } else if (type == keywords::kCircle) {
+    context.SetStrokeThickness(1.0f);
     context.StrokeEllipse(gfx::RectF(snapped_rect), auto_dark_mode);
   } else if (type == keywords::kSquare) {
     context.FillRect(snapped_rect, color, auto_dark_mode);
   } else if (type == keywords::kDisclosureOpen ||
              type == keywords::kDisclosureClosed) {
-    Path path =
-        GetCanonicalDisclosurePath(style, type == keywords::kDisclosureOpen);
-    path.Transform(AffineTransform::MakeScaleNonUniform(marker_rect.Width(),
-                                                        marker_rect.Height()));
-    path.Translate(gfx::Vector2dF(marker_rect.X(), marker_rect.Y()));
+    const Path path = GetCanonicalDisclosurePath(
+        style, gfx::RectF(marker_rect), type == keywords::kDisclosureOpen);
     context.FillPath(path, auto_dark_mode);
   } else {
     NOTREACHED();
@@ -254,8 +236,9 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
     return;
 
   const ComputedStyle& style = text_item.Style();
-  if (style.Visibility() != EVisibility::kVisible)
+  if (style.Visibility() != EVisibility::kVisible) {
     return;
+  }
 
   const TextFragmentPaintInfo& fragment_paint_info =
       cursor_.Current()->TextPaintInfo(cursor_.Items());
@@ -270,20 +253,23 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
   const PhysicalRect physical_box =
       PhysicalBoxRect(cursor_, paint_offset, parent_offset_, text_combine);
 #if DCHECK_IS_ON()
-  if (UNLIKELY(text_combine))
+  if (text_combine) [[unlikely]] {
     LayoutTextCombine::AssertStyleIsValid(style);
+  }
 #endif
 
-  ObjectPainter object_painter(*layout_object);
-  if (object_painter.ShouldRecordSpecialHitTestData(paint_info)) {
-    object_painter.RecordHitTestData(paint_info,
-                                     ToPixelSnappedRect(physical_box),
-                                     *text_item.GetDisplayItemClient());
+  if (paint_info.phase == PaintPhase::kForeground) {
+    ObjectPainter object_painter(*layout_object);
+    if (object_painter.ShouldRecordSpecialHitTestData(paint_info)) {
+      object_painter.RecordHitTestData(paint_info,
+                                       ToPixelSnappedRect(physical_box),
+                                       *text_item.GetDisplayItemClient());
+    }
   }
 
   // Determine whether or not we’ll need a writing-mode rotation, but don’t
   // actually rotate until we reach the steps that need it.
-  absl::optional<AffineTransform> rotation;
+  std::optional<AffineTransform> rotation;
   const WritingMode writing_mode = style.GetWritingMode();
   const bool is_horizontal = IsHorizontalWritingMode(writing_mode);
   const LineRelativeRect rotated_box =
@@ -295,11 +281,11 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
 
   // Determine whether or not we're selected.
   HighlightPainter::SelectionPaintState* selection = nullptr;
-  absl::optional<HighlightPainter::SelectionPaintState>
+  std::optional<HighlightPainter::SelectionPaintState>
       selection_for_bounds_recording;
-  if (UNLIKELY(!is_printing && !is_rendering_resource &&
-               paint_info.phase != PaintPhase::kTextClip &&
-               layout_object->IsSelected())) {
+  if (!is_printing && !is_rendering_resource &&
+      paint_info.phase != PaintPhase::kTextClip && layout_object->IsSelected())
+      [[unlikely]] {
     const InlineCursor& root_inline_cursor =
         InlineCursorForBlockFlow(cursor_, &inline_cursor_for_block_flow_);
 
@@ -326,7 +312,8 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
   const auto* const svg_inline_text =
       DynamicTo<LayoutSVGInlineText>(layout_object);
   float scaling_factor = 1.0f;
-  if (UNLIKELY(svg_inline_text)) {
+  bool is_scaled_inline_only = false;
+  if (svg_inline_text) [[unlikely]] {
     DCHECK(text_item.IsSvgText());
     scaling_factor = svg_inline_text->ScalingFactor();
     DCHECK_NE(scaling_factor, 0.0f);
@@ -334,6 +321,11 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
         svg_inline_text->Parent()->VisualRectInLocalSVGCoordinates());
   } else {
     DCHECK(!text_item.IsSvgText());
+    if (RuntimeEnabledFeatures::CssFitWidthTextEnabled()) {
+      auto fit_text_scale = text_item.GetFitTextScale();
+      scaling_factor = fit_text_scale.first;
+      is_scaled_inline_only = fit_text_scale.second;
+    }
     PhysicalRect ink_overflow = text_item.SelfInkOverflowRect();
     ink_overflow.Move(physical_box.offset);
     visual_rect = ToEnclosingRect(ink_overflow);
@@ -342,9 +334,10 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
   // Ensure the selection bounds are recorded on the paint chunk regardless of
   // whether the display item that contains the actual selection painting is
   // reused.
-  absl::optional<SelectionBoundsRecorder> selection_recorder;
-  if (UNLIKELY(selection_for_bounds_recording &&
-               paint_info.phase == PaintPhase::kForeground && !is_printing)) {
+  std::optional<SelectionBoundsRecorder> selection_recorder;
+  if (selection_for_bounds_recording &&
+      paint_info.phase == PaintPhase::kForeground && !is_printing)
+      [[unlikely]] {
     if (SelectionBoundsRecorder::ShouldRecordSelection(
             cursor_.Current().GetLayoutObject()->GetFrame()->Selection(),
             selection_for_bounds_recording->State())) {
@@ -352,21 +345,20 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
           selection_for_bounds_recording->State(),
           selection_for_bounds_recording->PhysicalSelectionRect(),
           paint_info.context.GetPaintController(),
-          cursor_.Current().ResolvedDirection(), style.GetWritingMode(),
-          *cursor_.Current().GetLayoutObject());
+          cursor_.Current().ResolvedDirection(), style.GetWritingMode());
     }
   }
 
   // This is declared after selection_recorder so that this will be destructed
   // before selection_recorder to ensure the selection is painted before
   // selection_recorder records the selection bounds.
-  absl::optional<DrawingRecorder> recorder;
+  std::optional<DrawingRecorder> recorder;
   const auto& display_item_client =
       AsDisplayItemClient(cursor_, selection != nullptr);
   // Text clips are initiated only in BoxPainterBase::PaintFillLayer, which is
   // already within a DrawingRecorder.
   if (paint_info.phase != PaintPhase::kTextClip) {
-    if (LIKELY(!paint_info.context.InDrawingRecorder())) {
+    if (!paint_info.context.InDrawingRecorder()) [[likely]] {
       if (DrawingRecorder::UseCachedDrawingIfPossible(
               paint_info.context, display_item_client, paint_info.phase)) {
         return;
@@ -376,7 +368,7 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
     }
   }
 
-  if (UNLIKELY(text_item.IsSymbolMarker())) {
+  if (text_item.IsSymbolMarker()) [[unlikely]] {
     PaintSymbol(layout_object, style, physical_box.size, paint_info,
                 physical_box.offset);
     return;
@@ -388,39 +380,43 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
 
   Node* node = layout_object->GetNode();
   TextPaintStyle text_style =
-      TextPainterBase::TextPaintingStyle(document, style, paint_info);
-  if (UNLIKELY(selection)) {
+      TextPainter::TextPaintingStyle(document, style, paint_info);
+  if (selection) [[unlikely]] {
     selection->ComputeSelectionStyle(document, style, node, paint_info,
                                      text_style);
   }
 
   // Set our font.
-  const Font& font = UNLIKELY(text_combine && text_combine->CompressedFont())
-                         ? *text_combine->CompressedFont()
-                         : text_item.ScaledFont();
-  const SimpleFontData* font_data = font.PrimaryFont();
+  const Font* font;
+  if (text_combine && text_combine->CompressedFont()) [[unlikely]] {
+    font = text_combine->CompressedFont();
+  } else {
+    font = &text_item.ScaledFont();
+  }
+  const SimpleFontData* font_data = font->PrimaryFont();
   DCHECK(font_data);
 
-  const bool paint_marker_backgrounds =
-      paint_info.phase != PaintPhase::kSelectionDragImage &&
-      paint_info.phase != PaintPhase::kTextClip && !is_printing;
   GraphicsContextStateSaver state_saver(context, /*save_and_restore=*/false);
   const int ascent = font_data ? font_data->GetFontMetrics().Ascent() : 0;
-  LineRelativeOffset text_origin{
-      physical_box.offset.left,
-      UNLIKELY(text_combine)
-          ? text_combine->AdjustTextTopForPaint(physical_box.offset.top)
-          : physical_box.offset.top + ascent};
+  LayoutUnit top = physical_box.offset.top + ascent;
+  if (RuntimeEnabledFeatures::CssFitWidthTextEnabled() &&
+      !is_scaled_inline_only && !svg_inline_text) {
+    top = LayoutUnit(physical_box.offset.top + ascent * scaling_factor);
+  }
+  LineRelativeOffset text_origin{physical_box.offset.left, top};
+  if (text_combine) [[unlikely]] {
+    text_origin.line_over =
+        text_combine->AdjustTextTopForPaint(physical_box.offset.top);
+  }
 
-  TextPainter text_painter(context, font, visual_rect, text_origin,
-                           inline_context_, is_horizontal);
-  TextDecorationPainter decoration_painter(text_painter, text_item, paint_info,
-                                           style, text_style, rotated_box,
-                                           selection);
+  TextPainter text_painter(context, paint_info.GetSvgContextPaints(), *font,
+                           visual_rect, text_origin);
+  TextDecorationPainter decoration_painter(text_painter, inline_context_,
+                                           paint_info, style, text_style,
+                                           rotated_box, selection);
   HighlightPainter highlight_painter(
       fragment_paint_info, text_painter, decoration_painter, paint_info,
-      cursor_, *cursor_.CurrentItem(), rotation, physical_box.offset, style,
-      text_style, selection, is_printing);
+      cursor_, text_item, physical_box.offset, style, text_style, selection);
   if (paint_info.phase == PaintPhase::kForeground) {
     if (auto* mf_checker = MobileFriendlinessChecker::From(document)) {
       if (auto* text = DynamicTo<LayoutText>(*layout_object)) {
@@ -453,12 +449,33 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
       svg_state.EnsureShaderTransform().PostConcat(
           fragment_transform.Inverse());
     }
+  } else if (RuntimeEnabledFeatures::CssFitWidthTextEnabled() &&
+             scaling_factor != 1.0f) {
+    state_saver.SaveIfNeeded();
+    AffineTransform t;
+    if (is_scaled_inline_only) {
+      t.SetMatrix(
+          scaling_factor, 0, 0, 1,
+          text_origin.line_left - scaling_factor * text_origin.line_left, 0);
+    } else {
+      t.SetMatrix(
+          scaling_factor, 0, 0, scaling_factor,
+          text_origin.line_left - scaling_factor * text_origin.line_left,
+          text_origin.line_over - scaling_factor * text_origin.line_over);
+    }
+    context.ConcatCTM(t);
   }
+
+  const bool paint_marker_backgrounds =
+      paint_info.phase != PaintPhase::kSelectionDragImage &&
+      paint_info.phase != PaintPhase::kTextClip && !is_printing;
 
   // 1. Paint backgrounds for document markers that don’t participate in the CSS
   // highlight overlay system, such as composition highlights. They use physical
   // coordinates, so are painted before GraphicsContext rotation.
-  highlight_painter.Paint(HighlightPainter::kBackground);
+  if (paint_marker_backgrounds) {
+    highlight_painter.PaintNonCssMarkers(HighlightPainter::kBackground);
+  }
 
   if (rotation) {
     state_saver.SaveIfNeeded();
@@ -469,7 +486,7 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
     }
   }
 
-  if (UNLIKELY(highlight_painter.Selection())) {
+  if (highlight_painter.Selection()) [[unlikely]] {
     PhysicalRect physical_selection =
         highlight_painter.Selection()->PhysicalSelectionRect();
     if (scaling_factor != 1.0f) {
@@ -486,9 +503,9 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
   // 2. Now paint the foreground, including text and decorations.
   // TODO(dazabani@igalia.com): suppress text proper where one or more highlight
   // overlays are active, but paint shadows in full <https://crbug.com/1147859>
-  if (ShouldPaintEmphasisMark(style, *layout_object)) {
+  if (ShouldPaintEmphasisMark(style, *layout_object, text_item)) {
     text_painter.SetEmphasisMark(style.TextEmphasisMarkString(),
-                                 style.GetTextEmphasisPosition());
+                                 style.GetTextEmphasisLineLogicalSide());
   }
 
   DOMNodeId node_id = kInvalidDOMNodeId;
@@ -505,30 +522,35 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
   HighlightPainter::Case highlight_case = highlight_painter.PaintCase();
   switch (highlight_case) {
     case HighlightPainter::kNoHighlights:
+    case HighlightPainter::kFastSpellingGrammar: {
       // Fast path: just paint the text, including its decorations.
-      decoration_painter.Begin(TextDecorationPainter::kOriginating);
+      // Shadows must paint before decorations, but painting shadows in their
+      // own pass is less efficient, so only do it when decorations are present.
+      bool paint_shadows_first =
+          text_style.shadow && style.HasAppliedTextDecorations();
+      if (paint_shadows_first) {
+        highlight_painter.PaintOriginatingShadow(text_style, node_id);
+      }
+      decoration_painter.Begin(text_item, TextDecorationPainter::kOriginating);
       decoration_painter.PaintExceptLineThrough(fragment_paint_info);
-      text_painter.Paint(fragment_paint_info, text_style, node_id,
-                         auto_dark_mode);
+      text_painter.Paint(
+          fragment_paint_info, text_style, node_id, auto_dark_mode,
+          paint_shadows_first ? TextPainter::kTextProperOnly
+                              : TextPainter::kBothShadowsAndTextProper);
       decoration_painter.PaintOnlyLineThrough();
-      break;
-    case HighlightPainter::kFastSpellingGrammar:
-      decoration_painter.Begin(TextDecorationPainter::kOriginating);
-      decoration_painter.PaintExceptLineThrough(fragment_paint_info);
-      text_painter.Paint(fragment_paint_info, text_style, node_id,
-                         auto_dark_mode);
-      decoration_painter.PaintOnlyLineThrough();
-      highlight_painter.FastPaintSpellingGrammarDecorations();
-      break;
+      if (highlight_case == HighlightPainter::kFastSpellingGrammar) {
+        highlight_painter.FastPaintSpellingGrammarDecorations();
+      }
+    } break;
     case HighlightPainter::kFastSelection:
       highlight_painter.Selection()->PaintSuppressingTextProperWhereSelected(
           text_painter, fragment_paint_info, text_style, node_id,
           auto_dark_mode);
       break;
     case HighlightPainter::kOverlay:
-      // Slow path: paint suppressing text proper where highlighted, then
-      // paint each highlight overlay, suppressing unless topmost highlight.
-      highlight_painter.PaintOriginatingText(text_style, node_id);
+      // Paint originating shadows at the bottom, below all highlight pseudos.
+      highlight_painter.PaintOriginatingShadow(text_style, node_id);
+      // Paint each highlight overlay, including originating and selection.
       highlight_painter.PaintHighlightOverlays(
           text_style, node_id, paint_marker_backgrounds, rotation);
       break;
@@ -538,7 +560,7 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
   }
 
   // Paint ::selection background.
-  if (UNLIKELY(highlight_painter.Selection() && paint_marker_backgrounds)) {
+  if (highlight_painter.Selection() && paint_marker_backgrounds) [[unlikely]] {
     if (highlight_case == HighlightPainter::kFastSelection) {
       highlight_painter.Selection()->PaintSelectionBackground(
           context, node, document, style, rotation);
@@ -548,11 +570,11 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
   // Paint foregrounds for document markers that don’t participate in the CSS
   // highlight overlay system, such as composition highlights.
   if (paint_info.phase == PaintPhase::kForeground) {
-    highlight_painter.Paint(HighlightPainter::kForeground);
+    highlight_painter.PaintNonCssMarkers(HighlightPainter::kForeground);
   }
 
   // Paint ::selection foreground only.
-  if (UNLIKELY(highlight_painter.Selection())) {
+  if (highlight_painter.Selection()) [[unlikely]] {
     switch (highlight_case) {
       case HighlightPainter::kFastSelection:
         highlight_painter.Selection()->PaintSelectedText(
@@ -560,7 +582,7 @@ void TextFragmentPainter::Paint(const PaintInfo& paint_info,
             auto_dark_mode);
         break;
       case HighlightPainter::kSelectionOnly:
-        decoration_painter.Begin(TextDecorationPainter::kSelection);
+        decoration_painter.Begin(text_item, TextDecorationPainter::kSelection);
         decoration_painter.PaintExceptLineThrough(fragment_paint_info);
         highlight_painter.Selection()->PaintSelectedText(
             text_painter, fragment_paint_info, text_style, node_id,

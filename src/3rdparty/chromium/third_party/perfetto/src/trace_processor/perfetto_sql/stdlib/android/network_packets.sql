@@ -14,11 +14,11 @@
 -- limitations under the License.
 
 -- Android network packet events (from android.network_packets data source).
-CREATE PERFETTO VIEW android_network_packets(
-  -- Timestamp in nanoseconds.
-  ts INT,
+CREATE PERFETTO VIEW android_network_packets (
+  -- Timestamp.
+  ts TIMESTAMP,
   -- Duration (non-zero only in aggregate events)
-  dur INT,
+  dur DURATION,
   -- The track name (interface and direction)
   track_name STRING,
   -- Traffic package source (or uid=$X if not found)
@@ -28,45 +28,51 @@ CREATE PERFETTO VIEW android_network_packets(
   -- Traffic direction ('Transmitted' or 'Received')
   direction STRING,
   -- Number of packets in this event
-  packet_count INT,
+  packet_count LONG,
   -- Number of bytes in this event (wire size)
-  packet_length INT,
+  packet_length LONG,
   -- Transport used for traffic in this event
   packet_transport STRING,
   -- TCP flags used by tcp frames in this event
-  packet_tcp_flags INT,
+  packet_tcp_flags LONG,
   -- The Android traffic tag of the network socket
   socket_tag STRING,
   -- The Linux user id of the network socket
-  socket_uid INT,
+  socket_uid LONG,
   -- The local port number (for udp or tcp only)
-  local_port INT,
+  local_port LONG,
   -- The remote port number (for udp or tcp only)
-  remote_port INT,
+  remote_port LONG,
   -- 1-byte ICMP type identifier.
-  packet_icmp_type INT,
+  packet_icmp_type LONG,
   -- 1-byte ICMP code identifier.
-  packet_icmp_code INT
+  packet_icmp_code LONG,
+  -- Packet's tcp flags bitmask (e.g. FIN=0x1, SYN=0x2).
+  packet_tcp_flags_int LONG,
+  -- Packet's socket tag as an integer.
+  socket_tag_int LONG
 ) AS
 SELECT
   ts,
   dur,
-  track.name AS track_name,
-  slice.name AS package_name,
-  str_split(track.name, ' ', 0) AS iface,
-  str_split(track.name, ' ', 1) AS direction,
-  ifnull(extract_arg(arg_set_id, 'packet_count'), 1) AS packet_count,
-  extract_arg(arg_set_id, 'packet_length') AS packet_length,
-  extract_arg(arg_set_id, 'packet_transport') AS packet_transport,
-  extract_arg(arg_set_id, 'packet_tcp_flags') AS packet_tcp_flags,
-  extract_arg(arg_set_id, 'socket_tag') AS socket_tag,
-  extract_arg(arg_set_id, 'socket_uid') AS socket_uid,
-  extract_arg(arg_set_id, 'local_port') AS local_port,
-  extract_arg(arg_set_id, 'remote_port') AS remote_port,
-  extract_arg(arg_set_id, 'packet_icmp_type') AS packet_icmp_type,
-  extract_arg(arg_set_id, 'packet_icmp_code') AS packet_icmp_code
-FROM slice
-JOIN track
-  ON slice.track_id = track.id
-WHERE (track.name GLOB '* Transmitted' OR
-       track.name GLOB '* Received');
+  category AS track_name,
+  name AS package_name,
+  iface,
+  direction,
+  packet_count,
+  packet_length,
+  packet_transport,
+  -- For backwards compatibility, the _str suffixed flags (which the ui shows)
+  -- are exposed without suffix, and the integer fields get suffix instead.
+  packet_tcp_flags_str AS packet_tcp_flags,
+  packet_tcp_flags AS packet_tcp_flags_int,
+  socket_tag_str AS socket_tag,
+  socket_tag AS socket_tag_int,
+  socket_uid,
+  local_port,
+  remote_port,
+  packet_icmp_type,
+  packet_icmp_code
+FROM __intrinsic_android_network_packets
+JOIN slice
+  USING (id);

@@ -7,7 +7,7 @@ Additional info on the tool itself is available at
 https://clang.llvm.org/docs/AddressSanitizer.html.
 
 For the memory leak detector built into ASan, see
-[LeakSanitizer](https://sites.google.com/a/chromium.org/dev/developers/testing/leaksanitizer).
+[LeakSanitizer](https://www.chromium.org/developers/testing/leaksanitizer).
 If you want to debug memory leaks, please refer to the instructions on that page
 instead.
 
@@ -65,10 +65,10 @@ Build with:
 ninja -C out/asan base_unittests
 ```
 
-### Goma build
+### Reclient build
 
-ASan builds should work seamlessly with Goma; just add `use_goma=true` in your
-"gn args" Don't forget to use `ninja -j <jobs>` to take advantage of goma.
+ASan builds should work seamlessly with Reclient; just add
+`use_remoteexec=true` in your "gn args".
 
 ### Build options
 
@@ -93,7 +93,7 @@ in order to enable the `--verify-heap` command line flag for v8 in Release build
 that is compatible with the sandbox. However, this is not compatible with
 LeakSanitizer. If you want to debug memory leaks, please use the instructions on
 the
-[LeakSanitizer](https://sites.google.com/a/chromium.org/dev/developers/testing/leaksanitizer)
+[LeakSanitizer](https://www.chromium.org/developers/testing/leaksanitizer)
 page instead.
 
 Now, check that the tool works. Run the following:
@@ -155,20 +155,6 @@ defaults for some options, so the default behavior may be different from that
 observed in other projects.
 See `build/sanitizers/sanitizer_options.cc` for more details.
 
-## NaCl support under ASan
-
-On Linux (and soon on macOS) you can build and run Chromium with NaCl under ASan.
-Untrusted code (nexe) itself is not instrumented with ASan in this mode, but
-everything else is.
-
-To do this, remove `enable_nacl=false` from your `args.gn`, and define
-`NACL_DANGEROUS_SKIP_QUALIFICATION_TEST=1` in your environment at run time.
-
-Pipe chromium output (stderr) through ``tools/valgrind/asan/asan_symbolize.py
-`pwd`/`` to get function names and line numbers in ASan reports.
-If you're seeing crashes within `nacl_helper_bootstrap`, try deleting
-`out/Release/nacl_helper`.
-
 ## Building on iOS
 
 It's possible to build and run Chrome tests for iOS simulator (which are x86
@@ -198,31 +184,6 @@ changes:
 target_os="android"
 is_asan=true
 is_debug=false
-```
-
-Running ASan applications on Android requires additional device setup. Chromium
-testing scripts take care of this, so testing works as expected:
-```shell
-build/android/test_runner.py instrumentation --test-apk ContentShellTest \
-    --test_data content:content/test/data/android/device_files -v -v -v \
-    --tool=asan --release
-```
-
-If the above step fails or to run stuff without Chromium testing script (ex.
-ContentShell.apk, or any third party apk or binary), device setup is needed:
-```shell
-tools/android/asan/third_party/asan_device_setup.sh \
-    --lib third_party/android_toolchain/ndk/toolchains/llvm/prebuilt/linux-x86_64/lib64/clang/*/lib/linux
-# wait a few seconds for the device to reload
-```
-It only needs to be run once per device. It is safe to run it multiple times.
-Examine the output to ensure that setup was successful (you may need to run
-`adb disable-verity` and restart the device first). When this is done, the
-device will run ASan apks as well as normal apks without any further setup.
-
-To run command-line tools (i.e. binaries), prefix them with `asanwrapper`:
-```shell
-adb shell /system/bin/asanwrapper /path/to/binary
 ```
 
 Use `build/android/asan_symbolize.py` to symbolize stack from `adb logcat`. It
@@ -271,7 +232,7 @@ above, just like you would for Linux.
 
 For Chromebook hardware, add `is_asan = true` to your args.gn and build.
 `deploy_chrome` with `--mount` and `--nostrip`. ASan logs can be found in
-`/var/log/asan/`.
+`/tmp/asan/`.
 
 To catch crashes in gdb:
 

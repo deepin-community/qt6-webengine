@@ -9,7 +9,7 @@
 syntax = "proto2";
 option optimize_for = LITE_RUNTIME;
 package tpm_manager;
-option go_package = "chromiumos/system_api/tpm_manager_proto";
+option go_package = "go.chromium.org/chromiumos/system_api/tpm_manager_proto";
 
 enum TpmManagerStatus {
   STATUS_SUCCESS = 0;
@@ -105,10 +105,11 @@ enum NvramSpacePolicy {
   NVRAM_POLICY_PCR0 = 1;
 }
 
-enum GscVersion {
-  GSC_VERSION_NOT_GSC = 0;
-  GSC_VERSION_CR50 = 1;
-  GSC_VERSION_TI50 = 2;
+enum GscDevice {
+  GSC_DEVICE_NOT_GSC = 0;
+  GSC_DEVICE_H1 = 1;
+  GSC_DEVICE_DT = 2;
+  GSC_DEVICE_NT = 3;
 }
 
 // The status of whether last AP reboot is triggered by RO verification.
@@ -344,8 +345,8 @@ message GetVersionInfoReply {
   optional uint64 firmware_version = 6;
   // Vendor specific information.
   optional bytes vendor_specific = 7;
-  // The GSC version.
-  optional GscVersion gsc_version = 8;
+  // The GSC device.
+  optional GscDevice gsc_device = 8;
   // The RW firmware version.
   optional string rw_version = 9;
 }

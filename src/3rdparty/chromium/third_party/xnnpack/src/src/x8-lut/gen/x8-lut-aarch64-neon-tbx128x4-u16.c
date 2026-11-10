@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/x8-lut/neon-tbx128x4.c.in
 //   Generator: tools/xngen
@@ -7,20 +8,21 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/lut.h>
-#include <xnnpack/common.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/lut.h"
 
 
 void xnn_x8_lut_ukernel__aarch64_neon_tbx128x4_u16(
     size_t batch,
     const uint8_t* input,
     uint8_t* output,
-    const uint8_t table[restrict XNN_MIN_ELEMENTS(256)])
+    const uint8_t* restrict table)
 {
   assert(batch != 0);
   assert(batch % sizeof(uint8_t) == 0);

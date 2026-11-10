@@ -6,6 +6,7 @@
 
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "ui/aura/client/cursor_client_observer.h"
 #include "ui/aura/test/aura_test_base.h"
 #include "ui/base/cursor/cursor_size.h"
@@ -40,6 +41,17 @@ class TestingCursorManager : public wm::NativeCursorManager {
   void SetCursorSize(ui::CursorSize cursor_size,
                      wm::NativeCursorManagerDelegate* delegate) override {
     delegate->CommitCursorSize(cursor_size);
+  }
+
+  void SetLargeCursorSizeInDip(
+      int large_cursor_size_in_dip,
+      wm::NativeCursorManagerDelegate* delegate) override {
+    delegate->CommitLargeCursorSizeInDip(large_cursor_size_in_dip);
+  }
+
+  void SetCursorColor(SkColor color,
+                      wm::NativeCursorManagerDelegate* delegate) override {
+    NOTIMPLEMENTED();
   }
 };
 

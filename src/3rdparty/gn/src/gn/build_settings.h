@@ -77,6 +77,16 @@ class BuildSettings {
     no_stamp_files_ = no_stamp_files;
   }
 
+  // The 'async_non_linkable_deps' boolean flag can be set to generate Ninja
+  // files that build non-linkable deps asynchronously using Ninja validations
+  // instead of order-only dependencies.
+  // This speeds up build by increasing the parallerism of the build graph.
+  // This requires Ninja 1.11 for the `validations` feature.
+  bool async_non_linkable_deps() const { return async_non_linkable_deps_; }
+  void set_async_non_linkable_deps(bool async_non_linkable_deps) {
+    async_non_linkable_deps_ = async_non_linkable_deps;
+  }
+
   const SourceFile& build_config_file() const { return build_config_file_; }
   void set_build_config_file(const SourceFile& f) { build_config_file_ = f; }
 
@@ -129,15 +139,23 @@ class BuildSettings {
   // callback is is_null() (the default) the output will be printed to the
   // console.
   const PrintCallback& print_callback() const { return print_callback_; }
-  void set_print_callback(const PrintCallback& cb) { print_callback_ = cb; }
+  void set_print_callback(const PrintCallback cb) { print_callback_ = cb; }
+  const PrintCallback swap_print_callback(const PrintCallback cb);
 
   // A list of files that can call exec_script(). If the returned pointer is
   // null, exec_script may be called from anywhere.
-  const SourceFileSet* exec_script_whitelist() const {
-    return exec_script_whitelist_.get();
+  const SourceFileSet* exec_script_allowlist() const {
+    return exec_script_allowlist_.get();
   }
-  void set_exec_script_whitelist(std::unique_ptr<SourceFileSet> list) {
-    exec_script_whitelist_ = std::move(list);
+  void set_exec_script_allowlist(std::unique_ptr<SourceFileSet> list) {
+    exec_script_allowlist_ = std::move(list);
+  }
+
+  void set_ignore_assert_list(std::vector<std::string> ignore_assert_list) {
+    ignore_assert_list_ = std::move(ignore_assert_list);
+  }
+  const std::vector<std::string>& ignore_assert_list() const {
+    return ignore_assert_list_;
   }
 
  private:
@@ -151,7 +169,8 @@ class BuildSettings {
 
   // See 40045b9 for the reason behind using 1.7.2 as the default version.
   Version ninja_required_version_{1, 7, 2};
-  bool no_stamp_files_ = false;
+  bool no_stamp_files_ = true;
+  bool async_non_linkable_deps_ = false;
 
   SourceFile build_config_file_;
   SourceFile arg_file_template_path_;
@@ -161,8 +180,8 @@ class BuildSettings {
   ItemDefinedCallback item_defined_callback_;
   PrintCallback print_callback_;
 
-  std::unique_ptr<SourceFileSet> exec_script_whitelist_;
-
+  std::unique_ptr<SourceFileSet> exec_script_allowlist_;
+  std::vector<std::string> ignore_assert_list_;
   BuildSettings& operator=(const BuildSettings&) = delete;
 };
 

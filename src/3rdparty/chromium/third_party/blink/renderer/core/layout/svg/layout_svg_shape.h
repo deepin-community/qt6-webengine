@@ -163,6 +163,11 @@ class LayoutSVGShape : public LayoutSVGModelObject {
     geometry_type_ = geometry_type;
   }
 
+  void SetGeometryDependsOnViewport(bool depends_on_viewport) {
+    NOT_DESTROYED();
+    geometry_depends_on_viewport_ = depends_on_viewport;
+  }
+
   // Update (cached) shape data and the (object) bounding box.
   virtual gfx::RectF UpdateShapeFromElement() = 0;
   virtual void UpdateMarkerBounds() { NOT_DESTROYED(); }
@@ -187,10 +192,12 @@ class LayoutSVGShape : public LayoutSVGModelObject {
     NOT_DESTROYED();
     return true;
   }
-  void UpdateLayout() final;
+
+  SVGLayoutResult UpdateSVGLayout(const SVGLayoutInfo&) final;
   // Update LayoutObject state after layout has completed. Returns true if
   // boundaries needs to be propagated (because of a change to the transform).
-  bool UpdateAfterLayout(bool bbox_changed);
+  bool UpdateAfterSVGLayout(const SVGLayoutInfo&, bool bbox_changed);
+
   void Paint(const PaintInfo&) const final;
 
   bool NodeAtPoint(HitTestResult&,
@@ -232,6 +239,7 @@ class LayoutSVGShape : public LayoutSVGModelObject {
   std::unique_ptr<Path> stroke_path_cache_;
 
   GeometryType geometry_type_;
+  bool geometry_depends_on_viewport_ : 1 = false;
   bool needs_boundaries_update_ : 1;
   bool needs_shape_update_ : 1;
   bool needs_transform_update_ : 1;

@@ -8,11 +8,12 @@
 #define CORE_FPDFAPI_PARSER_CPDF_FLATEENCODER_H_
 
 #include <stdint.h>
+#include <variant>
 
 #include "core/fxcrt/data_vector.h"
+#include "core/fxcrt/raw_span.h"
 #include "core/fxcrt/retain_ptr.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
-#include "third_party/base/containers/span.h"
+#include "core/fxcrt/span.h"
 
 class CPDF_Dictionary;
 class CPDF_Encryptor;
@@ -33,20 +34,20 @@ class CPDF_FlateEncoder {
 
  private:
   bool is_owned() const {
-    return absl::holds_alternative<DataVector<uint8_t>>(m_Data);
+    return std::holds_alternative<DataVector<uint8_t>>(data_);
   }
 
-  // Returns |m_pClonedDict| if it is valid. Otherwise returns |m_pDict|.
+  // Returns |cloned_dict_| if it is valid. Otherwise returns |dict_|.
   const CPDF_Dictionary* GetDict() const;
 
-  // Must outlive `m_Data`.
-  RetainPtr<CPDF_StreamAcc> const m_pAcc;
+  // Must outlive `data_`.
+  RetainPtr<CPDF_StreamAcc> const acc_;
 
-  absl::variant<pdfium::span<const uint8_t>, DataVector<uint8_t>> m_Data;
+  std::variant<pdfium::raw_span<const uint8_t>, DataVector<uint8_t>> data_;
 
   // Only one of these two pointers is valid at any time.
-  RetainPtr<const CPDF_Dictionary> m_pDict;
-  RetainPtr<CPDF_Dictionary> m_pClonedDict;
+  RetainPtr<const CPDF_Dictionary> dict_;
+  RetainPtr<CPDF_Dictionary> cloned_dict_;
 };
 
 #endif  // CORE_FPDFAPI_PARSER_CPDF_FLATEENCODER_H_

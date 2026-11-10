@@ -6,6 +6,7 @@
 
 #include <ostream>
 
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "ui/events/velocity_tracker/motion_event_generic.h"
 
@@ -25,6 +26,10 @@ base::TimeTicks MotionEvent::GetLatestEventTime() const {
   // Fallback to getting the event time which might be oldest event time in
   // presence of historical event times.
   return GetEventTime();
+}
+
+base::TimeTicks MotionEvent::GetDownTime() const {
+  NOTREACHED();
 }
 
 float MotionEvent::GetHistoricalTouchMajor(size_t pointer_index,
@@ -64,8 +69,12 @@ int MotionEvent::GetSourceDeviceId(size_t pointer_index) const {
   return 0;
 }
 
-std::unique_ptr<MotionEvent> MotionEvent::Clone() const {
-  return MotionEventGeneric::CloneEvent(*this);
+bool MotionEvent::IsLatestEventTimeResampled() const {
+  return false;
+}
+
+std::unique_ptr<MotionEvent> MotionEvent::Clone(bool with_history) const {
+  return MotionEventGeneric::CloneEvent(*this, with_history);
 }
 
 std::unique_ptr<MotionEvent> MotionEvent::Cancel() const {

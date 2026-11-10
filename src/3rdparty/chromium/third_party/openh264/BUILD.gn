@@ -67,6 +67,7 @@ if (use_assembler) {
     include_dirs = openh264_common_include_dirs
     sources = openh264_common_sources_asm_x86
     defines = asm_defines
+    inputs = [ "./src/codec/common/x86/asm_inc.asm" ]
     if (current_cpu == "x86") {
       defines += [
         "X86_32",
@@ -90,6 +91,7 @@ if (use_assembler) {
     include_dirs = openh264_processing_include_dirs
     include_dirs += [ "./src/codec/common/x86" ]
     sources = openh264_processing_sources_asm_x86
+    inputs = [ "./src/codec/common/x86/asm_inc.asm" ]
     defines = asm_defines
     if (current_cpu == "x86") {
       defines += [
@@ -114,6 +116,7 @@ if (use_assembler) {
     include_dirs = openh264_encoder_include_dirs
     include_dirs += [ "./src/codec/common/x86" ]
     sources = openh264_encoder_sources_asm_x86
+    inputs = [ "./src/codec/common/x86/asm_inc.asm" ]
     defines = asm_defines
     if (current_cpu == "x86") {
       defines += [
@@ -206,7 +209,33 @@ source_set("bundled_encoder") {
   }
 }
 
+source_set("decoder") {
+  testonly = true
+
+  sources = openh264_decoder_sources
+  include_dirs = openh264_decoder_include_dirs
+
+  configs -= [ "//build/config/compiler:chromium_code" ]
+  configs += [ "//build/config/compiler:no_chromium_code" ]
+  configs += [ ":config" ]
+
+  deps = [
+    ":common",
+    ":processing",
+  ]
+}
+
 if (use_system_openh264) {
+  config("encoder_cfi_flags") {
+    cflags = []
+    if (current_toolchain == default_toolchain && is_clang) {
+      openh264_cfi_ignorelist_path =
+          rebase_path("//build/linux/unbundle/openh264_encoder_cfi_ignores.txt",
+                    root_build_dir)
+      cflags += [ "-fsanitize-ignorelist=$openh264_cfi_ignorelist_path" ]
+    }
+  }
+
   pkg_config("system_openh264") {
     packages = [ "openh264" ]
   }
@@ -214,7 +243,7 @@ if (use_system_openh264) {
 
 shim_headers("openh264_shim") {
   prefix = "wels/"
-  root_path = "src/codec/api/svc"
+  root_path = "src/codec/api/wels"
   headers = [
     "codec_api.h",
     "codec_app_def.h",
@@ -244,7 +273,10 @@ group("processing") {
 group("encoder") {
   if (use_system_openh264) {
     deps = [ ":openh264_shim" ]
-    public_configs = [ ":system_openh264" ]
+    public_configs = [
+      ":system_openh264",
+      ":encoder_cfi_flags",
+    ]
   } else {
     public_deps = [ ":bundled_encoder" ]
   }

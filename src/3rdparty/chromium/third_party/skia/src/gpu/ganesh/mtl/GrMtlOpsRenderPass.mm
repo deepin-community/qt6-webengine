@@ -186,7 +186,7 @@ void GrMtlOpsRenderPass::onClearStencilClip(const GrScissorState& scissor, bool 
     }
 }
 
-void GrMtlOpsRenderPass::inlineUpload(GrOpFlushState* state, GrDeferredTextureUploadFn& upload) {
+bool GrMtlOpsRenderPass::inlineUpload(GrOpFlushState* state, GrDeferredTextureUploadFn& upload) {
     state->doUpload(upload);
 
     // If the previous renderCommandEncoder did a resolve without an MSAA store
@@ -197,6 +197,8 @@ void GrMtlOpsRenderPass::inlineUpload(GrOpFlushState* state, GrDeferredTextureUp
         // create a new encoder at this point, though maybe not necessary.
         this->setupRenderCommandEncoder(nullptr);
     }
+
+    return true;
 }
 
 void GrMtlOpsRenderPass::initRenderState(GrMtlRenderCommandEncoder* encoder) {
@@ -535,6 +537,7 @@ void GrMtlOpsRenderPass::setVertexBuffer(GrMtlRenderCommandEncoder* encoder,
         return;
     }
 
+    // point after the uniforms
     constexpr static int kFirstBufferBindingIdx = GrMtlUniformHandler::kLastUniformBinding + 1;
     int index = inputBufferIndex + kFirstBufferBindingIdx;
     SkASSERT(index < 4);

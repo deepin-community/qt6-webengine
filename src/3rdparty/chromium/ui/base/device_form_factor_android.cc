@@ -5,12 +5,15 @@
 #include "ui/base/device_form_factor.h"
 
 #include "base/android/build_info.h"
+#include "base/android/device_info.h"
 #include "base/android/jni_android.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
 #include "ui/base/ui_base_jni_headers/DeviceFormFactor_jni.h"
 
 namespace ui {
 
-// TODO(crbug.com/1501069): Need to land a long-term solution to return
+// TODO(crbug.com/40941316): Need to land a long-term solution to return
 // foldable, either by exposing ui_mode or returning foldable here after
 // auditing usages. Currently we are temporarily returning the foldable form
 // factor in VariationsServiceClient::GetCurrentFormFactor() and
@@ -22,6 +25,14 @@ DeviceFormFactor GetDeviceFormFactor() {
 
   if (base::android::BuildInfo::GetInstance()->is_automotive()) {
     return DEVICE_FORM_FACTOR_AUTOMOTIVE;
+  }
+
+  if (base::android::BuildInfo::GetInstance()->is_desktop()) {
+    return DEVICE_FORM_FACTOR_DESKTOP;
+  }
+
+  if (base::android::device_info::is_xr()) {
+    return DEVICE_FORM_FACTOR_XR;
   }
 
   if (Java_DeviceFormFactor_isTablet(base::android::AttachCurrentThread())) {

@@ -30,6 +30,8 @@
 
 #include "third_party/blink/renderer/core/exported/web_settings_impl.h"
 
+#include <optional>
+
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
@@ -159,8 +161,9 @@ void WebSettingsImpl::SetTextAutosizingEnabled(bool enabled) {
   dev_tools_emulator_->SetTextAutosizingEnabled(enabled);
 }
 
+// TODO(pdr): Rename this OSTextScaleFactor.
 void WebSettingsImpl::SetAccessibilityFontScaleFactor(float font_scale_factor) {
-  settings_->SetAccessibilityFontScaleFactor(font_scale_factor);
+  dev_tools_emulator_->SetAccessibilityFontScaleFactor(font_scale_factor);
 }
 
 void WebSettingsImpl::SetAccessibilityTextSizeContrastFactor(
@@ -349,6 +352,10 @@ void WebSettingsImpl::SetDownloadableBinaryFontsEnabled(bool enabled) {
   settings_->SetDownloadableBinaryFontsEnabled(enabled);
 }
 
+void WebSettingsImpl::SetDynamicSafeAreaInsetsEnabled(bool enabled) {
+  settings_->SetDynamicSafeAreaInsetsEnabled(enabled);
+}
+
 void WebSettingsImpl::SetJavaScriptCanAccessClipboard(bool enabled) {
   settings_->SetJavaScriptCanAccessClipboard(enabled);
 }
@@ -474,6 +481,10 @@ void WebSettingsImpl::SetEditingBehavior(
 
 void WebSettingsImpl::SetHideScrollbars(bool enabled) {
   dev_tools_emulator_->SetHideScrollbars(enabled);
+}
+
+void WebSettingsImpl::SetPrefersDefaultScrollbarStyles(bool enabled) {
+  settings_->SetPrefersDefaultScrollbarStyles(enabled);
 }
 
 void WebSettingsImpl::SetMockGestureTapHighlightsEnabled(bool enabled) {
@@ -630,8 +641,8 @@ void WebSettingsImpl::SetTargetBlankImpliesNoOpenerEnabledWillBeRemoved(
   settings_->SetTargetBlankImpliesNoOpenerEnabledWillBeRemoved(enabled);
 }
 
-void WebSettingsImpl::SetAllowNonEmptyNavigatorPlugins(bool enabled) {
-  settings_->SetAllowNonEmptyNavigatorPlugins(enabled);
+void WebSettingsImpl::SetIgnorePermissionForDeviceChangedEvent(bool enabled) {
+  settings_->SetIgnorePermissionForDeviceChangedEvent(enabled);
 }
 
 void WebSettingsImpl::SetCaretBrowsingEnabled(bool enabled) {
@@ -692,34 +703,28 @@ void WebSettingsImpl::SetLazyLoadEnabled(bool enabled) {
   settings_->SetLazyLoadEnabled(enabled);
 }
 
-void WebSettingsImpl::SetLazyFrameLoadingDistanceThresholdPxUnknown(
-    int distance_px) {
-  settings_->SetLazyFrameLoadingDistanceThresholdPxUnknown(distance_px);
+void WebSettingsImpl::SetLazyLoadingFrameMarginPxUnknown(int distance_px) {
+  settings_->SetLazyLoadingFrameMarginPxUnknown(distance_px);
 }
 
-void WebSettingsImpl::SetLazyFrameLoadingDistanceThresholdPxOffline(
-    int distance_px) {
-  settings_->SetLazyFrameLoadingDistanceThresholdPxOffline(distance_px);
+void WebSettingsImpl::SetLazyLoadingFrameMarginPxOffline(int distance_px) {
+  settings_->SetLazyLoadingFrameMarginPxOffline(distance_px);
 }
 
-void WebSettingsImpl::SetLazyFrameLoadingDistanceThresholdPxSlow2G(
-    int distance_px) {
-  settings_->SetLazyFrameLoadingDistanceThresholdPxSlow2G(distance_px);
+void WebSettingsImpl::SetLazyLoadingFrameMarginPxSlow2G(int distance_px) {
+  settings_->SetLazyLoadingFrameMarginPxSlow2G(distance_px);
 }
 
-void WebSettingsImpl::SetLazyFrameLoadingDistanceThresholdPx2G(
-    int distance_px) {
-  settings_->SetLazyFrameLoadingDistanceThresholdPx2G(distance_px);
+void WebSettingsImpl::SetLazyLoadingFrameMarginPx2G(int distance_px) {
+  settings_->SetLazyLoadingFrameMarginPx2G(distance_px);
 }
 
-void WebSettingsImpl::SetLazyFrameLoadingDistanceThresholdPx3G(
-    int distance_px) {
-  settings_->SetLazyFrameLoadingDistanceThresholdPx3G(distance_px);
+void WebSettingsImpl::SetLazyLoadingFrameMarginPx3G(int distance_px) {
+  settings_->SetLazyLoadingFrameMarginPx3G(distance_px);
 }
 
-void WebSettingsImpl::SetLazyFrameLoadingDistanceThresholdPx4G(
-    int distance_px) {
-  settings_->SetLazyFrameLoadingDistanceThresholdPx4G(distance_px);
+void WebSettingsImpl::SetLazyLoadingFrameMarginPx4G(int distance_px) {
+  settings_->SetLazyLoadingFrameMarginPx4G(distance_px);
 }
 
 void WebSettingsImpl::SetLazyLoadingImageMarginPxUnknown(int distance_px) {
@@ -750,6 +755,20 @@ void WebSettingsImpl::SetForceDarkModeEnabled(bool enabled) {
   settings_->SetForceDarkModeEnabled(enabled);
 }
 
+void WebSettingsImpl::SetInForcedColors(bool in_forced_colors) {
+  settings_->SetInForcedColors(in_forced_colors);
+}
+
+void WebSettingsImpl::SetIsForcedColorsDisabled(
+    bool is_forced_colors_disabled) {
+  settings_->SetIsForcedColorsDisabled(is_forced_colors_disabled);
+}
+
+void WebSettingsImpl::SetPreferredRootScrollbarColorScheme(
+    mojom::blink::PreferredColorScheme color_scheme) {
+  settings_->SetPreferredRootScrollbarColorScheme(color_scheme);
+}
+
 void WebSettingsImpl::SetPreferredColorScheme(
     mojom::blink::PreferredColorScheme color_scheme) {
   settings_->SetPreferredColorScheme(color_scheme);
@@ -769,10 +788,6 @@ void WebSettingsImpl::SetAriaModalPrunesAXTree(bool enabled) {
   settings_->SetAriaModalPrunesAXTree(enabled);
 }
 
-void WebSettingsImpl::SetUseAXMenuList(bool enabled) {
-  settings_->SetUseAXMenuList(enabled);
-}
-
 void WebSettingsImpl::SetSelectionClipboardBufferAvailable(bool available) {
   settings_->SetSelectionClipboardBufferAvailable(available);
 }
@@ -789,4 +804,17 @@ void WebSettingsImpl::SetWebXRImmersiveArAllowed(
 void WebSettingsImpl::SetModalContextMenu(bool is_available) {
   settings_->SetModalContextMenu(is_available);
 }
+
+void WebSettingsImpl::
+    SetRequireTransientActivationAndAuthorizationForSubAppsAPIs(
+        bool is_required) {
+  settings_->SetRequireTransientActivationAndAuthorizationForSubAppsAPI(
+      is_required);
+}
+
+void WebSettingsImpl::SetRootScrollbarThemeColor(
+    std::optional<SkColor> theme_color) {
+  settings_->SetRootScrollbarThemeColor(theme_color);
+}
+
 }  // namespace blink

@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "components/zucchini/exception_filter_helper_win.h"
+
+#include <windows.h>
 
 #include <stddef.h>
 #include <stdint.h>
-#include <windows.h>
 
 #include <map>
 

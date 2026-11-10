@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 // based on //chrome/browser/plugins/pdf_iframe_navigation_throttle.h
 // Copyright 2017 The Chromium Authors. All rights reserved.
@@ -25,9 +26,9 @@ namespace extensions {
 class PDFIFrameNavigationThrottleQt : public content::NavigationThrottle
 {
 public:
-    static std::unique_ptr<content::NavigationThrottle> MaybeCreateThrottleFor(content::NavigationHandle *handle);
+    static std::unique_ptr<content::NavigationThrottle> MaybeCreateThrottleFor(content::NavigationThrottleRegistry &registry);
 
-    explicit PDFIFrameNavigationThrottleQt(content::NavigationHandle *handle);
+    explicit PDFIFrameNavigationThrottleQt(content::NavigationThrottleRegistry &registry);
     ~PDFIFrameNavigationThrottleQt() override;
 
     // content::NavigationThrottle

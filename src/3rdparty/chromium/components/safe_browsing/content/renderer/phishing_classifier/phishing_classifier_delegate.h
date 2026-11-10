@@ -11,6 +11,8 @@
 #include <string>
 
 #include "base/memory/read_only_shared_memory_region.h"
+#include "base/memory/ref_counted_memory.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
 #include "components/safe_browsing/content/common/safe_browsing.mojom.h"
@@ -42,7 +44,15 @@ enum class SBPhishingClassifierEvent {
   kDestructedBeforeClassificationDone = 4,
   // Scorer is updated and classifier is ready within timeout.
   kScorerUpdatedWithinRetryTimeout = 5,
-  kMaxValue = kScorerUpdatedWithinRetryTimeout,
+  // Phishing classifier begins.
+  kClassificationBegin = 6,
+  // Phishing classifier completes.
+  kClassificationComplete = 7,
+  // Phishing classifier callback is empty on classification completion.
+  kPhishingClasifierCallbackEmptyOnCompletion = 8,
+  // Phishing classification request responded.
+  kPhishingClassifierRequestResponded = 9,
+  kMaxValue = kPhishingClassifierRequestResponded,
 };
 
 class PhishingClassifierDelegate : public content::RenderFrameObserver,
@@ -66,7 +76,8 @@ class PhishingClassifierDelegate : public content::RenderFrameObserver,
   // conditions are met (see MaybeStartClassification for details).
   // We ignore preliminary captures, since these happen before the page has
   // finished loading.
-  void PageCaptured(std::u16string* page_text, bool preliminary_capture);
+  void PageCaptured(scoped_refptr<const base::RefCountedString16> page_text,
+                    bool preliminary_capture);
 
   // RenderFrameObserver implementation, public for testing.
 
@@ -86,15 +97,20 @@ class PhishingClassifierDelegate : public content::RenderFrameObserver,
   PhishingClassifierDelegate(content::RenderFrame* render_frame,
                              PhishingClassifier* classifier);
 
-  enum CancelClassificationReason {
-    NAVIGATE_AWAY,
-    NAVIGATE_WITHIN_PAGE,
-    PAGE_RECAPTURED,
-    SHUTDOWN,
-    NEW_PHISHING_SCORER,
-    SCORER_CLEARED,
-    CANCEL_CLASSIFICATION_MAX  // Always add new values before this one.
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  //
+  // LINT.IfChange(CancelClassificationReason)
+  enum class CancelClassificationReason {
+    kNavigateAway = 0,
+    kNavigateWithinPage = 1,
+    kPageRecaptured = 2,
+    kShutdown = 3,
+    kNewPhishingScorerUpdate = 4,
+    kScorerCleared = 5,
+    kMaxValue = kScorerCleared,  // Always add new values before this one.
   };
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/sb_client/enums.xml:SBClientPhishingCancelClassificationReason)
 
   void PhishingDetectorReceiver(
       mojo::PendingAssociatedReceiver<mojom::PhishingDetector> receiver);
@@ -113,8 +129,10 @@ class PhishingClassifierDelegate : public content::RenderFrameObserver,
   // for the given toplevel URL.  If the URL has been fully loaded into the
   // RenderFrame and a Scorer has been set, this will begin classification,
   // otherwise classification will be deferred until these conditions are met.
-  void StartPhishingDetection(const GURL& url,
-                              StartPhishingDetectionCallback callback) override;
+  void StartPhishingDetection(
+      const GURL& url,
+      safe_browsing::mojom::ClientSideDetectionType request_type,
+      StartPhishingDetectionCallback callback) override;
 
   // Called when classification for the current page finishes.
   void ClassificationDone(
@@ -157,12 +175,7 @@ class PhishingClassifierDelegate : public content::RenderFrameObserver,
   // there is no Scorer yet when OnNavigate is called, or the browser has not
   // instructed us to classify the page, the page text will be cached until
   // these conditions are met.
-  std::u16string classifier_page_text_;
-
-  // Tracks whether we have stored anything in classifier_page_text_ for the
-  // most recent load.  We use this to distinguish empty text from cases where
-  // PageCaptured has not been called.
-  bool have_page_text_;
+  scoped_refptr<const base::RefCountedString16> classifier_page_text_;
 
   // Set to true if the classifier is currently running.
   bool is_classifying_;
@@ -175,6 +188,9 @@ class PhishingClassifierDelegate : public content::RenderFrameObserver,
   // ready. It is set to false whenever |is_phishing_detection_running_| is set
   // to true, classification is happening, completed, or cancelled.
   bool awaiting_retry_ = false;
+
+  // Trigger request type given by the client side detection host class.
+  std::optional<safe_browsing::mojom::ClientSideDetectionType> request_type_;
 
   // The callback from the most recent call to StartPhishingDetection.
   StartPhishingDetectionCallback callback_;

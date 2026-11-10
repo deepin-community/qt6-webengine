@@ -194,12 +194,14 @@ void InitBuiltInResources(ShBuiltInResources *resources)
     resources->EXT_shader_framebuffer_fetch_non_coherent      = 0;
     resources->NV_shader_framebuffer_fetch                    = 0;
     resources->ARM_shader_framebuffer_fetch                   = 0;
+    resources->ARM_shader_framebuffer_fetch_depth_stencil     = 0;
     resources->OVR_multiview                                  = 0;
     resources->OVR_multiview2                                 = 0;
     resources->EXT_YUV_target                                 = 0;
     resources->EXT_geometry_shader                            = 0;
     resources->OES_geometry_shader                            = 0;
     resources->EXT_gpu_shader5                                = 0;
+    resources->OES_gpu_shader5                                = 0;
     resources->OES_shader_io_blocks                           = 0;
     resources->EXT_shader_io_blocks                           = 0;
     resources->EXT_shader_non_constant_global_initializers    = 0;
@@ -215,13 +217,17 @@ void InitBuiltInResources(ShBuiltInResources *resources)
     resources->APPLE_clip_distance                            = 0;
     resources->OES_texture_cube_map_array                     = 0;
     resources->EXT_texture_cube_map_array                     = 0;
+    resources->EXT_texture_query_lod                          = 0;
+    resources->EXT_texture_shadow_lod                         = 0;
     resources->EXT_shadow_samplers                            = 0;
     resources->OES_shader_multisample_interpolation           = 0;
     resources->NV_draw_buffers                                = 0;
     resources->OES_shader_image_atomic                        = 0;
     resources->EXT_tessellation_shader                        = 0;
+    resources->OES_tessellation_shader                        = 0;
     resources->OES_texture_buffer                             = 0;
     resources->EXT_texture_buffer                             = 0;
+    resources->EXT_fragment_shading_rate                      = 0;
     resources->OES_sample_variables                           = 0;
     resources->EXT_clip_cull_distance                         = 0;
     resources->ANGLE_clip_cull_distance                       = 0;
@@ -248,7 +254,10 @@ void InitBuiltInResources(ShBuiltInResources *resources)
     // Disable name hashing by default.
     resources->HashFunction = nullptr;
 
+    resources->UserVariableNamePrefix = kUserDefinedNamePrefix;
+
     resources->MaxExpressionComplexity = 256;
+    resources->MaxStatementDepth       = 256;
     resources->MaxCallStackDepth       = 256;
     resources->MaxFunctionParameters   = 1024;
 
@@ -481,7 +490,7 @@ const std::map<std::string, std::string> *GetNameHashingMap(const ShHandle handl
 {
     TCompiler *compiler = GetCompilerFromHandle(handle);
     ASSERT(compiler);
-    return &(compiler->getNameMap());
+    return &(compiler->getNameMap().getInternalMap());
 }
 
 const std::vector<ShaderVariable> *GetUniforms(const ShHandle handle)
@@ -602,6 +611,14 @@ int GetVertexShaderNumViews(const ShHandle handle)
     ASSERT(compiler);
 
     return compiler->getNumViews();
+}
+
+const std::vector<ShPixelLocalStorageFormat> *GetPixelLocalStorageFormats(const ShHandle handle)
+{
+    TCompiler *compiler = GetCompilerFromHandle(handle);
+    ASSERT(compiler);
+
+    return &compiler->GetPixelLocalStorageFormats();
 }
 
 uint32_t GetShaderSpecConstUsageBits(const ShHandle handle)
@@ -892,7 +909,7 @@ uint32_t GetAdvancedBlendEquations(const ShHandle handle)
 // Can't prefix with just _ because then we might introduce a double underscore, which is not safe
 // in GLSL (ESSL 3.00.6 section 3.8: All identifiers containing a double underscore are reserved for
 // use by the underlying implementation). u is short for user-defined.
-const char kUserDefinedNamePrefix[] = "_u";
+const char kUserDefinedNamePrefix = 'u';
 
 const char *BlockLayoutTypeToString(BlockLayoutType type)
 {

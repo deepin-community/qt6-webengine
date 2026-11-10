@@ -2,14 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 // This file contains defines and typedefs that allow popular Windows types to
 // be used without the overhead of including windows.h.
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_WIN_WINDOWS_TYPES_H_
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_WIN_WINDOWS_TYPES_H_
+#ifndef PARTITION_ALLOC_PARTITION_ALLOC_BASE_WIN_WINDOWS_TYPES_H_
+#define PARTITION_ALLOC_PARTITION_ALLOC_BASE_WIN_WINDOWS_TYPES_H_
 
 // Needed for function prototypes.
 #include <specstrings.h>
+
 #include <cstdint>
 
 #ifdef __cplusplus
@@ -41,6 +47,11 @@ typedef DWORD ULONG;
 typedef unsigned short WORD;
 typedef WORD UWORD;
 typedef WORD ATOM;
+#if defined(_WIN64)
+typedef int64_t PA_LONG_PTR, *PA_PLONG_PTR;
+#else
+typedef int32_t PA_LONG_PTR, *PA_PLONG_PTR;
+#endif
 
 // Forward declare some Windows struct/typedef sets.
 
@@ -52,6 +63,16 @@ typedef struct _FILETIME FILETIME;
 struct PA_CHROME_SRWLOCK {
   PVOID Ptr;
 };
+
+// Define some commonly used Windows constants. Note that the layout of these
+// macros - including internal spacing - must be 100% consistent with windows.h.
+
+// clang-format off
+
+#ifndef INVALID_HANDLE_VALUE
+// Work around there being two slightly different definitions in the SDK.
+#define INVALID_HANDLE_VALUE ((HANDLE)(PA_LONG_PTR)-1)
+#endif
 
 // The trailing white-spaces after this macro are required, for compatibility
 // with the definition in winnt.h.
@@ -88,4 +109,4 @@ WINBASEAPI VOID WINAPI SetLastError(_In_ DWORD dwErrCode);
 }
 #endif
 
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_BASE_WIN_WINDOWS_TYPES_H_
+#endif  // PARTITION_ALLOC_PARTITION_ALLOC_BASE_WIN_WINDOWS_TYPES_H_

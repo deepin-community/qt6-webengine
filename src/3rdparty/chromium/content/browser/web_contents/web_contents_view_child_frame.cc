@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/notimplemented.h"
 #include "build/build_config.h"
 #include "content/browser/renderer_host/render_frame_proxy_host.h"
 #include "content/browser/renderer_host/render_widget_host_view_child_frame.h"
@@ -107,7 +108,6 @@ void WebContentsViewChildFrame::SetInitialFocus() {
 
 gfx::Rect WebContentsViewChildFrame::GetViewBounds() const {
   NOTREACHED();
-  return gfx::Rect();
 }
 
 void WebContentsViewChildFrame::CreateView(gfx::NativeView context) {
@@ -149,19 +149,24 @@ void WebContentsViewChildFrame::OnCapturerCountChanged() {}
 
 void WebContentsViewChildFrame::FullscreenStateChanged(bool is_fullscreen) {}
 
-void WebContentsViewChildFrame::UpdateWindowControlsOverlay(
-    const gfx::Rect& bounding_rect) {}
+BackForwardTransitionAnimationManager*
+WebContentsViewChildFrame::GetBackForwardTransitionAnimationManager() {
+  return nullptr;
+}
+
+void WebContentsViewChildFrame::DestroyBackForwardTransitionAnimationManager() {
+}
 
 void WebContentsViewChildFrame::RestoreFocus() {
-  NOTREACHED();
+  NOTIMPLEMENTED();
 }
 
 void WebContentsViewChildFrame::Focus() {
-  NOTREACHED();
+  NOTIMPLEMENTED();
 }
 
 void WebContentsViewChildFrame::StoreFocus() {
-  NOTREACHED();
+  NOTIMPLEMENTED();
 }
 
 void WebContentsViewChildFrame::FocusThroughTabTraversal(bool reverse) {
@@ -169,11 +174,6 @@ void WebContentsViewChildFrame::FocusThroughTabTraversal(bool reverse) {
 }
 
 DropData* WebContentsViewChildFrame::GetDropData() const {
-  NOTREACHED();
-  return nullptr;
-}
-
-void WebContentsViewChildFrame::TransferDragSecurityInfo(WebContentsView*) {
   NOTREACHED();
 }
 
@@ -207,7 +207,6 @@ void WebContentsViewChildFrame::ShowPopupMenu(
     RenderFrameHost* render_frame_host,
     mojo::PendingRemote<blink::mojom::PopupMenuClient> popup_client,
     const gfx::Rect& bounds,
-    int item_height,
     double item_font_size,
     int selected_item,
     std::vector<blink::mojom::MenuItemPtr> menu_items,
@@ -216,7 +215,7 @@ void WebContentsViewChildFrame::ShowPopupMenu(
 #if BUILDFLAG(IS_MAC)
   NoOpPopupMenuHelperDelegate delegate;
   PopupMenuHelper helper(&delegate, render_frame_host, std::move(popup_client));
-  helper.ShowPopupMenu(bounds, item_height, item_font_size, selected_item,
+  helper.ShowPopupMenu(bounds, item_font_size, selected_item,
                        std::move(menu_items), right_aligned,
                        allow_multiple_selection);
 #endif  // BUILDFLAG(IS_MAC)
@@ -224,19 +223,19 @@ void WebContentsViewChildFrame::ShowPopupMenu(
 #endif  // BUILDFLAG(USE_EXTERNAL_POPUP_MENU)
 
 void WebContentsViewChildFrame::StartDragging(
+    RenderFrameHost& source_rfh,
     const DropData& drop_data,
-    const url::Origin& source_origin,
     DragOperationsMask ops,
     const gfx::ImageSkia& image,
     const gfx::Vector2d& cursor_offset,
     const gfx::Rect& drag_obj_rect,
-    const blink::mojom::DragEventSourceInfo& event_info,
-    RenderWidgetHostImpl* source_rwh) {
+    const blink::mojom::DragEventSourceInfo& event_info) {
   if (auto* view = GetOuterDelegateView()) {
-    view->StartDragging(drop_data, source_origin, ops, image, cursor_offset,
-                        drag_obj_rect, event_info, source_rwh);
+    view->StartDragging(source_rfh, drop_data, ops, image, cursor_offset,
+                        drag_obj_rect, event_info);
   } else {
-    web_contents_->GetOuterWebContents()->SystemDragEnded(source_rwh);
+    web_contents_->GetOuterWebContents()->SystemDragEnded(
+        source_rfh.GetRenderWidgetHost());
   }
 }
 

@@ -36,6 +36,16 @@ class TransformFeedbackGL;
 class VertexArrayGL;
 class QueryGL;
 
+struct ExternalContextVertexAttribute
+{
+    bool enabled;
+    const angle::Format *format;
+    GLuint stride;
+    GLvoid *pointer;
+    GLuint buffer;
+    gl::VertexAttribCurrentValueData currentData;
+};
+
 // TODO(penghuang): use gl::State?
 struct ExternalContextState
 {
@@ -65,6 +75,7 @@ struct ExternalContextState
     bool sampleCoverageInvert;
     GLenum blendEquationRgb;
     GLenum blendEquationAlpha;
+    bool enableBlendEquationAdvancedCoherent;
 
     bool enableDither;
     GLenum polygonMode;
@@ -121,6 +132,9 @@ struct ExternalContextState
     std::vector<TextureBindings> textureBindings;
 
     GLenum vertexArrayBinding;
+
+    angle::FixedVector<ExternalContextVertexAttribute, gl::MAX_VERTEX_ATTRIBS>
+        defaultVertexArrayAttributes;
 };
 
 struct VertexAttributeGL
@@ -138,7 +152,7 @@ struct VertexBindingGL
 {
     GLuint stride   = 16;
     GLuint divisor  = 0;
-    GLintptr offset = 0;
+    uintptr_t offset = 0;
 
     GLuint buffer = 0;
 };
@@ -171,6 +185,8 @@ class StateManagerGL final : angle::NonCopyable
     void deleteRenderbuffer(GLuint rbo);
     void deleteTransformFeedback(GLuint transformFeedback);
 
+    void onSyncedFlushOrFinish();
+
     void useProgram(GLuint program);
     void forceUseProgram(GLuint program);
     void bindVertexArray(GLuint vao, VertexArrayStateGL *vaoState);
@@ -193,6 +209,7 @@ class StateManagerGL final : angle::NonCopyable
                           GLenum access,
                           GLenum format);
     void bindFramebuffer(GLenum type, GLuint framebuffer);
+    void forcefullyFlush();
     void bindRenderbuffer(GLenum type, GLuint renderbuffer);
     void bindTransformFeedback(GLenum type, GLuint transformFeedback);
     void onTransformFeedbackStateChange();
@@ -213,10 +230,12 @@ class StateManagerGL final : angle::NonCopyable
     void setBlendColor(const gl::ColorF &blendColor);
     void setBlendFuncs(const gl::BlendStateExt &blendStateExt);
     void setBlendEquations(const gl::BlendStateExt &blendStateExt);
+    void setBlendAdvancedCoherent(bool enabled);
     void setColorMask(bool red, bool green, bool blue, bool alpha);
     void setSampleAlphaToCoverageEnabled(bool enabled);
     void setSampleCoverageEnabled(bool enabled);
     void setSampleCoverage(float value, bool invert);
+    void forceSetSampleCoverage(float value, bool invert);
     void setSampleMaskEnabled(bool enabled);
     void setSampleMaski(GLuint maskNumber, GLbitfield mask);
 
@@ -327,6 +346,8 @@ class StateManagerGL final : angle::NonCopyable
     void restoreNativeContext(const gl::Extensions &extensions, const ExternalContextState *state);
 
   private:
+    void forceBindVertexArray(GLuint vao, VertexArrayStateGL *vaoState);
+
     void setTextureCubemapSeamlessEnabled(bool enabled);
 
     void setClipControlWithEmulatedClipOrigin(const gl::ProgramExecutable *executable,
@@ -347,6 +368,8 @@ class StateManagerGL final : angle::NonCopyable
     void updateDispatchIndirectBufferBinding(const gl::Context *context);
     void updateDrawIndirectBufferBinding(const gl::Context *context);
 
+    void setBufferBindingDirty(gl::BufferBinding binding);
+
     template <typename T>
     void get(GLenum name, T *value);
 
@@ -355,6 +378,7 @@ class StateManagerGL final : angle::NonCopyable
 
     void syncSamplersState(const gl::Context *context);
     void syncTransformFeedbackState(const gl::Context *context);
+    void syncProgramState(const gl::Context *context);
 
     void updateEmulatedClipDistanceState(const gl::ProgramExecutable *executable,
                                          const gl::ClipDistanceEnableBits enables) const;
@@ -489,6 +513,7 @@ class StateManagerGL final : angle::NonCopyable
 
     gl::ColorF mBlendColor;
     gl::BlendStateExt mBlendStateExt;
+    bool mBlendAdvancedCoherent;
     const bool mIndependentBlendStates;
 
     bool mSampleAlphaToCoverageEnabled;
@@ -497,6 +522,8 @@ class StateManagerGL final : angle::NonCopyable
     bool mSampleCoverageInvert;
     bool mSampleMaskEnabled;
     gl::SampleMaskArray<GLbitfield> mSampleMaskValues;
+    bool mSampleCoverageEverChanged;
+    bool mHasUnflushedQueries;
 
     bool mDepthTestEnabled;
     GLenum mDepthFunc;

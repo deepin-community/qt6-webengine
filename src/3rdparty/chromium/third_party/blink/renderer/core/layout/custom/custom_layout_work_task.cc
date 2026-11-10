@@ -21,14 +21,14 @@ namespace blink {
 
 CustomLayoutWorkTask::CustomLayoutWorkTask(CustomLayoutChild* child,
                                            CustomLayoutToken* token,
-                                           ScriptPromiseResolver* resolver,
+                                           ScriptPromiseResolverBase* resolver,
                                            const TaskType type)
     : CustomLayoutWorkTask(child, token, resolver, nullptr, nullptr, type) {}
 
 CustomLayoutWorkTask::CustomLayoutWorkTask(
     CustomLayoutChild* child,
     CustomLayoutToken* token,
-    ScriptPromiseResolver* resolver,
+    ScriptPromiseResolverBase* resolver,
     const CustomLayoutConstraintsOptions* options,
     scoped_refptr<SerializedScriptValue> constraint_data,
     const TaskType type)
@@ -130,7 +130,6 @@ void CustomLayoutWorkTask::RunLayoutFragmentTask(
 
   builder.SetAvailableSize(available_size);
   builder.SetPercentageResolutionSize(percentage_size);
-  builder.SetReplacedPercentageResolutionSize(percentage_size);
   builder.SetIsFixedInlineSize(is_fixed_inline_size);
   builder.SetIsFixedBlockSize(is_fixed_block_size);
   if (child.IsCustom()) {
@@ -143,9 +142,10 @@ void CustomLayoutWorkTask::RunLayoutFragmentTask(
       parent_space.GetWritingDirection(),
       To<PhysicalBoxFragment>(result->GetPhysicalFragment()));
 
-  resolver_->Resolve(MakeGarbageCollected<CustomLayoutFragment>(
-      child_, token_, std::move(result), fragment.Size(),
-      fragment.FirstBaseline(), resolver_->GetScriptState()->GetIsolate()));
+  resolver_->DowncastTo<CustomLayoutFragment>()->Resolve(
+      MakeGarbageCollected<CustomLayoutFragment>(
+          child_, token_, std::move(result), fragment.Size(),
+          fragment.FirstBaseline(), resolver_->GetScriptState()->GetIsolate()));
 }
 
 void CustomLayoutWorkTask::RunIntrinsicSizesTask(
@@ -164,8 +164,9 @@ void CustomLayoutWorkTask::RunIntrinsicSizesTask(
 
   MinMaxSizesResult result = ComputeMinAndMaxContentContribution(
       parent_style, To<BlockNode>(child), space);
-  resolver_->Resolve(MakeGarbageCollected<CustomIntrinsicSizes>(
-      child_, token_, result.sizes.min_size, result.sizes.max_size));
+  resolver_->DowncastTo<CustomIntrinsicSizes>()->Resolve(
+      MakeGarbageCollected<CustomIntrinsicSizes>(
+          child_, token_, result.sizes.min_size, result.sizes.max_size));
 
   if (child_depends_on_block_constraints)
     *child_depends_on_block_constraints |= result.depends_on_block_constraints;

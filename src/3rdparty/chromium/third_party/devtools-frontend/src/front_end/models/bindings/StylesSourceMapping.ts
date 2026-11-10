@@ -31,11 +31,11 @@
 import * as Common from '../../core/common/common.js';
 import type * as Platform from '../../core/platform/platform.js';
 import * as SDK from '../../core/sdk/sdk.js';
-import type * as TextUtils from '../text_utils/text_utils.js';
+import * as TextUtils from '../text_utils/text_utils.js';
 import * as Workspace from '../workspace/workspace.js';
 
 import {ContentProviderBasedProject} from './ContentProviderBasedProject.js';
-import {type SourceMapping} from './CSSWorkspaceBinding.js';
+import type {SourceMapping} from './CSSWorkspaceBinding.js';
 import {NetworkProject} from './NetworkProject.js';
 import {metadataForURL} from './ResourceUtils.js';
 
@@ -44,7 +44,7 @@ const uiSourceCodeToStyleMap = new WeakMap<Workspace.UISourceCode.UISourceCode, 
 export class StylesSourceMapping implements SourceMapping {
   #cssModel: SDK.CSSModel.CSSModel;
   #project: ContentProviderBasedProject;
-  readonly #styleFiles: Map<string, StyleFile>;
+  readonly #styleFiles = new Map<string, StyleFile>();
   readonly #eventListeners: Common.EventTarget.EventDescriptor[];
 
   constructor(cssModel: SDK.CSSModel.CSSModel, workspace: Workspace.Workspace.WorkspaceImpl) {
@@ -54,7 +54,6 @@ export class StylesSourceMapping implements SourceMapping {
         workspace, 'css:' + target.id(), Workspace.Workspace.projectTypes.Network, '', false /* isServiceProject */);
     NetworkProject.setTargetForProject(this.#project, target);
 
-    this.#styleFiles = new Map();
     this.#eventListeners = [
       this.#cssModel.addEventListener(SDK.CSSModel.Events.StyleSheetAdded, this.styleSheetAdded, this),
       this.#cssModel.addEventListener(SDK.CSSModel.Events.StyleSheetRemoved, this.styleSheetRemoved, this),
@@ -183,8 +182,8 @@ export class StyleFile implements TextUtils.ContentProvider.ContentProvider {
   headers: Set<SDK.CSSStyleSheetHeader.CSSStyleSheetHeader>;
   uiSourceCode: Workspace.UISourceCode.UISourceCode;
   readonly #eventListeners: Common.EventTarget.EventDescriptor[];
-  readonly #throttler: Common.Throttler.Throttler;
-  #terminated: boolean;
+  readonly #throttler = new Common.Throttler.Throttler(200);
+  #terminated = false;
   #isAddingRevision?: boolean;
   #isUpdatingHeaders?: boolean;
 
@@ -211,8 +210,6 @@ export class StyleFile implements TextUtils.ContentProvider.ContentProvider {
       this.uiSourceCode.addEventListener(
           Workspace.UISourceCode.Events.WorkingCopyCommitted, this.workingCopyCommitted, this),
     ];
-    this.#throttler = new Common.Throttler.Throttler(StyleFile.updateTimeout);
-    this.#terminated = false;
   }
 
   addHeader(header: SDK.CSSStyleSheetHeader.CSSStyleSheetHeader): void {
@@ -231,7 +228,7 @@ export class StyleFile implements TextUtils.ContentProvider.ContentProvider {
       return;
     }
     const mirrorContentBound = this.mirrorContent.bind(this, header, true /* majorChange */);
-    void this.#throttler.schedule(mirrorContentBound, false /* asSoonAsPossible */);
+    void this.#throttler.schedule(mirrorContentBound, Common.Throttler.Scheduling.DEFAULT);
   }
 
   private workingCopyCommitted(): void {
@@ -239,7 +236,7 @@ export class StyleFile implements TextUtils.ContentProvider.ContentProvider {
       return;
     }
     const mirrorContentBound = this.mirrorContent.bind(this, this.uiSourceCode, true /* majorChange */);
-    void this.#throttler.schedule(mirrorContentBound, true /* asSoonAsPossible */);
+    void this.#throttler.schedule(mirrorContentBound, Common.Throttler.Scheduling.AS_SOON_AS_POSSIBLE);
   }
 
   private workingCopyChanged(): void {
@@ -247,7 +244,7 @@ export class StyleFile implements TextUtils.ContentProvider.ContentProvider {
       return;
     }
     const mirrorContentBound = this.mirrorContent.bind(this, this.uiSourceCode, false /* majorChange */);
-    void this.#throttler.schedule(mirrorContentBound, false /* asSoonAsPossible */);
+    void this.#throttler.schedule(mirrorContentBound, Common.Throttler.Scheduling.DEFAULT);
   }
 
   private async mirrorContent(fromProvider: TextUtils.ContentProvider.ContentProvider, majorChange: boolean):
@@ -257,12 +254,11 @@ export class StyleFile implements TextUtils.ContentProvider.ContentProvider {
       return;
     }
 
-    let newContent: string|(string | null)|null = null;
+    let newContent: string|null = null;
     if (fromProvider === this.uiSourceCode) {
       newContent = this.uiSourceCode.workingCopy();
     } else {
-      const deferredContent = await fromProvider.requestContent();
-      newContent = deferredContent.content;
+      newContent = TextUtils.ContentData.ContentData.textOr(await fromProvider.requestContentData(), null);
     }
 
     if (newContent === null || this.#terminated) {
@@ -272,7 +268,7 @@ export class StyleFile implements TextUtils.ContentProvider.ContentProvider {
 
     if (fromProvider !== this.uiSourceCode) {
       this.#isAddingRevision = true;
-      this.uiSourceCode.addRevision(newContent);
+      this.uiSourceCode.setWorkingCopy(newContent);
       this.#isAddingRevision = false;
     }
 
@@ -304,27 +300,29 @@ export class StyleFile implements TextUtils.ContentProvider.ContentProvider {
 
   contentURL(): Platform.DevToolsPath.UrlString {
     console.assert(this.headers.size > 0);
-    return this.headers.values().next().value.originalContentProvider().contentURL();
+    return this.#firstHeader().originalContentProvider().contentURL();
   }
 
   contentType(): Common.ResourceType.ResourceType {
     console.assert(this.headers.size > 0);
-    return this.headers.values().next().value.originalContentProvider().contentType();
+    return this.#firstHeader().originalContentProvider().contentType();
   }
 
-  requestContent(): Promise<TextUtils.ContentProvider.DeferredContent> {
+  requestContentData(): Promise<TextUtils.ContentData.ContentDataOrError> {
     console.assert(this.headers.size > 0);
-    return this.headers.values().next().value.originalContentProvider().requestContent();
+    return this.#firstHeader().originalContentProvider().requestContentData();
   }
 
   searchInContent(query: string, caseSensitive: boolean, isRegex: boolean):
       Promise<TextUtils.ContentProvider.SearchMatch[]> {
     console.assert(this.headers.size > 0);
-    return this.headers.values().next().value.originalContentProvider().searchInContent(query, caseSensitive, isRegex);
+    return this.#firstHeader().originalContentProvider().searchInContent(query, caseSensitive, isRegex);
   }
-  // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration)
-  // eslint-disable-next-line @typescript-eslint/naming-convention
-  static readonly updateTimeout = 200;
+
+  #firstHeader(): SDK.CSSStyleSheetHeader.CSSStyleSheetHeader {
+    console.assert(this.headers.size > 0);
+    return this.headers.values().next().value as SDK.CSSStyleSheetHeader.CSSStyleSheetHeader;
+  }
 
   getHeaders(): Set<SDK.CSSStyleSheetHeader.CSSStyleSheetHeader> {
     return this.headers;

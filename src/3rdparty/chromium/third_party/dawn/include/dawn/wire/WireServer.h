@@ -54,20 +54,10 @@ class DAWN_WIRE_EXPORT WireServer : public CommandHandler {
 
     const volatile char* HandleCommands(const volatile char* commands, size_t size) override;
 
-    bool InjectTexture(WGPUTexture texture,
-                       uint32_t id,
-                       uint32_t generation,
-                       uint32_t deviceId,
-                       uint32_t deviceGeneration);
-    bool InjectSwapChain(WGPUSwapChain swapchain,
-                         uint32_t id,
-                         uint32_t generation,
-                         uint32_t deviceId,
-                         uint32_t deviceGeneration);
-
-    bool InjectDevice(WGPUDevice device, uint32_t id, uint32_t generation);
-
-    bool InjectInstance(WGPUInstance instance, uint32_t id, uint32_t generation);
+    bool InjectBuffer(WGPUBuffer buffer, const Handle& handle, const Handle& deviceHandle);
+    bool InjectTexture(WGPUTexture texture, const Handle& handle, const Handle& deviceHandle);
+    bool InjectSurface(WGPUSurface surface, const Handle& handle, const Handle& instanceHandle);
+    bool InjectInstance(WGPUInstance instance, const Handle& handle);
 
     // Look up a device by (id, generation) pair. Returns nullptr if the generation
     // has expired or the id is not found.
@@ -83,8 +73,10 @@ class DAWN_WIRE_EXPORT WireServer : public CommandHandler {
     // them periodically to ensure progress on asynchronous work is made.
     bool IsDeviceKnown(WGPUDevice device) const;
 
+    server::Server* GetImplForTesting();
+
   private:
-    std::unique_ptr<server::Server> mImpl;
+    std::shared_ptr<server::Server> mImpl;
 };
 
 namespace server {

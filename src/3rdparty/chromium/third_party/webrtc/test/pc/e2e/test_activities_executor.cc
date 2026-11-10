@@ -10,13 +10,18 @@
 
 #include "test/pc/e2e/test_activities_executor.h"
 
-#include <memory>
+#include <functional>
+#include <optional>
 #include <utility>
 
-#include "absl/memory/memory.h"
+#include "api/task_queue/task_queue_base.h"
+#include "api/units/time_delta.h"
+#include "api/units/timestamp.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/logging.h"
+#include "rtc_base/synchronization/mutex.h"
 #include "rtc_base/task_queue_for_test.h"
+#include "rtc_base/task_utils/repeating_task.h"
 
 namespace webrtc {
 namespace webrtc_pc_e2e {
@@ -48,7 +53,7 @@ void TestActivitiesExecutor::Stop() {
 
 void TestActivitiesExecutor::ScheduleActivity(
     TimeDelta initial_delay_since_start,
-    absl::optional<TimeDelta> interval,
+    std::optional<TimeDelta> interval,
     std::function<void(TimeDelta)> func) {
   RTC_CHECK(initial_delay_since_start.IsFinite() &&
             initial_delay_since_start >= TimeDelta::Zero());
@@ -112,7 +117,7 @@ Timestamp TestActivitiesExecutor::Now() const {
 
 TestActivitiesExecutor::ScheduledActivity::ScheduledActivity(
     TimeDelta initial_delay_since_start,
-    absl::optional<TimeDelta> interval,
+    std::optional<TimeDelta> interval,
     std::function<void(TimeDelta)> func)
     : initial_delay_since_start(initial_delay_since_start),
       interval(interval),

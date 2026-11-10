@@ -6,6 +6,7 @@
 
 #include "core/fpdfdoc/cpdf_aaction.h"
 
+#include <array>
 #include <iterator>
 #include <utility>
 
@@ -13,50 +14,48 @@
 
 namespace {
 
-constexpr const char* kAATypes[] = {
-    "E",   // kCursorEnter
-    "X",   // kCursorExit
-    "D",   // kButtonDown
-    "U",   // kButtonUp
-    "Fo",  // kGetFocus
-    "Bl",  // kLoseFocus
-    "PO",  // kPageOpen
-    "PC",  // kPageClose
-    "PV",  // kPageVisible
-    "PI",  // kPageInvisible
-    "O",   // kOpenPage
-    "C",   // kClosePage
-    "K",   // kKeyStroke
-    "F",   // kFormat
-    "V",   // kValidate
-    "C",   // kCalculate
-    "WC",  // kCloseDocument
-    "WS",  // kSaveDocument
-    "DS",  // kDocumentSaved
-    "WP",  // kPrintDocument
-    "DP",  // kDocumentPrinted
-};
-
 // |kAATypes| should have one less element than enum AActionType due to
 // |kDocumentOpen|, which is an artificial type.
-static_assert(std::size(kAATypes) == CPDF_AAction::kNumberOfActions - 1,
-              "kAATypes count mismatch");
+constexpr const std::array<const char*, CPDF_AAction::kNumberOfActions - 1>
+    kAATypes = {{
+        "E",   // kCursorEnter
+        "X",   // kCursorExit
+        "D",   // kButtonDown
+        "U",   // kButtonUp
+        "Fo",  // kGetFocus
+        "Bl",  // kLoseFocus
+        "PO",  // kPageOpen
+        "PC",  // kPageClose
+        "PV",  // kPageVisible
+        "PI",  // kPageInvisible
+        "O",   // kOpenPage
+        "C",   // kClosePage
+        "K",   // kKeyStroke
+        "F",   // kFormat
+        "V",   // kValidate
+        "C",   // kCalculate
+        "WC",  // kCloseDocument
+        "WS",  // kSaveDocument
+        "DS",  // kDocumentSaved
+        "WP",  // kPrintDocument
+        "DP",  // kDocumentPrinted
+    }};
 
 }  // namespace
 
-CPDF_AAction::CPDF_AAction(RetainPtr<const CPDF_Dictionary> pDict)
-    : m_pDict(std::move(pDict)) {}
+CPDF_AAction::CPDF_AAction(RetainPtr<const CPDF_Dictionary> dict)
+    : dict_(std::move(dict)) {}
 
 CPDF_AAction::CPDF_AAction(const CPDF_AAction& that) = default;
 
 CPDF_AAction::~CPDF_AAction() = default;
 
 bool CPDF_AAction::ActionExist(AActionType eType) const {
-  return m_pDict && m_pDict->KeyExist(kAATypes[eType]);
+  return dict_ && dict_->KeyExist(kAATypes[eType]);
 }
 
 CPDF_Action CPDF_AAction::GetAction(AActionType eType) const {
-  return CPDF_Action(m_pDict ? m_pDict->GetDictFor(kAATypes[eType]) : nullptr);
+  return CPDF_Action(dict_ ? dict_->GetDictFor(kAATypes[eType]) : nullptr);
 }
 
 // static

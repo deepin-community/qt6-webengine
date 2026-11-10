@@ -2,16 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import * as Common from '../common/common.js';
 import type * as ProtocolProxyApi from '../../generated/protocol-proxy-api.js';
 import * as Protocol from '../../generated/protocol.js';
+import * as Common from '../common/common.js';
 
 import {CSSModel} from './CSSModel.js';
 import {MultitargetNetworkManager} from './NetworkManager.js';
 import {Events, OverlayModel} from './OverlayModel.js';
-
-import {Capability, type Target} from './Target.js';
 import {SDKModel} from './SDKModel.js';
+import {Capability, type Target} from './Target.js';
+
+export const enum DataSaverOverride {
+  UNSET = 'unset',
+  ENABLED = 'enabled',
+  DISABLED = 'disabled',
+}
 
 export class EmulationModel extends SDKModel<void> {
   readonly #emulationAgent: ProtocolProxyApi.EmulationApi;
@@ -19,6 +24,7 @@ export class EmulationModel extends SDKModel<void> {
   #cssModel: CSSModel|null;
   readonly #overlayModelInternal: OverlayModel|null;
   readonly #mediaConfiguration: Map<string, string>;
+  #cpuPressureEnabled: boolean;
   #touchEnabled: boolean;
   #touchMobile: boolean;
   #touchEmulationAllowed: boolean;
@@ -35,12 +41,12 @@ export class EmulationModel extends SDKModel<void> {
     this.#cssModel = target.model(CSSModel);
     this.#overlayModelInternal = target.model(OverlayModel);
     if (this.#overlayModelInternal) {
-      this.#overlayModelInternal.addEventListener(Events.InspectModeWillBeToggled, () => {
+      this.#overlayModelInternal.addEventListener(Events.INSPECT_MODE_WILL_BE_TOGGLED, () => {
         void this.updateTouch();
       }, this);
     }
 
-    const disableJavascriptSetting = Common.Settings.Settings.instance().moduleSetting('javaScriptDisabled');
+    const disableJavascriptSetting = Common.Settings.Settings.instance().moduleSetting('java-script-disabled');
     disableJavascriptSetting.addChangeListener(
         async () =>
             await this.#emulationAgent.invoke_setScriptExecutionDisabled({value: disableJavascriptSetting.get()}));
@@ -55,7 +61,7 @@ export class EmulationModel extends SDKModel<void> {
       void this.overrideEmulateTouch(settingValue === 'force');
     });
 
-    const idleDetectionSetting = Common.Settings.Settings.instance().moduleSetting('emulation.idleDetection');
+    const idleDetectionSetting = Common.Settings.Settings.instance().moduleSetting('emulation.idle-detection');
     idleDetectionSetting.addChangeListener(async () => {
       const settingValue = idleDetectionSetting.get();
       if (settingValue === 'none') {
@@ -70,21 +76,39 @@ export class EmulationModel extends SDKModel<void> {
       await this.setIdleOverride(emulationParams);
     });
 
-    const mediaTypeSetting = Common.Settings.Settings.instance().moduleSetting<string>('emulatedCSSMedia');
+    const cpuPressureDetectionSetting = Common.Settings.Settings.instance().moduleSetting('emulation.cpu-pressure');
+    cpuPressureDetectionSetting.addChangeListener(async () => {
+      const settingValue = cpuPressureDetectionSetting.get();
+
+      if (settingValue === 'none') {
+        await this.setPressureSourceOverrideEnabled(false);
+        this.#cpuPressureEnabled = false;
+        return;
+      }
+
+      if (!this.#cpuPressureEnabled) {
+        this.#cpuPressureEnabled = true;
+        await this.setPressureSourceOverrideEnabled(true);
+      }
+
+      await this.setPressureStateOverride(settingValue);
+    });
+
+    const mediaTypeSetting = Common.Settings.Settings.instance().moduleSetting<string>('emulated-css-media');
     const mediaFeatureColorGamutSetting =
-        Common.Settings.Settings.instance().moduleSetting<string>('emulatedCSSMediaFeatureColorGamut');
+        Common.Settings.Settings.instance().moduleSetting<string>('emulated-css-media-feature-color-gamut');
     const mediaFeaturePrefersColorSchemeSetting =
-        Common.Settings.Settings.instance().moduleSetting<string>('emulatedCSSMediaFeaturePrefersColorScheme');
+        Common.Settings.Settings.instance().moduleSetting<string>('emulated-css-media-feature-prefers-color-scheme');
     const mediaFeatureForcedColorsSetting =
-        Common.Settings.Settings.instance().moduleSetting('emulatedCSSMediaFeatureForcedColors');
+        Common.Settings.Settings.instance().moduleSetting('emulated-css-media-feature-forced-colors');
     const mediaFeaturePrefersContrastSetting =
-        Common.Settings.Settings.instance().moduleSetting<string>('emulatedCSSMediaFeaturePrefersContrast');
+        Common.Settings.Settings.instance().moduleSetting<string>('emulated-css-media-feature-prefers-contrast');
     const mediaFeaturePrefersReducedDataSetting =
-        Common.Settings.Settings.instance().moduleSetting<string>('emulatedCSSMediaFeaturePrefersReducedData');
-    const mediaFeaturePrefersReducedTransparencySetting =
-        Common.Settings.Settings.instance().moduleSetting<string>('emulatedCSSMediaFeaturePrefersReducedTransparency');
+        Common.Settings.Settings.instance().moduleSetting<string>('emulated-css-media-feature-prefers-reduced-data');
+    const mediaFeaturePrefersReducedTransparencySetting = Common.Settings.Settings.instance().moduleSetting<string>(
+        'emulated-css-media-feature-prefers-reduced-transparency');
     const mediaFeaturePrefersReducedMotionSetting =
-        Common.Settings.Settings.instance().moduleSetting<string>('emulatedCSSMediaFeaturePrefersReducedMotion');
+        Common.Settings.Settings.instance().moduleSetting<string>('emulated-css-media-feature-prefers-reduced-motion');
     // Note: this uses a different format than what the CDP API expects,
     // because we want to update these values per media type/feature
     // without having to search the `features` array (inefficient) or
@@ -133,7 +157,7 @@ export class EmulationModel extends SDKModel<void> {
     });
     void this.updateCssMedia();
 
-    const autoDarkModeSetting = Common.Settings.Settings.instance().moduleSetting('emulateAutoDarkMode');
+    const autoDarkModeSetting = Common.Settings.Settings.instance().moduleSetting('emulate-auto-dark-mode');
     autoDarkModeSetting.addChangeListener(() => {
       const enabled = autoDarkModeSetting.get();
       mediaFeaturePrefersColorSchemeSetting.setDisabled(enabled);
@@ -146,20 +170,28 @@ export class EmulationModel extends SDKModel<void> {
       void this.emulateAutoDarkMode(true);
     }
 
-    const visionDeficiencySetting = Common.Settings.Settings.instance().moduleSetting('emulatedVisionDeficiency');
+    const visionDeficiencySetting = Common.Settings.Settings.instance().moduleSetting('emulated-vision-deficiency');
     visionDeficiencySetting.addChangeListener(() => this.emulateVisionDeficiency(visionDeficiencySetting.get()));
     if (visionDeficiencySetting.get()) {
       void this.emulateVisionDeficiency(visionDeficiencySetting.get());
     }
 
-    const localFontsDisabledSetting = Common.Settings.Settings.instance().moduleSetting('localFontsDisabled');
+    const osTextScaleSetting = Common.Settings.Settings.instance().moduleSetting('emulated-os-text-scale');
+    osTextScaleSetting.addChangeListener(() => {
+      void this.emulateOSTextScale(parseFloat(osTextScaleSetting.get()) || undefined);
+    });
+    if (osTextScaleSetting.get()) {
+      void this.emulateOSTextScale(parseFloat(osTextScaleSetting.get()) || undefined);
+    }
+
+    const localFontsDisabledSetting = Common.Settings.Settings.instance().moduleSetting('local-fonts-disabled');
     localFontsDisabledSetting.addChangeListener(() => this.setLocalFontsDisabled(localFontsDisabledSetting.get()));
     if (localFontsDisabledSetting.get()) {
       this.setLocalFontsDisabled(localFontsDisabledSetting.get());
     }
 
-    const avifFormatDisabledSetting = Common.Settings.Settings.instance().moduleSetting('avifFormatDisabled');
-    const webpFormatDisabledSetting = Common.Settings.Settings.instance().moduleSetting('webpFormatDisabled');
+    const avifFormatDisabledSetting = Common.Settings.Settings.instance().moduleSetting('avif-format-disabled');
+    const webpFormatDisabledSetting = Common.Settings.Settings.instance().moduleSetting('webp-format-disabled');
 
     const updateDisabledImageFormats = (): void => {
       const types = [];
@@ -179,6 +211,7 @@ export class EmulationModel extends SDKModel<void> {
       updateDisabledImageFormats();
     }
 
+    this.#cpuPressureEnabled = false;
     this.#touchEmulationAllowed = true;
     this.#touchEnabled = false;
     this.#touchMobile = false;
@@ -194,7 +227,7 @@ export class EmulationModel extends SDKModel<void> {
   }
 
   supportsDeviceEmulation(): boolean {
-    return this.target().hasAllCapabilities(Capability.DeviceEmulation);
+    return this.target().hasAllCapabilities(Capability.DEVICE_EMULATION);
   }
 
   async resetPageScaleFactor(): Promise<void> {
@@ -211,6 +244,18 @@ export class EmulationModel extends SDKModel<void> {
 
   overlayModel(): OverlayModel|null {
     return this.#overlayModelInternal;
+  }
+
+  async setPressureSourceOverrideEnabled(enabled: boolean): Promise<void> {
+    await this.#emulationAgent.invoke_setPressureSourceOverrideEnabled(
+        {source: Protocol.Emulation.PressureSource.Cpu, enabled});
+  }
+
+  async setPressureStateOverride(pressureState: string): Promise<void> {
+    await this.#emulationAgent.invoke_setPressureStateOverride({
+      source: Protocol.Emulation.PressureSource.Cpu,
+      state: pressureState as Protocol.Emulation.PressureState,
+    });
   }
 
   async emulateLocation(location: Location|null): Promise<void> {
@@ -247,7 +292,7 @@ export class EmulationModel extends SDKModel<void> {
             .invoke_setGeolocationOverride({
               latitude: location.latitude,
               longitude: location.longitude,
-              accuracy: Location.defaultGeoMockAccuracy,
+              accuracy: location.accuracy,
             })
             .then(result => processEmulationResult('emulation-set-location', result)),
         this.#emulationAgent
@@ -290,10 +335,10 @@ export class EmulationModel extends SDKModel<void> {
     await this.#emulationAgent.invoke_clearIdleOverride();
   }
 
-  private async emulateCSSMedia(type: string, features: {
-    name: string,
-    value: string,
-  }[]): Promise<void> {
+  private async emulateCSSMedia(type: string, features: Array<{
+                                  name: string,
+                                  value: string,
+                                }>): Promise<void> {
     await this.#emulationAgent.invoke_setEmulatedMedia({media: type, features});
     if (this.#cssModel) {
       this.#cssModel.mediaQueryResultChanged();
@@ -315,6 +360,10 @@ export class EmulationModel extends SDKModel<void> {
     await this.#emulationAgent.invoke_setEmulatedVisionDeficiency({type});
   }
 
+  private async emulateOSTextScale(scale: number|undefined): Promise<void> {
+    await this.#emulationAgent.invoke_setEmulatedOSTextScale({scale: scale || undefined});
+  }
+
   private setLocalFontsDisabled(disabled: boolean): void {
     if (!this.#cssModel) {
       return;
@@ -324,6 +373,13 @@ export class EmulationModel extends SDKModel<void> {
 
   private setDisabledImageTypes(imageTypes: Protocol.Emulation.DisabledImageType[]): void {
     void this.#emulationAgent.invoke_setDisabledImageTypes({imageTypes});
+  }
+
+  async setDataSaverOverride(dataSaverOverride: DataSaverOverride): Promise<void> {
+    const dataSaverEnabled = dataSaverOverride === DataSaverOverride.UNSET ? undefined :
+        dataSaverOverride === DataSaverOverride.ENABLED                    ? true :
+                                                                             false;
+    await this.#emulationAgent.invoke_setDataSaverOverride({dataSaverEnabled});
   }
 
   async setCPUThrottlingRate(rate: number): Promise<void> {
@@ -415,103 +471,107 @@ export class EmulationModel extends SDKModel<void> {
         value: this.#mediaConfiguration.get('prefers-reduced-transparency') ?? '',
       },
     ];
-    return this.emulateCSSMedia(type, features);
+    return await this.emulateCSSMedia(type, features);
   }
 }
 
 export class Location {
+  static readonly DEFAULT_ACCURACY = 150;
   latitude: number;
   longitude: number;
   timezoneId: string;
   locale: string;
+  accuracy: number;
   unavailable: boolean;
 
-  constructor(latitude: number, longitude: number, timezoneId: string, locale: string, unavailable: boolean) {
+  constructor(
+      latitude: number, longitude: number, timezoneId: string, locale: string, accuracy: number, unavailable: boolean) {
     this.latitude = latitude;
     this.longitude = longitude;
     this.timezoneId = timezoneId;
     this.locale = locale;
+    this.accuracy = accuracy;
     this.unavailable = unavailable;
   }
 
   static parseSetting(value: string): Location {
     if (value) {
-      const [position, timezoneId, locale, unavailable] = value.split(':');
+      const [position, timezoneId, locale, unavailable, ...maybeAccuracy] = value.split(':');
+      const accuracy = maybeAccuracy.length ? Number(maybeAccuracy[0]) : Location.DEFAULT_ACCURACY;
       const [latitude, longitude] = position.split('@');
-      return new Location(parseFloat(latitude), parseFloat(longitude), timezoneId, locale, Boolean(unavailable));
+      return new Location(
+          parseFloat(latitude), parseFloat(longitude), timezoneId, locale, accuracy, Boolean(unavailable));
     }
-    return new Location(0, 0, '', '', false);
+    return new Location(0, 0, '', '', Location.DEFAULT_ACCURACY, false);
   }
 
-  static parseUserInput(latitudeString: string, longitudeString: string, timezoneId: string, locale: string): Location
-      |null {
-    if (!latitudeString && !longitudeString) {
+  static parseUserInput(
+      latitudeString: string, longitudeString: string, timezoneId: string, locale: string,
+      accuracyString: string): Location|null {
+    if (!latitudeString && !longitudeString && !accuracyString) {
       return null;
     }
 
-    const {valid: isLatitudeValid} = Location.latitudeValidator(latitudeString);
-    const {valid: isLongitudeValid} = Location.longitudeValidator(longitudeString);
+    const isLatitudeValid = Location.latitudeValidator(latitudeString);
+    const isLongitudeValid = Location.longitudeValidator(longitudeString);
+    const {valid: isAccuracyValid} = Location.accuracyValidator(accuracyString);
 
-    if (!isLatitudeValid && !isLongitudeValid) {
+    if (!isLatitudeValid && !isLongitudeValid && !isAccuracyValid) {
       return null;
     }
 
     const latitude = isLatitudeValid ? parseFloat(latitudeString) : -1;
     const longitude = isLongitudeValid ? parseFloat(longitudeString) : -1;
-    return new Location(latitude, longitude, timezoneId, locale, false);
+    const accuracy = isAccuracyValid ? parseFloat(accuracyString) : Location.DEFAULT_ACCURACY;
+    return new Location(latitude, longitude, timezoneId, locale, accuracy, false);
   }
 
-  static latitudeValidator(value: string): {
-    valid: boolean,
-    errorMessage: (string|undefined),
-  } {
+  static latitudeValidator(value: string): boolean {
     const numValue = parseFloat(value);
-    const valid = /^([+-]?[\d]+(\.\d+)?|[+-]?\.\d+)$/.test(value) && numValue >= -90 && numValue <= 90;
-    return {valid, errorMessage: undefined};
+    return /^([+-]?[\d]+(\.\d+)?|[+-]?\.\d+)$/.test(value) && numValue >= -90 && numValue <= 90;
   }
 
-  static longitudeValidator(value: string): {
-    valid: boolean,
-    errorMessage: (string|undefined),
-  } {
+  static longitudeValidator(value: string): boolean {
     const numValue = parseFloat(value);
-    const valid = /^([+-]?[\d]+(\.\d+)?|[+-]?\.\d+)$/.test(value) && numValue >= -180 && numValue <= 180;
-    return {valid, errorMessage: undefined};
+    return /^([+-]?[\d]+(\.\d+)?|[+-]?\.\d+)$/.test(value) && numValue >= -180 && numValue <= 180;
   }
 
-  static timezoneIdValidator(value: string): {
-    valid: boolean,
-    errorMessage: (string|undefined),
-  } {
+  static timezoneIdValidator(value: string): boolean {
     // Chromium uses ICU's timezone implementation, which is very
     // liberal in what it accepts. ICU does not simply use an allowlist
     // but instead tries to make sense of the input, even for
     // weird-looking timezone IDs. There's not much point in validating
     // the input other than checking if it contains at least one alphabet.
     // The empty string resets the override, and is accepted as well.
-    const valid = value === '' || /[a-zA-Z]/.test(value);
-    return {valid, errorMessage: undefined};
+    return value === '' || /[a-zA-Z]/.test(value);
   }
 
-  static localeValidator(value: string): {
-    valid: boolean,
-    errorMessage: (string|undefined),
-  } {
+  static localeValidator(value: string): boolean {
     // Similarly to timezone IDs, there's not much point in validating
     // input locales other than checking if it contains at least two
     // alphabetic characters.
     // https://unicode.org/reports/tr35/#Unicode_language_identifier
     // The empty string resets the override, and is accepted as
     // well.
-    const valid = value === '' || /[a-zA-Z]{2}/.test(value);
+    return value === '' || /[a-zA-Z]{2}/.test(value);
+  }
+
+  static accuracyValidator(value: string): {
+    valid: boolean,
+    errorMessage: (string|undefined),
+  } {
+    if (!value) {
+      return {valid: true, errorMessage: undefined};
+    }
+    const numValue = parseFloat(value);
+    const valid = /^([+-]?[\d]+(\.\d+)?|[+-]?\.\d+)$/.test(value) && numValue >= 0;
     return {valid, errorMessage: undefined};
   }
 
   toSetting(): string {
-    return `${this.latitude}@${this.longitude}:${this.timezoneId}:${this.locale}:${this.unavailable || ''}`;
+    return `${this.latitude}@${this.longitude}:${this.timezoneId}:${this.locale}:${this.unavailable || ''}:${
+        this.accuracy || ''}`;
   }
-
-  static defaultGeoMockAccuracy = 150;
 }
 
 export class DeviceOrientation {
@@ -538,9 +598,9 @@ export class DeviceOrientation {
       return null;
     }
 
-    const {valid: isAlphaValid} = DeviceOrientation.alphaAngleValidator(alphaString);
-    const {valid: isBetaValid} = DeviceOrientation.betaAngleValidator(betaString);
-    const {valid: isGammaValid} = DeviceOrientation.gammaAngleValidator(gammaString);
+    const isAlphaValid = DeviceOrientation.alphaAngleValidator(alphaString);
+    const isBetaValid = DeviceOrientation.betaAngleValidator(betaString);
+    const isGammaValid = DeviceOrientation.gammaAngleValidator(gammaString);
 
     if (!isAlphaValid && !isBetaValid && !isGammaValid) {
       return null;
@@ -556,34 +616,27 @@ export class DeviceOrientation {
   static angleRangeValidator(value: string, interval: {
     minimum: number,
     maximum: number,
-  }): {
-    valid: boolean,
-    errorMessage: undefined,
-  } {
+  }): boolean {
     const numValue = parseFloat(value);
-    const valid =
-        /^([+-]?[\d]+(\.\d+)?|[+-]?\.\d+)$/.test(value) && numValue >= interval.minimum && numValue < interval.maximum;
-    return {valid, errorMessage: undefined};
+    return /^([+-]?[\d]+(\.\d+)?|[+-]?\.\d+)$/.test(value) && numValue >= interval.minimum &&
+        numValue < interval.maximum;
   }
 
-  static alphaAngleValidator(value: string): {
-    valid: boolean,
-    errorMessage: (string|undefined),
-  } {
+  static alphaAngleValidator(value: string): boolean {
+    // https://w3c.github.io/deviceorientation/#device-orientation-model
+    // Alpha must be within the [0, 360) interval.
+    return DeviceOrientation.angleRangeValidator(value, {minimum: 0, maximum: 360});
+  }
+
+  static betaAngleValidator(value: string): boolean {
+    // https://w3c.github.io/deviceorientation/#device-orientation-model
+    // Beta must be within the [-180, 180) interval.
     return DeviceOrientation.angleRangeValidator(value, {minimum: -180, maximum: 180});
   }
 
-  static betaAngleValidator(value: string): {
-    valid: boolean,
-    errorMessage: (string|undefined),
-  } {
-    return DeviceOrientation.angleRangeValidator(value, {minimum: -180, maximum: 180});
-  }
-
-  static gammaAngleValidator(value: string): {
-    valid: boolean,
-    errorMessage: (string|undefined),
-  } {
+  static gammaAngleValidator(value: string): boolean {
+    // https://w3c.github.io/deviceorientation/#device-orientation-model
+    // Gamma must be within the [-90, 90) interval.
     return DeviceOrientation.angleRangeValidator(value, {minimum: -90, maximum: 90});
   }
 
@@ -592,4 +645,4 @@ export class DeviceOrientation {
   }
 }
 
-SDKModel.register(EmulationModel, {capabilities: Capability.Emulation, autostart: true});
+SDKModel.register(EmulationModel, {capabilities: Capability.EMULATION, autostart: true});

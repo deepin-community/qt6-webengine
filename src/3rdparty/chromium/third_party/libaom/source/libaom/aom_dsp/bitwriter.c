@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, Alliance for Open Media. All rights reserved
+ * Copyright (c) 2016, Alliance for Open Media. All rights reserved.
  *
  * This source code is subject to the terms of the BSD 2 Clause License and
  * the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -12,8 +12,9 @@
 #include <string.h>
 #include "aom_dsp/bitwriter.h"
 
-void aom_start_encode(aom_writer *w, uint8_t *source) {
+void aom_start_encode(aom_writer *w, uint8_t *source, size_t size) {
   w->buffer = source;
+  w->size = size;
   w->pos = 0;
   od_ec_enc_init(&w->ec, 62025);
 }
@@ -23,7 +24,7 @@ int aom_stop_encode(aom_writer *w) {
   uint32_t bytes;
   unsigned char *data;
   data = od_ec_enc_done(&w->ec, &bytes);
-  if (!data) {
+  if (!data || bytes > w->size) {
     od_ec_enc_clear(&w->ec);
     return -1;
   }

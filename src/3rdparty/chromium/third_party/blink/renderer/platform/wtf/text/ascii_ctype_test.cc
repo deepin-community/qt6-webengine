@@ -6,7 +6,7 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace WTF {
+namespace blink {
 
 TEST(ASCIICTypeTest, ASCIICaseFoldTable) {
   LChar symbol = 0xff;
@@ -15,4 +15,13 @@ TEST(ASCIICTypeTest, ASCIICaseFoldTable) {
   }
 }
 
-}  // namespace WTF
+TEST(ASCIICTypeTest, IsASCIISpaceWHATWG) {
+  char c = 0xFF;
+  do {
+    bool expected_whitespace =
+        c == 0x9 || c == 0xA || c == 0xC || c == 0xD || c == 0x20;
+    EXPECT_EQ(IsASCIISpaceWHATWG(c), expected_whitespace);
+  } while (c--);
+}
+
+}  // namespace blink

@@ -60,8 +60,6 @@ jumbo_component("domain_reliability") {
     "dispatcher.cc",
     "dispatcher.h",
     "domain_reliability_export.h",
-    "features.cc",
-    "features.h",
     "google_configs.cc",
     "google_configs.h",
     "monitor.cc",
@@ -120,7 +118,7 @@ source_set("prefs") {
 
   deps = [
     "//base",
-    "//components/pref_registry:pref_registry",
-    "//components/prefs:prefs",
+    "//components/pref_registry",
+    "//components/prefs",
   ]
 }

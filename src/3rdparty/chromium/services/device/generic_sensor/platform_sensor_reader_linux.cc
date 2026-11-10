@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/compiler_specific.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/sequence_checker.h"
@@ -153,7 +154,7 @@ void PollingSensorReader::BlockingTaskRunnerHelper::PollForData() {
       StopWithError();
       return;
     }
-    readings.raw.values[i++] = new_value;
+    UNSAFE_TODO(readings.raw.values[i++]) = new_value;
   }
 
   const auto& scaling_function = sensor_info_.apply_scaling_func;

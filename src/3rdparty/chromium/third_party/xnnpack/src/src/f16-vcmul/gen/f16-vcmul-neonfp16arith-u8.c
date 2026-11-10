@@ -1,5 +1,6 @@
+// clang-format off
 // Auto-generated file. Do not edit!
-//   Template: src/f16-vcmul/neon.c.in
+//   Template: src/f16-vcmul/neonfp16arith.c.in
 //   Generator: tools/xngen
 //
 // Copyright 2023 Google LLC
@@ -7,20 +8,23 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/vbinary.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vbinary.h"
 
 
 void xnn_f16_vcmul_ukernel__neonfp16arith_u8(
     size_t batch,
-    const void* input_a,
-    const void* input_b,
-    void* output,
-    const union xnn_f16_default_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const xnn_float16* input_a,
+    const xnn_float16* input_b,
+    xnn_float16* output,
+    const struct xnn_f16_default_params* restrict params) XNN_OOB_READS
 {
   assert(batch != 0);
   assert(batch % sizeof(uint16_t) == 0);
@@ -70,8 +74,8 @@ void xnn_f16_vcmul_ukernel__neonfp16arith_u8(
       vacci_lo = vget_high_f16(vacci);
     }
     if (batch & (2 * sizeof(uint16_t))) {
-      vst1_lane_u32((uint32_t*) or, vreinterpret_u32_f16(vaccr_lo), 0); or += 2;
-      vst1_lane_u32((uint32_t*) oi, vreinterpret_u32_f16(vacci_lo), 0); oi += 2;
+      vst1_lane_u32((void*) or, vreinterpret_u32_f16(vaccr_lo), 0); or += 2;
+      vst1_lane_u32((void*) oi, vreinterpret_u32_f16(vacci_lo), 0); oi += 2;
       vaccr_lo = vext_f16(vaccr_lo, vaccr_lo, 2);
       vacci_lo = vext_f16(vacci_lo, vacci_lo, 2);
     }

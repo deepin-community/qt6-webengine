@@ -6,25 +6,33 @@
 #include <assert.h>
 
 #include <emmintrin.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/unaligned.h>
-#include <xnnpack/vunary.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/unaligned.h"
+#include "src/xnnpack/vunary.h"
 
 
 void xnn_s8_vclamp_ukernel__sse2_u64(
     size_t batch,
     const int8_t* input,
     int8_t* output,
-    const union xnn_s8_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_s8_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(batch != 0);
   assert(batch % sizeof(int8_t) == 0);
   assert(input != NULL);
   assert(output != NULL);
 
-  const __m128i vbias = _mm_load_si128((const __m128i*) params->sse2.bias);
-  const __m128i voutput_max_with_bias = _mm_load_si128((const __m128i*) params->sse2.max_with_bias);
-  const __m128i voutput_min_with_bias = _mm_load_si128((const __m128i*) params->sse2.min_with_bias);
+  const __m128i vbias = _mm_set1_epi8(UINT8_C(0x80));
+  const __m128i voutput_max_with_bias = _mm_set1_epi8(UINT8_C(0x80) ^ params->scalar.max);
+  const __m128i voutput_min_with_bias = _mm_set1_epi8(UINT8_C(0x80) ^ params->scalar.min);
+  XNN_FORCE_REALIZATION(vbias);
+  XNN_FORCE_REALIZATION(voutput_max_with_bias);
+  XNN_FORCE_REALIZATION(voutput_min_with_bias);
+
   for (; batch >= 64; batch -= 64) {
     __m128i vacc0 = _mm_loadu_si128((const __m128i*) input);
     __m128i vacc1 = _mm_loadu_si128((const __m128i*) input + 1);

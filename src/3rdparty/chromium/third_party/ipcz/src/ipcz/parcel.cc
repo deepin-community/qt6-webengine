@@ -10,6 +10,7 @@
 #include <sstream>
 #include <string>
 #include <utility>
+#include <variant>
 
 #include "ipcz/node_link.h"
 #include "ipcz/node_link_memory.h"
@@ -24,11 +25,9 @@ Parcel::Parcel(SequenceNumber sequence_number)
     : sequence_number_(sequence_number) {}
 
 Parcel::~Parcel() {
-  if (objects_) {
-    for (Ref<APIObject>& object : objects_->storage) {
-      if (object) {
-        object->Close();
-      }
+  for (Ref<APIObject>& object : objects_.storage) {
+    if (object) {
+      object->Close();
     }
   }
 }
@@ -44,7 +43,7 @@ void Parcel::SetDataFromMessage(Message::ReceivedDataBuffer buffer,
 void Parcel::AllocateData(size_t num_bytes,
                           bool allow_partial,
                           NodeLinkMemory* memory) {
-  ABSL_ASSERT(absl::holds_alternative<absl::monostate>(data_.storage));
+  ABSL_ASSERT(std::holds_alternative<std::monostate>(data_.storage));
 
   Fragment fragment;
   if (num_bytes > 0 && memory) {
@@ -100,10 +99,8 @@ bool Parcel::AdoptDataFragment(Ref<NodeLinkMemory> memory,
 }
 
 void Parcel::SetObjects(std::vector<Ref<APIObject>> objects) {
-  ABSL_ASSERT(!objects_);
-  objects_ = std::make_unique<ObjectStorageWithView>();
-  objects_->storage = std::move(objects);
-  objects_->view = absl::MakeSpan(objects_->storage);
+  objects_.storage = std::move(objects);
+  objects_.view = absl::MakeSpan(objects_.storage);
 }
 
 void Parcel::CommitData(size_t num_bytes) {
@@ -112,7 +109,7 @@ void Parcel::CommitData(size_t num_bytes) {
     return;
   }
 
-  DataFragment& storage = absl::get<DataFragment>(data_.storage);
+  DataFragment& storage = std::get<DataFragment>(data_.storage);
   ABSL_ASSERT(storage.is_valid());
   ABSL_ASSERT(num_bytes <= storage.fragment().size() + sizeof(FragmentHeader));
   auto& header = *reinterpret_cast<FragmentHeader*>(
@@ -129,25 +126,24 @@ void Parcel::CommitData(size_t num_bytes) {
 
 void Parcel::ReleaseDataFragment() {
   ABSL_ASSERT(has_data_fragment());
-  std::ignore = absl::get<DataFragment>(data_.storage).release();
-  data_.storage.emplace<absl::monostate>();
+  std::ignore = std::get<DataFragment>(data_.storage).release();
+  data_.storage.emplace<std::monostate>();
   data_.view = {};
 }
 
 void Parcel::ConsumeHandles(absl::Span<IpczHandle> out_handles) {
-  absl::Span<Ref<APIObject>> objects;
-  if (objects_) {
-    objects = objects_->view;
-  }
+  absl::Span<Ref<APIObject>> objects = objects_.view;
   ABSL_ASSERT(out_handles.size() <= objects.size());
 
   for (size_t i = 0; i < out_handles.size(); ++i) {
     out_handles[i] = APIObject::ReleaseAsHandle(std::move(objects[i]));
   }
 
-  if (objects_) {
-    objects_->view.remove_prefix(out_handles.size());
-  }
+  objects_.view.remove_prefix(out_handles.size());
+}
+
+void Parcel::SetEnvelope(DriverObject envelope) {
+  envelope_ = std::move(envelope);
 }
 
 std::string Parcel::Describe() const {

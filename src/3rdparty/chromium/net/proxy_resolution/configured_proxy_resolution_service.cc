@@ -22,7 +22,6 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "net/base/net_errors.h"
 #include "net/base/net_info_source_list.h"
 #include "net/base/network_anonymization_key.h"
@@ -256,7 +255,6 @@ class ProxyResolverFactoryForSystem : public MultiThreadedProxyResolverFactory {
     return std::make_unique<ProxyResolverFactoryApple>();
 #else
     NOTREACHED();
-    return nullptr;
 #endif
   }
 
@@ -337,7 +335,7 @@ class ProxyResolverFactoryForProxyChains : public ProxyResolverFactory {
 
 // Returns NetLog parameters describing a proxy configuration change.
 base::Value::Dict NetLogProxyConfigChangedParams(
-    const absl::optional<ProxyConfigWithAnnotation>* old_config,
+    const std::optional<ProxyConfigWithAnnotation>* old_config,
     const ProxyConfigWithAnnotation* new_config) {
   base::Value::Dict dict;
   // The "old_config" is optional -- the first notification will not have
@@ -380,7 +378,7 @@ base::Value::Dict NetLogFinishedResolvingProxyParams(const ProxyInfo* result) {
 // for security (attacker can already route traffic through their HTTP proxy
 // and see the full URL for http:// requests).
 //
-// TODO(https://crbug.com/882536): Use the same stripping for insecure URL
+// TODO(crbug.com/41412888): Use the same stripping for insecure URL
 // schemes.
 GURL SanitizeUrl(const GURL& url) {
   DCHECK(url.is_valid());
@@ -540,8 +538,6 @@ class ConfiguredProxyResolutionService::InitProxyResolver {
           break;
         default:
           NOTREACHED() << "bad state: " << static_cast<int>(state);
-          rv = ERR_UNEXPECTED;
-          break;
       }
     } while (rv != ERR_IO_PENDING && next_state_ != State::kNone);
     return rv;
@@ -1063,7 +1059,6 @@ ConfiguredProxyResolutionService::~ConfiguredProxyResolutionService() {
   while (!pending_requests_.empty()) {
     ConfiguredProxyResolutionRequest* req = *pending_requests_.begin();
     req->QueryComplete(ERR_ABORTED);
-    pending_requests_.erase(req);
   }
 }
 
@@ -1089,7 +1084,7 @@ void ConfiguredProxyResolutionService::SetReady() {
       weak_ptr_factory_.GetWeakPtr();
 
   auto pending_requests_copy = pending_requests_;
-  for (auto* req : pending_requests_copy) {
+  for (ConfiguredProxyResolutionRequest* req : pending_requests_copy) {
     if (!ContainsPendingRequest(req))
       continue;
 
@@ -1176,23 +1171,16 @@ void ConfiguredProxyResolutionService::OnInitProxyResolverComplete(int result) {
   SetReady();
 }
 
-bool ConfiguredProxyResolutionService::MarkProxiesAsBadUntil(
-    const ProxyInfo& result,
-    base::TimeDelta retry_delay,
-    const std::vector<ProxyChain>& additional_bad_proxies,
-    const NetLogWithSource& net_log) {
-  result.proxy_list().UpdateRetryInfoOnFallback(&proxy_retry_info_, retry_delay,
-                                                false, additional_bad_proxies,
-                                                OK, net_log);
-  return result.proxy_list().size() > (additional_bad_proxies.size() + 1);
-}
-
 void ConfiguredProxyResolutionService::ReportSuccess(const ProxyInfo& result) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   const ProxyRetryInfoMap& new_retry_info = result.proxy_retry_info();
   if (new_retry_info.empty())
     return;
+
+  if (proxy_delegate_) {
+    proxy_delegate_->OnSuccessfulRequestAfterFailures(new_retry_info);
+  }
 
   for (const auto& iter : new_retry_info) {
     auto existing = proxy_retry_info_.find(iter.first);
@@ -1285,8 +1273,9 @@ int ConfiguredProxyResolutionService::DidFinishResolvingProxy(
       // If the ProxyResolver crashed, force it to be re-initialized for the
       // next request by resetting the proxy config. If there are other pending
       // requests, trigger the recreation immediately so those requests retry.
-      if (pending_requests_.size() > 1)
+      if (!pending_requests_.empty()) {
         ApplyProxyConfigIfAvailable();
+      }
     }
   }
 
@@ -1362,9 +1351,9 @@ ConfiguredProxyResolutionService::ResetProxyConfig(bool reset_fetched_config) {
   init_proxy_resolver_.reset();
   SuspendAllPendingRequests();
   resolver_.reset();
-  config_ = absl::nullopt;
+  config_ = std::nullopt;
   if (reset_fetched_config)
-    fetched_config_ = absl::nullopt;
+    fetched_config_ = std::nullopt;
   current_state_ = STATE_NONE;
 
   return previous_state;
@@ -1441,7 +1430,6 @@ void ConfiguredProxyResolutionService::OnProxyConfigChanged(
     case ProxyConfigService::CONFIG_PENDING:
       // ProxyConfigService implementors should never pass CONFIG_PENDING.
       NOTREACHED() << "Proxy config change with CONFIG_PENDING availability!";
-      return;
     case ProxyConfigService::CONFIG_VALID:
       effective_config = config;
       break;

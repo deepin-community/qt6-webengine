@@ -103,7 +103,7 @@ TEST_F(WaylandCursorFactoryTest, RetainOldThemeUntilNewBufferIsAttached) {
 
   // Trigger theme reload and ensure that the theme instance has changed.
   // As we didn't request any buffers, the unloaded theme should not be held.
-  // TODO(crbug.com/1357512): the current method here compares addresses of the
+  // TODO(crbug.com/40861116): the current method here compares addresses of the
   // objects before and after the reload, and expects the address to change,
   // which means that a new object has been allocated.  Technically that is not
   // guaranteed.  Probably a better way should be invented.
@@ -139,7 +139,7 @@ TEST_F(WaylandCursorFactoryTest, RetainOldThemeUntilNewBufferIsAttached) {
 
       auto* const new_current_theme = cursor_factory->theme_cache_.get();
       ASSERT_EQ(new_current_theme->size(), 1U);
-      EXPECT_EQ(new_current_theme->begin()->second->cache.size(), 0U);
+      EXPECT_EQ(new_current_theme->begin()->second->cache().size(), 0U);
       EXPECT_NE(new_current_theme, used_current_theme);
       EXPECT_EQ(cursor_factory->unloaded_theme_.get(), used_current_theme);
 
@@ -183,7 +183,7 @@ TEST_F(WaylandCursorFactoryTest, CachesSizesUntilThemeNameIsChanged) {
 
   // Trigger theme reload and ensure that the theme instance has changed.
   // As we didn't request any buffers, the unloaded theme should not be held.
-  // TODO(crbug.com/1357512): the current method here compares addresses of the
+  // TODO(crbug.com/40861116): the current method here compares addresses of the
   // objects before and after the reload, and expects the address to change,
   // which means that a new object has been allocated.  Technically that is not
   // guaranteed.  Probably a better way should be invented.
@@ -236,7 +236,7 @@ TEST_F(WaylandCursorFactoryTest, CachesSizesUntilThemeNameIsChanged) {
     ASSERT_EQ(cursor_factory->theme_cache_->size(), 1U);
     auto* const new_current_theme =
         cursor_factory->theme_cache_->begin()->second.get();
-    EXPECT_EQ(new_current_theme->cache.size(), 0U);
+    EXPECT_EQ(new_current_theme->cache().size(), 0U);
     EXPECT_NE(cursor_factory->unloaded_theme_.get(), nullptr);
 
     WaitForThemeLoaded();

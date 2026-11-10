@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-vadd/scalar.c.in
 //   Generator: tools/xngen
@@ -8,9 +9,13 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/math.h>
-#include <xnnpack/vbinary.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vbinary.h"
 
 
 void xnn_qu8_vadd_minmax_ukernel__scalar_u1(
@@ -18,7 +23,7 @@ void xnn_qu8_vadd_minmax_ukernel__scalar_u1(
     const uint8_t* input_a,
     const uint8_t* input_b,
     uint8_t* output,
-    const union xnn_qu8_add_minmax_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const struct xnn_qu8_add_minmax_params* restrict params)
 {
   assert(batch != 0);
   assert(batch % sizeof(uint8_t) == 0);
@@ -30,8 +35,8 @@ void xnn_qu8_vadd_minmax_ukernel__scalar_u1(
   const int32_t va_multiplier = params->scalar.a_multiplier;
   const int32_t vb_multiplier = params->scalar.b_multiplier;
   const uint32_t vshift = params->scalar.shift;
-  const int32_t voutput_min_less_zero_point = params->scalar.output_min_less_zero_point;
-  const int32_t voutput_max_less_zero_point = params->scalar.output_max_less_zero_point;
+  const int32_t voutput_min = params->scalar.output_min;
+  const int32_t voutput_max = params->scalar.output_max;
   const int32_t voutput_zero_point = params->scalar.output_zero_point;
 
   do {
@@ -40,9 +45,10 @@ void xnn_qu8_vadd_minmax_ukernel__scalar_u1(
     const int32_t vacc = vbias + va * va_multiplier + vb * vb_multiplier;
 
     int32_t vout = math_asr_s32(vacc, vshift);
-    vout = math_max_s32(vout, voutput_min_less_zero_point);
-    vout = math_min_s32(vout, voutput_max_less_zero_point);
-    *output++ = (uint8_t) (vout + voutput_zero_point);
+    vout += voutput_zero_point;
+    vout = math_max_s32(vout, voutput_min);
+    vout = math_min_s32(vout, voutput_max);
+    *output++ = (uint8_t) vout;
 
     batch -= sizeof(uint8_t);
   } while (batch != 0);

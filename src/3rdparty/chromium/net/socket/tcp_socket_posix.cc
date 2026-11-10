@@ -17,11 +17,13 @@
 #include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notimplemented.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "net/base/address_list.h"
 #include "net/base/io_buffer.h"
@@ -31,7 +33,6 @@
 #include "net/base/network_change_notifier.h"
 #include "net/base/sockaddr_storage.h"
 #include "net/base/sys_addrinfo.h"
-#include "net/base/tracing.h"
 #include "net/http/http_util.h"
 #include "net/log/net_log.h"
 #include "net/log/net_log_event_type.h"
@@ -54,7 +55,7 @@
 #endif
 
 // Fuchsia defines TCP_INFO, but it's not implemented.
-// TODO(crbug.com/758294): Enable TCP_INFO on Fuchsia once it's implemented
+// TODO(crbug.com/42050612): Enable TCP_INFO on Fuchsia once it's implemented
 // there (see NET-160).
 #if defined(TCP_INFO) && !BUILDFLAG(IS_FUCHSIA)
 #define HAVE_TCP_INFO
@@ -143,6 +144,23 @@ base::TimeDelta GetTransportRtt(SocketDescriptor fd) {
 
 //-----------------------------------------------------------------------------
 
+// static
+std::unique_ptr<TCPSocketPosix> TCPSocketPosix::Create(
+    std::unique_ptr<SocketPerformanceWatcher> socket_performance_watcher,
+    NetLog* net_log,
+    const NetLogSource& source) {
+  return base::WrapUnique(new TCPSocketPosix(
+      std::move(socket_performance_watcher), net_log, source));
+}
+
+// static
+std::unique_ptr<TCPSocketPosix> TCPSocketPosix::Create(
+    std::unique_ptr<SocketPerformanceWatcher> socket_performance_watcher,
+    NetLogWithSource net_log_source) {
+  return base::WrapUnique(new TCPSocketPosix(
+      std::move(socket_performance_watcher), net_log_source));
+}
+
 TCPSocketPosix::TCPSocketPosix(
     std::unique_ptr<SocketPerformanceWatcher> socket_performance_watcher,
     NetLog* net_log,
@@ -192,7 +210,7 @@ int TCPSocketPosix::AdoptConnectedSocket(SocketDescriptor socket,
   DCHECK(!socket_);
 
   SockaddrStorage storage;
-  if (!peer_address.ToSockAddr(storage.addr, &storage.addr_len) &&
+  if (!peer_address.ToSockAddr(storage.addr(), &storage.addr_len) &&
       // For backward compatibility, allows the empty address.
       !(peer_address == IPEndPoint())) {
     return ERR_ADDRESS_INVALID;
@@ -223,8 +241,9 @@ int TCPSocketPosix::Bind(const IPEndPoint& address) {
   DCHECK(socket_);
 
   SockaddrStorage storage;
-  if (!address.ToSockAddr(storage.addr, &storage.addr_len))
+  if (!address.ToSockAddr(storage.addr(), &storage.addr_len)) {
     return ERR_ADDRESS_INVALID;
+  }
 
   return socket_->Bind(storage);
 }
@@ -264,8 +283,9 @@ int TCPSocketPosix::Connect(const IPEndPoint& address,
                       [&] { return CreateNetLogIPEndPointParams(&address); });
 
   SockaddrStorage storage;
-  if (!address.ToSockAddr(storage.addr, &storage.addr_len))
+  if (!address.ToSockAddr(storage.addr(), &storage.addr_len)) {
     return ERR_ADDRESS_INVALID;
+  }
 
   int rv = socket_->Connect(
       storage, base::BindOnce(&TCPSocketPosix::ConnectCompleted,
@@ -362,8 +382,9 @@ int TCPSocketPosix::GetLocalAddress(IPEndPoint* address) const {
   if (rv != OK)
     return rv;
 
-  if (!address->FromSockAddr(storage.addr, storage.addr_len))
+  if (!address->FromSockAddr(storage.addr(), storage.addr_len)) {
     return ERR_ADDRESS_INVALID;
+  }
 
   return OK;
 }
@@ -379,8 +400,9 @@ int TCPSocketPosix::GetPeerAddress(IPEndPoint* address) const {
   if (rv != OK)
     return rv;
 
-  if (!address->FromSockAddr(storage.addr, storage.addr_len))
+  if (!address->FromSockAddr(storage.addr(), storage.addr_len)) {
     return ERR_ADDRESS_INVALID;
+  }
 
   return OK;
 }
@@ -536,13 +558,13 @@ int TCPSocketPosix::BuildTcpSocketPosix(
 
   SockaddrStorage storage;
   if (accept_socket_->GetPeerAddress(&storage) != OK ||
-      !address->FromSockAddr(storage.addr, storage.addr_len)) {
+      !address->FromSockAddr(storage.addr(), storage.addr_len)) {
     accept_socket_.reset();
     return ERR_ADDRESS_INVALID;
   }
 
-  *tcp_socket = std::make_unique<TCPSocketPosix>(nullptr, net_log_.net_log(),
-                                                 net_log_.source());
+  *tcp_socket =
+      TCPSocketPosix::Create(nullptr, net_log_.net_log(), net_log_.source());
   (*tcp_socket)->socket_ = std::move(accept_socket_);
   return OK;
 }

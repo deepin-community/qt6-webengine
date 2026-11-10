@@ -34,7 +34,6 @@ void AutofillScanner::Advance() {
 AutofillField* AutofillScanner::Cursor() const {
   if (IsEnd()) {
     NOTREACHED();
-    return nullptr;
   }
 
   return *cursor_;

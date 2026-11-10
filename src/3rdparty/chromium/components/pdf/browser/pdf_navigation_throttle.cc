@@ -5,6 +5,7 @@
 #include "components/pdf/browser/pdf_navigation_throttle.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "base/check.h"
@@ -13,33 +14,62 @@
 #include "base/memory/weak_ptr.h"
 #include "base/task/sequenced_task_runner.h"
 #include "components/pdf/browser/pdf_stream_delegate.h"
+#include "components/pdf/common/constants.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/navigation_throttle.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/web_contents.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "net/http/http_response_headers.h"
+#include "pdf/pdf_features.h"
+#include "services/network/public/cpp/web_sandbox_flags.h"
 #include "ui/base/page_transition_types.h"
 #include "url/gurl.h"
 
 namespace pdf {
 
-// static
-std::unique_ptr<content::NavigationThrottle>
-PdfNavigationThrottle::MaybeCreateThrottleFor(
-    content::NavigationHandle* navigation_handle,
-    std::unique_ptr<PdfStreamDelegate> stream_delegate) {
-  if (navigation_handle->IsInMainFrame())
-    return nullptr;
+content::NavigationThrottle::ThrottleCheckResult
+PdfNavigationThrottle::WillProcessResponse() {
+  // OOPIF PDF viewer only.
+  if (!chrome_pdf::features::IsOopifPdfEnabled()) {
+    return PROCEED;
+  }
 
-  return std::make_unique<PdfNavigationThrottle>(navigation_handle,
-                                                 std::move(stream_delegate));
+  const net::HttpResponseHeaders* response_headers =
+      navigation_handle()->GetResponseHeaders();
+  if (!response_headers) {
+    return PROCEED;
+  }
+
+  std::string mime_type;
+  response_headers->GetMimeType(&mime_type);
+  if (mime_type != kPDFMimeType) {
+    return PROCEED;
+  }
+
+  // Fenced frames should not be able to load PDFs.
+  bool is_sandboxed_pdf = (navigation_handle()->SandboxFlagsToCommit() &
+                           network::mojom::WebSandboxFlags::kPlugins) !=
+                          network::mojom::WebSandboxFlags::kNone;
+  if (!is_sandboxed_pdf) {
+    return PROCEED;
+  }
+
+  // If there is a PDF stream, then the navigation is for a PDF in a sandboxed
+  // iframe and should be canceled. Otherwise, the navigation is for PDFs that
+  // are not meant to be viewed inline (e.g. downloads) and should be allowed to
+  // proceed.
+  if (!stream_delegate_->MaybeDeleteSandboxedStream(
+          navigation_handle()->GetFrameTreeNodeId())) {
+    return PROCEED;
+  }
+  return ThrottleCheckResult(CANCEL, net::ERR_BLOCKED_BY_CLIENT);
 }
 
 PdfNavigationThrottle::PdfNavigationThrottle(
-    content::NavigationHandle* navigation_handle,
+    content::NavigationThrottleRegistry& registry,
     std::unique_ptr<PdfStreamDelegate> stream_delegate)
-    : content::NavigationThrottle(navigation_handle),
+    : content::NavigationThrottle(registry),
       stream_delegate_(std::move(stream_delegate)) {
   DCHECK(stream_delegate_);
 }
@@ -52,11 +82,28 @@ const char* PdfNavigationThrottle::GetNameForLogging() {
 
 content::NavigationThrottle::ThrottleCheckResult
 PdfNavigationThrottle::WillStartRequest() {
-  // Ignore unless navigating to the stream URL.
-  const absl::optional<GURL> original_url =
+  // Intercepts navigations to a PDF stream URL in a PDF content frame and
+  // re-navigates to the original PDF URL.
+
+  // The main frame may contain the PDF extension for non-PdfOopif cases; it
+  // should never be navigated away from the extension.
+  if (navigation_handle()->IsInMainFrame()) {
+    return stream_delegate_->ShouldAllowPdfExtensionFrameNavigation(
+               navigation_handle())
+               ? PROCEED
+               : BLOCK_REQUEST;
+  }
+
+  // Skip unless navigating to the stream URL.
+  const std::optional<GURL> original_url =
       stream_delegate_->MapToOriginalUrl(*navigation_handle());
-  if (!original_url.has_value())
-    return PROCEED;
+  if (!original_url.has_value()) {
+    // Block any non-PDF navigations in internal PDF extension and content
+    // frames. Allow all other navigations to proceed.
+    return stream_delegate_->ShouldAllowPdfFrameNavigation(navigation_handle())
+               ? PROCEED
+               : BLOCK_REQUEST;
+  }
 
   // Uses the same pattern as `PDFIFrameNavigationThrottle` to redirect
   // navigation to the original URL. We'll use this to navigate to the correct
@@ -70,7 +117,7 @@ PdfNavigationThrottle::WillStartRequest() {
   params.is_pdf = true;
 
   // The parent frame should always exist after main frame navigations are
-  // filtered out in `MaybeCreateThrottleFor()`, and it has the expected
+  // filtered out at the beginning of this method, and it has the expected
   // embedder URL based on the checks in
   // `PdfStreamDelegate::MapToOriginalUrl()`. For the PDF viewer, the parent
   // frame is the PDF extension frame. For Print Preview, the parent frame is
@@ -96,7 +143,7 @@ PdfNavigationThrottle::WillStartRequest() {
   // task does run and does not get canceled due to the embedder frame becoming
   // null, we can restore the source SiteInstance at that point.
   //
-  // TODO(crbug.com/1382761): This should be fixed in a more systematic way.
+  // TODO(crbug.com/40061670): This should be fixed in a more systematic way.
   DCHECK_EQ(params.source_site_instance, embedder_frame->GetSiteInstance());
   params.source_site_instance.reset();
 
@@ -118,10 +165,8 @@ PdfNavigationThrottle::WillStartRequest() {
             // `MimeHandlerViewGuest` navigates its embedder for calls to
             // `WebContents::OpenURL()`, so use `LoadURLWithParams()` directly
             // instead.
-            content::WebContents::FromRenderFrameHost(embedder_frame)
-                ->GetController()
-                .LoadURLWithParams(
-                    content::NavigationController::LoadURLParams(new_params));
+            embedder_frame->GetController().LoadURLWithParams(
+                content::NavigationController::LoadURLParams(new_params));
 
             // Note that we don't need to register the stream's URL loader as a
             // subresource, as `MimeHandlerViewGuest::ReadyToCommitNavigation()`

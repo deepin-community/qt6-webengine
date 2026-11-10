@@ -7,6 +7,8 @@
 #include <map>
 #include <string>
 
+#include "base/compiler_specific.h"
+#include "base/containers/span.h"
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
 #include "base/i18n/icu_string_conversions.h"
@@ -26,9 +28,7 @@ namespace {
 bool VerifyWords(const convert_dict::DicReader::WordList& org_words,
                  const std::string& serialized) {
   hunspell::BDictReader reader;
-  EXPECT_TRUE(
-      reader.Init(reinterpret_cast<const unsigned char*>(serialized.data()),
-      serialized.size()));
+  EXPECT_TRUE(reader.Init(base::as_byte_span(serialized)));
 
   hunspell::WordIterator iter = reader.GetAllWordIterator();
 
@@ -48,7 +48,8 @@ bool VerifyWords(const convert_dict::DicReader::WordList& org_words,
     // Check the individual affix indices.
     for (size_t affix_index = 0; affix_index < org_words[i].second.size();
          affix_index++) {
-      EXPECT_EQ(affix_ids[affix_index], org_words[i].second[affix_index]);
+      UNSAFE_TODO(
+          EXPECT_EQ(affix_ids[affix_index], org_words[i].second[affix_index]));
     }
   }
 
@@ -116,15 +117,15 @@ void RunDictionaryTest(const char* codepage,
     writer.SetWords(dic_reader.words());
 
     std::string bdict_data = writer.GetBDict();
+    base::span<const uint8_t> bytes = base::as_byte_span(bdict_data);
     VerifyWords(dic_reader.words(), bdict_data);
-    EXPECT_TRUE(hunspell::BDict::Verify(bdict_data.data(), bdict_data.size()));
+    EXPECT_TRUE(hunspell::BDict::Verify(bytes));
 
     // Trim the end of this BDICT and verify our verifier tells these trimmed
     // BDICTs are corrupted.
     for (size_t i = 1; i < bdict_data.size(); ++i) {
       SCOPED_TRACE(base::StringPrintf("i = %" PRIuS, i));
-      EXPECT_FALSE(hunspell::BDict::Verify(bdict_data.data(),
-                                           bdict_data.size() - i));
+      EXPECT_FALSE(hunspell::BDict::Verify(bytes.first(i)));
     }
   }
 
@@ -146,7 +147,7 @@ TEST(ConvertDictTest, English) {
 
   std::map<std::u16string, bool> word_list;
   for (size_t i = 0; i < std::size(kWords); ++i) {
-    word_list.insert({base::WideToUTF16(kWords[i]), true});
+    word_list.insert({base::WideToUTF16(UNSAFE_TODO(kWords[i])), true});
   }
 
   RunDictionaryTest(kCodepage, word_list);
@@ -168,7 +169,7 @@ TEST(ConvertDictTest, Russian) {
 
   std::map<std::u16string, bool> word_list;
   for (size_t i = 0; i < std::size(kWords); ++i) {
-    word_list.insert({base::WideToUTF16(kWords[i]), true});
+    word_list.insert({base::WideToUTF16(UNSAFE_TODO(kWords[i])), true});
   }
 
   RunDictionaryTest(kCodepage, word_list);
@@ -192,7 +193,7 @@ TEST(ConvertDictTest, Hungarian) {
 
   std::map<std::u16string, bool> word_list;
   for (size_t i = 0; i < std::size(kWords); ++i) {
-    word_list.insert({base::WideToUTF16(kWords[i]), true});
+    word_list.insert({base::WideToUTF16(UNSAFE_TODO(kWords[i])), true});
   }
 
   RunDictionaryTest(kCodepage, word_list);

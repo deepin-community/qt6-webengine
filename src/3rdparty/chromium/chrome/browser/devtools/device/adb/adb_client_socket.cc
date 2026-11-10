@@ -35,8 +35,8 @@ std::string EncodeMessage(const std::string& message) {
   CHECK_LE(length, 0xffffu);
   std::string result;
   result.reserve(4);
-  base::AppendHexEncodedByte(reinterpret_cast<const uint8_t*>(&length)[1],
-                             result);
+  base::AppendHexEncodedByte(
+      UNSAFE_TODO(reinterpret_cast<const uint8_t*>(&length)[1]), result);
   base::AppendHexEncodedByte(reinterpret_cast<const uint8_t*>(&length)[0],
                              result);
   return result + message;
@@ -173,8 +173,7 @@ AdbClientSocket::AdbClientSocket(int port)
     : host_(kLocalhost), port_(port) {
 }
 
-AdbClientSocket::~AdbClientSocket() {
-}
+AdbClientSocket::~AdbClientSocket() = default;
 
 void AdbClientSocket::RunConnectCallback(int result) {
   std::move(connect_callback_).Run(result);

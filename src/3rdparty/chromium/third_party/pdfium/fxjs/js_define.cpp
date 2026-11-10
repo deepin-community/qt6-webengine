@@ -11,21 +11,20 @@
 
 #include <algorithm>
 #include <limits>
-#include <vector>
 
+#include "core/fxcrt/check.h"
 #include "core/fxcrt/fx_extension.h"
+#include "core/fxcrt/span.h"
 #include "fxjs/cjs_document.h"
 #include "fxjs/cjs_object.h"
 #include "fxjs/fx_date_helpers.h"
 #include "fxjs/fxv8.h"
-#include "third_party/base/check.h"
-#include "third_party/base/containers/span.h"
 #include "v8/include/v8-context.h"
 #include "v8/include/v8-function.h"
 #include "v8/include/v8-isolate.h"
 
 void JSDestructor(v8::Local<v8::Object> obj) {
-  CFXJS_Engine::SetObjectPrivate(obj, nullptr);
+  CFXJS_Engine::SetBinding(obj, nullptr);
 }
 
 double JS_DateParse(v8::Isolate* pIsolate, const WideString& str) {
@@ -39,13 +38,15 @@ double JS_DateParse(v8::Isolate* pIsolate, const WideString& str) {
       context->Global()->Get(context, fxv8::NewStringHelper(pIsolate, "Date"));
 
   v8::Local<v8::Value> value;
-  if (!maybe_value.ToLocal(&value) || !value->IsObject())
+  if (!maybe_value.ToLocal(&value) || !value->IsObject()) {
     return 0;
+  }
 
   v8::Local<v8::Object> obj = value.As<v8::Object>();
   maybe_value = obj->Get(context, fxv8::NewStringHelper(pIsolate, "parse"));
-  if (!maybe_value.ToLocal(&value) || !value->IsFunction())
+  if (!maybe_value.ToLocal(&value) || !value->IsFunction()) {
     return 0;
+  }
 
   v8::Local<v8::Function> func = value.As<v8::Function>();
   static constexpr int argc = 1;
@@ -53,8 +54,9 @@ double JS_DateParse(v8::Isolate* pIsolate, const WideString& str) {
       fxv8::NewStringHelper(pIsolate, str.AsStringView()),
   };
   maybe_value = func->Call(context, context->Global(), argc, argv);
-  if (!maybe_value.ToLocal(&value) || !value->IsNumber())
+  if (!maybe_value.ToLocal(&value) || !value->IsNumber()) {
     return 0;
+  }
 
   double date = value.As<v8::Number>()->Value();
   return isfinite(date) ? FX_LocalTime(date) : date;
@@ -69,8 +71,9 @@ v8::LocalVector<v8::Value> ExpandKeywordParams(
 
   v8::LocalVector<v8::Value> result(pRuntime->GetIsolate(), nKeywords);
   size_t size = std::min(originals.size(), nKeywords);
-  for (size_t i = 0; i < size; ++i)
+  for (size_t i = 0; i < size; ++i) {
     result[i] = originals[i];
+  }
 
   if (originals.size() != 1 || !originals[0]->IsObject() ||
       originals[0]->IsArray()) {
@@ -84,8 +87,9 @@ v8::LocalVector<v8::Value> ExpandKeywordParams(
   for (size_t i = 0; i < nKeywords; ++i) {
     const char* property = va_arg(ap, const char*);
     v8::Local<v8::Value> v8Value = pRuntime->GetObjectProperty(pObj, property);
-    if (!v8Value->IsUndefined())
+    if (!v8Value->IsUndefined()) {
       result[i] = v8Value;
+    }
   }
   va_end(ap);
 

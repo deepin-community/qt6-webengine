@@ -66,6 +66,9 @@ struct info_t :
 {
   void add_options ()
   {
+    set_summary ("Query font information.");
+    set_description ("Queries font file for various information. If no query option is specified, --show-all is assumed.");
+
     font_options_t::add_options (this);
 
     GOptionEntry misc_entries[] =
@@ -243,9 +246,6 @@ struct info_t :
   {
     add_options ();
 
-    if (argc == 2)
-      show_all = true;
-
     parse (&argc, &argv);
 
     if (all)
@@ -255,6 +255,7 @@ struct info_t :
       true;
     }
 
+retry:
     if (show_all)
     {
       show_face_count =
@@ -294,42 +295,52 @@ struct info_t :
       true;
     }
 
-    if (show_face_count)  _show_face_count ();
-    if (show_family)	  _show_family ();
-    if (show_subfamily)	  _show_subfamily ();
-    if (show_unique_name) _show_unique_name ();
-    if (show_full_name)	  _show_full_name ();
-    if (show_postscript_name)_show_postscript_name ();
-    if (show_version)	  _show_version ();
-    if (show_technology)  _show_technology ();
-    if (show_unicode_count)_show_unicode_count ();
-    if (show_glyph_count) _show_glyph_count ();
-    if (show_upem)	  _show_upem ();
-    if (show_extents)	  _show_extents ();
+    bool done_something = false;
 
-    if (get_name)	  _get_name ();
-    if (get_style)	  _get_style ();
-    if (get_metric)	  _get_metric ();
-    if (get_baseline)	  _get_baseline ();
-    if (get_meta)	  _get_meta ();
-    if (get_table)	  _get_table ();
+#define process_item(item) HB_STMT_START { if (item) { done_something = true; _##item (); } } HB_STMT_END
 
-    if (list_names)	  _list_names ();
+    process_item (show_face_count);
+    process_item (show_family);
+    process_item (show_subfamily);
+    process_item (show_unique_name);
+    process_item (show_full_name);
+    process_item (show_postscript_name);
+    process_item (show_version);
+    process_item (show_technology);
+    process_item (show_unicode_count);
+    process_item (show_glyph_count);
+    process_item (show_upem);
+    process_item (show_extents);
+
+    process_item (get_name);
+    process_item (get_style);
+    process_item (get_metric);
+    process_item (get_baseline);
+    process_item (get_meta);
+    process_item (get_table);
+
+    process_item (list_names);
 #ifdef HB_HAS_GOBJECT
-    if (list_style)	  _list_style ();
-    if (list_metrics)	  _list_metrics ();
-    if (list_baselines)	  _list_baselines ();
+    process_item (list_style);
+    process_item (list_metrics);
+    process_item (list_baselines);
 #endif
-    if (list_tables)	  _list_tables ();
-    if (list_unicodes)	  _list_unicodes ();
-    if (list_glyphs)	  _list_glyphs ();
-    if (list_scripts)	  _list_scripts ();
-    if (list_features)	  _list_features ();
+    process_item (list_tables);
+    process_item (list_unicodes);
+    process_item (list_glyphs);
+    process_item (list_scripts);
+    process_item (list_features);
 #ifndef HB_NO_VAR
-    if (list_variations)  _list_variations ();
+    process_item (list_variations);
 #endif
-    if (list_palettes)	  _list_palettes ();
-    if (list_meta)	  _list_meta ();
+    process_item (list_palettes);
+    process_item (list_meta);
+
+    if (!done_something)
+    {
+      show_all = true;
+      goto retry;
+    }
 
     return 0;
   }
@@ -349,7 +360,9 @@ struct info_t :
   void
   _show_face_count ()
   {
+    hb_blob_t *blob = hb_blob_create_from_file (font_file);
     printf ("Face count: %u\n", hb_face_count (blob));
+    hb_blob_destroy (blob);
   }
 
   void
@@ -418,6 +431,8 @@ struct info_t :
       printf ("Has AAT layout\n");
     if (_has_blob (HB_TAG('S','i','l','f')))
       printf ("Has Graphite layout\n");
+    if (_has_blob (HB_TAG('W','a','s','m')))
+      printf ("Has WebAssembly layout\n");
     if (_has_blob (HB_TAG('k','e','r','n')))
       printf ("Has legacy kerning\n");
 
@@ -821,7 +836,7 @@ struct info_t :
     {
       hb_codepoint_t gid = hb_map_get (cmap, u);
 
-      char glyphname[64];
+      char glyphname[128];
       hb_font_glyph_to_string (font, gid,
 			       glyphname, sizeof glyphname);
 
@@ -849,7 +864,7 @@ struct info_t :
 	HB_UNUSED bool b = hb_font_get_variation_glyph (font, u, vs, &gid);
 	assert (b);
 
-	char glyphname[64];
+	char glyphname[128];
 	hb_font_glyph_to_string (font, gid,
 				 glyphname, sizeof glyphname);
 
@@ -875,7 +890,7 @@ struct info_t :
 
     for (hb_codepoint_t gid = 0; gid < num_glyphs; gid++)
     {
-      char glyphname[64];
+      char glyphname[128];
       hb_font_glyph_to_string (font, gid,
 			       glyphname, sizeof glyphname);
 
@@ -1000,7 +1015,7 @@ struct info_t :
 					     nullptr,
 					     nullptr);
 
-	  char name[64];
+	  char name[128];
 	  unsigned name_len = sizeof name;
 
 	  _hb_ot_name_get_utf8 (face, label_id,
@@ -1118,7 +1133,7 @@ struct info_t :
 					     nullptr,
 					     nullptr);
 
-	  char name[64];
+	  char name[128];
 	  unsigned name_len = sizeof name;
 
 	  _hb_ot_name_get_utf8 (face, label_id,
@@ -1175,7 +1190,7 @@ struct info_t :
       if (axis.flags & HB_OT_VAR_AXIS_FLAG_HIDDEN)
 	has_hidden = true;
 
-      char name[64];
+      char name[128];
       unsigned name_len = sizeof name;
 
       _hb_ot_name_get_utf8 (face, axis.name_id,
@@ -1207,7 +1222,7 @@ struct info_t :
 
       for (unsigned i = 0; i < count; i++)
       {
-	char name[64];
+	char name[128];
 	unsigned name_len = sizeof name;
 
 	hb_ot_name_id_t name_id = hb_ot_var_named_instance_get_subfamily_name_id (face, i);
@@ -1327,7 +1342,7 @@ struct info_t :
 	hb_ot_name_id_t name_id = hb_ot_color_palette_get_name_id (face, i);
 	hb_ot_color_palette_flags_t flags = hb_ot_color_palette_get_flags (face, i);
 
-	char name[64];
+	char name[128];
 	unsigned name_len = sizeof name;
 
 	_hb_ot_name_get_utf8 (face, name_id,
@@ -1375,7 +1390,7 @@ struct info_t :
       {
 	hb_ot_name_id_t name_id = hb_ot_color_palette_color_get_name_id (face, i);
 
-	char name[64];
+	char name[128];
 	unsigned name_len = sizeof name;
 	_hb_ot_name_get_utf8 (face, name_id,
 			      language,
@@ -1416,30 +1431,6 @@ struct info_t :
 	hb_blob_destroy (blob);
       }
     }
-  }
-
-};
-
-
-template <typename consumer_t,
-	  typename font_options_type>
-struct main_font_t :
-       option_parser_t,
-       font_options_type,
-       consumer_t
-{
-  int operator () (int argc, char **argv)
-  {
-    add_options ();
-
-    if (argc == 2)
-      consumer_t::show_all = true;
-
-    parse (&argc, &argv);
-
-    consumer_t::operator () (this);
-
-    return 0;
   }
 };
 

@@ -2,16 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "device/base/synchronization/one_writer_seqlock.h"
 
 #include <stdlib.h>
+
+#include <array>
 #include <atomic>
 
 #include "base/memory/raw_ptr.h"
-#include "base/third_party/dynamic_annotations/dynamic_annotations.h"
 #include "base/threading/platform_thread.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/abseil-cpp/absl/base/dynamic_annotations.h"
 
 namespace device {
 
@@ -19,7 +22,7 @@ namespace device {
 
 struct TestData {
   // Data copies larger than a cache line.
-  uint32_t buffer[32];
+  std::array<uint32_t, 32> buffer;
 };
 
 class BasicSeqLockTestThread : public base::PlatformThread::Delegate {
@@ -43,7 +46,7 @@ class BasicSeqLockTestThread : public base::PlatformThread::Delegate {
 
     for (unsigned i = 0; i < 1000; ++i) {
       TestData copy;
-      base::subtle::Atomic32 version;
+      int32_t version;
       do {
         version = seqlock_->ReadBegin();
         OneWriterSeqLock::AtomicReaderMemcpy(&copy, data_.get(),
@@ -81,7 +84,7 @@ class MaxRetriesSeqLockTestThread : public base::PlatformThread::Delegate {
     }
 
     for (unsigned i = 0; i < 10; ++i) {
-      base::subtle::Atomic32 version;
+      int32_t version;
       version = seqlock_->ReadBegin(100);
 
       EXPECT_NE(version & 1, 0);
@@ -105,11 +108,11 @@ TEST(OneWriterSeqLockTest, MAYBE_ManyThreads) {
   TestData data;
   std::atomic<int> ready(0);
 
-  ANNOTATE_BENIGN_RACE_SIZED(&data, sizeof(data), "Racey reads are discarded");
+  ABSL_ANNOTATE_BENIGN_RACE_SIZED(&data, sizeof(data), "Racey reads are discarded");
 
   static const unsigned kNumReaderThreads = 10;
-  BasicSeqLockTestThread threads[kNumReaderThreads];
-  base::PlatformThreadHandle handles[kNumReaderThreads];
+  std::array<BasicSeqLockTestThread, kNumReaderThreads> threads;
+  std::array<base::PlatformThreadHandle, kNumReaderThreads> handles;
 
   for (uint32_t i = 0; i < kNumReaderThreads; ++i)
     threads[i].Init(&seqlock, &data, &ready);
@@ -144,8 +147,8 @@ TEST(OneWriterSeqLockTest, MaxRetries) {
   std::atomic<int> ready(0);
 
   static const unsigned kNumReaderThreads = 3;
-  MaxRetriesSeqLockTestThread threads[kNumReaderThreads];
-  base::PlatformThreadHandle handles[kNumReaderThreads];
+  std::array<MaxRetriesSeqLockTestThread, kNumReaderThreads> threads;
+  std::array<base::PlatformThreadHandle, kNumReaderThreads> handles;
 
   for (uint32_t i = 0; i < kNumReaderThreads; ++i)
     threads[i].Init(&seqlock, &ready);

@@ -26,6 +26,11 @@
   flex: 2 0 200px;
 }
 
+.network-config-fields span:first-of-type,
+.network-config-fields .network-config-accepted-encoding-custom {
+  padding: 3px 0;
+}
+
 .panel-section-separator {
   height: 1px;
   margin-bottom: 10px;
@@ -49,22 +54,25 @@
 }
 /* Network throttling */
 
-.network-config-throttling .chrome-select {
-  width: 100%;
-  max-width: 250px;
-}
+.network-config-throttling {
+  select {
+    width: 100%;
+    max-width: 250px;
+  }
 
-.network-config-throttling > .network-config-title {
-  line-height: 24px;
+  .network-config-fields {
+    display: flex;
+    column-gap: var(--sys-size-5);
+  }
+
+  & > .network-config-title {
+    line-height: 24px;
+  }
 }
 /* User agent */
 
 .network-config-ua > .network-config-title {
   line-height: 20px;
-}
-
-.network-config-ua span[is="dt-radio"].checked > * {
-  display: none;
 }
 
 .network-config-ua input {
@@ -73,29 +81,33 @@
 }
 
 .network-config-ua input[type="text"],
-.network-config-ua .chrome-select {
+.network-config-ua select {
   margin-top: 8px;
 }
 
-.network-config-ua .chrome-select {
+.network-config-ua select {
   width: calc(100% - 20px);
   max-width: 250px;
 }
 
-.network-config-ua span[is="dt-radio"] {
-  display: block;
-}
-
 .network-config-ua-custom {
-  opacity: 50%;
   padding-bottom: 8px;
+
+  input,
+  devtools-user-agent-client-hints-form {
+    opacity: 38%;
+    pointer-events: none;
+  }
+
+  &.checked input,
+  &.checked devtools-user-agent-client-hints-form {
+    opacity: revert;
+    pointer-events: revert;
+  }
 }
 
-.network-config-ua-custom.checked {
-  opacity: 100%;
-}
-
-.client-hints-form {
+devtools-user-agent-client-hints-form {
+  display: block;
   margin-top: 14px;
   width: min(100%, 400px);
 }

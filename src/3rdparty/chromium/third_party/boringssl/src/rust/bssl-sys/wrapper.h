@@ -1,6 +1,5 @@
 #include <openssl/aes.h>
 #include <openssl/asn1.h>
-#include <openssl/asn1_mac.h>
 #include <openssl/asn1t.h>
 #include <openssl/base.h>
 #include <openssl/base64.h>
@@ -45,6 +44,8 @@
 #include <openssl/md4.h>
 #include <openssl/md5.h>
 #include <openssl/mem.h>
+#include <openssl/mldsa.h>
+#include <openssl/mlkem.h>
 #include <openssl/obj.h>
 #include <openssl/obj_mac.h>
 #include <openssl/objects.h>
@@ -63,7 +64,9 @@
 #include <openssl/rsa.h>
 #include <openssl/safestack.h>
 #include <openssl/sha.h>
+#include <openssl/sha2.h>
 #include <openssl/siphash.h>
+#include <openssl/slhdsa.h>
 #include <openssl/span.h>
 #include <openssl/srtp.h>
 #include <openssl/ssl.h>

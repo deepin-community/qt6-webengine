@@ -54,7 +54,7 @@
 }
 
 .metrics .position {
-  /* This border is different from the ones displayed between the box-moodel
+  /* This border is different from the ones displayed between the box-model
   regions because it is displayed against the pane background, so needs to be
   visible in both light and dark theme. We therefore use a theme variable. */
   border: 1px var(--sys-color-token-subtle) dotted;
@@ -144,14 +144,14 @@
 /* In dark theme, when a specific box-model region is hovered, the other regions
 lose their background colors, so we need to give them a lighter border color so
 that region separators remain visible against the dark panel background. */
-:host-context(.-theme-with-dark-background) .margin:hover,
-:host-context(.-theme-with-dark-background) .margin:hover * {
+:host-context(.theme-with-dark-background) .margin:hover,
+:host-context(.theme-with-dark-background) .margin:hover * {
   border-color: var(--sys-color-token-subtle);
 }
 
 /* With the exception of the position labels, labels are displayed on top of
 the box-model region colors, so need to use the following color to remain
 visible. */
-.metrics .highlighted:not(.position) > *:not(.border):not(.padding):not(.content) {
+.metrics .highlighted:not(.position) > *:not(.border, .padding, .content) {
   color: var(--override-box-model-text-color);
 }

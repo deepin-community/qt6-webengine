@@ -9,10 +9,10 @@
 
 #include <stdint.h>
 
+#include "core/fxcrt/span.h"
 #include "core/fxcrt/unowned_ptr.h"
 #include "core/fxge/cfx_fontmapper.h"
 #include "core/fxge/systemfontinfo_iface.h"
-#include "third_party/base/containers/span.h"
 
 class CFPF_SkiaFontMgr;
 
@@ -21,10 +21,10 @@ class CFX_AndroidFontInfo final : public SystemFontInfoIface {
   CFX_AndroidFontInfo();
   ~CFX_AndroidFontInfo() override;
 
-  bool Init(CFPF_SkiaFontMgr* pFontMgr);
+  bool Init(CFPF_SkiaFontMgr* font_mgr, const char** user_paths);
 
   // SystemFontInfoIface:
-  bool EnumFontList(CFX_FontMapper* pMapper) override;
+  void EnumFontList(CFX_FontMapper* pMapper) override;
   void* MapFont(int weight,
                 bool bItalic,
                 FX_Charset charset,
@@ -39,7 +39,7 @@ class CFX_AndroidFontInfo final : public SystemFontInfoIface {
   void DeleteFont(void* hFont) override;
 
  private:
-  UnownedPtr<CFPF_SkiaFontMgr> m_pFontMgr;
+  UnownedPtr<CFPF_SkiaFontMgr> font_mgr_;
 };
 
 #endif  // CORE_FXGE_ANDROID_CFX_ANDROIDFONTINFO_H_

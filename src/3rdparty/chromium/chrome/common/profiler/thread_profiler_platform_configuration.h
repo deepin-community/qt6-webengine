@@ -8,9 +8,17 @@
 #include <memory>
 #include <optional>
 
+#include "base/feature_list.h"
 #include "base/functional/callback.h"
-#include "components/metrics/call_stacks/call_stack_profile_params.h"
+#include "components/sampling_profiler/process_type.h"
 #include "components/version_info/channel.h"
+
+// If enabled, ThreadProfilerPlatformConfiguration::IsEnabledForThread() will
+// return true for ThreadPoolWorker threads. This can use a normal feature
+// config instead of being part of the RelativePopulations experiment group
+// because the feature is only checked after the ThreadPool is created, at which
+// point field trials have been set up.
+BASE_DECLARE_FEATURE(kSamplingProfilerOnWorkerThreads);
 
 // Encapsulates the platform-specific configuration for the ThreadProfiler.
 //
@@ -32,13 +40,15 @@
 class ThreadProfilerPlatformConfiguration {
  public:
   // The relative populations to use for enabling/disabling the profiler.
-  // |enabled| + |experiment| is expected to equal 100. Profiling is to be
-  // enabled with probability |enabled|/100. The fraction |experiment|/100 is to
-  // be split in to two equal-sized experiment groups with probability
-  // |experiment|/(2 * 100), one of which will be enabled and one disabled.
+  // |disabled| + |enabled| + |experiment| is expected to equal 100.
+  // - Within the enabled population, profiling is always enabled.
+  // - Within the disabled population, profiling is always disabled.
+  // - The experiment population is further split down to N equal-sized
+  // subgroups with different configurations.
   struct RelativePopulations {
-    int enabled;
-    int experiment;
+    double disabled;
+    double enabled;
+    double experiment;
   };
 
   virtual ~ThreadProfilerPlatformConfiguration() = default;
@@ -62,19 +72,19 @@ class ThreadProfilerPlatformConfiguration {
   // Returns the fraction of the time that profiling should be randomly enabled
   // for the child |process|. The return value is in the range [0.0, 1.0].
   virtual double GetChildProcessPerExecutionEnableFraction(
-      metrics::CallStackProfileParams::Process process) const = 0;
+      sampling_profiler::ProfilerProcessType process) const = 0;
 
   // Choose a process to run profiling when profiling is enabled. Running
   // the sampler on a single process instead of all processes at the same time
   // will help reduce the impact on users. If std::nullopt is returned, the
   // setting can be ignored. All processes will be sampled.
-  virtual std::optional<metrics::CallStackProfileParams::Process>
+  virtual std::optional<sampling_profiler::ProfilerProcessType>
   ChooseEnabledProcess() const = 0;
 
   // Returns whether the profiler is enabled for |thread| in |process|.
   virtual bool IsEnabledForThread(
-      metrics::CallStackProfileParams::Process process,
-      metrics::CallStackProfileParams::Thread thread,
+      sampling_profiler::ProfilerProcessType process,
+      sampling_profiler::ProfilerThreadType thread,
       std::optional<version_info::Channel> release_channel) const = 0;
 
  protected:

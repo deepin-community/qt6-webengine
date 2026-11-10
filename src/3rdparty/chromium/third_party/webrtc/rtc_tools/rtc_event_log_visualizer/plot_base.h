@@ -12,13 +12,13 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/base/attributes.h"
 #include "absl/strings/string_view.h"
-#include "absl/types/optional.h"
 
 // Generated at build-time by the protobuf compiler.
 #include "rtc_tools/rtc_event_log_visualizer/proto/chart.pb.h"
@@ -172,7 +172,7 @@ class Plot {
       absl::string_view figure_output_path = absl::string_view()) const;
 
   // Replaces ProtobufPlot::Draw()
-  void ExportProtobuf(webrtc::analytics::Chart* chart) const;
+  void ExportProtobuf(analytics::Chart* chart) const;
 
  protected:
   float xaxis_min_;
@@ -209,11 +209,11 @@ class PlotCollection {
       absl::string_view figure_output_path = absl::string_view()) const;
 
   // Replaces ProtobufPlotCollections::Draw()
-  void ExportProtobuf(webrtc::analytics::ChartCollection* collection) const;
+  void ExportProtobuf(analytics::ChartCollection* collection) const;
 
  protected:
   std::vector<std::unique_ptr<Plot>> plots_;
-  absl::optional<int64_t> calltime_to_utc_ms_;
+  std::optional<int64_t> calltime_to_utc_ms_;
 };
 
 }  // namespace webrtc

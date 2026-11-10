@@ -27,8 +27,6 @@
 
 #include "src/tint/lang/core/ir/transform/demote_to_helper.h"
 
-#include <utility>
-
 #include "src/tint/lang/core/ir/builder.h"
 #include "src/tint/lang/core/ir/module.h"
 #include "src/tint/lang/core/ir/validator.h"
@@ -91,7 +89,7 @@ struct State {
     /// @param func the function to check
     /// @returns true if @p func contains a discard instruction
     bool HasDiscard(Function* func) {
-        return function_discard_status.GetOrCreate(func, [&] { return HasDiscard(func->Block()); });
+        return function_discard_status.GetOrAdd(func, [&] { return HasDiscard(func->Block()); });
     }
 
     /// Check if a block (transitively) contains a discard instruction.
@@ -149,8 +147,8 @@ struct State {
             TINT_ASSERT(results.Length() < 2);
             if (!results.IsEmpty() && !results[0]->Type()->Is<core::type::Void>()) {
                 // The original instruction had a result, so return it from the if instruction.
-                ifelse->SetResults(Vector{b.InstructionResult(results[0]->Type())});
-                results[0]->ReplaceAllUsesWith(ifelse->Result(0));
+                ifelse->SetResult(b.InstructionResult(results[0]->Type()));
+                results[0]->ReplaceAllUsesWith(ifelse->Result());
                 ifelse->True()->Append(b.ExitIf(ifelse, result));
             } else {
                 ifelse->True()->Append(b.ExitIf(ifelse));
@@ -191,10 +189,10 @@ struct State {
                 [&](Return* ret) {
                     // Insert a conditional terminate invocation instruction before each return
                     // instruction in the entry point function.
-                    if (ret->Func()->Stage() == Function::PipelineStage::kFragment) {
+                    if (ret->Func()->IsFragment()) {
                         b.InsertBefore(ret, [&] {
                             auto* cond = b.Load(continue_execution);
-                            auto* ifelse = b.If(b.Equal(ty.bool_(), cond, false));
+                            auto* ifelse = b.If(b.Not<bool>(cond));
                             b.Append(ifelse->True(), [&] {  //
                                 b.TerminateInvocation();
                             });
@@ -216,7 +214,7 @@ struct State {
 }  // namespace
 
 Result<SuccessType> DemoteToHelper(Module& ir) {
-    auto result = ValidateAndDumpIfNeeded(ir, "DemoteToHelper transform");
+    auto result = ValidateAndDumpIfNeeded(ir, "core.DemoteToHelper", kDemoteToHelperCapabilities);
     if (result != Success) {
         return result;
     }

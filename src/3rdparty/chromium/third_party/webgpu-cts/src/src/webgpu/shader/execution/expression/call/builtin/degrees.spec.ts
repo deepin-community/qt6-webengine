@@ -1,21 +1,21 @@
 export const description = `
 Execution tests for the 'degrees' builtin function
 
-S is AbstractFloat, f32, f16
+S is abstract-float, f32, f16
 T is S or vecN<T>
 @const fn degrees(e1: T ) -> T
 Converts radians to degrees, approximating e1 × 180 ÷ π. Component-wise when T is a vector
 `;
 
 import { makeTestGroup } from '../../../../../../common/framework/test_group.js';
-import { GPUTest } from '../../../../../gpu_test.js';
-import { TypeAbstractFloat, TypeF16, TypeF32 } from '../../../../../util/conversion.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../../../../gpu_test.js';
+import { Type } from '../../../../../util/conversion.js';
 import { allInputSources, onlyConstInputSource, run } from '../../expression.js';
 
-import { abstractBuiltin, builtin } from './builtin.js';
+import { abstractFloatBuiltin, builtin } from './builtin.js';
 import { d } from './degrees.cache.js';
 
-export const g = makeTestGroup(GPUTest);
+export const g = makeTestGroup(AllFeaturesMaxLimitsGPUTest);
 
 g.test('abstract_float')
   .specURL('https://www.w3.org/TR/WGSL/#float-builtin-functions')
@@ -29,9 +29,9 @@ g.test('abstract_float')
     const cases = await d.get('abstract_const');
     await run(
       t,
-      abstractBuiltin('degrees'),
-      [TypeAbstractFloat],
-      TypeAbstractFloat,
+      abstractFloatBuiltin('degrees'),
+      [Type.abstractFloat],
+      Type.abstractFloat,
       t.params,
       cases
     );
@@ -45,7 +45,7 @@ g.test('f32')
   )
   .fn(async t => {
     const cases = await d.get(t.params.inputSource === 'const' ? 'f32_const' : 'f32_non_const');
-    await run(t, builtin('degrees'), [TypeF32], TypeF32, t.params, cases);
+    await run(t, builtin('degrees'), [Type.f32], Type.f32, t.params, cases);
   });
 
 g.test('f16')
@@ -54,10 +54,8 @@ g.test('f16')
   .params(u =>
     u.combine('inputSource', allInputSources).combine('vectorize', [undefined, 2, 3, 4] as const)
   )
-  .beforeAllSubcases(t => {
-    t.selectDeviceOrSkipTestCase('shader-f16');
-  })
   .fn(async t => {
+    t.skipIfDeviceDoesNotHaveFeature('shader-f16');
     const cases = await d.get(t.params.inputSource === 'const' ? 'f16_const' : 'f16_non_const');
-    await run(t, builtin('degrees'), [TypeF16], TypeF16, t.params, cases);
+    await run(t, builtin('degrees'), [Type.f16], Type.f16, t.params, cases);
   });

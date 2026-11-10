@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f16-vunary/sse2.c.in
 //   Generator: tools/xngen
@@ -8,20 +9,23 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <emmintrin.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/math.h>
-#include <xnnpack/unaligned.h>
-#include <xnnpack/vunary.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/unaligned.h"
+#include "src/xnnpack/vunary.h"
 
 
 void xnn_f16_vabs_ukernel__sse2_u16(
     size_t batch,
-    const void* input,
-    void* output,
-    const union xnn_f16_abs_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const xnn_float16* input,
+    xnn_float16* output,
+    const struct xnn_f16_default_params* restrict params) XNN_OOB_READS
 {
   assert(batch != 0);
   assert(batch % sizeof(uint16_t) == 0);
@@ -30,7 +34,7 @@ void xnn_f16_vabs_ukernel__sse2_u16(
 
   const uint16_t* i = (const uint16_t*) input;
   uint16_t* o = (uint16_t*) output;
-  const __m128i vnonsign_mask = _mm_load_si128((const __m128i*) params->sse.nonsign_mask);
+  const __m128i vnonsign_mask = _mm_set1_epi16(0x7FFF);
   for (; batch >= 16 * sizeof(uint16_t); batch -= 16 * sizeof(uint16_t)) {
     __m128i vacc0 = _mm_loadu_si128((const __m128i*) i);
     __m128i vacc1 = _mm_loadu_si128((const __m128i*) (i + 8));

@@ -28,11 +28,6 @@ let browserInspector = 'chrome://tracing';
 let browserInspectorTitle = 'trace';
 
 (function() {
-const chromeMatch = navigator.userAgent.match(/(?:^|\W)Chrome\/(\S+)/);
-if (chromeMatch && chromeMatch.length > 1) {
-  HOST_CHROME_VERSION = chromeMatch[1].split('.').map(s => Number(s) || 0);
-}
-
 const queryParams = window.location.search;
 if (!queryParams) {
   return;
@@ -160,6 +155,11 @@ function showNativeUILaunchButton(enabled) {
   $('launch-ui-devtools').disabled = !enabled;
   $('ui-devtools-disabled-text').hidden = enabled;
   $('ui-devtools-enabled-text').hidden = !enabled;
+}
+
+function setHostVersion(version) {
+  version = version.split('.').map(s => Number(s) || 0);
+  HOST_CHROME_VERSION = version;
 }
 
 function populateLocalTargets(data) {
@@ -364,7 +364,12 @@ function populateRemoteTargets(devices) {
         const browserName = document.createElement('div');
         browserName.className = 'browser-name';
         browserHeader.appendChild(browserName);
-        browserName.textContent = browser.adbBrowserName;
+        // Localhost targets are always named "Target".
+        // Let's use the ID instead as it's more expressive.
+        browserName.textContent = browser.adbBrowserName === 'Target' ?
+            browser.id :
+            browser.adbBrowserName;
+
         if (browser.adbBrowserVersion) {
           browserName.textContent += ' (' + browser.adbBrowserVersion + ')';
         }
@@ -466,12 +471,11 @@ function populateRemoteTargets(devices) {
                 row, 'close', sendTargetCommand.bind(null, 'close', page),
                 false);
           }
-          if (browserNeedsFallback) {
-            addActionLink(
-                row, 'inspect fallback',
-                sendTargetCommand.bind(null, 'inspect-fallback', page),
-                page.hasNoUniqueId || page.adbAttachedForeign);
-          }
+          addActionLink(
+              row, 'inspect fallback',
+              sendTargetCommand.bind(null, 'inspect-fallback', page),
+              page.hasNoUniqueId || page.adbAttachedForeign,
+              'Best-effort fallback to debug the target using this browser instance\'s potentially mismatching DevTools version.');
         }
       }
       updateBrowserVisibility(browserSection);
@@ -515,6 +519,31 @@ function addGuestViews(row, guests) {
 function addToWorkersList(data) {
   const row =
       addTargetToList(data, $('workers-list'), ['name', 'description', 'url']);
+
+  let description;
+  try {
+    description = JSON.parse(data.description);
+  } catch (e) {
+    // Not a JSON description, ignore and proceed.
+  }
+
+  if (description && description.extendedLifetime) {
+    const nameElement = row.querySelector('.name');
+    if (nameElement) {
+      const label = document.createElement('span');
+      label.className = 'extended-lifetime-label';
+      label.textContent = 'Extended Lifetime';
+      nameElement.appendChild(document.createTextNode(' '));
+      nameElement.appendChild(label);
+    }
+
+    // Hide the raw JSON description.
+    const descriptionElement = row.querySelector('.description');
+    if (descriptionElement) {
+      descriptionElement.style.display = 'none';
+    }
+  }
+
   addActionLink(
       row, 'terminate', sendTargetCommand.bind(null, 'close', data), false);
 }
@@ -707,10 +736,13 @@ function addTargetToList(data, list, properties) {
   return row;
 }
 
-function addActionLink(row, text, handler, opt_disabled) {
+function addActionLink(row, text, handler, opt_disabled, opt_title) {
   const link = document.createElement('span');
   link.classList.add('action');
   link.setAttribute('tabindex', 1);
+  if (opt_title) {
+    link.title = opt_title;
+  }
   if (opt_disabled) {
     link.classList.add('disabled');
   } else {
@@ -738,6 +770,8 @@ function initSettings() {
 
   $('launch-ui-devtools')
       .addEventListener('click', sendCommand.bind(null, 'launch-ui-devtools'));
+  checkboxSendsCommand('bubble-locking-checkbox', 'set-bubble-locking');
+
   $('port-forwarding-config-open')
       .addEventListener('click', openPortForwardingConfig);
   $('tcp-discovery-config-open').addEventListener('click', openTargetsConfig);
@@ -926,6 +960,10 @@ function updateTCPDiscoveryEnabled(enabled) {
 function updateTCPDiscoveryConfig(config) {
   window.targetDiscoveryConfig = config;
   $('tcp-discovery-config-open').disabled = !config;
+}
+
+function updateBubbleLockingCheckbox(enabled) {
+  updateCheckbox('bubble-locking-checkbox', enabled);
 }
 
 function appendRow(list, lineFactory, key, value) {
@@ -1163,11 +1201,13 @@ Object.assign(window, {
   updatePortForwardingConfig,
   updateTCPDiscoveryEnabled,
   updateTCPDiscoveryConfig,
+  updateBubbleLockingCheckbox,
   populateNativeUITargets,
   populateTargets,
   populatePortStatus,
   showIncognitoWarning,
   showNativeUILaunchButton,
+  setHostVersion,
 });
 
 document.addEventListener('DOMContentLoaded', onload);

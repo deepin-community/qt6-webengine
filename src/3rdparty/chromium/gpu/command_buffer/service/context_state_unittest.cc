@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include "base/compiler_specific.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace gpu {
@@ -31,7 +32,7 @@ TEST(ContextStateVec4Test, SetGetFloatValues) {
   GLfloat fv[4];
   v.GetValues(fv);
   for (size_t ii = 0; ii < 4; ++ii) {
-    EXPECT_EQ(kFloatValues[ii], fv[ii]);
+    UNSAFE_TODO(EXPECT_EQ(kFloatValues[ii], fv[ii]));
   }
 }
 
@@ -44,7 +45,7 @@ TEST(ContextStateVec4Test, SetGetIntValues) {
   GLint iv[4];
   v.GetValues(iv);
   for (size_t ii = 0; ii < 4; ++ii) {
-    EXPECT_EQ(kIntValues[ii], iv[ii]);
+    UNSAFE_TODO(EXPECT_EQ(kIntValues[ii], iv[ii]));
   }
 }
 
@@ -57,7 +58,7 @@ TEST(ContextStateVec4Test, SetGetUIntValues) {
   GLuint uiv[4];
   v.GetValues(uiv);
   for (size_t ii = 0; ii < 4; ++ii) {
-    EXPECT_EQ(kUIntValues[ii], uiv[ii]);
+    UNSAFE_TODO(EXPECT_EQ(kUIntValues[ii], uiv[ii]));
   }
 }
 

@@ -24,24 +24,10 @@
 #include "media/base/mime_util.h"
 #include "media/cdm/clear_key_cdm_common.h"
 #include "media/media_buildflags.h"
-#include "third_party/widevine/cdm/widevine_cdm_common.h"
 
 namespace media {
 
 namespace {
-
-// These names are used by UMA. Do not change them!
-const char kClearKeyKeySystemNameForUMA[] = "ClearKey";
-const char kUnknownKeySystemNameForUMA[] = "Unknown";
-const char kHardwareSecureForUMA[] = "HardwareSecure";
-const char kSoftwareSecureForUMA[] = "SoftwareSecure";
-
-enum KeySystemForUkm {
-  // These values reported to UKM. Do not change their ordinal values.
-  kUnknownKeySystemForUkm = 0,
-  kClearKeyKeySystemForUkm,
-  kWidevineKeySystemForUkm,
-};
 
 struct MimeTypeToCodecs {
   const char* mime_type;
@@ -163,7 +149,7 @@ class ClearKeyKeySystemInfo : public KeySystemInfo {
       case EncryptionScheme::kUnencrypted:
         break;
     }
-    NOTREACHED_NORETURN();
+    NOTREACHED();
   }
 
   SupportedCodecs GetSupportedCodecs() const final {
@@ -200,56 +186,6 @@ class ClearKeyKeySystemInfo : public KeySystemInfo {
   bool UseAesDecryptor() const final { return true; }
 };
 
-// Returns whether the |key_system| is known to Chromium and is thus likely to
-// be implemented in an interoperable way.
-// True is always returned for a |key_system| that begins with "x-".
-//
-// As with other web platform features, advertising support for a key system
-// implies that it adheres to a defined and interoperable specification.
-//
-// To ensure interoperability, implementations of a specific |key_system| string
-// must conform to a specification for that identifier that defines
-// key system-specific behaviors not fully defined by the EME specification.
-// That specification should be provided by the owner of the domain that is the
-// reverse of the |key_system| string.
-// This involves more than calling a library, SDK, or platform API.
-// KeySystemsImpl must be populated appropriately, and there will likely be glue
-// code to adapt to the API of the library, SDK, or platform API.
-//
-// Chromium mainline contains this data and glue code for specific key systems,
-// which should help ensure interoperability with other implementations using
-// these key systems.
-//
-// If you need to add support for other key systems, ensure that you have
-// obtained the specification for how to integrate it with EME, implemented the
-// appropriate glue/adapter code, and added all the appropriate data to
-// KeySystemsImpl. Only then should you change this function.
-static bool IsPotentiallySupportedKeySystem(const std::string& key_system) {
-  if (key_system == kWidevineKeySystem)
-    return true;
-
-  if (key_system == kClearKeyKeySystem) {
-    return true;
-  }
-
-  // External or MediaFoundation Clear Key is known and supports suffixes for
-  // testing.
-  if (IsExternalClearKey(key_system))
-    return true;
-
-  // Chromecast defines behaviors for Cast clients within its reverse domain.
-  const char kChromecastRoot[] = "com.chromecast";
-  if (IsSubKeySystemOf(key_system, kChromecastRoot))
-    return true;
-
-  // Implementations that do not have a specification or appropriate glue code
-  // can use the "x-" prefix to avoid conflicting with and advertising support
-  // for real key system names. Use is discouraged.
-  const char kExcludedPrefix[] = "x-";
-  return base::StartsWith(key_system, kExcludedPrefix,
-                          base::CompareCase::SENSITIVE);
-}
-
 // Returns whether distinctive identifiers and persistent state can be reliably
 // blocked for |key_system_info| (and therefore be safely configurable).
 static bool CanBlock(const KeySystemInfo& key_system_info) {
@@ -280,12 +216,8 @@ static bool CanBlock(const KeySystemInfo& key_system_info) {
 
 }  // namespace
 
-KeySystemsImpl* KeySystemsImpl::GetInstance() {
-  static base::NoDestructor<KeySystemsImpl> key_systems;
-  return key_systems.get();
-}
-
-KeySystemsImpl::KeySystemsImpl() {
+KeySystemsImpl::KeySystemsImpl(RegisterKeySystemsSupportCB cb)
+    : register_key_systems_support_cb_(std::move(cb)) {
   Initialize();
 }
 
@@ -310,9 +242,11 @@ void KeySystemsImpl::UpdateSupportedKeySystems() {
     return;
   }
 
-  GetMediaClient()->GetSupportedKeySystems(
-      base::BindRepeating(&KeySystemsImpl::OnSupportedKeySystemsUpdated,
-                          weak_factory_.GetWeakPtr()));
+  key_system_support_registration_ =
+      std::move(register_key_systems_support_cb_)
+          .Run(
+              base::BindRepeating(&KeySystemsImpl::OnSupportedKeySystemsUpdated,
+                                  weak_factory_.GetWeakPtr()));
 }
 
 void KeySystemsImpl::UpdateIfNeeded(base::OnceClosure done_cb) {
@@ -405,13 +339,6 @@ void KeySystemsImpl::ProcessSupportedKeySystems(KeySystemInfos key_systems) {
            EmeFeatureSupport::INVALID);
     DCHECK(key_system->GetDistinctiveIdentifierSupport() !=
            EmeFeatureSupport::INVALID);
-
-    if (!IsPotentiallySupportedKeySystem(key_system->GetBaseKeySystemName())) {
-      // If you encounter this path, see the comments for the function above.
-      DLOG(ERROR) << "Unsupported name '" << key_system->GetBaseKeySystemName()
-                  << "'. See code comments.";
-      continue;
-    }
 
     // Supporting persistent state is a prerequisite for supporting persistent
     // sessions.
@@ -540,7 +467,6 @@ std::string KeySystemsImpl::GetBaseKeySystemName(
   const auto* key_system_info = GetKeySystemInfo(key_system);
   if (!key_system_info) {
     NOTREACHED() << "Key system support should have been checked";
-    return key_system;
   }
 
   return key_system_info->GetBaseKeySystemName();
@@ -559,7 +485,6 @@ bool KeySystemsImpl::ShouldUseBaseKeySystemName(
   const auto* key_system_info = GetKeySystemInfo(key_system);
   if (!key_system_info) {
     NOTREACHED() << "Key system support should have been checked";
-    return false;
   }
 
   return key_system_info->ShouldUseBaseKeySystemName();
@@ -604,23 +529,14 @@ EmeConfig::Rule KeySystemsImpl::GetContentTypeConfigRule(
   const auto* key_system_info = GetKeySystemInfo(key_system);
   if (!key_system_info) {
     NOTREACHED() << "Key system support should have been checked";
-    return EmeConfig::UnsupportedRule();
   }
 
   // Look up the key system's supported codecs and secure codecs.
   SupportedCodecs key_system_codec_mask = key_system_info->GetSupportedCodecs();
   SupportedCodecs key_system_hw_secure_codec_mask =
       key_system_info->GetSupportedHwSecureCodecs();
-
-  // Check that the container is supported by the key system. (This check is
-  // necessary because |codecs| may be empty.)
   SupportedCodecs mime_type_codec_mask =
       GetCodecMaskForMimeType(container_mime_type);
-  if ((key_system_codec_mask & mime_type_codec_mask) == 0) {
-    DVLOG(2) << "Container " << container_mime_type << " not supported by "
-             << key_system;
-    return EmeConfig::UnsupportedRule();
-  }
 
   // Check that the codecs are supported by the key system and container based
   // on the following rule:
@@ -716,81 +632,6 @@ EmeFeatureSupport KeySystemsImpl::GetDistinctiveIdentifierSupport(
   CHECK(key_system_info);
 
   return key_system_info->GetDistinctiveIdentifierSupport();
-}
-
-
-KeySystems* KeySystems::GetInstance() {
-  return KeySystemsImpl::GetInstance();
-}
-
-bool IsSupportedKeySystemWithInitDataType(const std::string& key_system,
-                                          EmeInitDataType init_data_type) {
-  return KeySystemsImpl::GetInstance()->IsSupportedInitDataType(key_system,
-                                                                init_data_type);
-}
-
-std::string GetKeySystemNameForUMA(const std::string& key_system,
-                                   absl::optional<bool> use_hw_secure_codecs) {
-  // Here we maintain a short list of known key systems to facilitate UMA
-  // reporting. Mentioned key systems are not necessarily supported by
-  // the current platform.
-
-  if (key_system == kWidevineKeySystem) {
-    std::string key_system_name = kWidevineKeySystemNameForUMA;
-    if (use_hw_secure_codecs.has_value()) {
-      key_system_name += ".";
-      key_system_name += (use_hw_secure_codecs.value() ? kHardwareSecureForUMA
-                                                       : kSoftwareSecureForUMA);
-    }
-    return key_system_name;
-  }
-
-  // For Clear Key and unknown key systems we don't to differentiate between
-  // software and hardware security.
-
-  if (key_system == kClearKeyKeySystem) {
-    return kClearKeyKeySystemNameForUMA;
-  }
-
-  return kUnknownKeySystemNameForUMA;
-}
-
-int GetKeySystemIntForUKM(const std::string& key_system) {
-  if (key_system == kWidevineKeySystem)
-    return KeySystemForUkm::kWidevineKeySystemForUkm;
-
-  if (key_system == kClearKeyKeySystem) {
-    return KeySystemForUkm::kClearKeyKeySystemForUkm;
-  }
-
-  return KeySystemForUkm::kUnknownKeySystemForUkm;
-}
-
-bool CanUseAesDecryptor(const std::string& key_system) {
-  return KeySystemsImpl::GetInstance()->CanUseAesDecryptor(key_system);
-}
-
-// These three functions are for testing purpose only. The declaration in the
-// header file is guarded by "#if defined(UNIT_TEST)" so that they can be used
-// by tests but not non-test code. However, this .cc file is compiled as part of
-// "media" where "UNIT_TEST" is not defined. So we need to specify
-// "MEDIA_EXPORT" here again so that they are visible to tests.
-
-MEDIA_EXPORT void AddCodecMaskForTesting(EmeMediaType media_type,
-                                         const std::string& codec,
-                                         uint32_t mask) {
-  KeySystemsImpl::GetInstance()->AddCodecMaskForTesting(media_type, codec,
-                                                        mask);
-}
-
-MEDIA_EXPORT void AddMimeTypeCodecMaskForTesting(const std::string& mime_type,
-                                                 uint32_t mask) {
-  KeySystemsImpl::GetInstance()->AddMimeTypeCodecMaskForTesting(mime_type,
-                                                                mask);
-}
-
-MEDIA_EXPORT void ResetKeySystemsForTesting() {
-  KeySystemsImpl::GetInstance()->ResetForTesting();
 }
 
 }  // namespace media

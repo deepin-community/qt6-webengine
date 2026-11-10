@@ -7,12 +7,30 @@
 #   Build configurations for target platforms.
 
 load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "string_setting")
 
 package(
     default_visibility = ["//:__subpackages__"],
 )
 
+################################### Platforms ##################################
+
+platform(
+    name = "aarch64_linux",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+    ],
+)
+
 ############################# Build configurations #############################
+
+config_setting(
+    name = "linux",
+    constraint_values = [
+        "@platforms//os:linux",
+    ],
+)
 
 config_setting(
     name = "linux_arm64",
@@ -203,6 +221,13 @@ config_setting(
 )
 
 config_setting(
+    name = "ios",
+    constraint_values = [
+        "@platforms//os:ios",
+    ],
+)
+
+config_setting(
     name = "watchos_arm64_32",
     values = {
         "apple_platform_type": "watchos",
@@ -234,6 +259,48 @@ config_setting(
     },
 )
 
+# Duummy lexan config to avoid bazel errors.
+config_setting(
+    name = "windows_lexan",
+    values = {"cpu": "x64_windows"},
+)
+
+# Dummy hexagon config to avoid bazel errors
+config_setting(
+    name = "hexagon",
+    values = {
+        "cpu": "hexagon",  # Expected to not-match anything
+    },
+)
+
+config_setting(
+    name = "clang",
+    flag_values = {
+        "@bazel_tools//tools/cpp:compiler": "clang",
+    },
+)
+
+config_setting(
+    name = "gcc",
+    flag_values = {
+        "@bazel_tools//tools/cpp:compiler": "gcc",
+    },
+)
+
+config_setting(
+    name = "fuchsia",
+    constraint_values = [
+        "@platforms//os:fuchsia",
+    ],
+)
+
+config_setting(
+    name = "macos",
+    constraint_values = [
+        "@platforms//os:macos",
+    ],
+)
+
 ######################## Composite build configurations #######################
 
 selects.config_setting_group(
@@ -262,6 +329,14 @@ selects.config_setting_group(
 )
 
 selects.config_setting_group(
+    name = "arm",
+    match_any = [
+        ":aarch32",
+        ":aarch64",
+    ],
+)
+
+selects.config_setting_group(
     name = "x86",
     match_any = [
         ":android_x86",
@@ -280,6 +355,56 @@ selects.config_setting_group(
 )
 
 selects.config_setting_group(
+    name = "x86_64",
+    match_any = [
+        ":android_x86_64",
+        ":ios_x86_64",
+        ":linux_k8",
+        ":macos_x86_64",
+        ":macos_x86_64_legacy",
+        ":tvos_x86_64",
+        ":watchos_x86_64",
+        ":windows_x86_64_clang",
+        ":windows_x86_64_mingw",
+    ],
+)
+
+selects.config_setting_group(
     name = "riscv",
     match_any = [":linux_riscv64"],
 )
+
+# Define a hidden setting which no other modules can change.
+string_setting(
+    name = "always_true_value",
+    build_setting_default = "true",
+    values = [
+        "true",
+        "false",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+config_setting(
+    name = "always_true",
+    flag_values = {
+        ":always_true_value": "true",
+    },
+)
+
+config_setting(
+    name = "always_false",
+    flag_values = {
+        ":always_true_value": "false",
+    },
+)
+
+alias(
+    name = "clang_and_not_fuchsia_or_ios",
+    actual = select({
+        ":fuchsia": ":always_false",
+        ":ios": ":always_false",
+        "//conditions:default": ":clang",
+        }),
+)
+

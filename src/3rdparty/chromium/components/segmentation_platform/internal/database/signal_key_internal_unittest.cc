@@ -7,25 +7,26 @@
 #include <sstream>
 #include <string>
 
+#include "base/compiler_specific.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace segmentation_platform {
 
 namespace {
 void VerifyEqual(SignalKeyInternal a, SignalKeyInternal b) {
-  ASSERT_EQ(0, memcmp(&a, &b, sizeof(SignalKeyInternal)));
+  UNSAFE_TODO(ASSERT_EQ(0, memcmp(&a, &b, sizeof(SignalKeyInternal))));
 }
 
 void VerifyNotEqual(SignalKeyInternal a, SignalKeyInternal b) {
-  ASSERT_NE(0, memcmp(&a, &b, sizeof(SignalKeyInternal)));
+  UNSAFE_TODO(ASSERT_NE(0, memcmp(&a, &b, sizeof(SignalKeyInternal))));
 }
 
 void VerifyEqual(SignalKeyInternal::Prefix a, SignalKeyInternal::Prefix b) {
-  ASSERT_EQ(0, memcmp(&a, &b, sizeof(SignalKeyInternal::Prefix)));
+  UNSAFE_TODO(ASSERT_EQ(0, memcmp(&a, &b, sizeof(SignalKeyInternal::Prefix))));
 }
 
 void VerifyNotEqual(SignalKeyInternal::Prefix a, SignalKeyInternal::Prefix b) {
-  ASSERT_NE(0, memcmp(&a, &b, sizeof(SignalKeyInternal::Prefix)));
+  UNSAFE_TODO(ASSERT_NE(0, memcmp(&a, &b, sizeof(SignalKeyInternal::Prefix))));
 }
 
 TEST(SignalKeyInternalTest, TestKeyConversionToAndFromBinary) {

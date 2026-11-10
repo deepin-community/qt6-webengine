@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-dwconv/unipass-scalar.c.in
 //   Generator: tools/xngen
@@ -8,11 +9,14 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/dwconv.h>
-#include <xnnpack/math.h>
-#include <xnnpack/unaligned.h>
-
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/dwconv.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/unaligned.h"
 
 void xnn_qs8_qc8w_dwconv_minmax_fp32_ukernel_4p2c__scalar_imagic(
     size_t channels,
@@ -23,16 +27,19 @@ void xnn_qs8_qc8w_dwconv_minmax_fp32_ukernel_4p2c__scalar_imagic(
     intptr_t input_stride,
     size_t output_increment,
     size_t input_offset,
+    size_t input_pixel_stride,
     const int8_t* zero,
-    const union xnn_qs8_qc8w_conv_minmax_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const union xnn_qs8_qc8w_conv_minmax_params* restrict params)
 {
   assert(channels != 0);
   assert(output_width != 0);
 
-  const float vmagic_bias = params->fp32_scalar_imagic.magic_bias;
-  const int32_t vmagic_min = params->fp32_scalar_imagic.magic_min;
-  const int32_t vmagic_max = params->fp32_scalar_imagic.magic_max;
-  const int32_t vmagic_bias_less_zero_point = params->fp32_scalar_imagic.magic_bias_less_zero_point;
+  const float vmagic_bias = 12582912.0f;
+  const int32_t output_min_less_zero_point = (int32_t) params->fp32_scalar.output_min - (int32_t) params->fp32_scalar.output_zero_point;
+  const int32_t output_max_less_zero_point = (int32_t) params->fp32_scalar.output_max - (int32_t) params->fp32_scalar.output_zero_point;
+  const int32_t vmagic_min = (int32_t) float_as_uint32(12582912.0f + output_min_less_zero_point);
+  const int32_t vmagic_max = (int32_t) float_as_uint32(12582912.0f + output_max_less_zero_point);
+  const int32_t vmagic_bias_less_zero_point = INT32_C(0x4B400000) - (int32_t) params->fp32_scalar.output_zero_point;
   do {
     const int8_t* i0 = input[0];
     assert(i0 != NULL);
@@ -162,6 +169,7 @@ void xnn_qs8_qc8w_dwconv_minmax_fp32_ukernel_4p2c__scalar_imagic(
       *output++ = (int8_t) vout;
     }
 
+    input_offset += input_pixel_stride;
     output = (int8_t*) ((uintptr_t) output + output_increment);
   } while (--output_width != 0);
 }

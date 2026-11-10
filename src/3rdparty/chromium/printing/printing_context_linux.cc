@@ -32,13 +32,16 @@ namespace printing {
 // static
 std::unique_ptr<PrintingContext> PrintingContext::CreateImpl(
     Delegate* delegate,
-    ProcessBehavior process_behavior) {
-  return std::make_unique<PrintingContextLinux>(delegate, process_behavior);
+    OutOfProcessBehavior out_of_process_behavior) {
+  return std::make_unique<PrintingContextLinux>(delegate,
+                                                out_of_process_behavior);
 }
 
-PrintingContextLinux::PrintingContextLinux(Delegate* delegate,
-                                           ProcessBehavior process_behavior)
-    : PrintingContext(delegate, process_behavior), print_dialog_(nullptr) {}
+PrintingContextLinux::PrintingContextLinux(
+    Delegate* delegate,
+    OutOfProcessBehavior out_of_process_behavior)
+    : PrintingContext(delegate, out_of_process_behavior),
+      print_dialog_(nullptr) {}
 
 PrintingContextLinux::~PrintingContextLinux() {
   ReleaseContext();
@@ -55,8 +58,6 @@ void PrintingContextLinux::AskUserForSettings(int max_pages,
     // Can only get here if the renderer is sending bad messages.
     // http://crbug.com/341777
     NOTREACHED();
-    std::move(callback).Run(mojom::ResultCode::kFailed);
-    return;
   }
 
   print_dialog_->ShowDialog(delegate_->GetParentView(), has_selection,
@@ -130,11 +131,13 @@ mojom::ResultCode PrintingContextLinux::NewDocument(
   document_name_ = document_name;
 
 #if BUILDFLAG(ENABLE_OOP_PRINTING_NO_OOP_BASIC_PRINT_DIALOG)
-  if (process_behavior() == ProcessBehavior::kOopEnabledSkipSystemCalls) {
+  if (out_of_process_behavior() ==
+      OutOfProcessBehavior::kEnabledSkipSystemCalls) {
     return mojom::ResultCode::kSuccess;
   }
 
-  if (process_behavior() == ProcessBehavior::kOopEnabledPerformSystemCalls &&
+  if (out_of_process_behavior() ==
+          OutOfProcessBehavior::kEnabledPerformSystemCalls &&
       !settings_->system_print_dialog_data().empty()) {
     // Take the settings captured by the browser process from the system print
     // dialog and apply them to this printing context in the PrintBackend
@@ -160,7 +163,7 @@ mojom::ResultCode PrintingContextLinux::PrintDocument(
   if (!print_dialog_) {
     return mojom::ResultCode::kFailed;
   }
-  // TODO(crbug.com/1252685)  Plumb error code back from
+  // TODO(crbug.com/40198881)  Plumb error code back from
   // `PrintDialogLinuxInterface`.
   print_dialog_->PrintDocument(metafile, document_name_);
   return mojom::ResultCode::kSuccess;

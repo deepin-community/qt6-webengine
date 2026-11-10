@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/x8-lut/wasmpshufb.c.in
 //   Generator: tools/xngen
@@ -11,15 +12,15 @@
 
 #include <wasm_simd128.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/lut.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/lut.h"
 
 
 void xnn_x8_lut_ukernel__wasmpshufb_u48(
     size_t batch,
     const uint8_t* input,
     uint8_t* output,
-    const uint8_t table[restrict XNN_MIN_ELEMENTS(256)])
+    const uint8_t* restrict table)
 {
   assert(batch != 0);
   assert(batch % sizeof(uint8_t) == 0);

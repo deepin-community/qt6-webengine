@@ -17,12 +17,15 @@
 #include <atomic>
 
 #include "gtest/gtest.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/synchronization/notification.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
+#include "internal/platform/cancelable.h"
 #include "internal/platform/count_down_latch.h"
-#include "internal/platform/exception.h"
 #include "internal/platform/medium_environment.h"
+#include "internal/test/fake_clock.h"
 
 namespace nearby {
 
@@ -263,7 +266,7 @@ TEST(ScheduledExecutorTest,
   MediumEnvironment::Instance().Stop();
 }
 
-struct ThreadCheckTestClass {
+struct ScheduledThreadCheckTestClass {
   ScheduledExecutor executor;
   int value ABSL_GUARDED_BY(executor) = 0;
 
@@ -272,22 +275,30 @@ struct ThreadCheckTestClass {
 };
 
 TEST(ScheduledExecutorTest, ThreadCheck_Execute) {
-  ThreadCheckTestClass test_class;
+  ScheduledThreadCheckTestClass test_class;
+  absl::Notification notification;
 
   test_class.executor.Execute(
-      [&test_class]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(test_class.executor) {
-        test_class.incValue();
-      });
+      [&test_class, &notification]()
+          ABSL_EXCLUSIVE_LOCKS_REQUIRED(test_class.executor) {
+            test_class.incValue();
+            notification.Notify();
+          });
+  EXPECT_TRUE(notification.WaitForNotificationWithTimeout(absl::Seconds(2)));
 }
 
 TEST(ScheduledExecutorTest, ThreadCheck_Schedule) {
-  ThreadCheckTestClass test_class;
+  ScheduledThreadCheckTestClass test_class;
+  absl::Notification notification;
 
   test_class.executor.Schedule(
-      [&test_class]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(test_class.executor) {
-        test_class.incValue();
-      },
+      [&test_class, &notification]()
+          ABSL_EXCLUSIVE_LOCKS_REQUIRED(test_class.executor) {
+            test_class.incValue();
+            notification.Notify();
+          },
       absl::ZeroDuration());
+  EXPECT_TRUE(notification.WaitForNotificationWithTimeout(absl::Seconds(2)));
 }
 
 }  // namespace nearby

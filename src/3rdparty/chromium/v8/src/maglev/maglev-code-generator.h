@@ -11,9 +11,12 @@
 #include "src/maglev/maglev-assembler.h"
 #include "src/maglev/maglev-code-gen-state.h"
 #include "src/utils/identity-map.h"
+#include "src/zone/zone-containers.h"
 
 namespace v8 {
 namespace internal {
+class TrustedObject;
+
 namespace maglev {
 
 class Graph;
@@ -38,7 +41,7 @@ class MaglevCodeGenerator final {
   void EmitMetadata();
   void RecordInlinedFunctions();
 
-  GlobalHandleVector<Map> CollectRetainedMaps(Handle<Code> code);
+  GlobalHandleVector<Map> CollectRetainedMaps(DirectHandle<Code> code);
   Handle<DeoptimizationData> GenerateDeoptimizationData(
       LocalIsolate* local_isolate);
   MaybeHandle<Code> BuildCodeObject(LocalIsolate* local_isolate);
@@ -47,6 +50,7 @@ class MaglevCodeGenerator final {
   int stack_slot_count_with_fixed_frame() const {
     return stack_slot_count() + StandardFrameConstants::kFixedSlotCount;
   }
+  uint16_t parameter_count() const { return code_gen_state_.parameter_count(); }
 
   MaglevAssembler* masm() { return &masm_; }
 
@@ -57,16 +61,21 @@ class MaglevCodeGenerator final {
   MaglevAssembler masm_;
   Graph* const graph_;
 
+  IdentityMap<int, base::DefaultAllocationPolicy> protected_deopt_literals_;
   IdentityMap<int, base::DefaultAllocationPolicy> deopt_literals_;
+  ZoneVector<IndirectHandle<TrustedObject>> protected_deopt_literals_vector_;
+  ZoneVector<IndirectHandle<Object>> deopt_literals_vector_;
   int deopt_exit_start_offset_ = -1;
   int handler_table_offset_ = 0;
   int inlined_function_count_ = 0;
 
   bool code_gen_succeeded_ = false;
 
-  Handle<DeoptimizationData> deopt_data_;
-  MaybeHandle<Code> code_;
+  IndirectHandle<DeoptimizationData> deopt_data_;
+  MaybeIndirectHandle<Code> code_;
   GlobalHandleVector<Map> retained_maps_;
+  bool is_context_specialized_;
+  Zone* zone_;
 };
 
 }  // namespace maglev

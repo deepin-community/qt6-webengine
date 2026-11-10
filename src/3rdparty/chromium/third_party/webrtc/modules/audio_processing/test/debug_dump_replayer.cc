@@ -10,10 +10,18 @@
 
 #include "modules/audio_processing/test/debug_dump_replayer.h"
 
+#include <cstddef>
+#include <cstdio>
+#include <cstring>
+#include <memory>
+#include <optional>
 #include <string>
 
 #include "absl/strings/string_view.h"
-#include "modules/audio_processing/test/audio_processing_builder_for_testing.h"
+#include "api/audio/audio_processing.h"
+#include "api/audio/builtin_audio_processing_builder.h"
+#include "api/environment/environment_factory.h"
+#include "common_audio/channel_buffer.h"
 #include "modules/audio_processing/test/protobuf_utils.h"
 #include "modules/audio_processing/test/runtime_setting_util.h"
 #include "rtc_base/checks.h"
@@ -26,7 +34,7 @@ namespace {
 void MaybeResetBuffer(std::unique_ptr<ChannelBuffer<float>>* buffer,
                       const StreamConfig& config) {
   auto& buffer_ref = *buffer;
-  if (!buffer_ref.get() || buffer_ref->num_frames() != config.num_frames() ||
+  if (!buffer_ref || buffer_ref->num_frames() != config.num_frames() ||
       buffer_ref->num_channels() != config.num_channels()) {
     buffer_ref.reset(
         new ChannelBuffer<float>(config.num_frames(), config.num_channels()));
@@ -54,9 +62,9 @@ bool DebugDumpReplayer::SetDumpFile(absl::string_view filename) {
 }
 
 // Get next event that has not run.
-absl::optional<audioproc::Event> DebugDumpReplayer::GetNextEvent() const {
+std::optional<audioproc::Event> DebugDumpReplayer::GetNextEvent() const {
   if (!has_next_event_)
-    return absl::nullopt;
+    return std::nullopt;
   else
     return next_event_;
 }
@@ -188,8 +196,8 @@ void DebugDumpReplayer::MaybeRecreateApm(const audioproc::Config& msg) {
 
   // We only create APM once, since changes on these fields should not
   // happen in current implementation.
-  if (!apm_.get()) {
-    apm_ = AudioProcessingBuilderForTesting().Create();
+  if (apm_ == nullptr) {
+    apm_ = BuiltinAudioProcessingBuilder().Build(CreateEnvironment());
   }
 }
 

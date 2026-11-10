@@ -7,9 +7,11 @@
 #include <memory>
 #include <utility>
 
+#include "base/check.h"
 #include "base/feature_list.h"
 #include "base/supports_user_data.h"
 #include "components/subresource_filter/content/browser/content_subresource_filter_throttle_manager.h"
+#include "components/subresource_filter/content/shared/browser/utils.h"
 #include "components/subresource_filter/core/browser/subresource_filter_features.h"
 #include "content/public/browser/frame_type.h"
 #include "content/public/browser/global_routing_id.h"
@@ -75,11 +77,13 @@ void ContentSubresourceFilterWebContentsHelper::CreateForWebContents(
     SubresourceFilterProfileContext* profile_context,
     scoped_refptr<safe_browsing::SafeBrowsingDatabaseManager> database_manager,
     VerifiedRulesetDealer::Handle* dealer_handle) {
-  if (!base::FeatureList::IsEnabled(kSafeBrowsingSubresourceFilter))
+  if (!base::FeatureList::IsEnabled(kSafeBrowsingSubresourceFilter)) {
     return;
+  }
 
-  if (FromWebContents(web_contents))
+  if (FromWebContents(web_contents)) {
     return;
+  }
 
   content::WebContentsUserData<ContentSubresourceFilterWebContentsHelper>::
       CreateForWebContents(web_contents, profile_context, database_manager,
@@ -121,31 +125,36 @@ ContentSubresourceFilterWebContentsHelper::GetThrottleManager(
   // We should never be requesting the throttle manager for a navigation that
   // moves a page into the primary frame tree (e.g. prerender activation,
   // BFCache restoration).
-  DCHECK(!handle.IsPageActivation());
+  CHECK(!handle.IsPageActivation());
 
   if (WillCreateNewThrottleManager(handle)) {
     auto* container =
         ThrottleManagerInUserDataContainer::GetForNavigationHandle(handle);
-    if (!container)
+    if (!container) {
       return nullptr;
+    }
 
     ContentSubresourceFilterThrottleManager* throttle_manager =
         container->Get();
-    DCHECK(throttle_manager);
+    CHECK(throttle_manager);
     return throttle_manager;
   }
 
-  // For navigations that are not page activations (this method cannot be
-  // called for page activations) nor same-document, a throttle manager will be
-  // created iff they occur in a non-fenced-frame main frame. Since we didn't
-  // create a throttle manager here, for the non-same-document case use the
-  // frame's parent/outer-document RFH since subframe navigations are not
-  // associated with a RFH until commit.
-  DCHECK(handle.IsSameDocument() || !IsInSubresourceFilterRoot(&handle));
-  content::RenderFrameHost* rfh = handle.IsSameDocument()
+  // For a cross-document navigation, excluding page activation (this method
+  // cannot be called for page activations), a throttle manager is created iff
+  // it occurs in a non-fenced main frame. Since a throttle manager wasn't
+  // created here, in the cross-document case, we must use the frame's
+  // parent/outer-document RFH since subframe navigations are not associated
+  // with a RFH until commit. We also use the parent here for same-document
+  // non-root navigations to avoid rare issues with navigations that are aborted
+  // due to a parent's navigation (where the navigation's handle's RFH may be
+  // null); this does not affect the result as both frames have the same
+  // throttle manager.
+  CHECK(handle.IsSameDocument() || !IsInSubresourceFilterRoot(&handle));
+  content::RenderFrameHost* rfh = IsInSubresourceFilterRoot(&handle)
                                       ? handle.GetRenderFrameHost()
                                       : handle.GetParentFrameOrOuterDocument();
-  DCHECK(rfh);
+  CHECK(rfh);
   return GetThrottleManager(GetSubresourceFilterRootPage(rfh));
 }
 
@@ -171,21 +180,22 @@ void ContentSubresourceFilterWebContentsHelper::SetDatabaseManagerForTesting(
 void ContentSubresourceFilterWebContentsHelper::WillDestroyThrottleManager(
     ContentSubresourceFilterThrottleManager* throttle_manager) {
   bool was_erased = throttle_managers_.erase(throttle_manager);
-  DCHECK(was_erased);
+  CHECK(was_erased);
 }
 
 void ContentSubresourceFilterWebContentsHelper::RenderFrameDeleted(
     content::RenderFrameHost* frame_host) {
   ContentSubresourceFilterThrottleManager* throttle_manager =
       GetThrottleManager(frame_host->GetPage());
-  if (!throttle_manager)
+  if (!throttle_manager) {
     return;
+  }
 
   throttle_manager->RenderFrameDeleted(frame_host);
 }
 
 void ContentSubresourceFilterWebContentsHelper::FrameDeleted(
-    int frame_tree_node_id) {
+    content::FrameTreeNodeId frame_tree_node_id) {
   navigated_frames_.erase(frame_tree_node_id);
 
   // TODO(bokan): Not sure how to go from frame tree node id to a Page. The
@@ -201,8 +211,9 @@ void ContentSubresourceFilterWebContentsHelper::FrameDeleted(
 
 void ContentSubresourceFilterWebContentsHelper::DidStartNavigation(
     content::NavigationHandle* navigation_handle) {
-  if (!WillCreateNewThrottleManager(*navigation_handle))
+  if (!WillCreateNewThrottleManager(*navigation_handle)) {
     return;
+  }
 
   std::unique_ptr<ContentSubresourceFilterThrottleManager> new_manager =
       ContentSubresourceFilterThrottleManager::CreateForNewPage(
@@ -235,17 +246,17 @@ void ContentSubresourceFilterWebContentsHelper::DidFinishNavigation(
     // TODO(bokan): Once the BFCache restoration navigation is made synchronous
     // like prerender activation we can remove this special case.
     if (!navigation_handle->HasCommitted()) {
-      DCHECK(navigation_handle->IsServedFromBackForwardCache());
+      CHECK(navigation_handle->IsServedFromBackForwardCache());
       return;
     }
 
-    DCHECK(navigation_handle->HasCommitted());
-    DCHECK(navigation_handle->GetRenderFrameHost());
+    CHECK(navigation_handle->HasCommitted());
+    CHECK(navigation_handle->GetRenderFrameHost());
 
     ContentSubresourceFilterThrottleManager* throttle_manager =
         GetThrottleManager(navigation_handle->GetRenderFrameHost()->GetPage());
 
-    // TODO(https://crbug.com/1234233): This shouldn't be possible but, from
+    // TODO(crbug.com/40781366): This shouldn't be possible but, from
     // the investigation in https://crbug.com/1264667, this is likely a symptom
     // of navigating a detached WebContents so (very rarely) was causing
     // crashes.
@@ -272,7 +283,7 @@ void ContentSubresourceFilterWebContentsHelper::DidFinishNavigation(
         ThrottleManagerInUserDataContainer::GetForNavigationHandle(
             *navigation_handle);
 
-    // TODO(https://crbug.com/1234233): It is theoretically possible to start a
+    // TODO(crbug.com/40781366): It is theoretically possible to start a
     // navigation in an unattached WebContents (so the WebContents doesn't yet
     // have any WebContentsHelpers such as this class) but attach it before a
     // navigation completes. If that happened we won't have a throttle manager
@@ -282,7 +293,7 @@ void ContentSubresourceFilterWebContentsHelper::DidFinishNavigation(
       return;
     }
 
-    DCHECK(throttle_manager);
+    CHECK(throttle_manager);
 
     // If the navigation was successful it will have created a new page,
     // transfer the throttle manager to Page user data. If it failed, but it's
@@ -295,14 +306,14 @@ void ContentSubresourceFilterWebContentsHelper::DidFinishNavigation(
     } else if (is_initial_navigation) {
       if (auto* rfh = content::RenderFrameHost::FromID(
               navigation_handle->GetPreviousRenderFrameHostId())) {
-        // TODO(https://crbug.com/1234233): Ideally this should only happen on
+        // TODO(crbug.com/40781366): Ideally this should only happen on
         // the first navigation in a frame, however, in some cases we actually
         // attach this TabHelper after a navigation has occurred (possibly
         // before it has finished). See
         // https://groups.google.com/a/chromium.org/g/navigation-dev/c/cY5V-w-xPRM/m/uC1Nsg_KAwAJ.
-        // DCHECK(rfh->GetLastCommittedURL().is_empty() ||
-        //        rfh->GetLastCommittedURL().IsAboutBlank());
-        // DCHECK(!GetThrottleManager(rfh->GetPage()));
+        // CHECK(rfh->GetLastCommittedURL().is_empty() ||
+        //       rfh->GetLastCommittedURL().IsAboutBlank());
+        // CHECK(!GetThrottleManager(rfh->GetPage()));
         page = &rfh->GetPage();
       }
     }
@@ -337,7 +348,7 @@ void ContentSubresourceFilterWebContentsHelper::DidFinishLoad(
 void ContentSubresourceFilterWebContentsHelper::OnSubresourceFilterGoingAway() {
   // Stop observing here because the observer manager could be destroyed by the
   // time this class is destroyed.
-  DCHECK(scoped_observation_.IsObserving());
+  CHECK(scoped_observation_.IsObserving());
   scoped_observation_.Reset();
 }
 
@@ -354,40 +365,12 @@ void ContentSubresourceFilterWebContentsHelper::OnPageActivationComputed(
 void ContentSubresourceFilterWebContentsHelper::OnChildFrameNavigationEvaluated(
     content::NavigationHandle* navigation_handle,
     LoadPolicy load_policy) {
-  DCHECK(!IsInSubresourceFilterRoot(navigation_handle));
+  CHECK(!IsInSubresourceFilterRoot(navigation_handle));
   if (ContentSubresourceFilterThrottleManager* throttle_manager =
           GetThrottleManager(*navigation_handle)) {
     throttle_manager->OnChildFrameNavigationEvaluated(navigation_handle,
                                                       load_policy);
   }
-}
-
-bool IsInSubresourceFilterRoot(content::NavigationHandle* navigation_handle) {
-  // TODO(bokan): This should eventually consider Portals. crbug.com/1267506.
-  switch (navigation_handle->GetNavigatingFrameType()) {
-    case content::FrameType::kPrimaryMainFrame:
-    case content::FrameType::kPrerenderMainFrame:
-      return true;
-    case content::FrameType::kSubframe:
-    case content::FrameType::kFencedFrameRoot:
-      return false;
-  }
-}
-
-bool IsSubresourceFilterRoot(content::RenderFrameHost* rfh) {
-  return !rfh->GetParent() && !rfh->IsFencedFrameRoot();
-}
-
-content::Page& GetSubresourceFilterRootPage(content::RenderFrameHost* rfh) {
-  // This only "breaks out" from fenced frames since the desired behavior in
-  // other nested frame trees (e.g. portals) isn't clear. Otherwise we could
-  // just use GetOutermostMainFrame.
-  while (rfh->IsNestedWithinFencedFrame()) {
-    rfh = rfh->GetMainFrame()->GetParentOrOuterDocument();
-    DCHECK(rfh);
-  }
-
-  return rfh->GetPage();
 }
 
 }  // namespace subresource_filter

@@ -72,10 +72,6 @@ class BLINK_COMMON_EXPORT IdentifiabilityStudySettings {
   // Returns true if |type| should be sampled.
   bool ShouldSampleType(IdentifiableSurface::Type type) const;
 
-  // Returns true if any of |types| should be sampled.
-  bool ShouldSampleAnyType(
-      std::initializer_list<IdentifiableSurface::Type> types) const;
-
   // Convenience method for determining whether the surface constructable from
   // the type (|kWebFeature|) and the |feature| is allowed. See
   // ShouldSampleSurface for more detail.
@@ -97,6 +93,7 @@ class BLINK_COMMON_EXPORT IdentifiabilityStudySettings {
   const std::unique_ptr<IdentifiabilityStudySettingsProvider> provider_;
   const bool is_enabled_ = false;
   const bool is_any_surface_or_type_blocked_ = false;
+  const bool is_meta_experiment_active_ = false;
 };
 
 }  // namespace blink

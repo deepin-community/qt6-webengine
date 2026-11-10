@@ -5,6 +5,8 @@
 #ifndef NET_COOKIES_COOKIE_ACCESS_DELEGATE_H_
 #define NET_COOKIES_COOKIE_ACCESS_DELEGATE_H_
 
+#include <optional>
+
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
 #include "base/functional/callback_forward.h"
@@ -16,7 +18,6 @@
 #include "net/first_party_sets/first_party_set_entry.h"
 #include "net/first_party_sets/first_party_set_metadata.h"
 #include "net/first_party_sets/first_party_sets_cache_filter.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 namespace net {
@@ -44,6 +45,11 @@ class NET_EXPORT CookieAccessDelegate {
   virtual CookieAccessSemantics GetAccessSemantics(
       const CanonicalCookie& cookie) const = 0;
 
+  // Gets the scope semantics to apply to based on the given domain (i.e.,
+  // whether a policy specifies this legacy cookie scope should apply).
+  virtual CookieScopeSemantics GetScopeSemantics(
+      const std::string_view domain) const = 0;
+
   // Returns whether a cookie should be attached regardless of its SameSite
   // value vs the request context.
   virtual bool ShouldIgnoreSameSiteRestrictions(
@@ -64,7 +70,7 @@ class NET_EXPORT CookieAccessDelegate {
   // with the result. The callback will be invoked iff the return value is
   // nullopt; i.e. a result will be provided via return value or callback, but
   // not both, and not neither.
-  [[nodiscard]] virtual absl::optional<
+  [[nodiscard]] virtual std::optional<
       std::pair<FirstPartySetMetadata, FirstPartySetsCacheFilter::MatchInfo>>
   ComputeFirstPartySetMetadataMaybeAsync(
       const net::SchemefulSite& site,
@@ -81,7 +87,7 @@ class NET_EXPORT CookieAccessDelegate {
   // with the result. The callback will be invoked iff the return value is
   // nullopt; i.e. a result will be provided via return value or callback, but
   // not both, and not neither.
-  [[nodiscard]] virtual absl::optional<
+  [[nodiscard]] virtual std::optional<
       base::flat_map<net::SchemefulSite, net::FirstPartySetEntry>>
   FindFirstPartySetEntries(
       const base::flat_set<net::SchemefulSite>& sites,

@@ -60,11 +60,11 @@ class AppsSection : public OsSettingsSection,
 
   void UpdateAndroidSearchTags();
 
-  std::optional<StartupSection> startup_subsection_;
   raw_ptr<PrefService> pref_service_;
   raw_ptr<ArcAppListPrefs> arc_app_list_prefs_;
   raw_ptr<apps::AppServiceProxy> app_service_proxy_;
   PrefChangeRegistrar pref_change_registrar_;
+  const bool is_arc_allowed_;
 };
 
 }  // namespace ash::settings

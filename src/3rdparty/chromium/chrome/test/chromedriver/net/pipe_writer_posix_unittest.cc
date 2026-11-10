@@ -38,12 +38,13 @@ std::pair<std::string, int> ReadAll(base::File read_pipe) {
       base::MakeRefCounted<net::IOBufferWithSize>(4096);
   int rv = 0;
   while (true) {
-    rv = read_pipe.ReadAtCurrentPos(buffer->data(), buffer->size());
+    rv =
+        UNSAFE_TODO(read_pipe.ReadAtCurrentPos(buffer->data(), buffer->size()));
     if (rv <= 0) {
       break;
     }
     received_message.insert(received_message.end(), buffer->data(),
-                            buffer->data() + rv);
+                            UNSAFE_TODO(buffer->data() + rv));
   }
   return std::make_pair(std::move(received_message), rv);
 }

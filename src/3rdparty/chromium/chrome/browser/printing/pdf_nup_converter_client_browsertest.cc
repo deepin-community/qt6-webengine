@@ -6,9 +6,11 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
@@ -54,7 +56,8 @@ base::MappedReadOnlyRegion GetPdfRegion(const char* file_name) {
   if (!pdf_region.IsValid())
     return pdf_region;
 
-  memcpy(pdf_region.mapping.memory(), pdf_str.data(), pdf_str.size());
+  UNSAFE_TODO(
+      memcpy(pdf_region.mapping.memory(), pdf_str.data(), pdf_str.size()));
   return pdf_region;
 }
 
@@ -65,7 +68,8 @@ base::MappedReadOnlyRegion GetBadDataRegion() {
   if (!pdf_region.IsValid())
     return pdf_region;
 
-  memcpy(pdf_region.mapping.memory(), kBadData, std::size(kBadData));
+  UNSAFE_TODO(
+      memcpy(pdf_region.mapping.memory(), kBadData, std::size(kBadData)));
   return pdf_region;
 }
 
@@ -97,7 +101,7 @@ void VerifyPdf(base::span<const uint8_t> pdf_data,
     EXPECT_EQ(expected_sizes[i], page_sizes[i]);
 }
 
-base::span<const gfx::SizeF> GetExpectedPdfSizes(base::StringPiece pdf_name) {
+base::span<const gfx::SizeF> GetExpectedPdfSizes(std::string_view pdf_name) {
   if (pdf_name == "hello_world.pdf") {
     static constexpr gfx::SizeF kSizes[] = {
         {612.0f, 792.0f},
@@ -113,7 +117,7 @@ base::span<const gfx::SizeF> GetExpectedPdfSizes(base::StringPiece pdf_name) {
     return kSizes;
   }
 
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 }  // namespace

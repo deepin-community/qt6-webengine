@@ -16,14 +16,13 @@
 #include "base/base_export.h"
 #include "base/compiler_specific.h"
 #include "base/debug/debugging_buildflags.h"
-#include "base/debug/stack_trace.h"
-#include "third_party/jni_zero/core.h"
+#include "third_party/jni_zero/jni_zero.h"
 
 namespace base {
 namespace android {
 
 // Used to mark symbols to be exported in a shared library's symbol table.
-#define JNI_EXPORT __attribute__ ((visibility("default")))
+#define JNI_EXPORT __attribute__((visibility("default")))
 
 // Contains the registration method information for initializing JNI bindings.
 struct RegistrationMethod {
@@ -63,8 +62,10 @@ inline void DetachFromVM() {
 // Initializes the global JVM.
 BASE_EXPORT void InitVM(JavaVM* vm);
 
-// Returns true if the global JVM has been initialized.
-inline bool IsVMInitialized() {
+// Returns true if the global JVM has been initialized. This happens
+// immediately on native library load, so this is still correct even very
+// early in startup.
+inline bool IsJavaAvailable() {
   return jni_zero::IsVMInitialized();
 }
 
@@ -81,65 +82,15 @@ inline void DisableJvmForTesting() {
   return jni_zero::DisableJvmForTesting();
 }
 
-// Initializes the global ClassLoader used by the GetClass and LazyGetClass
-// methods. This is needed because JNI will use the base ClassLoader when there
-// is no Java code on the stack. The base ClassLoader doesn't know about any of
-// the application classes and will fail to lookup anything other than system
-// classes.
-void InitGlobalClassLoader(JNIEnv* env);
-
 // Finds the class named |class_name| and returns it.
 // Use this method instead of invoking directly the JNI FindClass method (to
 // prevent leaking local references).
 // This method triggers a fatal assertion if the class could not be found.
 // Use HasClass if you need to check whether the class exists.
-BASE_EXPORT ScopedJavaLocalRef<jclass> GetClass(JNIEnv* env,
-                                                const char* class_name,
-                                                const char* split_name);
-BASE_EXPORT ScopedJavaLocalRef<jclass> GetClass(JNIEnv* env,
-                                                const char* class_name);
-
-// The method will initialize |atomic_class_id| to contain a global ref to the
-// class. And will return that ref on subsequent calls.  It's the caller's
-// responsibility to release the ref when it is no longer needed.
-// The caller is responsible to zero-initialize |atomic_method_id|.
-// It's fine to simultaneously call this on multiple threads referencing the
-// same |atomic_method_id|.
-BASE_EXPORT jclass LazyGetClass(JNIEnv* env,
-                                const char* class_name,
-                                const char* split_name,
-                                std::atomic<jclass>* atomic_class_id);
-BASE_EXPORT jclass LazyGetClass(
-    JNIEnv* env,
-    const char* class_name,
-    std::atomic<jclass>* atomic_class_id);
-
-// This class is a wrapper for JNIEnv Get(Static)MethodID.
-class BASE_EXPORT MethodID {
- public:
-  enum Type {
-    TYPE_STATIC,
-    TYPE_INSTANCE,
-  };
-
-  // Returns the method ID for the method with the specified name and signature.
-  // This method triggers a fatal assertion if the method could not be found.
-  template<Type type>
-  static jmethodID Get(JNIEnv* env,
-                       jclass clazz,
-                       const char* method_name,
-                       const char* jni_signature);
-
-  // The caller is responsible to zero-initialize |atomic_method_id|.
-  // It's fine to simultaneously call this on multiple threads referencing the
-  // same |atomic_method_id|.
-  template<Type type>
-  static jmethodID LazyGet(JNIEnv* env,
-                           jclass clazz,
-                           const char* method_name,
-                           const char* jni_signature,
-                           std::atomic<jmethodID>* atomic_method_id);
-};
+inline ScopedJavaLocalRef<jclass> GetClass(JNIEnv* env,
+                                           const char* class_name) {
+  return jni_zero::GetClass(env, class_name);
+}
 
 // Returns true if an exception is pending in the provided JNIEnv*.
 inline bool HasException(JNIEnv* env) {
@@ -162,6 +113,7 @@ BASE_EXPORT std::string GetJavaExceptionInfo(
 // This returns a string representation of the java stack trace.
 BASE_EXPORT std::string GetJavaStackTraceIfPresent();
 
+using MethodID = jni_zero::MethodID;
 }  // namespace android
 }  // namespace base
 

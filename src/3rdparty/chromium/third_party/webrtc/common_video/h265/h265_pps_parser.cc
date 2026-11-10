@@ -10,13 +10,15 @@
 
 #include "common_video/h265/h265_pps_parser.h"
 
-#include <memory>
+#include <cstdint>
+#include <optional>
 #include <vector>
 
-#include "absl/types/optional.h"
+#include "api/array_view.h"
 #include "common_video/h265/h265_common.h"
-#include "rtc_base/bit_buffer.h"
+#include "common_video/h265/h265_sps_parser.h"
 #include "rtc_base/bitstream_reader.h"
+#include "rtc_base/checks.h"
 #include "rtc_base/logging.h"
 
 #define IN_RANGE_OR_RETURN_NULL(val, min, max)                                \
@@ -26,7 +28,7 @@
                              " to be"                                         \
                           << " in range [" << (min) << ":" << (max) << "]"    \
                           << " found " << (val) << " instead";                \
-      return absl::nullopt;                                                   \
+      return std::nullopt;                                                    \
     }                                                                         \
   } while (0)
 
@@ -46,7 +48,7 @@
     if (!reader.Ok() || !(a)) {                                          \
       RTC_LOG(LS_WARNING) << "Error in stream: invalid value, expected " \
                           << #a;                                         \
-      return absl::nullopt;                                              \
+      return std::nullopt;                                               \
     }                                                                    \
   } while (0)
 
@@ -62,18 +64,16 @@ namespace webrtc {
 // You can find it on this page:
 // http://www.itu.int/rec/T-REC-H.265
 
-absl::optional<H265PpsParser::PpsState> H265PpsParser::ParsePps(
-    const uint8_t* data,
-    size_t length,
+std::optional<H265PpsParser::PpsState> H265PpsParser::ParsePps(
+    ArrayView<const uint8_t> data,
     const H265SpsParser::SpsState* sps) {
   // First, parse out rbsp, which is basically the source buffer minus emulation
   // bytes (the last byte of a 0x00 0x00 0x03 sequence). RBSP is defined in
   // section 7.3.1.1 of the H.265 standard.
-  return ParseInternal(H265::ParseRbsp(data, length), sps);
+  return ParseInternal(H265::ParseRbsp(data), sps);
 }
 
-bool H265PpsParser::ParsePpsIds(const uint8_t* data,
-                                size_t length,
+bool H265PpsParser::ParsePpsIds(ArrayView<const uint8_t> data,
                                 uint32_t* pps_id,
                                 uint32_t* sps_id) {
   RTC_DCHECK(pps_id);
@@ -81,7 +81,7 @@ bool H265PpsParser::ParsePpsIds(const uint8_t* data,
   // First, parse out rbsp, which is basically the source buffer minus emulation
   // bytes (the last byte of a 0x00 0x00 0x03 sequence). RBSP is defined in
   // section 7.3.1.1 of the H.265 standard.
-  std::vector<uint8_t> unpacked_buffer = H265::ParseRbsp(data, length);
+  std::vector<uint8_t> unpacked_buffer = H265::ParseRbsp(data);
   BitstreamReader reader(unpacked_buffer);
   *pps_id = reader.ReadExponentialGolomb();
   IN_RANGE_OR_RETURN_FALSE(*pps_id, 0, 63);
@@ -90,18 +90,18 @@ bool H265PpsParser::ParsePpsIds(const uint8_t* data,
   return reader.Ok();
 }
 
-absl::optional<H265PpsParser::PpsState> H265PpsParser::ParseInternal(
-    rtc::ArrayView<const uint8_t> buffer,
+std::optional<H265PpsParser::PpsState> H265PpsParser::ParseInternal(
+    ArrayView<const uint8_t> buffer,
     const H265SpsParser::SpsState* sps) {
   BitstreamReader reader(buffer);
   PpsState pps;
 
   if (!sps) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   if (!ParsePpsIdsInternal(reader, pps.pps_id, pps.sps_id)) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   // dependent_slice_segments_enabled_flag: u(1)
@@ -223,14 +223,14 @@ absl::optional<H265PpsParser::PpsState> H265PpsParser::ParseInternal(
   if (pps_scaling_list_data_present_flag) {
     // scaling_list_data()
     if (!H265SpsParser::ParseScalingListData(reader)) {
-      return absl::nullopt;
+      return std::nullopt;
     }
   }
   // lists_modification_present_flag: u(1)
   pps.lists_modification_present_flag = reader.Read<bool>();
 
   if (!reader.Ok()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   return pps;

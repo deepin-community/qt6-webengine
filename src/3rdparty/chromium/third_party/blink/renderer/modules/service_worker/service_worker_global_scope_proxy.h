@@ -106,6 +106,8 @@ class ServiceWorkerGlobalScopeProxy final : public WebServiceWorkerContextProxy,
   bool IsWindowInteractionAllowed() override;
   void PauseEvaluation() override;
   void ResumeEvaluation() override;
+  void DeferPrepareForEvaluation() override;
+  void RunDeferredPrepareForEvaluation() override;
   mojom::blink::ServiceWorkerFetchHandlerType FetchHandlerType() override;
   bool HasHidEventHandlers() override;
   bool HasUsbEventHandlers() override;
@@ -117,7 +119,7 @@ class ServiceWorkerGlobalScopeProxy final : public WebServiceWorkerContextProxy,
   // WorkerReportingProxy overrides:
   void CountFeature(WebFeature) override;
   void ReportException(const String& error_message,
-                       std::unique_ptr<SourceLocation>,
+                       SourceLocation*,
                        int exception_id) override;
   void ReportConsoleMessage(mojom::ConsoleMessageSource,
                             mojom::ConsoleMessageLevel,
@@ -162,12 +164,12 @@ class ServiceWorkerGlobalScopeProxy final : public WebServiceWorkerContextProxy,
 
   // Non-null until the WebEmbeddedWorkerImpl explicitly detach()es
   // as part of its finalization.
-  raw_ptr<WebEmbeddedWorkerImpl, ExperimentalRenderer> embedded_worker_;
+  raw_ptr<WebEmbeddedWorkerImpl> embedded_worker_;
 
   scoped_refptr<base::SingleThreadTaskRunner>
       parent_thread_default_task_runner_;
 
-  raw_ptr<WebServiceWorkerContextClient, ExperimentalRenderer> client_;
+  raw_ptr<WebServiceWorkerContextClient> client_;
 
   CrossThreadPersistent<ServiceWorkerGlobalScope> worker_global_scope_;
 

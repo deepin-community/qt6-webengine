@@ -76,7 +76,7 @@ void PushMessagingRefresher::OnUnsubscribed(const std::string& old_app_id) {
   refresh_map_.erase(found_new_app_id);
 
   RefreshInfo::iterator result = old_subscriptions_.find(new_app_id);
-  DCHECK(result != old_subscriptions_.end());
+  CHECK(result != old_subscriptions_.end());
 
   PushMessagingAppIdentifier old_identifier = result->second.old_identifier;
   old_subscriptions_.erase(result);

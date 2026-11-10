@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/trace_event/trace_event.h"
 #include "content/browser/loader/cached_navigation_url_loader.h"
 #include "content/browser/loader/navigation_loader_interceptor.h"
 #include "content/browser/loader/navigation_url_loader_factory.h"
@@ -39,9 +40,12 @@ std::unique_ptr<NavigationURLLoader> NavigationURLLoader::Create(
     mojo::PendingRemote<network::mojom::URLLoaderNetworkServiceObserver>
         url_loader_network_observer,
     mojo::PendingRemote<network::mojom::DevToolsObserver> devtools_observer,
+    mojo::PendingRemote<network::mojom::DeviceBoundSessionAccessObserver>
+        device_bound_session_observer,
     network::mojom::URLResponseHeadPtr cached_response_head,
     std::vector<std::unique_ptr<NavigationLoaderInterceptor>>
         initial_interceptors) {
+  TRACE_EVENT0("navigation", "NavigationURLLoader::Create");
   // Prioritize CachedNavigationURLLoader over `g_loader_factory` even for tests
   // as prerendered page activation needs to run synchronously and
   // CachedNavigationURLLoader serves a fake response synchronously.
@@ -59,7 +63,7 @@ std::unique_ptr<NavigationURLLoader> NavigationURLLoader::Create(
         loader_type);
   }
 
-  // TODO(https://crbug.com/1226442): Merge this into the kNoopForPrerender path
+  // TODO(crbug.com/40188852): Merge this into the kNoopForPrerender path
   // above.
   if (loader_type == LoaderType::kNoopForBackForwardCache) {
     DCHECK(cached_response_head);
@@ -75,6 +79,7 @@ std::unique_ptr<NavigationURLLoader> NavigationURLLoader::Create(
       std::move(cookie_observer), std::move(trust_token_observer),
       std::move(shared_dictionary_observer),
       std::move(url_loader_network_observer), std::move(devtools_observer),
+      std::move(device_bound_session_observer),
       std::move(initial_interceptors));
 }
 

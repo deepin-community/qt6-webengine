@@ -120,23 +120,18 @@ IntersectionObserver& DisplayLockDocumentState::EnsureIntersectionObserver() {
     // Paint containment requires using the overflow clip edge. To do otherwise
     // results in overflow-clip-margin not being painted in certain scenarios.
     intersection_observer_ = IntersectionObserver::Create(
-        /* (root) margin */ {Length::Percent(kViewportMarginPercentage)},
-        /* scroll_margin */ Vector<Length>(),
-        /* thresholds */ {std::numeric_limits<float>::min()},
-        /* document */ document_,
-        /* callback */
+        *document_,
         WTF::BindRepeating(
             &DisplayLockDocumentState::ProcessDisplayLockActivationObservation,
             WrapWeakPersistent(this)),
-        /* ukm_metric_id */
         LocalFrameUkmAggregator::kDisplayLockIntersectionObserver,
-        /* behavior */ IntersectionObserver::kDeliverDuringPostLayoutSteps,
-        /* semantics */ IntersectionObserver::kFractionOfTarget,
-        /* delay */ 0,
-        /* track_visibility */ false,
-        /* always report_root_bounds */ false,
-        /* margin_target */ IntersectionObserver::kApplyMarginToTarget,
-        /* use_overflow_clip_edge */ true);
+        IntersectionObserver::Params{
+            .margin = {Length::Percent(kViewportMarginPercentage)},
+            .margin_target = IntersectionObserver::kApplyMarginToTarget,
+            .thresholds = {std::numeric_limits<float>::min()},
+            .behavior = IntersectionObserver::kDeliverDuringPostLayoutSteps,
+            .use_overflow_clip_edge = true,
+        });
   }
   return *intersection_observer_;
 }
@@ -356,38 +351,11 @@ void DisplayLockDocumentState::ForcedNodeInfo::ForceLockIfNeeded(
 
 void DisplayLockDocumentState::ForcedRangeInfo::ForceLockIfNeeded(
     Element* new_locked_element) {
-  // TODO(crbug.com/1256849): Combine this with the range loop in
-  //   DisplayLockUtilities::ScopedForcedUpdate::Impl::Impl.
-  // Ranges use NodeTraversal::Next to go in between their start and end nodes,
-  // and will access the layout information of each of those nodes. In order to
-  // ensure that each of these nodes has unlocked layout information, we have to
-  // do a scoped unlock for each of those nodes by unlocking all of their flat
-  // tree ancestors.
-  for (Node* node = range_->FirstNode(); node != range_->PastLastNode();
-       node = NodeTraversal::Next(*node)) {
-    if (node->IsChildOfShadowHost()) {
-      // This node may be slotted into another place in the flat tree, so we
-      // have to do a flat tree parent traversal for it.
-      for (Node* ancestor = node; ancestor;
-           ancestor = FlatTreeTraversal::Parent(*ancestor)) {
-        if (ancestor == new_locked_element) {
-          chain_->AddForcedUpdateScopeForContext(
-              new_locked_element->GetDisplayLockContext());
-          return;
-        }
-      }
-    } else if (node == new_locked_element) {
+  for (Element* element :
+       DisplayLockUtilities::InclusiveAncestorsOfRange(*range_)) {
+    if (element == new_locked_element) {
       chain_->AddForcedUpdateScopeForContext(
           new_locked_element->GetDisplayLockContext());
-      return;
-    }
-  }
-  for (Node* node = range_->FirstNode(); node;
-       node = FlatTreeTraversal::Parent(*node)) {
-    if (node == new_locked_element) {
-      chain_->AddForcedUpdateScopeForContext(
-          new_locked_element->GetDisplayLockContext());
-      return;
     }
   }
 }
@@ -401,7 +369,9 @@ DisplayLockDocumentState::ScopedForceActivatableDisplayLocks::
       if (context->HasElement()) {
         context->DidForceActivatableDisplayLocks();
       } else {
-        DUMP_WILL_BE_NOTREACHED_NORETURN()
+        // This used to be a DUMP_WILL_BE_NOTREACHED(), but the crash volume was
+        // too high. See crbug.com/41494130
+        DCHECK(false)
             << "The DisplayLockContext's element has been garbage collected or"
             << " otherwise deleted, but the DisplayLockContext is still alive!"
             << " This shouldn't happen and could cause a crash. See"
@@ -458,12 +428,10 @@ void DisplayLockDocumentState::IssueForcedRenderWarning(Element* element) {
         RuntimeEnabledFeatures::WarnOnContentVisibilityRenderAccessEnabled()
             ? mojom::blink::ConsoleMessageLevel::kWarning
             : mojom::blink::ConsoleMessageLevel::kVerbose;
-    auto* console_message = MakeGarbageCollected<ConsoleMessage>(
+    element->AddConsoleMessage(
         mojom::blink::ConsoleMessageSource::kJavaScript, level,
         forced_render_warnings_ == kMaxConsoleMessages ? kForcedRenderingMax
                                                        : kForcedRendering);
-    console_message->SetNodes(document_->GetFrame(), {element->GetDomNodeId()});
-    document_->AddConsoleMessage(console_message);
   }
 }
 

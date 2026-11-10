@@ -1,6 +1,16 @@
 // Copyright 2016 The Chromium Authors
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #ifndef BSSL_PKI_CERT_ISSUER_SOURCE_H_
 #define BSSL_PKI_CERT_ISSUER_SOURCE_H_
@@ -12,7 +22,7 @@
 
 #include "parsed_certificate.h"
 
-namespace bssl {
+BSSL_NAMESPACE_BEGIN
 
 // Interface for looking up issuers of a certificate during path building.
 // Provides a synchronous and asynchronous method for retrieving issuers, so the
@@ -63,6 +73,6 @@ class OPENSSL_EXPORT CertIssuerSource {
                                  std::unique_ptr<Request> *out_req) = 0;
 };
 
-}  // namespace bssl
+BSSL_NAMESPACE_END
 
 #endif  // BSSL_PKI_CERT_ISSUER_SOURCE_H_

@@ -8,7 +8,7 @@ import * as Layers from '../../panels/layers/layers.js';
 import {TestRunner} from '../test_runner/test_runner.js';
 
 /**
- * @fileoverview using private properties isn't a Closure violation in tests.
+ * @file using private properties isn't a Closure violation in tests.
  */
 export const LayersTestRunner = {};
 
@@ -122,7 +122,7 @@ LayersTestRunner.dispatchMouseEvent = function(eventType, button, element, offse
     screenY: totalOffset.top - element.scrollTop + offsetY,
     clientX: totalOffset.left + offsetX,
     clientY: totalOffset.top + offsetY,
-    button: button,
+    button,
     composed: true
   };
 

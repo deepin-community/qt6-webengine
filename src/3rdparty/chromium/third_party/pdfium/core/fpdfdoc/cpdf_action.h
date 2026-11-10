@@ -7,12 +7,12 @@
 #ifndef CORE_FPDFDOC_CPDF_ACTION_H_
 #define CORE_FPDFDOC_CPDF_ACTION_H_
 
+#include <optional>
 #include <vector>
 
 #include "core/fpdfdoc/cpdf_dest.h"
 #include "core/fxcrt/fx_string.h"
 #include "core/fxcrt/retain_ptr.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 class CPDF_Dictionary;
 class CPDF_Document;
@@ -43,17 +43,17 @@ class CPDF_Action {
     kLast = kGoTo3DView
   };
 
-  explicit CPDF_Action(RetainPtr<const CPDF_Dictionary> pDict);
+  explicit CPDF_Action(RetainPtr<const CPDF_Dictionary> dict);
   CPDF_Action(const CPDF_Action& that);
   ~CPDF_Action();
 
-  bool HasDict() const { return !!m_pDict; }
-  const CPDF_Dictionary* GetDict() const { return m_pDict.Get(); }
+  bool HasDict() const { return !!dict_; }
+  const CPDF_Dictionary* GetDict() const { return dict_.Get(); }
 
   Type GetType() const;
-  CPDF_Dest GetDest(CPDF_Document* pDoc) const;
+  CPDF_Dest GetDest(CPDF_Document* doc) const;
   WideString GetFilePath() const;
-  ByteString GetURI(const CPDF_Document* pDoc) const;
+  ByteString GetURI(const CPDF_Document* doc) const;
   bool GetHideStatus() const;
   ByteString GetNamedAction() const;
   uint32_t GetFlags() const;
@@ -62,7 +62,7 @@ class CPDF_Action {
   std::vector<RetainPtr<const CPDF_Object>> GetAllFields() const;
 
   // Differentiates between empty JS entry and no JS entry.
-  absl::optional<WideString> MaybeGetJavaScript() const;
+  std::optional<WideString> MaybeGetJavaScript() const;
 
   // Returns empty string for empty JS entry and no JS entry.
   WideString GetJavaScript() const;
@@ -73,7 +73,7 @@ class CPDF_Action {
  private:
   RetainPtr<const CPDF_Object> GetJavaScriptObject() const;
 
-  RetainPtr<const CPDF_Dictionary> const m_pDict;
+  RetainPtr<const CPDF_Dictionary> const dict_;
 };
 
 #endif  // CORE_FPDFDOC_CPDF_ACTION_H_

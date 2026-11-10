@@ -33,7 +33,6 @@ bool MemoryCacheDumpProvider::OnMemoryDump(
       break;
     default:
       NOTREACHED();
-      return false;
   }
 
   WebProcessMemoryDump dump(args.level_of_detail, memory_dump);

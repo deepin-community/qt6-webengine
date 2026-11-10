@@ -95,9 +95,11 @@ void ServiceWorkerJobCoordinator::Unregister(
     const GURL& scope,
     const blink::StorageKey& key,
     bool is_immediate,
+    ServiceWorkerRegistration::DeleteInitiator initiator,
     ServiceWorkerUnregisterJob::UnregistrationCallback callback) {
   std::unique_ptr<ServiceWorkerRegisterJobBase> job(
-      new ServiceWorkerUnregisterJob(context_, scope, key, is_immediate));
+      new ServiceWorkerUnregisterJob(context_, scope, key, is_immediate,
+                                     initiator));
   ServiceWorkerUnregisterJob* queued_job =
       static_cast<ServiceWorkerUnregisterJob*>(
           job_queues_[UniqueRegistrationKey(scope, key)].Push(std::move(job)));
@@ -144,7 +146,7 @@ void ServiceWorkerJobCoordinator::FinishJob(const GURL& scope,
                                             const blink::StorageKey& key,
                                             ServiceWorkerRegisterJobBase* job) {
   auto pending_jobs = job_queues_.find(UniqueRegistrationKey(scope, key));
-  DCHECK(pending_jobs != job_queues_.end()) << "Deleting non-existent job.";
+  CHECK(pending_jobs != job_queues_.end()) << "Deleting non-existent job.";
   pending_jobs->second.Pop(job);
   if (pending_jobs->second.empty())
     job_queues_.erase(pending_jobs);

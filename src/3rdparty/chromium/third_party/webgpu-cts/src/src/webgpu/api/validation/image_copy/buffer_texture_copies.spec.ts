@@ -5,21 +5,26 @@ the general image_copy tests, or by destroyed,*.
 
 import { makeTestGroup } from '../../../../common/framework/test_group.js';
 import { assert, unreachable } from '../../../../common/util/util.js';
-import { kBufferUsages, kTextureUsages } from '../../../capability_info.js';
+import { kBufferUsages, kTextureDimensions, kTextureUsages } from '../../../capability_info.js';
 import { GPUConst } from '../../../constants.js';
 import {
   kDepthStencilFormats,
   depthStencilBufferTextureCopySupported,
   depthStencilFormatAspectSize,
+  kColorTextureFormats,
+  canCopyFromAllAspectsOfTextureFormat,
+  canCopyToAllAspectsOfTextureFormat,
+  textureFormatAndDimensionPossiblyCompatible,
+  getBlockInfoForColorTextureFormat,
 } from '../../../format_info.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../../gpu_test.js';
 import { align } from '../../../util/math.js';
 import { kBufferCopyAlignment, kBytesPerRowAlignment } from '../../../util/texture/layout.js';
-import { ValidationTest } from '../validation_test.js';
 
-class ImageCopyTest extends ValidationTest {
+class ImageCopyTest extends AllFeaturesMaxLimitsGPUTest {
   testCopyBufferToTexture(
-    source: GPUImageCopyBuffer,
-    destination: GPUImageCopyTexture,
+    source: GPUTexelCopyBufferInfo,
+    destination: GPUTexelCopyTextureInfo,
     copySize: GPUExtent3DStrict,
     isSuccess: boolean
   ): void {
@@ -29,8 +34,8 @@ class ImageCopyTest extends ValidationTest {
   }
 
   testCopyTextureToBuffer(
-    source: GPUImageCopyTexture,
-    destination: GPUImageCopyBuffer,
+    source: GPUTexelCopyTextureInfo,
+    destination: GPUTexelCopyBufferInfo,
     copySize: GPUExtent3DStrict,
     isSuccess: boolean
   ): void {
@@ -40,9 +45,9 @@ class ImageCopyTest extends ValidationTest {
   }
 
   testWriteTexture(
-    destination: GPUImageCopyTexture,
+    destination: GPUTexelCopyTextureInfo,
     uploadData: Uint8Array,
-    dataLayout: GPUImageDataLayout,
+    dataLayout: GPUTexelCopyBufferLayout,
     copySize: GPUExtent3DStrict,
     isSuccess: boolean
   ): void {
@@ -70,22 +75,19 @@ g.test('depth_stencil_format,copy_usage_and_aspect')
       .beginSubcases()
       .combine('aspect', ['all', 'depth-only', 'stencil-only'] as const)
   )
-  .beforeAllSubcases(t => {
-    const { format } = t.params;
-    t.selectDeviceForTextureFormatOrSkipTestCase(format);
-  })
   .fn(t => {
     const { format, aspect } = t.params;
+    t.skipIfTextureFormatNotSupported(format);
 
     const textureSize = { width: 1, height: 1, depthOrArrayLayers: 1 };
-    const texture = t.device.createTexture({
+    const texture = t.createTextureTracked({
       size: textureSize,
       format,
       usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST,
     });
 
     const uploadBufferSize = 32;
-    const buffer = t.device.createBuffer({
+    const buffer = t.createBufferTracked({
       size: uploadBufferSize,
       usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     });
@@ -135,14 +137,11 @@ g.test('depth_stencil_format,copy_buffer_size')
         { width: 4, height: 4, depthOrArrayLayers: 3 },
       ])
   )
-  .beforeAllSubcases(t => {
-    const { format } = t.params;
-    t.selectDeviceForTextureFormatOrSkipTestCase(format);
-  })
   .fn(t => {
     const { format, aspect, copyType, copySize } = t.params;
+    t.skipIfTextureFormatNotSupported(format);
 
-    const texture = t.device.createTexture({
+    const texture = t.createTextureTracked({
       size: copySize,
       format,
       usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST,
@@ -159,11 +158,11 @@ g.test('depth_stencil_format,copy_buffer_size')
       align(texelAspectSize * copySize.width, kBufferCopyAlignment);
     assert(minimumBufferSize > kBufferCopyAlignment);
 
-    const bigEnoughBuffer = t.device.createBuffer({
+    const bigEnoughBuffer = t.createBufferTracked({
       size: minimumBufferSize,
       usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     });
-    const smallerBuffer = t.device.createBuffer({
+    const smallerBuffer = t.createBufferTracked({
       size: minimumBufferSize - kBufferCopyAlignment,
       usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     });
@@ -242,16 +241,13 @@ g.test('depth_stencil_format,copy_buffer_offset')
       .beginSubcases()
       .combine('offset', [1, 2, 4, 6, 8])
   )
-  .beforeAllSubcases(t => {
-    const { format } = t.params;
-    t.selectDeviceForTextureFormatOrSkipTestCase(format);
-  })
   .fn(t => {
     const { format, aspect, copyType, offset } = t.params;
+    t.skipIfTextureFormatNotSupported(format);
 
     const textureSize = { width: 4, height: 4, depthOrArrayLayers: 1 };
 
-    const texture = t.device.createTexture({
+    const texture = t.createTextureTracked({
       size: textureSize,
       format,
       usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST,
@@ -268,7 +264,7 @@ g.test('depth_stencil_format,copy_buffer_offset')
       align(texelAspectSize * textureSize.width, kBufferCopyAlignment);
     assert(minimumBufferSize > kBufferCopyAlignment);
 
-    const buffer = t.device.createBuffer({
+    const buffer = t.createBufferTracked({
       size: align(minimumBufferSize + offset, kBufferCopyAlignment),
       usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     });
@@ -329,20 +325,20 @@ g.test('sample_count')
     if (sampleCount > 1) {
       usage |= GPUTextureUsage.RENDER_ATTACHMENT;
     }
-    const texture = t.device.createTexture({
-      size: { width: 16, height: 16 },
+
+    const textureSize = { width: 16, height: 1, depthOrArrayLayers: 1 };
+    const texture = t.createTextureTracked({
+      size: textureSize,
       sampleCount,
       format: 'bgra8unorm',
       usage,
     });
 
-    const uploadBufferSize = 32;
-    const buffer = t.device.createBuffer({
+    const uploadBufferSize = 64;
+    const buffer = t.createBufferTracked({
       size: uploadBufferSize,
       usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     });
-
-    const textureSize = { width: 1, height: 1, depthOrArrayLayers: 1 };
 
     const isSuccess = sampleCount === 1;
 
@@ -383,14 +379,14 @@ g.test('texture_buffer_usages')
   .fn(t => {
     const { copyType, textureUsage, _textureUsageValid, bufferUsage, _bufferUsageValid } = t.params;
 
-    const texture = t.device.createTexture({
+    const texture = t.createTextureTracked({
       size: { width: 16, height: 16 },
       format: 'rgba8unorm',
       usage: textureUsage,
     });
 
     const uploadBufferSize = 32;
-    const buffer = t.device.createBuffer({
+    const buffer = t.createBufferTracked({
       size: uploadBufferSize,
       usage: bufferUsage,
     });
@@ -422,26 +418,26 @@ g.test('device_mismatch')
         { bufMismatched: false, texMismatched: true },
       ] as const)
   )
-  .beforeAllSubcases(t => {
-    t.selectMismatchedDeviceOrSkipTestCase(undefined);
-  })
+  .beforeAllSubcases(t => t.usesMismatchedDevice())
   .fn(t => {
     const { copyType, bufMismatched, texMismatched } = t.params;
 
     const uploadBufferSize = 32;
-    const buffer = (bufMismatched ? t.mismatchedDevice : t.device).createBuffer({
-      size: uploadBufferSize,
-      usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
-    });
-    t.trackForCleanup(buffer);
+    const buffer = t.trackForCleanup(
+      (bufMismatched ? t.mismatchedDevice : t.device).createBuffer({
+        size: uploadBufferSize,
+        usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+      })
+    );
 
     const textureSize = { width: 1, height: 1, depthOrArrayLayers: 1 };
-    const texture = (texMismatched ? t.mismatchedDevice : t.device).createTexture({
-      size: textureSize,
-      format: 'rgba8unorm',
-      usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST,
-    });
-    t.trackForCleanup(texture);
+    const texture = t.trackForCleanup(
+      (texMismatched ? t.mismatchedDevice : t.device).createTexture({
+        size: textureSize,
+        format: 'rgba8unorm',
+        usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST,
+      })
+    );
 
     const isValid = !bufMismatched && !texMismatched;
 
@@ -449,5 +445,160 @@ g.test('device_mismatch')
       t.testCopyBufferToTexture({ buffer }, { texture }, textureSize, isValid);
     } else if (copyType === 'CopyT2B') {
       t.testCopyTextureToBuffer({ texture }, { buffer }, textureSize, isValid);
+    }
+  });
+
+g.test('offset_and_bytesPerRow')
+  .desc(
+    `Test that for copyBufferToTexture, and copyTextureToBuffer
+     * bytesPerRow must be a multiple of 256
+     * offset must be a multiple of bytesPerBlock
+     * the last row does not need to be a multiple of 256
+       In other words, If the copy size is 4x2 of a r8unorm texture that's 4 bytes per row.
+       To get from row 0 to row 1 in the buffer, bytesPerRow must be a multiple of 256.
+       But, the size requirement for the buffer is only 256 + 4, not 256 * 2
+     * origin.x must be a multiple of blockWidth
+     * origin.y must be a multiple of blockHeight
+     * copySize.width must be a multiple of blockWidth
+     * copySize.height must be a multiple of blockHeight
+`
+  )
+  .params(u =>
+    u
+      .combine('format', kColorTextureFormats)
+      .combine('copyType', ['CopyB2T', 'CopyT2B'] as const)
+      .filter(
+        ({ format }) =>
+          canCopyToAllAspectsOfTextureFormat(format) && canCopyFromAllAspectsOfTextureFormat(format)
+      )
+      .combine('dimension', kTextureDimensions)
+      .filter(({ dimension, format }) =>
+        textureFormatAndDimensionPossiblyCompatible(dimension, format)
+      )
+      .beginSubcases()
+      .combineWithParams(
+        /* prettier-ignore */ [
+          { xInBlocks: 1  , yInBlocks: 1  , copyWidthInBlocks: 64  , copyHeightInBlocks: 2  , offsetInBlocks: 1  , bytesPerRowAlign: 256 }, // good
+          { xInBlocks: 0  , yInBlocks: 0  , copyWidthInBlocks: 64  , copyHeightInBlocks: 2  , offsetInBlocks: 1.5, bytesPerRowAlign: 256 }, // bad as offset is not blockSize
+          { xInBlocks: 0  , yInBlocks: 0  , copyWidthInBlocks: 64  , copyHeightInBlocks: 2  , offsetInBlocks: 0  , bytesPerRowAlign: 128 }, // bad as bytesPerBlock is not multiple of 256
+          { xInBlocks: 0  , yInBlocks: 0  , copyWidthInBlocks: 64  , copyHeightInBlocks: 2  , offsetInBlocks: 0  , bytesPerRowAlign: 384 }, // bad as bytesPerBlock is not multiple of 256
+          { xInBlocks: 1.5, yInBlocks: 0  , copyWidthInBlocks: 64  , copyHeightInBlocks: 2  , offsetInBlocks: 0  , bytesPerRowAlign: 256 }, // bad as origin.x is not multiple of blockSize
+          { xInBlocks: 0  , yInBlocks: 1.5, copyWidthInBlocks: 64  , copyHeightInBlocks: 2  , offsetInBlocks: 0  , bytesPerRowAlign: 256 }, // bad as origin.y is not multiple of blockSize
+          { xInBlocks: 0  , yInBlocks: 0  , copyWidthInBlocks: 64.5, copyHeightInBlocks: 2  , offsetInBlocks: 0  , bytesPerRowAlign: 256 }, // bad as copySize.width is not multiple of blockSize
+          { xInBlocks: 0  , yInBlocks: 0  , copyWidthInBlocks: 64  , copyHeightInBlocks: 2.5, offsetInBlocks: 0  , bytesPerRowAlign: 256 }, // bad as copySize.height is not multiple of blockSize
+        ] as const
+      )
+      // Remove non-integer offsetInBlocks, copyWidthInBlocks, copyHeightInBlocks if bytesPerBlock === 1
+      .unless(
+        t =>
+          (t.offsetInBlocks % 1 !== 0 ||
+            t.copyWidthInBlocks % 1 !== 0 ||
+            t.copyHeightInBlocks % 1 !== 0) &&
+          getBlockInfoForColorTextureFormat(t.format).bytesPerBlock > 1
+      )
+      // Remove yInBlocks > 0 if dimension is 1d
+      .unless(t => t.dimension === '1d' && t.yInBlocks > 0)
+  )
+  .fn(t => {
+    const {
+      copyType,
+      format,
+      dimension,
+      xInBlocks,
+      yInBlocks,
+      offsetInBlocks,
+      copyWidthInBlocks,
+      copyHeightInBlocks,
+      bytesPerRowAlign,
+    } = t.params;
+    t.skipIfTextureFormatNotSupported(format);
+    t.skipIfTextureFormatAndDimensionNotCompatible(format, dimension);
+    if (copyType === 'CopyT2B') {
+      t.skipIfTextureFormatDoesNotSupportCopyTextureToBuffer(format);
+    }
+
+    const info = getBlockInfoForColorTextureFormat(format);
+
+    // make a texture big enough that we have room for our copySize and our origin.
+    // Note that xxxInBlocks may be factional so that we test origins and sizes not aligned to blocks.
+    const widthBlocks = Math.ceil(xInBlocks) + Math.ceil(copyWidthInBlocks);
+    const heightBlocks = Math.ceil(yInBlocks) + Math.ceil(copyHeightInBlocks);
+    let copySizeBlocks = [copyWidthInBlocks, copyHeightInBlocks, 1];
+    let texSizeBlocks = [widthBlocks, heightBlocks, 1];
+    if (dimension === '1d') {
+      copySizeBlocks = [copyWidthInBlocks, 1, 1];
+      texSizeBlocks = [widthBlocks, 1, 1];
+    }
+
+    const origin = [
+      Math.ceil(xInBlocks * info.blockWidth),
+      Math.ceil(yInBlocks * info.blockHeight),
+      0,
+    ];
+    const copySize = [
+      Math.ceil(copySizeBlocks[0] * info.blockWidth),
+      Math.ceil(copySizeBlocks[1] * info.blockHeight),
+      copySizeBlocks[2],
+    ];
+    const textureSize = [
+      texSizeBlocks[0] * info.blockWidth,
+      texSizeBlocks[1] * info.blockHeight,
+      texSizeBlocks[2],
+    ] as const;
+    const textureBytePerRow = info.bytesPerBlock * texSizeBlocks[0];
+    const rowsPerImage = Math.ceil(copySizeBlocks[1]);
+    const offset = Math.ceil(offsetInBlocks * info.bytesPerBlock);
+    const bytesPerRow = align(textureBytePerRow, bytesPerRowAlign);
+
+    // Make sure our buffer is big enough for the required alignment
+    // and offset but no bigger.
+    const totalRows = rowsPerImage * copySizeBlocks[2];
+    const bufferSize = offset + (totalRows - 1) * bytesPerRow + textureBytePerRow;
+
+    const buffer = t.createBufferTracked({
+      label: `buffer(${bufferSize})`,
+      size: bufferSize,
+      usage: copyType === 'CopyB2T' ? GPUBufferUsage.COPY_SRC : GPUBufferUsage.COPY_DST,
+    });
+
+    const texture = t.createTextureTracked({
+      size: textureSize,
+      format,
+      dimension,
+      usage: copyType === 'CopyB2T' ? GPUTextureUsage.COPY_DST : GPUTextureUsage.COPY_SRC,
+    });
+
+    const shouldSucceed =
+      offset % info.bytesPerBlock === 0 &&
+      bytesPerRow % 256 === 0 &&
+      origin[0] % info.blockWidth === 0 &&
+      origin[1] % info.blockHeight === 0 &&
+      copySize[0] % info.blockWidth === 0 &&
+      copySize[1] % info.blockHeight === 0;
+
+    t.debug(
+      () =>
+        `offset: ${offset}, bytesPerRow: ${bytesPerRow}, copySize: ${copySize}, origin: ${origin}`
+    );
+
+    switch (copyType) {
+      case 'CopyB2T': {
+        t.testCopyBufferToTexture(
+          { buffer, offset, bytesPerRow },
+          { texture, origin },
+          copySize,
+          shouldSucceed
+        );
+        break;
+      }
+      case 'CopyT2B': {
+        t.testCopyTextureToBuffer(
+          { texture, origin },
+          { buffer, offset, bytesPerRow },
+          copySize,
+          shouldSucceed
+        );
+        break;
+      }
     }
   });

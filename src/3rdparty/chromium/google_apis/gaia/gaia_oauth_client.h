@@ -6,13 +6,12 @@
 #define GOOGLE_APIS_GAIA_GAIA_OAUTH_CLIENT_H_
 
 #include <memory>
-#include <string>
-#include <vector>
+#include <string_view>
 
 #include "base/component_export.h"
+#include "base/containers/span.h"
 #include "base/memory/ref_counted.h"
 #include "base/values.h"
-#include "net/base/request_priority.h"
 
 namespace network {
 class SharedURLLoaderFactory;
@@ -147,8 +146,7 @@ class COMPONENT_EXPORT(GOOGLE_APIS) GaiaOAuthClient {
   // |max_retries| docs above.
   void GetAccountCapabilities(
       const std::string& oauth_access_token,
-      const std::vector<std::string>& capabilities_names,
-      net::RequestPriority priority,
+      base::span<const std::string_view> capabilities_names,
       int max_retries,
       Delegate* delegate);
 

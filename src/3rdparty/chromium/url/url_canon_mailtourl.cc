@@ -4,6 +4,7 @@
 
 // Functions for canonicalizing "mailto:" URLs.
 
+#include "base/compiler_specific.h"
 #include "url/url_canon.h"
 #include "url/url_canon_internal.h"
 #include "url/url_file.h"
@@ -59,7 +60,7 @@ bool DoCanonicalizeMailtoURL(const URLComponentSource<CHAR>& source,
     // ASCII characters alone.
     size_t end = static_cast<size_t>(parsed.path.end());
     for (size_t i = static_cast<size_t>(parsed.path.begin); i < end; ++i) {
-      UCHAR uch = static_cast<UCHAR>(source.path[i]);
+      UCHAR uch = static_cast<UCHAR>(UNSAFE_TODO(source.path[i]));
       if (ShouldEncodeMailboxCharacter<UCHAR>(uch))
         success &= AppendUTF8EscapedChar(source.path, &i, end, output);
       else
@@ -73,7 +74,7 @@ bool DoCanonicalizeMailtoURL(const URLComponentSource<CHAR>& source,
   }
 
   // Query -- always use the default UTF8 charset converter.
-  CanonicalizeQuery(source.query, parsed.query, NULL,
+  CanonicalizeQuery(parsed.query.maybe_as_string_view_on(source.query), nullptr,
                     output, &new_parsed->query);
 
   return success;

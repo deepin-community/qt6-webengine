@@ -20,13 +20,15 @@
 #include <cstdint>
 #include <type_traits>
 
+#include "absl/base/nullability.h"
+
 // This library must not depend on anything other than libc,
 // so that it does not introduce any dependencies to its users.
 // Any such dependencies may get coverage-instrumented, introducing noise
 // into coverage reporting.
 // Small exceptions for header-only parts of STL may be possible.
 
-namespace centipede {
+namespace fuzztest::internal {
 
 // Simple TLV (tag-length-value) data structure.
 // Blob does not own the memory in `data`, just references it.
@@ -38,7 +40,7 @@ namespace centipede {
 // TODO(kcc): [impl] consider making it a class.
 struct Blob {
   using SizeAndTagT = size_t;
-  Blob(SizeAndTagT tag, SizeAndTagT size, const uint8_t *data)
+  Blob(SizeAndTagT tag, SizeAndTagT size, const uint8_t *absl_nullable data)
       : tag(tag), size(size), data(data) {}
   Blob() = default;  // Construct an invalid Blob.
   bool IsValid() const { return tag != 0; }
@@ -73,8 +75,10 @@ class BlobSequence {
   }
 
   // Reads the next blob from the sequence.
-  // If no more blobs are left, returns a blob with size = 0.
-  // Must not be called after Write() w/o first calling Reset().
+  // If a failure happens or no more blobs are left, returns a invalid blob
+  // returning false on `IsValid()`. Unless a concurrent writer updates
+  // the underlying buffer, all subsequent calls to `Read()` will return invalid
+  // blobs. Must not be called after Write() w/o first calling Reset().
   Blob Read();
 
   // Resets the internal state, allowing to read from or write to
@@ -167,7 +171,8 @@ class SharedMemoryBlobSequence : public BlobSequence {
   size_t NumBytesUsed() const;
 
   // Gets the file path that can be used to create new instances.
-  const char *path() const { return path_; }
+  // TODO(ussuri): Refactor `char *` into a `string_view`.
+  const char *absl_nonnull path() const { return path_; }
 
  private:
   // mmaps `size_` bytes from `fd_`, assigns to `data_`. Crashes if mmap failed.
@@ -182,6 +187,6 @@ class SharedMemoryBlobSequence : public BlobSequence {
   bool path_is_owned_ = false;
 };
 
-}  // namespace centipede
+}  // namespace fuzztest::internal
 
 #endif  // THIRD_PARTY_CENTIPEDE_SHARED_MEMORY_BLOB_SEQUENCE_H_

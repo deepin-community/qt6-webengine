@@ -40,6 +40,7 @@
 #include "third_party/blink/renderer/core/fileapi/file_reader_client.h"
 #include "third_party/blink/renderer/core/fileapi/file_reader_loader.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
+#include "third_party/blink/renderer/core/typed_arrays/dom_data_view.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 #include "third_party/blink/renderer/platform/bindings/name_client.h"
@@ -55,6 +56,7 @@ namespace blink {
 
 class Blob;
 class ExecutionContext;
+class ImageBitmap;
 class ImageBitmapSource;
 class ScriptState;
 
@@ -67,21 +69,28 @@ class MODULES_EXPORT ImageBitmapFactories final
 
   explicit ImageBitmapFactories(ExecutionContext& context);
 
-  static ScriptPromise CreateImageBitmap(ScriptState*,
-                                         const V8ImageBitmapSource*,
-                                         const ImageBitmapOptions*,
-                                         ExceptionState&);
-  static ScriptPromise CreateImageBitmap(ScriptState*,
-                                         const V8ImageBitmapSource*,
-                                         int sx,
-                                         int sy,
-                                         int sw,
-                                         int sh,
-                                         const ImageBitmapOptions*,
-                                         ExceptionState&);
+  static ScriptPromise<ImageBitmap> CreateImageBitmap(
+      ScriptState*,
+      const V8ImageBitmapSource*,
+      const ImageBitmapOptions*,
+      ExceptionState&);
+  // Note that this makes a copy of DOMDataView*.
+  static ScriptPromise<ImageBitmap> CreateImageBitmap(ScriptState*,
+                                                      const DOMDataView*,
+                                                      const ImageBitmapOptions*,
+                                                      ExceptionState&);
+  static ScriptPromise<ImageBitmap> CreateImageBitmap(
+      ScriptState*,
+      const V8ImageBitmapSource*,
+      int sx,
+      int sy,
+      int sw,
+      int sh,
+      const ImageBitmapOptions*,
+      ExceptionState&);
 
   // window.createImageBitmap()
-  static ScriptPromise createImageBitmap(
+  static ScriptPromise<ImageBitmap> createImageBitmap(
       ScriptState* script_state,
       LocalDOMWindow&,
       const V8ImageBitmapSource* bitmap_source,
@@ -90,7 +99,7 @@ class MODULES_EXPORT ImageBitmapFactories final
     return CreateImageBitmap(script_state, bitmap_source, options,
                              exception_state);
   }
-  static ScriptPromise createImageBitmap(
+  static ScriptPromise<ImageBitmap> createImageBitmap(
       ScriptState* script_state,
       LocalDOMWindow&,
       const V8ImageBitmapSource* bitmap_source,
@@ -105,7 +114,7 @@ class MODULES_EXPORT ImageBitmapFactories final
   }
 
   // worker.createImageBitmap()
-  static ScriptPromise createImageBitmap(
+  static ScriptPromise<ImageBitmap> createImageBitmap(
       ScriptState* script_state,
       WorkerGlobalScope&,
       const V8ImageBitmapSource* bitmap_source,
@@ -114,7 +123,7 @@ class MODULES_EXPORT ImageBitmapFactories final
     return CreateImageBitmap(script_state, bitmap_source, options,
                              exception_state);
   }
-  static ScriptPromise createImageBitmap(
+  static ScriptPromise<ImageBitmap> createImageBitmap(
       ScriptState* script_state,
       WorkerGlobalScope&,
       const V8ImageBitmapSource* bitmap_source,
@@ -131,23 +140,24 @@ class MODULES_EXPORT ImageBitmapFactories final
   ~ImageBitmapFactories() override = default;
 
   void Trace(Visitor*) const override;
-  const char* NameInHeapSnapshot() const override {
+  const char* GetHumanReadableName() const override {
     return "ImageBitmapLoader";
   }
 
  private:
-  static ScriptPromise CreateImageBitmap(ScriptState*,
-                                         ImageBitmapSource*,
-                                         absl::optional<gfx::Rect> crop_rect,
-                                         const ImageBitmapOptions*,
-                                         ExceptionState&);
+  static ScriptPromise<ImageBitmap> CreateImageBitmap(
+      ScriptState*,
+      ImageBitmapSource*,
+      std::optional<gfx::Rect> crop_rect,
+      const ImageBitmapOptions*,
+      ExceptionState&);
 
   class ImageBitmapLoader final : public GarbageCollected<ImageBitmapLoader>,
                                   public ExecutionContextLifecycleObserver,
                                   public FileReaderAccumulator {
    public:
     static ImageBitmapLoader* Create(ImageBitmapFactories& factory,
-                                     absl::optional<gfx::Rect> crop_rect,
+                                     std::optional<gfx::Rect> crop_rect,
                                      const ImageBitmapOptions* options,
                                      ScriptState* script_state) {
       return MakeGarbageCollected<ImageBitmapLoader>(factory, crop_rect,
@@ -155,12 +165,13 @@ class MODULES_EXPORT ImageBitmapFactories final
     }
 
     ImageBitmapLoader(ImageBitmapFactories&,
-                      absl::optional<gfx::Rect> crop_rect,
+                      std::optional<gfx::Rect> crop_rect,
                       ScriptState*,
                       const ImageBitmapOptions*);
 
     void LoadBlobAsync(Blob*);
-    ScriptPromise Promise() { return resolver_->Promise(); }
+    void LoadDataViewAsync(const DOMDataView*);
+    ScriptPromise<ImageBitmap> Promise() { return resolver_->Promise(); }
 
     void Trace(Visitor*) const override;
 
@@ -189,16 +200,16 @@ class MODULES_EXPORT ImageBitmapFactories final
 
     Member<FileReaderLoader> loader_;
     Member<ImageBitmapFactories> factory_;
-    Member<ScriptPromiseResolver> resolver_;
-    absl::optional<gfx::Rect> crop_rect_;
+    Member<ScriptPromiseResolver<ImageBitmap>> resolver_;
+    std::optional<gfx::Rect> crop_rect_;
     Member<const ImageBitmapOptions> options_;
   };
 
   static ImageBitmapFactories& From(ExecutionContext&);
-  static ScriptPromise CreateImageBitmapFromBlob(
+  static ScriptPromise<ImageBitmap> CreateImageBitmapFromBlob(
       ScriptState*,
       ImageBitmapSource*,
-      absl::optional<gfx::Rect> crop_rect,
+      std::optional<gfx::Rect> crop_rect,
       const ImageBitmapOptions*);
 
   void AddLoader(ImageBitmapLoader*);

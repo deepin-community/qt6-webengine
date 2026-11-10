@@ -16,6 +16,7 @@
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/predictors/loading_predictor_config.h"
+#include "chrome/browser/preloading/scoped_prewarm_feature_list.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -23,9 +24,11 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/metrics/content/subprocess_metrics_provider.h"
+#include "components/policy/core/common/policy_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/test/browser_test.h"
+#include "content/public/test/browser_test_utils.h"
 #include "content/public/test/download_test_observer.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "net/base/filename_util.h"
@@ -80,12 +83,13 @@ class WaitForMainFrameResourceObserver : public content::WebContentsObserver {
   WaitForMainFrameResourceObserver& operator=(
       const WaitForMainFrameResourceObserver&) = delete;
 
-  ~WaitForMainFrameResourceObserver() override {}
+  ~WaitForMainFrameResourceObserver() override = default;
 
   // content::WebContentsObserver implementation:
   void ResourceLoadComplete(
       RenderFrameHost* render_frame_host,
       const content::GlobalRequestID& request_id,
+      const GURL& original_url,
       const blink::mojom::ResourceLoadInfo& resource_load_info) override {
     EXPECT_EQ(network::mojom::RequestDestination::kDocument,
               resource_load_info.request_destination);
@@ -137,7 +141,6 @@ class NetworkRequestMetricsBrowserTest
       case RequestType::kMainFrame:
         NOTREACHED();
     }
-    return std::string();
   }
 
   void StartNavigatingAndWaitForRequest() {
@@ -323,6 +326,11 @@ class NetworkRequestMetricsBrowserTest
   base::HistogramTester* histograms() { return histograms_.get(); }
 
  private:
+  // TODO(https://crbug.com/423465927): Explore a better approach to make the
+  // existing tests run with the prewarm feature enabled.
+  test::ScopedPrewarmFeatureList scoped_prewarm_feature_list_{
+      test::ScopedPrewarmFeatureList::PrewarmState::kDisabled};
+
   std::unique_ptr<net::test_server::ControllableHttpResponse>
       uninteresting_main_frame_response_;
   std::unique_ptr<net::test_server::ControllableHttpResponse>
@@ -455,8 +463,8 @@ IN_PROC_BROWSER_TEST_P(NetworkRequestMetricsBrowserTest, Download) {
   }
 
   browser()->profile()->GetPrefs()->SetInteger(
-      prefs::kDownloadRestrictions,
-      static_cast<int>(DownloadPrefs::DownloadRestriction::ALL_FILES));
+      policy::policy_prefs::kDownloadRestrictions,
+      static_cast<int>(policy::DownloadRestriction::ALL_FILES));
   browser()->profile()->GetPrefs()->SetBoolean(prefs::kPromptForDownload,
                                                false);
 

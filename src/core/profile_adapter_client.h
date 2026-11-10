@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 //
 //  W A R N I N G
@@ -82,19 +83,19 @@ public:
     };
 
     struct DownloadItemInfo {
-        const quint32 id;
-        const QUrl url;
-        const int state;
-        const qint64 totalBytes;
-        const qint64 receivedBytes;
-        const QString mimeType;
-
+        quint32 id;
+        QUrl url;
+        int state;
+        qint64 totalBytes;
+        qint64 receivedBytes;
+        QString mimeType;
         QString path;
         int savePageFormat;
         bool accepted;
         bool paused;
         bool done;
         bool isSavePageDownload;
+        bool useDownloadTargetCallback;
         int downloadInterruptReason;
         WebContentsAdapterClient *page;
         QString suggestedFileName;
@@ -103,7 +104,7 @@ public:
 
     virtual ~ProfileAdapterClient() { }
 
-    virtual void downloadRequested(DownloadItemInfo &info) = 0;
+    virtual void downloadRequested(const DownloadItemInfo &info) = 0;
     virtual void downloadUpdated(const DownloadItemInfo &info) = 0;
     virtual void showNotification(QSharedPointer<UserNotificationController> &) { }
 

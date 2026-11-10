@@ -1,7 +1,7 @@
 # Rust third-party code
 
-This directory contains all third-party Rust code, and sometimes thin wrappers
-around it for C++ intertop.
+This directory contains third-party Rust libraries from https://crates.io
+(and sometimes thin wrappers around them for Chromium interop).
 
 ## Crates.io
 
@@ -38,9 +38,9 @@ Whereas GN rules for the verion **0.2.8** version would be stored at
 ## Other sources
 
 Third-party Rust libraries that are not distributed through [crates.io](
-https://crates.io) are uncommon. But they may live under
-`//third_party/rust/crate_name` directly, as a git submodule,
-with GN rules written for them by hand.
+https://crates.io) should live outside of `//third_party/rust`.
+For an example, see `//third_party/crabbyavif` or
+`//third_party/cloud_authenticator`.
 
 ## OWNERS
 

@@ -1,6 +1,16 @@
 // Copyright 2015 The Chromium Authors
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include "parser.h"
 
@@ -8,15 +18,16 @@
 #include "input.h"
 #include "parse_values.h"
 
-namespace bssl::der::test {
+BSSL_NAMESPACE_BEGIN
+namespace der::test {
 
 TEST(ParserTest, ConsumesAllBytesOfTLV) {
   const uint8_t der[] = {0x04 /* OCTET STRING */, 0x00};
   Parser parser((Input(der)));
-  Tag tag;
+  CBS_ASN1_TAG tag;
   Input value;
   ASSERT_TRUE(parser.ReadTagAndValue(&tag, &value));
-  ASSERT_EQ(kOctetString, tag);
+  ASSERT_EQ(CBS_ASN1_OCTETSTRING, tag);
   ASSERT_FALSE(parser.HasMore());
 }
 
@@ -38,7 +49,7 @@ TEST(ParserTest, IgnoresContentsOfInnerValues) {
   // with an invalid encoding - its length is too long.
   const uint8_t der[] = {0x30, 0x02, 0x30, 0x7e};
   Parser parser((Input(der)));
-  Tag tag;
+  CBS_ASN1_TAG tag;
   Input value;
   ASSERT_TRUE(parser.ReadTagAndValue(&tag, &value));
 }
@@ -58,7 +69,7 @@ TEST(ParserTest, FailsIfLengthOverlapsAnotherTLV) {
   ASSERT_FALSE(parser.HasMore());
 
   // Try to read the INTEGER from the SEQUENCE, which should fail.
-  Tag tag;
+  CBS_ASN1_TAG tag;
   Input value;
   ASSERT_FALSE(inner_sequence.ReadTagAndValue(&tag, &value));
 }
@@ -72,14 +83,14 @@ TEST(ParserTest, ReadOptionalTagPresent) {
 
   Input value;
   bool present;
-  ASSERT_TRUE(parser.ReadOptionalTag(kInteger, &value, &present));
+  ASSERT_TRUE(parser.ReadOptionalTag(CBS_ASN1_INTEGER, &value, &present));
   ASSERT_TRUE(present);
   const uint8_t expected_int_value[] = {0x01};
   ASSERT_EQ(Input(expected_int_value), value);
 
-  Tag tag;
+  CBS_ASN1_TAG tag;
   ASSERT_TRUE(parser.ReadTagAndValue(&tag, &value));
-  ASSERT_EQ(kOctetString, tag);
+  ASSERT_EQ(CBS_ASN1_OCTETSTRING, tag);
   const uint8_t expected_octet_string_value[] = {0x02};
   ASSERT_EQ(Input(expected_octet_string_value), value);
 
@@ -94,15 +105,15 @@ TEST(ParserTest, ReadOptionalTag2Present) {
   Parser parser((Input(der)));
 
   std::optional<Input> optional_value;
-  ASSERT_TRUE(parser.ReadOptionalTag(kInteger, &optional_value));
+  ASSERT_TRUE(parser.ReadOptionalTag(CBS_ASN1_INTEGER, &optional_value));
   ASSERT_TRUE(optional_value.has_value());
   const uint8_t expected_int_value[] = {0x01};
   ASSERT_EQ(Input(expected_int_value), *optional_value);
 
-  Tag tag;
+  CBS_ASN1_TAG tag;
   Input value;
   ASSERT_TRUE(parser.ReadTagAndValue(&tag, &value));
-  ASSERT_EQ(kOctetString, tag);
+  ASSERT_EQ(CBS_ASN1_OCTETSTRING, tag);
   const uint8_t expected_octet_string_value[] = {0x02};
   ASSERT_EQ(Input(expected_octet_string_value), value);
 
@@ -117,12 +128,12 @@ TEST(ParserTest, ReadOptionalTagNotPresent) {
 
   Input value;
   bool present;
-  ASSERT_TRUE(parser.ReadOptionalTag(kInteger, &value, &present));
+  ASSERT_TRUE(parser.ReadOptionalTag(CBS_ASN1_INTEGER, &value, &present));
   ASSERT_FALSE(present);
 
-  Tag tag;
+  CBS_ASN1_TAG tag;
   ASSERT_TRUE(parser.ReadTagAndValue(&tag, &value));
-  ASSERT_EQ(kOctetString, tag);
+  ASSERT_EQ(CBS_ASN1_OCTETSTRING, tag);
   const uint8_t expected_octet_string_value[] = {0x02};
   ASSERT_EQ(Input(expected_octet_string_value), value);
 
@@ -136,13 +147,13 @@ TEST(ParserTest, ReadOptionalTag2NotPresent) {
   Parser parser((Input(der)));
 
   std::optional<Input> optional_value;
-  ASSERT_TRUE(parser.ReadOptionalTag(kInteger, &optional_value));
+  ASSERT_TRUE(parser.ReadOptionalTag(CBS_ASN1_INTEGER, &optional_value));
   ASSERT_FALSE(optional_value.has_value());
 
-  Tag tag;
+  CBS_ASN1_TAG tag;
   Input value;
   ASSERT_TRUE(parser.ReadTagAndValue(&tag, &value));
-  ASSERT_EQ(kOctetString, tag);
+  ASSERT_EQ(CBS_ASN1_OCTETSTRING, tag);
   const uint8_t expected_octet_string_value[] = {0x02};
   ASSERT_EQ(Input(expected_octet_string_value), value);
 
@@ -153,11 +164,11 @@ TEST(ParserTest, CanSkipOptionalTagAtEndOfInput) {
   const uint8_t der[] = {0x02 /* INTEGER */, 0x01, 0x01};
   Parser parser((Input(der)));
 
-  Tag tag;
+  CBS_ASN1_TAG tag;
   Input value;
   ASSERT_TRUE(parser.ReadTagAndValue(&tag, &value));
   bool present;
-  ASSERT_TRUE(parser.ReadOptionalTag(kInteger, &value, &present));
+  ASSERT_TRUE(parser.ReadOptionalTag(CBS_ASN1_INTEGER, &value, &present));
   ASSERT_FALSE(present);
   ASSERT_FALSE(parser.HasMore());
 }
@@ -167,9 +178,9 @@ TEST(ParserTest, SkipOptionalTagDoesntConsumePresentNonMatchingTLVs) {
   Parser parser((Input(der)));
 
   bool present;
-  ASSERT_TRUE(parser.SkipOptionalTag(kOctetString, &present));
+  ASSERT_TRUE(parser.SkipOptionalTag(CBS_ASN1_OCTETSTRING, &present));
   ASSERT_FALSE(present);
-  ASSERT_TRUE(parser.SkipOptionalTag(kInteger, &present));
+  ASSERT_TRUE(parser.SkipOptionalTag(CBS_ASN1_INTEGER, &present));
   ASSERT_TRUE(present);
   ASSERT_FALSE(parser.HasMore());
 }
@@ -179,10 +190,10 @@ TEST(ParserTest, TagNumbersAboveThirtySupported) {
   const uint8_t der[] = {0x9f, 0x1f, 0x00};
   Parser parser((Input(der)));
 
-  Tag tag;
+  CBS_ASN1_TAG tag;
   Input value;
   ASSERT_TRUE(parser.ReadTagAndValue(&tag, &value));
-  EXPECT_EQ(kTagContextSpecific | 31u, tag);
+  EXPECT_EQ(CBS_ASN1_CONTEXT_SPECIFIC | 31u, tag);
   ASSERT_FALSE(parser.HasMore());
 }
 
@@ -192,10 +203,10 @@ TEST(ParserTest, ParseTags) {
     const uint8_t der[] = {0x04, 0x00};
     Parser parser((Input(der)));
 
-    Tag tag;
+    CBS_ASN1_TAG tag;
     Input value;
     ASSERT_TRUE(parser.ReadTagAndValue(&tag, &value));
-    EXPECT_EQ(kOctetString, tag);
+    EXPECT_EQ(CBS_ASN1_OCTETSTRING, tag);
   }
 
   {
@@ -203,10 +214,10 @@ TEST(ParserTest, ParseTags) {
     const uint8_t der[] = {0x30, 0x00};
     Parser parser((Input(der)));
 
-    Tag tag;
+    CBS_ASN1_TAG tag;
     Input value;
     ASSERT_TRUE(parser.ReadTagAndValue(&tag, &value));
-    EXPECT_EQ(kSequence, tag);
+    EXPECT_EQ(CBS_ASN1_SEQUENCE, tag);
   }
 
   {
@@ -214,10 +225,10 @@ TEST(ParserTest, ParseTags) {
     const uint8_t der[] = {0x41, 0x00};
     Parser parser((Input(der)));
 
-    Tag tag;
+    CBS_ASN1_TAG tag;
     Input value;
     ASSERT_TRUE(parser.ReadTagAndValue(&tag, &value));
-    EXPECT_EQ(kTagApplication | 1, tag);
+    EXPECT_EQ(CBS_ASN1_APPLICATION | 1, tag);
   }
 
   {
@@ -225,10 +236,10 @@ TEST(ParserTest, ParseTags) {
     const uint8_t der[] = {0xbe, 0x00};
     Parser parser((Input(der)));
 
-    Tag tag;
+    CBS_ASN1_TAG tag;
     Input value;
     ASSERT_TRUE(parser.ReadTagAndValue(&tag, &value));
-    EXPECT_EQ(kTagContextSpecific | kTagConstructed | 30, tag);
+    EXPECT_EQ(CBS_ASN1_CONTEXT_SPECIFIC | CBS_ASN1_CONSTRUCTED | 30, tag);
   }
 
   {
@@ -236,10 +247,10 @@ TEST(ParserTest, ParseTags) {
     const uint8_t der[] = {0xcf, 0x00};
     Parser parser((Input(der)));
 
-    Tag tag;
+    CBS_ASN1_TAG tag;
     Input value;
     ASSERT_TRUE(parser.ReadTagAndValue(&tag, &value));
-    EXPECT_EQ(kTagPrivate | 15, tag);
+    EXPECT_EQ(CBS_ASN1_PRIVATE | 15, tag);
   }
 }
 
@@ -247,7 +258,7 @@ TEST(ParserTest, IncompleteEncodingTagOnly) {
   const uint8_t der[] = {0x01};
   Parser parser((Input(der)));
 
-  Tag tag;
+  CBS_ASN1_TAG tag;
   Input value;
   ASSERT_FALSE(parser.ReadTagAndValue(&tag, &value));
   ASSERT_TRUE(parser.HasMore());
@@ -259,7 +270,7 @@ TEST(ParserTest, IncompleteEncodingLengthTruncated) {
   const uint8_t der[] = {0x04, 0x81};
   Parser parser((Input(der)));
 
-  Tag tag;
+  CBS_ASN1_TAG tag;
   Input value;
   ASSERT_FALSE(parser.ReadTagAndValue(&tag, &value));
   ASSERT_TRUE(parser.HasMore());
@@ -270,7 +281,7 @@ TEST(ParserTest, IncompleteEncodingValueShorterThanLength) {
   const uint8_t der[] = {0x04, 0x02, 0x84};
   Parser parser((Input(der)));
 
-  Tag tag;
+  CBS_ASN1_TAG tag;
   Input value;
   ASSERT_FALSE(parser.ReadTagAndValue(&tag, &value));
   ASSERT_TRUE(parser.HasMore());
@@ -280,7 +291,7 @@ TEST(ParserTest, LengthMustBeEncodedWithMinimumNumberOfOctets) {
   const uint8_t der[] = {0x01, 0x81, 0x01, 0x00};
   Parser parser((Input(der)));
 
-  Tag tag;
+  CBS_ASN1_TAG tag;
   Input value;
   ASSERT_FALSE(parser.ReadTagAndValue(&tag, &value));
   ASSERT_TRUE(parser.HasMore());
@@ -304,7 +315,7 @@ TEST(ParserTest, LengthMustNotHaveLeadingZeroes) {
       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
   Parser parser((Input(der)));
 
-  Tag tag;
+  CBS_ASN1_TAG tag;
   Input value;
   ASSERT_FALSE(parser.ReadTagAndValue(&tag, &value));
   ASSERT_TRUE(parser.HasMore());
@@ -315,7 +326,7 @@ TEST(ParserTest, ReadConstructedFailsForNonConstructedTags) {
   const uint8_t der[] = {0x10, 0x00};
   Parser parser((Input(der)));
 
-  Tag expected_tag = 0x10;
+  CBS_ASN1_TAG expected_tag = 0x10;
   Parser sequence_parser;
   ASSERT_FALSE(parser.ReadConstructed(expected_tag, &sequence_parser));
 
@@ -347,7 +358,7 @@ TEST(ParserTest, ReadBitString) {
   EXPECT_FALSE(parser.HasMore());
 
   EXPECT_EQ(1u, bit_string->unused_bits());
-  ASSERT_EQ(2u, bit_string->bytes().Length());
+  ASSERT_EQ(2u, bit_string->bytes().size());
   EXPECT_EQ(0xAA, bit_string->bytes()[0]);
   EXPECT_EQ(0xBE, bit_string->bytes()[1]);
 }
@@ -362,4 +373,5 @@ TEST(ParserTest, ReadBitStringBadTag) {
   EXPECT_FALSE(bit_string.has_value());
 }
 
-}  // namespace bssl::der::test
+}  // namespace der::test
+BSSL_NAMESPACE_END

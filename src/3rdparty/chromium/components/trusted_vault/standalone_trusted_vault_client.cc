@@ -23,6 +23,7 @@
 #include "components/trusted_vault/command_line_switches.h"
 #include "components/trusted_vault/proto/local_trusted_vault.pb.h"
 #include "components/trusted_vault/standalone_trusted_vault_backend.h"
+#include "components/trusted_vault/standalone_trusted_vault_storage.h"
 #include "components/trusted_vault/trusted_vault_access_token_fetcher_impl.h"
 #include "components/trusted_vault/trusted_vault_connection_impl.h"
 #include "components/trusted_vault/trusted_vault_server_constants.h"
@@ -66,8 +67,12 @@ class IdentityManagerObserver : public signin::IdentityManager::Observer {
       const GoogleServiceAuthError& error) override;
   void OnErrorStateOfRefreshTokenUpdatedForAccount(
       const CoreAccountInfo& account_info,
-      const GoogleServiceAuthError& error) override;
+      const GoogleServiceAuthError& error,
+      signin_metrics::SourceForRefreshTokenOperation token_operation_source)
+      override;
   void OnRefreshTokensLoaded() override;
+  void OnIdentityManagerShutdown(
+      signin::IdentityManager* identity_manager) override;
 
  private:
   void UpdatePrimaryAccountIfNeeded();
@@ -80,6 +85,9 @@ class IdentityManagerObserver : public signin::IdentityManager::Observer {
   const scoped_refptr<StandaloneTrustedVaultBackend> backend_;
   const base::RepeatingClosure notify_keys_changed_callback_;
   const raw_ptr<signin::IdentityManager> identity_manager_;
+  base::ScopedObservation<signin::IdentityManager,
+                          signin::IdentityManager::Observer>
+      identity_manager_observation_{this};
   CoreAccountInfo primary_account_;
 };
 
@@ -96,16 +104,14 @@ IdentityManagerObserver::IdentityManagerObserver(
   DCHECK(backend_);
   DCHECK(identity_manager_);
 
-  identity_manager_->AddObserver(this);
+  identity_manager_observation_.Observe(identity_manager_);
   UpdatePrimaryAccountIfNeeded();
   if (identity_manager_->AreRefreshTokensLoaded()) {
     OnRefreshTokensLoaded();
   }
 }
 
-IdentityManagerObserver::~IdentityManagerObserver() {
-  identity_manager_->RemoveObserver(this);
-}
+IdentityManagerObserver::~IdentityManagerObserver() = default;
 
 void IdentityManagerObserver::OnPrimaryAccountChanged(
     const signin::PrimaryAccountChangeEvent& event) {
@@ -113,12 +119,11 @@ void IdentityManagerObserver::OnPrimaryAccountChanged(
 }
 
 void IdentityManagerObserver::OnAccountsCookieDeletedByUserAction() {
-  // TODO(crbug.com/1148328): remove this handler once tests can mimic
+  // TODO(crbug.com/40156992): remove this handler once tests can mimic
   // OnAccountInCookieUpdated() properly.
   UpdateAccountsInCookieJarInfoIfNeeded(
-      signin::AccountsInCookieJarInfo(/*accounts_are_fresh_param=*/true,
-                                      /*signed_in_accounts_param=*/{},
-                                      /*signed_out_accounts_param=*/{}));
+      signin::AccountsInCookieJarInfo(/*accounts_are_fresh=*/true,
+                                      /*accounts=*/{}));
   notify_keys_changed_callback_.Run();
 }
 
@@ -131,7 +136,8 @@ void IdentityManagerObserver::OnAccountsInCookieUpdated(
 
 void IdentityManagerObserver::OnErrorStateOfRefreshTokenUpdatedForAccount(
     const CoreAccountInfo& account_info,
-    const GoogleServiceAuthError& error) {
+    const GoogleServiceAuthError& error,
+    signin_metrics::SourceForRefreshTokenOperation token_operation_source) {
   if (primary_account_.IsEmpty() ||
       account_info.account_id != primary_account_.account_id) {
     return;
@@ -149,13 +155,24 @@ void IdentityManagerObserver::OnRefreshTokensLoaded() {
     // OnErrorStateOfRefreshTokenUpdatedForAccount() can be called before
     // refresh tokens are marked as loaded, in this case error state can not be
     // identified reliably. To mitigate this, call it again here.
+    // It is safe to use the default value for the source of the refresh token
+    // operation
+    // (`signin_metrics::SourceForRefreshTokenOperation::kUnknown`) as it is not
+    // currently used.
     OnErrorStateOfRefreshTokenUpdatedForAccount(
         primary_account_,
         identity_manager_->GetErrorStateOfRefreshTokenForAccount(
-            primary_account_.account_id));
+            primary_account_.account_id),
+        signin_metrics::SourceForRefreshTokenOperation::kUnknown);
   }
   UpdateAccountsInCookieJarInfoIfNeeded(
       identity_manager_->GetAccountsInCookieJar());
+}
+
+void IdentityManagerObserver::OnIdentityManagerShutdown(
+    signin::IdentityManager* identity_manager) {
+  CHECK_EQ(identity_manager, identity_manager_, base::NotFatalUntil::M142);
+  identity_manager_observation_.Reset();
 }
 
 void IdentityManagerObserver::UpdatePrimaryAccountIfNeeded() {
@@ -168,7 +185,7 @@ void IdentityManagerObserver::UpdatePrimaryAccountIfNeeded() {
 
   // IdentityManager returns empty CoreAccountInfo if there is no primary
   // account.
-  absl::optional<CoreAccountInfo> optional_primary_account;
+  std::optional<CoreAccountInfo> optional_primary_account;
   if (!primary_account.IsEmpty()) {
     optional_primary_account = primary_account;
   }
@@ -182,7 +199,7 @@ void IdentityManagerObserver::UpdatePrimaryAccountIfNeeded() {
 
 void IdentityManagerObserver::UpdateAccountsInCookieJarInfoIfNeeded(
     const signin::AccountsInCookieJarInfo& accounts_in_cookie_jar_info) {
-  if (accounts_in_cookie_jar_info.accounts_are_fresh) {
+  if (accounts_in_cookie_jar_info.AreAccountsFresh()) {
     backend_task_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(
@@ -216,10 +233,8 @@ IdentityManagerObserver::GetPrimaryAccountRefreshTokenErrorState() const {
 class BackendDelegate : public StandaloneTrustedVaultBackend::Delegate {
  public:
   explicit BackendDelegate(
-      const base::RepeatingClosure& notify_recoverability_degraded_cb,
-      const base::RepeatingClosure& notify_state_changed_cb)
-      : notify_recoverability_degraded_cb_(notify_recoverability_degraded_cb),
-        notify_state_changed_cb_(notify_state_changed_cb) {}
+      const base::RepeatingClosure& notify_recoverability_degraded_cb)
+      : notify_recoverability_degraded_cb_(notify_recoverability_degraded_cb) {}
 
   ~BackendDelegate() override = default;
 
@@ -228,32 +243,16 @@ class BackendDelegate : public StandaloneTrustedVaultBackend::Delegate {
     notify_recoverability_degraded_cb_.Run();
   }
 
-  void NotifyStateChanged() override { notify_state_changed_cb_.Run(); }
-
  private:
   const base::RepeatingClosure notify_recoverability_degraded_cb_;
-  const base::RepeatingClosure notify_state_changed_cb_;
 };
-
-constexpr base::FilePath::CharType kChromeSyncTrustedVaultFilename[] =
-    FILE_PATH_LITERAL("trusted_vault.pb");
-constexpr base::FilePath::CharType kPasskeysTrustedVaultFilename[] =
-    FILE_PATH_LITERAL("passkeys_trusted_vault.pb");
-
-base::FilePath GetBackendFilePath(const base::FilePath& base_dir,
-                                  SecurityDomainId security_domain) {
-  switch (security_domain) {
-    case SecurityDomainId::kChromeSync:
-      return base_dir.Append(kChromeSyncTrustedVaultFilename);
-    case SecurityDomainId::kPasskeys:
-      return base_dir.Append(kPasskeysTrustedVaultFilename);
-  }
-  NOTREACHED_NORETURN();
-}
 
 }  // namespace
 
 StandaloneTrustedVaultClient::StandaloneTrustedVaultClient(
+#if BUILDFLAG(IS_MAC)
+    const std::string& icloud_keychain_access_group_prefix,
+#endif
     SecurityDomainId security_domain,
     const base::FilePath& base_dir,
     signin::IdentityManager* identity_manager,
@@ -273,15 +272,16 @@ StandaloneTrustedVaultClient::StandaloneTrustedVaultClient(
   }
 
   backend_ = base::MakeRefCounted<StandaloneTrustedVaultBackend>(
-      GetBackendFilePath(base_dir, security_domain),
-      std::make_unique<BackendDelegate>(
-          base::BindPostTaskToCurrentDefault(
-              base::BindRepeating(&StandaloneTrustedVaultClient::
-                                      NotifyRecoverabilityDegradedChanged,
-                                  weak_ptr_factory_.GetWeakPtr())),
-          base::BindPostTaskToCurrentDefault(base::BindRepeating(
-              &StandaloneTrustedVaultClient::NotifyBackendStateChanged,
-              weak_ptr_factory_.GetWeakPtr()))),
+#if BUILDFLAG(IS_MAC)
+      icloud_keychain_access_group_prefix,
+#endif
+      security_domain,
+      std::make_unique<StandaloneTrustedVaultStorage>(base_dir,
+                                                      security_domain),
+      std::make_unique<BackendDelegate>(base::BindPostTaskToCurrentDefault(
+          base::BindRepeating(&StandaloneTrustedVaultClient::
+                                  NotifyRecoverabilityDegradedChanged,
+                              weak_ptr_factory_.GetWeakPtr()))),
       std::move(connection));
   backend_task_runner_->PostTask(
       FROM_HERE,
@@ -328,7 +328,7 @@ void StandaloneTrustedVaultClient::FetchKeys(
 }
 
 void StandaloneTrustedVaultClient::StoreKeys(
-    const std::string& gaia_id,
+    const GaiaId& gaia_id,
     const std::vector<std::vector<uint8_t>>& keys,
     int last_key_version) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -364,7 +364,7 @@ void StandaloneTrustedVaultClient::GetIsRecoverabilityDegraded(
 }
 
 void StandaloneTrustedVaultClient::AddTrustedRecoveryMethod(
-    const std::string& gaia_id,
+    const GaiaId& gaia_id,
     const std::vector<uint8_t>& public_key,
     int method_type_hint,
     base::OnceClosure cb) {
@@ -395,7 +395,7 @@ void StandaloneTrustedVaultClient::WaitForFlushForTesting(
 }
 
 void StandaloneTrustedVaultClient::FetchBackendPrimaryAccountForTesting(
-    base::OnceCallback<void(const absl::optional<CoreAccountInfo>&)> cb) const {
+    base::OnceCallback<void(const std::optional<CoreAccountInfo>&)> cb) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(backend_);
   backend_task_runner_->PostTaskAndReplyWithResult(
@@ -407,7 +407,7 @@ void StandaloneTrustedVaultClient::FetchBackendPrimaryAccountForTesting(
 }
 
 void StandaloneTrustedVaultClient::FetchIsDeviceRegisteredForTesting(
-    const std::string& gaia_id,
+    const GaiaId& gaia_id,
     base::OnceCallback<void(bool)> callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(backend_);
@@ -418,18 +418,6 @@ void StandaloneTrustedVaultClient::FetchIsDeviceRegisteredForTesting(
           backend_, gaia_id),
       base::BindOnce(&ReplyToIsDeviceRegisteredForTesting,
                      std::move(callback)));
-}
-
-void StandaloneTrustedVaultClient::AddDebugObserverForTesting(
-    DebugObserver* debug_observer) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  debug_observer_list_.AddObserver(debug_observer);
-}
-
-void StandaloneTrustedVaultClient::RemoveDebugObserverForTesting(
-    DebugObserver* debug_observer) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  debug_observer_list_.RemoveObserver(debug_observer);
 }
 
 void StandaloneTrustedVaultClient::
@@ -446,7 +434,7 @@ void StandaloneTrustedVaultClient::
 }
 
 void StandaloneTrustedVaultClient::GetLastKeyVersionForTesting(
-    const std::string& gaia_id,
+    const GaiaId& gaia_id,
     base::OnceCallback<void(int last_key_version)> callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(backend_);
@@ -469,13 +457,6 @@ void StandaloneTrustedVaultClient::NotifyRecoverabilityDegradedChanged() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   for (Observer& observer : observer_list_) {
     observer.OnTrustedVaultRecoverabilityChanged();
-  }
-}
-
-void StandaloneTrustedVaultClient::NotifyBackendStateChanged() {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  for (DebugObserver& debug_observer : debug_observer_list_) {
-    debug_observer.OnBackendStateChanged();
   }
 }
 

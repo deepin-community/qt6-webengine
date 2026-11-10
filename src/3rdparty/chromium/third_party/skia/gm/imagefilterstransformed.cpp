@@ -221,7 +221,7 @@ DEF_GM(return new ImageFilterMatrixWLocalMatrix();)
 class ImageFilterComposedTransform : public skiagm::GM {
 public:
 
-    // Start at 70 degrees since that highlighted the issue in skbug.com/10888
+    // Start at 70 degrees since that highlighted the issue in skbug.com/40042261
     ImageFilterComposedTransform() : fDegrees(70.f) {}
 
 protected:
@@ -261,7 +261,7 @@ private:
         canvas->clipRect(SkRect::MakeWH(256, 256));
         canvas->scale(0.5f, 0.5f);
         canvas->translate(128, 128);
-        canvas->drawImage(fImage, 0, 0, SkSamplingOptions(), &p);
+        canvas->drawImage(fImage, 0, 0, SkSamplingOptions(SkFilterMode::kLinear), &p);
         canvas->restore();
     }
 

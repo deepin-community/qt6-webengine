@@ -21,7 +21,6 @@
 #include "cc/trees/mutator_host_client.h"
 #include "cc/trees/target_property.h"
 #include "ui/gfx/animation/keyframe/keyframe_effect.h"
-#include "ui/gfx/geometry/box_f.h"
 #include "ui/gfx/geometry/point_f.h"
 
 namespace cc {
@@ -37,7 +36,7 @@ struct PropertyAnimationState;
 // element id for this animation so that the compositor animation system
 // recognize it. We do not use ElementId because it's an invalid element id.
 inline constexpr ElementId kReservedElementIdForPaintWorklet(
-    std::numeric_limits<ElementId::InternalValue>::max());
+    std::numeric_limits<ElementId::InternalValue>::max() - 1);
 
 // A KeyframeEffect owns a group of KeyframeModels for a single target
 // (identified by an ElementId). It is responsible for managing the
@@ -85,6 +84,7 @@ class CC_ANIMATION_EXPORT KeyframeEffect : public gfx::KeyframeEffect {
 
   bool needs_push_properties() const { return needs_push_properties_; }
   void SetNeedsPushProperties();
+  void ResetNeedsPushProperties();
 
   void BindElementAnimations(ElementAnimations* element_animations);
   void UnbindElementAnimations();
@@ -166,6 +166,10 @@ class CC_ANIMATION_EXPORT KeyframeEffect : public gfx::KeyframeEffect {
 
   bool awaiting_deletion() { return awaiting_deletion_; }
 
+  void set_replaced_group(int replaced_group) {
+    replaced_group_ = replaced_group;
+  }
+
  protected:
   // We override this because we have additional bookkeeping (eg, noting if
   // we've aborted a scroll animation, updating ticking state, sending updates
@@ -198,6 +202,11 @@ class CC_ANIMATION_EXPORT KeyframeEffect : public gfx::KeyframeEffect {
 
   // element_animations_ is non-null if controller is attached to an element.
   scoped_refptr<ElementAnimations> element_animations_;
+
+  // When an animation is being replaced (see is_replaced_ in animation.h),
+  // this is set to the animation group being replaced. Set only on the
+  // impl-side KeyframeEffect.
+  std::optional<int> replaced_group_;
 
   // Only try to start KeyframeModels when new keyframe models are added or
   // when the previous attempt at starting KeyframeModels failed to start all

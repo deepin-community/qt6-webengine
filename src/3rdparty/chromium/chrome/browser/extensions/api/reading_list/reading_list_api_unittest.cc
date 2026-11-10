@@ -6,16 +6,16 @@
 
 #include <memory>
 
+#include "base/location.h"
 #include "base/test/values_test_util.h"
 #include "base/time/time.h"
 #include "chrome/browser/extensions/api/reading_list/reading_list_api_constants.h"
 #include "chrome/browser/extensions/api/reading_list/reading_list_event_router.h"
+#include "chrome/browser/extensions/api/reading_list/reading_list_event_router_factory.h"
 #include "chrome/browser/extensions/extension_service_test_base.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/reading_list/reading_list_model_factory.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/common/extensions/api/reading_list.h"
-#include "chrome/test/base/test_browser_window.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/reading_list/core/reading_list_entry.h"
 #include "components/reading_list/core/reading_list_model.h"
@@ -27,9 +27,12 @@
 #include "extensions/browser/event_router_factory.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/test_event_router_observer.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/features/feature_channel.h"
 #include "url/gurl.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -38,7 +41,7 @@ namespace {
 // Create an extension with "readingList" permission.
 scoped_refptr<const Extension> CreateReadingListExtension() {
   return ExtensionBuilder("Extension with readingList permission")
-      .AddPermission("readingList")
+      .AddAPIPermission("readingList")
       .Build();
 }
 
@@ -48,7 +51,7 @@ void AddReadingListEntry(ReadingListModel* reading_list_model,
                          bool has_been_read) {
   reading_list_model->AddOrReplaceEntry(
       url, title, reading_list::EntrySource::ADDED_VIA_CURRENT_APP,
-      base::TimeDelta());
+      /*estimated_read_time=*/std::nullopt, /*creation_time=*/std::nullopt);
   reading_list_model->SetReadStatusIfExists(url, has_been_read);
 }
 
@@ -72,46 +75,24 @@ class ReadingListApiUnitTest : public ExtensionServiceTestBase {
   ReadingListApiUnitTest& operator=(const ReadingListApiUnitTest&) = delete;
   ~ReadingListApiUnitTest() override = default;
 
- protected:
-  Browser* browser() { return browser_.get(); }
-  TestBrowserWindow* browser_window() { return browser_window_.get(); }
-
  private:
   void SetUp() override;
-  void TearDown() override;
-
-  std::unique_ptr<TestBrowserWindow> browser_window_;
-  std::unique_ptr<Browser> browser_;
 };
 
 void ReadingListApiUnitTest::SetUp() {
   ExtensionServiceTestBase::SetUp();
   InitializeEmptyExtensionService();
 
-  // Create a browser window.
-  browser_window_ = std::make_unique<TestBrowserWindow>();
-  Browser::CreateParams params(profile(), /*user_gesture*/ true);
-  params.type = Browser::TYPE_NORMAL;
-  params.window = browser_window_.get();
-  browser_ = std::unique_ptr<Browser>(Browser::Create(params));
-
-  ReadingListEventRouter::GetFactoryInstance()->SetTestingFactory(
+  ReadingListEventRouterFactory::GetInstance()->SetTestingFactory(
       browser_context(), base::BindRepeating(&BuildReadingListEventRouter));
 
   EventRouterFactory::GetInstance()->SetTestingFactory(
       browser_context(), base::BindRepeating(&BuildEventRouter));
 
-  // We need to call ReadingListEventRouterFactory::GetForProfile() in order to
-  // instantiate the keyed service, since it's not created by default in unit
-  // tests.
-  ReadingListEventRouter::Get(browser_context());
-}
-
-void ReadingListApiUnitTest::TearDown() {
-  browser_->tab_strip_model()->CloseAllTabs();
-  browser_.reset();
-  browser_window_.reset();
-  ExtensionServiceTestBase::TearDown();
+  // We need to call ReadingListEventRouterFactory::GetForBrowserContext() in
+  // order to instantiate the keyed service, since it's not created by default
+  // in unit tests.
+  ReadingListEventRouterFactory::GetForBrowserContext(browser_context());
 }
 
 // Test that it is possible to add a unique URL.
@@ -501,7 +482,7 @@ TEST_F(ReadingListApiUnitTest, ReadingListOnEntryRemoved) {
 
   TestEventRouterObserver event_observer(EventRouter::Get(browser_context()));
 
-  reading_list_model->RemoveEntryByURL(url);
+  reading_list_model->RemoveEntryByURL(url, FROM_HERE);
   EXPECT_EQ(reading_list_model->size(), 0u);
 
   EXPECT_EQ(event_observer.events().size(), 1u);

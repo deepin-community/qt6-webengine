@@ -1,6 +1,7 @@
 // Copyright (c) 2015 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import * as Common from '../../../../core/common/common.js';
 import * as VisualLogging from '../../../visual_logging/visual_logging.js';
@@ -28,11 +29,13 @@ export class BezierEditor extends Common.ObjectWrapper.eventMixin<EventTypes, ty
   private debouncedStartPreviewAnimation: () => void;
 
   constructor(model: AnimationTimingModel) {
-    super(true);
+    super({useShadowDom: true});
+    this.registerRequiredCSS(bezierEditorStyles);
 
     this.model = model;
     this.contentElement.tabIndex = 0;
-    this.contentElement.setAttribute('jslog', `${VisualLogging.bezierEditor()}`);
+    this.contentElement.setAttribute(
+        'jslog', `${VisualLogging.dialog('bezierEditor').parent('mapped').track({keydown: 'Enter|Escape'})}`);
     this.setDefaultFocusedElement(this.contentElement);
     this.element.style.overflowY = 'auto';
 
@@ -68,7 +71,7 @@ export class BezierEditor extends Common.ObjectWrapper.eventMixin<EventTypes, ty
         Common.Debouncer.debounce(this.startPreviewAnimation.bind(this), PREVIEW_ANIMATION_DEBOUNCE_DELAY);
     this.animationTimingUI = new AnimationTimingUI({
       model: this.model,
-      onChange: (model: AnimationTimingModel): void => {
+      onChange: (model: AnimationTimingModel) => {
         this.setModel(model);
         this.onchange();
         this.unselectPresets();
@@ -82,10 +85,10 @@ export class BezierEditor extends Common.ObjectWrapper.eventMixin<EventTypes, ty
     this.header = this.contentElement.createChild('div', 'bezier-header');
     const minus = this.createPresetModifyIcon(this.header, 'bezier-preset-minus', 'M 12 6 L 8 10 L 12 14');
     minus.addEventListener('click', this.presetModifyClicked.bind(this, false));
-    minus.setAttribute('jslog', `${VisualLogging.action().track({click: true}).context('bezier.prev-preset')}`);
+    minus.setAttribute('jslog', `${VisualLogging.action('bezier.prev-preset').track({click: true})}`);
     const plus = this.createPresetModifyIcon(this.header, 'bezier-preset-plus', 'M 8 6 L 12 10 L 8 14');
     plus.addEventListener('click', this.presetModifyClicked.bind(this, true));
-    plus.setAttribute('jslog', `${VisualLogging.action().track({click: true}).context('bezier.next-preset')}`);
+    plus.setAttribute('jslog', `${VisualLogging.action('bezier.next-preset').track({click: true})}`);
     this.label = this.header.createChild('span', 'source-code bezier-display-value');
   }
 
@@ -96,7 +99,6 @@ export class BezierEditor extends Common.ObjectWrapper.eventMixin<EventTypes, ty
   }
 
   override wasShown(): void {
-    this.registerCSSFiles([bezierEditorStyles]);
     this.unselectPresets();
     // Check if bezier matches a preset
     for (const category of this.presetCategories) {
@@ -114,7 +116,7 @@ export class BezierEditor extends Common.ObjectWrapper.eventMixin<EventTypes, ty
 
   private onchange(): void {
     this.updateUI();
-    this.dispatchEventToListeners(Events.BezierChanged, this.model.asCSSText());
+    this.dispatchEventToListeners(Events.BEZIER_CHANGED, this.model.asCSSText());
   }
 
   private updateUI(): void {
@@ -124,10 +126,10 @@ export class BezierEditor extends Common.ObjectWrapper.eventMixin<EventTypes, ty
     this.animationTimingUI?.draw();
   }
 
-  private createCategory(presetGroup: {
+  private createCategory(presetGroup: Array<{
     name: string,
     value: string,
-  }[]): PresetCategory|null {
+  }>): PresetCategory|null {
     const pivot = AnimationTimingModel.parse(presetGroup[0].value);
     if (!pivot) {
       return null;
@@ -227,12 +229,12 @@ export class BezierEditor extends Common.ObjectWrapper.eventMixin<EventTypes, ty
 }
 
 export const enum Events {
-  BezierChanged = 'BezierChanged',
+  BEZIER_CHANGED = 'BezierChanged',
 }
 
-export type EventTypes = {
-  [Events.BezierChanged]: string,
-};
+export interface EventTypes {
+  [Events.BEZIER_CHANGED]: string;
+}
 
 export const Presets = [
   [
@@ -279,10 +281,10 @@ export const Presets = [
   ],
 ];
 export interface PresetCategory {
-  presets: {
+  presets: Array<{
     name: string,
     value: string,
-  }[];
+  }>;
   icon: Element;
   presetIndex: number;
 }

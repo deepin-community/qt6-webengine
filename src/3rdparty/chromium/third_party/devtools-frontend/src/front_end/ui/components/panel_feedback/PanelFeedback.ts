@@ -1,13 +1,15 @@
 // Copyright 2021 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
+
+import '../../legacy/legacy.js';
 
 import * as i18n from '../../../core/i18n/i18n.js';
 import * as Platform from '../../../core/platform/platform.js';
 import * as ComponentHelpers from '../../components/helpers/helpers.js';
-import * as LitHtml from '../../lit-html/lit-html.js';
+import {html, render} from '../../lit/lit.js';
 import * as VisualLogging from '../../visual_logging/visual_logging.js';
-import * as IconButton from '../icon_button/icon_button.js';
 
 import panelFeedbackStyles from './panelFeedback.css.js';
 
@@ -28,7 +30,7 @@ const UIStrings = {
    *@description Title of the section to the quick start video and documentation on experimental panels.
    */
   videoAndDocumentation: 'Video and documentation',
-};
+} as const;
 
 const str_ = i18n.i18n.registerUIStrings('ui/components/panel_feedback/PanelFeedback.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
@@ -42,9 +44,7 @@ export interface PanelFeedbackData {
   quickStartLinkText: string;
 }
 export class PanelFeedback extends HTMLElement {
-  static readonly litTagName = LitHtml.literal`devtools-panel-feedback`;
   readonly #shadow = this.attachShadow({mode: 'open'});
-  readonly #boundRender = this.#render.bind(this);
 
   #props: PanelFeedbackData = {
     feedbackUrl: Platform.DevToolsPath.EmptyUrlString,
@@ -52,13 +52,9 @@ export class PanelFeedback extends HTMLElement {
     quickStartLinkText: '',
   };
 
-  connectedCallback(): void {
-    this.#shadow.adoptedStyleSheets = [panelFeedbackStyles];
-  }
-
   set data(data: PanelFeedbackData) {
     this.#props = data;
-    void ComponentHelpers.ScheduledRender.scheduleRender(this, this.#boundRender);
+    void ComponentHelpers.ScheduledRender.scheduleRender(this, this.#render);
   }
 
   #render(): void {
@@ -67,24 +63,25 @@ export class PanelFeedback extends HTMLElement {
     }
 
     // clang-format off
-    LitHtml.render(LitHtml.html`
+    render(html`
+      <style>${panelFeedbackStyles}</style>
       <div class="preview">
         <h2 class="flex">
-          <${IconButton.Icon.Icon.litTagName} .data=${{
+          <devtools-icon .data=${{
             iconPath: previewFeatureUrl,
             width: '20px',
             height: '20px',
             color: 'var(--icon-primary)',
-          } as IconButton.Icon.IconData}></${IconButton.Icon.Icon.litTagName}> ${i18nString(UIStrings.previewFeature)}
+          }}></devtools-icon> ${i18nString(UIStrings.previewFeature)}
         </h2>
-        <p>${i18nString(UIStrings.previewText)} <x-link href=${this.#props.feedbackUrl} jslog=${VisualLogging.link().track({click: true}).context('feedback')}>${i18nString(UIStrings.previewTextFeedbackLink)}</x-link></p>
+        <p>${i18nString(UIStrings.previewText)} <x-link href=${this.#props.feedbackUrl} jslog=${VisualLogging.link('feedback').track({click: true})}>${i18nString(UIStrings.previewTextFeedbackLink)}</x-link></p>
         <div class="video">
           <div class="thumbnail">
             <img src=${videoThumbnailUrl} role="presentation" />
           </div>
           <div class="video-description">
             <h3>${i18nString(UIStrings.videoAndDocumentation)}</h3>
-            <x-link class="quick-start-link" href=${this.#props.quickStartUrl} jslog=${VisualLogging.link().track({click: true}).context('css-overview.quick-start')}>${this.#props.quickStartLinkText}</x-link>
+            <x-link class="quick-start-link" href=${this.#props.quickStartUrl} jslog=${VisualLogging.link('css-overview.quick-start').track({click: true})}>${this.#props.quickStartLinkText}</x-link>
           </div>
         </div>
       </div>
@@ -93,7 +90,7 @@ export class PanelFeedback extends HTMLElement {
   }
 }
 
-ComponentHelpers.CustomElements.defineComponent('devtools-panel-feedback', PanelFeedback);
+customElements.define('devtools-panel-feedback', PanelFeedback);
 
 declare global {
   interface HTMLElementTagNameMap {

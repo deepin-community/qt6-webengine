@@ -2,46 +2,54 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "partition_alloc/partition_address_space.h"
 
 #include <array>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <ostream>
 #include <string>
 
-#include "build/build_config.h"
 #include "partition_alloc/address_pool_manager.h"
+#include "partition_alloc/allocator_config.h"
+#include "partition_alloc/build_config.h"
+#include "partition_alloc/buildflags.h"
 #include "partition_alloc/compressed_pointer.h"
 #include "partition_alloc/page_allocator.h"
+#include "partition_alloc/partition_alloc_base/bits.h"
 #include "partition_alloc/partition_alloc_base/compiler_specific.h"
 #include "partition_alloc/partition_alloc_base/debug/alias.h"
-#include "partition_alloc/partition_alloc_buildflags.h"
+#include "partition_alloc/partition_alloc_base/files/platform_file.h"
 #include "partition_alloc/partition_alloc_check.h"
 #include "partition_alloc/partition_alloc_config.h"
 #include "partition_alloc/partition_alloc_constants.h"
 #include "partition_alloc/thread_isolation/thread_isolation.h"
 
-#if BUILDFLAG(IS_IOS)
+#if PA_BUILDFLAG(IS_IOS)
 #include <mach-o/dyld.h>
 #endif
 
-#if BUILDFLAG(IS_WIN)
+#if PA_BUILDFLAG(IS_WIN)
 #include <windows.h>
-#endif  // BUILDFLAG(IS_WIN)
+#endif  // PA_BUILDFLAG(IS_WIN)
 
-#if PA_CONFIG(ENABLE_SHADOW_METADATA) || BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#if PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
 #include <sys/mman.h>
 #endif
 
 namespace partition_alloc::internal {
 
-#if BUILDFLAG(HAS_64_BIT_POINTERS)
+#if PA_BUILDFLAG(HAS_64_BIT_POINTERS)
 
 namespace {
 
-#if BUILDFLAG(IS_WIN)
+#if PA_BUILDFLAG(IS_WIN)
 
 PA_NOINLINE void HandlePoolAllocFailureOutOfVASpace() {
   PA_NO_CODE_FOLDING();
@@ -52,7 +60,7 @@ PA_NOINLINE void HandlePoolAllocFailureOutOfCommitCharge() {
   PA_NO_CODE_FOLDING();
   PA_CHECK(false);
 }
-#endif  // BUILDFLAG(IS_WIN)
+#endif  // PA_BUILDFLAG(IS_WIN)
 
 PA_NOINLINE void HandlePoolAllocFailure() {
   PA_NO_CODE_FOLDING();
@@ -60,7 +68,7 @@ PA_NOINLINE void HandlePoolAllocFailure() {
   PA_DEBUG_DATA_ON_STACK("error", static_cast<size_t>(alloc_page_error_code));
   // It's important to easily differentiate these two failures on Windows, so
   // crash with different stacks.
-#if BUILDFLAG(IS_WIN)
+#if PA_BUILDFLAG(IS_WIN)
   if (alloc_page_error_code == ERROR_NOT_ENOUGH_MEMORY) {
     // The error code says NOT_ENOUGH_MEMORY, but since we only do MEM_RESERVE,
     // it must be VA space exhaustion.
@@ -72,28 +80,50 @@ PA_NOINLINE void HandlePoolAllocFailure() {
     // amount per 64kiB block. Keep this path anyway, to check in crash reports.
     HandlePoolAllocFailureOutOfCommitCharge();
   } else
-#endif  // BUILDFLAG(IS_WIN)
+#endif  // PA_BUILDFLAG(IS_WIN)
   {
     PA_CHECK(false);
   }
 }
 
+#if PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
+PAGE_ALLOCATOR_CONSTANTS_DECLARE_CONSTEXPR size_t
+MetadataInnerOffset(pool_handle pool) {
+  PA_DCHECK(kRegularPoolHandle <= pool && pool < kMaxPoolHandle);
+  // Each metadata needs 2 SystemPage, i.e. 1 SystemPage for Guardian
+  // and another SystemPage for actual metadata.
+  // To make the first SystemPage a guardian, need `+ 1`.
+  return SystemPageSize() * (2 * (pool - kRegularPoolHandle) + 1);
+}
+#endif  // PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
+
 }  // namespace
 
-PartitionAddressSpace::PoolSetup PartitionAddressSpace::setup_;
+PA_CONSTINIT PartitionAddressSpace::PoolSetup PartitionAddressSpace::setup_;
 
-#if PA_CONFIG(ENABLE_SHADOW_METADATA)
-std::ptrdiff_t PartitionAddressSpace::regular_pool_shadow_offset_ = 0;
-std::ptrdiff_t PartitionAddressSpace::brp_pool_shadow_offset_ = 0;
-#endif
+#if PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
+PA_CONSTINIT std::array<std::ptrdiff_t, kMaxPoolHandle>
+    PartitionAddressSpace::offsets_to_metadata_ = {
+        0, 0, 0, 0,
+#if PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
+        0,
+#endif  // PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
+};
+
+uintptr_t PartitionAddressSpace::metadata_region_start_ =
+    PartitionAddressSpace::kUninitializedPoolBaseAddress;
 
 #if PA_CONFIG(DYNAMICALLY_SELECT_POOL_SIZE)
-#if !BUILDFLAG(IS_IOS)
+size_t PartitionAddressSpace::metadata_region_size_ = 0;
+#endif  // PA_CONFIG(DYNAMICALLY_SELECT_POOL_SIZE)
+#endif  // PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
+
+#if PA_CONFIG(DYNAMICALLY_SELECT_POOL_SIZE)
+#if !PA_BUILDFLAG(IS_IOS)
 #error Dynamic pool size is only supported on iOS.
 #endif
 
-namespace {
-bool IsIOSTestProcess() {
+bool PartitionAddressSpace::IsIOSTestProcess() {
   // On iOS, only applications with the extended virtual addressing entitlement
   // can use a large address space. Since Earl Grey test runner apps cannot get
   // entitlements, they must use a much smaller pool size. Similarly,
@@ -124,15 +154,6 @@ bool IsIOSTestProcess() {
 
   return has_suffix("Runner") || has_suffix("ios_web_view_inttests");
 }
-}  // namespace
-
-PA_ALWAYS_INLINE size_t PartitionAddressSpace::RegularPoolSize() {
-  return IsIOSTestProcess() ? kRegularPoolSizeForIOSTestProcess
-                            : kRegularPoolSize;
-}
-PA_ALWAYS_INLINE size_t PartitionAddressSpace::BRPPoolSize() {
-  return IsIOSTestProcess() ? kBRPPoolSizeForIOSTestProcess : kBRPPoolSize;
-}
 #endif  // PA_CONFIG(DYNAMICALLY_SELECT_POOL_SIZE)
 
 void PartitionAddressSpace::Init() {
@@ -140,149 +161,80 @@ void PartitionAddressSpace::Init() {
     return;
   }
 
-  size_t regular_pool_size = RegularPoolSize();
-  size_t brp_pool_size = BRPPoolSize();
+  const size_t core_pool_size = CorePoolSize();
 
-#if BUILDFLAG(GLUE_CORE_POOLS)
-  // Gluing core pools (regular & BRP) makes sense only when both pools are of
-  // the same size. This the only way we can check belonging to either of the
-  // two with a single bitmask operation.
-  PA_CHECK(regular_pool_size == brp_pool_size);
-
-  // TODO(crbug.com/1362969): Support PA_ENABLE_SHADOW_METADATA.
-  int pools_fd = -1;
-
-  size_t glued_pool_sizes = regular_pool_size * 2;
+  size_t glued_pool_sizes = core_pool_size * 2;
   // Note, BRP pool requires to be preceded by a "forbidden zone", which is
   // conveniently taken care of by the last guard page of the regular pool.
   setup_.regular_pool_base_address_ =
       AllocPages(glued_pool_sizes, glued_pool_sizes,
                  PageAccessibilityConfiguration(
                      PageAccessibilityConfiguration::kInaccessible),
-                 PageTag::kPartitionAlloc, pools_fd);
+                 PageTag::kPartitionAlloc);
+#if PA_BUILDFLAG(IS_ANDROID)
+  // On Android, Adreno-GSL library fails to mmap if we snatch address
+  // 0x400000000. Find a different address instead.
+  if (setup_.regular_pool_base_address_ == 0x400000000) {
+    uintptr_t new_base_address =
+        AllocPages(glued_pool_sizes, glued_pool_sizes,
+                   PageAccessibilityConfiguration(
+                       PageAccessibilityConfiguration::kInaccessible),
+                   PageTag::kPartitionAlloc);
+    FreePages(setup_.regular_pool_base_address_, glued_pool_sizes);
+    setup_.regular_pool_base_address_ = new_base_address;
+  }
+#endif  // PA_BUILDFLAG(IS_ANDROID)
   if (!setup_.regular_pool_base_address_) {
     HandlePoolAllocFailure();
   }
   setup_.brp_pool_base_address_ =
-      setup_.regular_pool_base_address_ + regular_pool_size;
-#else  // BUILDFLAG(GLUE_CORE_POOLS)
-#if PA_CONFIG(ENABLE_SHADOW_METADATA)
-  int regular_pool_fd = memfd_create("/regular_pool", MFD_CLOEXEC);
-#else
-  int regular_pool_fd = -1;
-#endif
-  setup_.regular_pool_base_address_ =
-      AllocPages(regular_pool_size, regular_pool_size,
-                 PageAccessibilityConfiguration(
-                     PageAccessibilityConfiguration::kInaccessible),
-                 PageTag::kPartitionAlloc, regular_pool_fd);
-  if (!setup_.regular_pool_base_address_) {
-    HandlePoolAllocFailure();
-  }
-
-#if PA_CONFIG(ENABLE_SHADOW_METADATA)
-  int brp_pool_fd = memfd_create("/brp_pool", MFD_CLOEXEC);
-#else
-  int brp_pool_fd = -1;
-#endif
-  // Reserve an extra allocation granularity unit before the BRP pool, but keep
-  // the pool aligned at BRPPoolSize(). A pointer immediately past an allocation
-  // is a valid pointer, and having a "forbidden zone" before the BRP pool
-  // prevents such a pointer from "sneaking into" the pool.
-  const size_t kForbiddenZoneSize = PageAllocationGranularity();
-  uintptr_t base_address = AllocPagesWithAlignOffset(
-      0, brp_pool_size + kForbiddenZoneSize, brp_pool_size,
-      brp_pool_size - kForbiddenZoneSize,
-      PageAccessibilityConfiguration(
-          PageAccessibilityConfiguration::kInaccessible),
-      PageTag::kPartitionAlloc, brp_pool_fd);
-  if (!base_address) {
-    HandlePoolAllocFailure();
-  }
-  setup_.brp_pool_base_address_ = base_address + kForbiddenZoneSize;
-#endif  // BUILDFLAG(GLUE_CORE_POOLS)
+      setup_.regular_pool_base_address_ + core_pool_size;
 
 #if PA_CONFIG(DYNAMICALLY_SELECT_POOL_SIZE)
-  setup_.regular_pool_base_mask_ = ~(regular_pool_size - 1);
-  setup_.brp_pool_base_mask_ = ~(brp_pool_size - 1);
-#if BUILDFLAG(GLUE_CORE_POOLS)
-  // When PA_GLUE_CORE_POOLS is on, the BRP pool is placed at the end of the
-  // regular pool, effectively forming one virtual pool of a twice bigger
-  // size. Adjust the mask appropriately.
-  setup_.core_pools_base_mask_ = setup_.regular_pool_base_mask_ << 1;
-  PA_DCHECK(setup_.core_pools_base_mask_ == (setup_.brp_pool_base_mask_ << 1));
-#endif
+  setup_.core_pool_base_mask_ = ~(core_pool_size - 1);
+  // The BRP pool is placed at the end of the regular pool, effectively forming
+  // one virtual pool of a twice bigger size. Adjust the mask appropriately.
+  setup_.glued_pools_base_mask_ = setup_.core_pool_base_mask_ << 1;
 #endif  // PA_CONFIG(DYNAMICALLY_SELECT_POOL_SIZE)
 
   AddressPoolManager::GetInstance().Add(
-      kRegularPoolHandle, setup_.regular_pool_base_address_, regular_pool_size);
+      kRegularPoolHandle, setup_.regular_pool_base_address_, core_pool_size);
   AddressPoolManager::GetInstance().Add(
-      kBRPPoolHandle, setup_.brp_pool_base_address_, brp_pool_size);
+      kBRPPoolHandle, setup_.brp_pool_base_address_, core_pool_size);
 
   // Sanity check pool alignment.
-  PA_DCHECK(!(setup_.regular_pool_base_address_ & (regular_pool_size - 1)));
-  PA_DCHECK(!(setup_.brp_pool_base_address_ & (brp_pool_size - 1)));
-#if BUILDFLAG(GLUE_CORE_POOLS)
+  PA_DCHECK(!(setup_.regular_pool_base_address_ & (core_pool_size - 1)));
+  PA_DCHECK(!(setup_.brp_pool_base_address_ & (core_pool_size - 1)));
   PA_DCHECK(!(setup_.regular_pool_base_address_ & (glued_pool_sizes - 1)));
-#endif
 
   // Sanity check pool belonging.
   PA_DCHECK(!IsInRegularPool(setup_.regular_pool_base_address_ - 1));
   PA_DCHECK(IsInRegularPool(setup_.regular_pool_base_address_));
-  PA_DCHECK(IsInRegularPool(setup_.regular_pool_base_address_ +
-                            regular_pool_size - 1));
   PA_DCHECK(
-      !IsInRegularPool(setup_.regular_pool_base_address_ + regular_pool_size));
+      IsInRegularPool(setup_.regular_pool_base_address_ + core_pool_size - 1));
+  PA_DCHECK(
+      !IsInRegularPool(setup_.regular_pool_base_address_ + core_pool_size));
   PA_DCHECK(!IsInBRPPool(setup_.brp_pool_base_address_ - 1));
   PA_DCHECK(IsInBRPPool(setup_.brp_pool_base_address_));
-  PA_DCHECK(IsInBRPPool(setup_.brp_pool_base_address_ + brp_pool_size - 1));
-  PA_DCHECK(!IsInBRPPool(setup_.brp_pool_base_address_ + brp_pool_size));
-#if BUILDFLAG(GLUE_CORE_POOLS)
+  PA_DCHECK(IsInBRPPool(setup_.brp_pool_base_address_ + core_pool_size - 1));
+  PA_DCHECK(!IsInBRPPool(setup_.brp_pool_base_address_ + core_pool_size));
   PA_DCHECK(!IsInCorePools(setup_.regular_pool_base_address_ - 1));
   PA_DCHECK(IsInCorePools(setup_.regular_pool_base_address_));
   PA_DCHECK(
-      IsInCorePools(setup_.regular_pool_base_address_ + regular_pool_size - 1));
-  PA_DCHECK(
-      IsInCorePools(setup_.regular_pool_base_address_ + regular_pool_size));
+      IsInCorePools(setup_.regular_pool_base_address_ + core_pool_size - 1));
+  PA_DCHECK(IsInCorePools(setup_.regular_pool_base_address_ + core_pool_size));
   PA_DCHECK(IsInCorePools(setup_.brp_pool_base_address_ - 1));
   PA_DCHECK(IsInCorePools(setup_.brp_pool_base_address_));
-  PA_DCHECK(IsInCorePools(setup_.brp_pool_base_address_ + brp_pool_size - 1));
-  PA_DCHECK(!IsInCorePools(setup_.brp_pool_base_address_ + brp_pool_size));
-#endif  // BUILDFLAG(GLUE_CORE_POOLS)
+  PA_DCHECK(IsInCorePools(setup_.brp_pool_base_address_ + core_pool_size - 1));
+  PA_DCHECK(!IsInCorePools(setup_.brp_pool_base_address_ + core_pool_size));
 
-#if PA_CONFIG(STARSCAN_USE_CARD_TABLE)
-  // Reserve memory for PCScan quarantine card table.
-  uintptr_t requested_address = setup_.regular_pool_base_address_;
-  uintptr_t actual_address = AddressPoolManager::GetInstance().Reserve(
-      kRegularPoolHandle, requested_address, kSuperPageSize);
-  PA_CHECK(requested_address == actual_address)
-      << "QuarantineCardTable is required to be allocated at the beginning of "
-         "the regular pool";
-#endif  // PA_CONFIG(STARSCAN_USE_CARD_TABLE)
-
-#if PA_CONFIG(ENABLE_SHADOW_METADATA)
-  // Reserve memory for the shadow pools.
-  uintptr_t regular_pool_shadow_address =
-      AllocPages(regular_pool_size, regular_pool_size,
-                 PageAccessibilityConfiguration(
-                     PageAccessibilityConfiguration::kInaccessible),
-                 PageTag::kPartitionAlloc, regular_pool_fd);
-  regular_pool_shadow_offset_ =
-      regular_pool_shadow_address - setup_.regular_pool_base_address_;
-
-  uintptr_t brp_pool_shadow_address = AllocPagesWithAlignOffset(
-      0, brp_pool_size + kForbiddenZoneSize, brp_pool_size,
-      brp_pool_size - kForbiddenZoneSize,
-      PageAccessibilityConfiguration(
-          PageAccessibilityConfiguration::kInaccessible),
-      PageTag::kPartitionAlloc, brp_pool_fd);
-  brp_pool_shadow_offset_ =
-      brp_pool_shadow_address - setup_.brp_pool_base_address_;
-#endif
-
-#if BUILDFLAG(ENABLE_POINTER_COMPRESSION)
+#if PA_BUILDFLAG(ENABLE_POINTER_COMPRESSION)
   CompressedPointerBaseGlobal::SetBase(setup_.regular_pool_base_address_);
-#endif  // BUILDFLAG(ENABLE_POINTER_COMPRESSION)
+#endif  // PA_BUILDFLAG(ENABLE_POINTER_COMPRESSION)
+
+#if PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
+  InitMetadataRegionAndOffsets();
+#endif  // PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
 }
 
 void PartitionAddressSpace::InitConfigurablePool(uintptr_t pool_base,
@@ -290,7 +242,7 @@ void PartitionAddressSpace::InitConfigurablePool(uintptr_t pool_base,
   // The ConfigurablePool must only be initialized once.
   PA_CHECK(!IsConfigurablePoolInitialized());
 
-#if BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#if PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
   // It's possible that the thread isolated pool has been initialized first, in
   // which case the setup_ memory has been made read-only. Remove the protection
   // temporarily.
@@ -302,7 +254,7 @@ void PartitionAddressSpace::InitConfigurablePool(uintptr_t pool_base,
   PA_CHECK(pool_base);
   PA_CHECK(size <= kConfigurablePoolMaxSize);
   PA_CHECK(size >= kConfigurablePoolMinSize);
-  PA_CHECK(std::has_single_bit(size));
+  PA_CHECK(base::bits::HasSingleBit(size));
   PA_CHECK(pool_base % size == 0);
 
   setup_.configurable_pool_base_address_ = pool_base;
@@ -311,15 +263,30 @@ void PartitionAddressSpace::InitConfigurablePool(uintptr_t pool_base,
   AddressPoolManager::GetInstance().Add(
       kConfigurablePoolHandle, setup_.configurable_pool_base_address_, size);
 
-#if BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#if PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
   // Put the metadata protection back in place.
   if (IsThreadIsolatedPoolInitialized()) {
     WriteProtectThreadIsolatedGlobals(setup_.thread_isolation_);
   }
 #endif
+
+#if PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
+  // Initialize metadata for configurable pool without PartitionAlloc enabled.
+  // This will happen when there exists a test which uses configurable pool
+  // and a sanitizer is enabled.
+  if (metadata_region_start_ != kUninitializedPoolBaseAddress) {
+    // Set offset from ConfigurablePool to MetadataRegion.
+    offsets_to_metadata_[kConfigurablePoolHandle] =
+        metadata_region_start_ - ConfigurablePoolBase() +
+        MetadataInnerOffset(kConfigurablePoolHandle);
+  } else {
+    // If no metadata region is available, use `SystemPageSize()`.
+    offsets_to_metadata_[kConfigurablePoolHandle] = SystemPageSize();
+  }
+#endif  // PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
 }
 
-#if BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#if PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
 void PartitionAddressSpace::InitThreadIsolatedPool(
     ThreadIsolationOption thread_isolation) {
   // The ThreadIsolated pool can't be initialized with conflicting settings.
@@ -352,26 +319,21 @@ void PartitionAddressSpace::InitThreadIsolatedPool(
   PA_DCHECK(!IsInThreadIsolatedPool(setup_.thread_isolated_pool_base_address_ +
                                     pool_size));
 
-  // TODO(1362969): support PA_ENABLE_SHADOW_METADATA
+#if PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
+  offsets_to_metadata_[kThreadIsolatedPoolHandle] =
+      metadata_region_start_ - setup_.thread_isolated_pool_base_address_ +
+      MetadataInnerOffset(kThreadIsolatedPoolHandle);
+#endif  // PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
 }
-#endif  // BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#endif  // PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
 
 void PartitionAddressSpace::UninitForTesting() {
-#if BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#if PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
   UninitThreadIsolatedPoolForTesting();  // IN-TEST
 #endif
-#if BUILDFLAG(GLUE_CORE_POOLS)
   // The core pools (regular & BRP) were allocated using a single allocation of
   // double size.
-  FreePages(setup_.regular_pool_base_address_, 2 * RegularPoolSize());
-#else   // BUILDFLAG(GLUE_CORE_POOLS)
-  FreePages(setup_.regular_pool_base_address_, RegularPoolSize());
-  // For BRP pool, the allocation region includes a "forbidden zone" before the
-  // pool.
-  const size_t kForbiddenZoneSize = PageAllocationGranularity();
-  FreePages(setup_.brp_pool_base_address_ - kForbiddenZoneSize,
-            BRPPoolSize() + kForbiddenZoneSize);
-#endif  // BUILDFLAG(GLUE_CORE_POOLS)
+  FreePages(setup_.regular_pool_base_address_, 2 * CorePoolSize());
   // Do not free pages for the configurable pool, because its memory is owned
   // by someone else, but deinitialize it nonetheless.
   setup_.regular_pool_base_address_ = kUninitializedPoolBaseAddress;
@@ -379,13 +341,24 @@ void PartitionAddressSpace::UninitForTesting() {
   setup_.configurable_pool_base_address_ = kUninitializedPoolBaseAddress;
   setup_.configurable_pool_base_mask_ = 0;
   AddressPoolManager::GetInstance().ResetForTesting();
-#if BUILDFLAG(ENABLE_POINTER_COMPRESSION)
+#if PA_BUILDFLAG(ENABLE_POINTER_COMPRESSION)
   CompressedPointerBaseGlobal::ResetBaseForTesting();
-#endif  // BUILDFLAG(ENABLE_POINTER_COMPRESSION)
+#endif  // PA_BUILDFLAG(ENABLE_POINTER_COMPRESSION)
+
+#if PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
+  FreePages(metadata_region_start_, MetadataRegionSize());
+  metadata_region_start_ = kUninitializedPoolBaseAddress;
+#if PA_CONFIG(DYNAMICALLY_SELECT_POOL_SIZE)
+  metadata_region_size_ = 0;
+#endif  // PA_CONFIG(DYNAMICALLY_SELECT_POOL_SIZE)
+  for (size_t i = 0; i < kMaxPoolHandle; ++i) {
+    offsets_to_metadata_[i] = SystemPageSize();
+  }
+#endif  // PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
 }
 
 void PartitionAddressSpace::UninitConfigurablePoolForTesting() {
-#if BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#if PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
   // It's possible that the thread isolated pool has been initialized first, in
   // which case the setup_ memory has been made read-only. Remove the protection
   // temporarily.
@@ -396,19 +369,22 @@ void PartitionAddressSpace::UninitConfigurablePoolForTesting() {
   AddressPoolManager::GetInstance().Remove(kConfigurablePoolHandle);
   setup_.configurable_pool_base_address_ = kUninitializedPoolBaseAddress;
   setup_.configurable_pool_base_mask_ = 0;
-#if BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#if PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
   // Put the metadata protection back in place.
   if (IsThreadIsolatedPoolInitialized()) {
     WriteProtectThreadIsolatedGlobals(setup_.thread_isolation_);
   }
 #endif
+#if PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
+  offsets_to_metadata_[kConfigurablePoolHandle] = SystemPageSize();
+#endif  // PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
 }
 
-#if BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#if PA_BUILDFLAG(ENABLE_THREAD_ISOLATION)
 void PartitionAddressSpace::UninitThreadIsolatedPoolForTesting() {
   if (IsThreadIsolatedPoolInitialized()) {
     UnprotectThreadIsolatedGlobals();
-#if BUILDFLAG(PA_DCHECK_IS_ON)
+#if PA_BUILDFLAG(DCHECKS_ARE_ON)
     ThreadIsolationSettings::settings.enabled = false;
 #endif
 
@@ -421,13 +397,62 @@ void PartitionAddressSpace::UninitThreadIsolatedPoolForTesting() {
 }
 #endif
 
-#if (BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX)) && defined(ARCH_CPU_ARM64)
+#if PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
+// Allocate virtual address space of metadata and initialize metadata offsets
+// of regular, brp and configurable pools.
+void PartitionAddressSpace::InitMetadataRegionAndOffsets() {
+  // Set up an address space only once.
+  if (metadata_region_start_ != kUninitializedPoolBaseAddress) {
+    return;
+  }
+
+#if PA_BUILDFLAG(ENABLE_MOVE_METADATA_OUT_OF_GIGACAGE_TRIAL)
+  if (ExternalMetadataTrialGroup::kUndefined ==
+      GetExternalMetadataTrialGroup()) {
+    if (SelectExternalMetadataTrialGroup() !=
+        ExternalMetadataTrialGroup::kEnabled) {
+      for (size_t i = 0; i < kMaxPoolHandle; ++i) {
+        offsets_to_metadata_[i] = SystemPageSize();
+      }
+      return;
+    }
+  }
+#endif  // PA_BUILDFLAG(ENABLE_MOVE_METADATA_OUT_OF_GIGACAGE_TRIAL)
+
+#if PA_CONFIG(DYNAMICALLY_SELECT_POOL_SIZE)
+  metadata_region_size_ = std::max(kConfigurablePoolMaxSize, CorePoolSize());
+#endif  // PA_CONFIG(DYNAMICALLY_SELECT_POOL_SIZE)
+
+  uintptr_t address =
+      AllocPages(MetadataRegionSize(), PageAllocationGranularity(),
+                 PageAccessibilityConfiguration(
+                     PageAccessibilityConfiguration::kInaccessible),
+                 PageTag::kPartitionAlloc);
+  if (!address) {
+    HandlePoolAllocFailure();
+  }
+
+  metadata_region_start_ = address;
+
+  PA_DCHECK(RegularPoolBase() != kUninitializedPoolBaseAddress);
+  PA_DCHECK(BRPPoolBase() != kUninitializedPoolBaseAddress);
+
+  offsets_to_metadata_[kRegularPoolHandle] =
+      address - RegularPoolBase() + MetadataInnerOffset(kRegularPoolHandle);
+  offsets_to_metadata_[kBRPPoolHandle] =
+      address - BRPPoolBase() + MetadataInnerOffset(kBRPPoolHandle);
+
+  // ConfigurablePool has not been initialized yet at this time.
+  offsets_to_metadata_[kConfigurablePoolHandle] = SystemPageSize();
+}
+#endif  // PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
+
+#if defined(PARTITION_ALLOCATOR_CONSTANTS_POSIX_NONCONST_PAGE_SIZE)
 
 PageCharacteristics page_characteristics;
 
-#endif  // (BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX)) &&
-        // defined(ARCH_CPU_ARM64)
+#endif
 
-#endif  // BUILDFLAG(HAS_64_BIT_POINTERS)
+#endif  // PA_BUILDFLAG(HAS_64_BIT_POINTERS)
 
 }  // namespace partition_alloc::internal

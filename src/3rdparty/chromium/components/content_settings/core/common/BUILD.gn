@@ -29,9 +29,8 @@ jumbo_static_library("common") {
     "content_settings_utils.cc",
     "content_settings_utils.h",
     "cookie_blocking_3pcd_status.h",
-    "cookie_controls_breakage_confidence_level.h",
     "cookie_controls_enforcement.h",
-    "cookie_controls_status.h",
+    "cookie_controls_state.h",
     "cookie_settings_base.cc",
     "cookie_settings_base.h",
     "host_indexed_content_settings.cc",
@@ -43,9 +42,11 @@ jumbo_static_library("common") {
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
 
   public_deps = [
+    ":content_settings_enums",
     ":content_settings_types",
     ":features",
     "//base",
+    "//services/network/public/cpp:web_platform",
   ]
 
   deps = [
@@ -68,7 +69,6 @@ jumbo_source_set("unit_tests") {
     "content_settings_partition_key_unittest.cc",
     "content_settings_pattern_parser_unittest.cc",
     "content_settings_pattern_unittest.cc",
-    "content_settings_utils_unittest.cc",
     "cookie_settings_base_unittest.cc",
     "host_indexed_content_settings_unittest.cc",
   ]
@@ -96,11 +96,22 @@ mojom("content_settings_types") {
   generate_legacy_js_bindings = true
 }
 
+mojom("content_settings_enums") {
+  generate_java = true
+  sources = [ "content_settings_enums.mojom" ]
+
+  public_deps = [ "//mojo/public/mojom/base" ]
+
+  webui_module_path = "/"
+  generate_legacy_js_bindings = true
+}
+
 mojom("mojo_bindings") {
   generate_java = true
   sources = [ "content_settings.mojom" ]
 
   public_deps = [
+    ":content_settings_enums",
     ":content_settings_types",
     "//mojo/public/mojom/base",
   ]
@@ -132,12 +143,9 @@ mojom("mojo_bindings") {
           cpp = "::RendererContentSettingRules"
         },
         {
-          mojom = "content_settings.mojom.SessionModel"
-          cpp = "::content_settings::SessionModel"
-        },
-        {
           mojom = "content_settings.mojom.RuleMetaData"
           cpp = "::content_settings::RuleMetaData"
+          move_only = true
         },
       ]
       traits_headers = [ "content_settings_mojom_traits.h" ]

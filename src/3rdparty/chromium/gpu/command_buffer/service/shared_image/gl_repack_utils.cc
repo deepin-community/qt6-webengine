@@ -8,7 +8,8 @@
 
 #include "base/bits.h"
 #include "base/check_op.h"
-#include "third_party/libyuv/include/libyuv/planar_functions.h"
+#include "base/compiler_specific.h"
+#include "gpu/command_buffer/service/shared_image/copy_image_plane.h"
 #include "third_party/skia/include/core/SkPixmap.h"
 
 namespace gpu {
@@ -31,16 +32,17 @@ std::vector<uint8_t> RepackPixelDataAsRgb(const gfx::Size& size,
 
   for (int y = 0; y < size.height(); ++y) {
     for (int x = 0; x < size.width(); ++x) {
-      auto* src = &src_data[y * src_stride + x * kSrcBytesPerPixel];
+      auto* src =
+          &UNSAFE_TODO(src_data[y * src_stride + x * kSrcBytesPerPixel]);
       auto* dst = &dst_data[y * dst_stride + x * kDstBytesPerPixel];
       if (src_is_bgrx) {
-        dst[0] = src[2];
-        dst[1] = src[1];
-        dst[2] = src[0];
+        dst[0] = UNSAFE_TODO(src[2]);
+        UNSAFE_TODO(dst[1]) = UNSAFE_TODO(src[1]);
+        UNSAFE_TODO(dst[2]) = src[0];
       } else {
         dst[0] = src[0];
-        dst[1] = src[1];
-        dst[2] = src[2];
+        UNSAFE_TODO(dst[1]) = UNSAFE_TODO(src[1]);
+        UNSAFE_TODO(dst[2]) = UNSAFE_TODO(src[2]);
       }
     }
   }
@@ -57,8 +59,8 @@ std::vector<uint8_t> RepackPixelDataWithStride(const gfx::Size& size,
   DCHECK_LT(dst_stride, src_stride);
 
   std::vector<uint8_t> dst_data(dst_stride * size.height());
-  libyuv::CopyPlane(src_data, src_stride, dst_data.data(), dst_stride,
-                    src_pixmap.info().minRowBytes(), size.height());
+  CopyImagePlane(src_data, src_stride, dst_data.data(), dst_stride,
+                 src_pixmap.info().minRowBytes(), size.height());
 
   return dst_data;
 }
@@ -72,8 +74,8 @@ void UnpackPixelDataWithStride(const gfx::Size& size,
 
   DCHECK_GT(dst_stride, src_stride);
 
-  libyuv::CopyPlane(src_data.data(), src_stride, dst_data, dst_stride,
-                    dst_pixmap.info().minRowBytes(), size.height());
+  CopyImagePlane(src_data.data(), src_stride, dst_data, dst_stride,
+                 dst_pixmap.info().minRowBytes(), size.height());
 }
 
 void SwizzleRedAndBlue(const SkPixmap& pixmap) {
@@ -86,7 +88,8 @@ void SwizzleRedAndBlue(const SkPixmap& pixmap) {
     size_t row_offset = y * stride;
     for (int x = 0; x < pixmap.width(); ++x) {
       size_t pixel_offset = row_offset + x * 4;
-      std::swap(data[pixel_offset], data[pixel_offset + 2]);
+      std::swap(UNSAFE_TODO(data[pixel_offset]),
+                UNSAFE_TODO(data[pixel_offset + 2]));
     }
   }
 }

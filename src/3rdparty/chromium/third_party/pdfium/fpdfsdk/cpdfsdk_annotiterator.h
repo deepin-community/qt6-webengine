@@ -11,8 +11,8 @@
 
 #include "core/fpdfdoc/cpdf_annot.h"
 #include "core/fxcrt/fx_coordinates.h"
+#include "core/fxcrt/span.h"
 #include "core/fxcrt/unowned_ptr.h"
-#include "third_party/base/containers/span.h"
 
 class CPDFSDK_Annot;
 class CPDFSDK_PageView;
@@ -41,10 +41,10 @@ class CPDFSDK_AnnotIterator {
   void AddSelectedToAnnots(std::vector<UnownedPtr<CPDFSDK_Annot>>& sa,
                            pdfium::span<const size_t> aSelect);
 
-  UnownedPtr<CPDFSDK_PageView> const m_pPageView;
-  const std::vector<CPDF_Annot::Subtype> m_subtypes;
-  const TabOrder m_eTabOrder;
-  std::vector<UnownedPtr<CPDFSDK_Annot>> m_Annots;
+  UnownedPtr<CPDFSDK_PageView> const page_view_;
+  const std::vector<CPDF_Annot::Subtype> subtypes_;
+  const TabOrder tab_order_;
+  std::vector<UnownedPtr<CPDFSDK_Annot>> annots_;
 };
 
 #endif  // FPDFSDK_CPDFSDK_ANNOTITERATOR_H_

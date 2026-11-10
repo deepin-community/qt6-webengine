@@ -50,8 +50,6 @@ int TextTrackList::GetTrackIndex(TextTrack* text_track) {
     return element_tracks_.size() + add_track_tracks_.Find(text_track);
 
   NOTREACHED();
-
-  return -1;
 }
 
 int TextTrackList::GetTrackIndexRelativeToRenderedTracks(
@@ -80,8 +78,6 @@ int TextTrackList::GetTrackIndexRelativeToRenderedTracks(
   }
 
   NOTREACHED();
-
-  return -1;
 }
 
 TextTrack* TextTrackList::AnonymousIndexedGetter(unsigned index) {
@@ -188,12 +184,13 @@ void TextTrackList::Remove(TextTrack* track) {
 bool TextTrackList::Contains(TextTrack* track) const {
   const HeapVector<Member<TextTrack>>* tracks = nullptr;
 
-  if (IsA<LoadableTextTrack>(track))
+  if (IsA<LoadableTextTrack>(track)) {
     tracks = &element_tracks_;
-  else if (track->TrackType() == TextTrack::kAddTrack)
+  } else if (track->TrackType() == TextTrack::kAddTrack) {
     tracks = &add_track_tracks_;
-  else
+  } else {
     NOTREACHED();
+  }
 
   return tracks->Find(track) != kNotFound;
 }

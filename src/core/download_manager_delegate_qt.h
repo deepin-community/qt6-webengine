@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef DOWNLOAD_MANAGER_DELEGATE_QT_H
 #define DOWNLOAD_MANAGER_DELEGATE_QT_H
@@ -7,7 +8,11 @@
 #include "content/public/browser/download_manager_delegate.h"
 #include <base/memory/weak_ptr.h>
 
+#include <QString>
 #include <QtGlobal>
+#include <map>
+
+#include "profile_adapter_client.h"
 
 namespace base {
 class FilePath;
@@ -51,6 +56,9 @@ public:
     void resumeDownload(quint32 downloadId);
     void removeDownload(quint32 downloadId);
 
+    void downloadTargetDetermined(quint32 downloadId, bool accepted, const QString &path);
+    void savePathDetermined(quint32 downloadId, bool accepted, const QString &path, int format);
+
     // Inherited from content::DownloadItem::Observer
     void OnDownloadUpdated(download::DownloadItem *download) override;
     void OnDownloadDestroyed(download::DownloadItem *download) override;
@@ -62,6 +70,8 @@ private:
     ProfileAdapter *m_profileAdapter;
 
     uint32_t m_currentId;
+    std::map<quint32, download::DownloadTargetCallback> m_pendingDownloads;
+    std::map<quint32, content::SavePackagePathPickedCallback> m_pendingSaves;
     base::WeakPtrFactory<DownloadManagerDelegateQt> m_weakPtrFactory;
 };
 

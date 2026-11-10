@@ -28,7 +28,6 @@
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
 #include "filters.h"
-#include "internal.h"
 #include "video.h"
 
 #include "vidstabutils.h"
@@ -60,9 +59,9 @@ static const AVOption vidstabdetect_options[] = {
     {"tripod",      "virtual tripod mode (if >0): motion is compared to a reference"
                     " reference frame (frame # is the value)",                       OFFSETC(virtualTripod),     AV_OPT_TYPE_INT,    {.i64 = 0}, 0, INT_MAX, FLAGS},
 #ifdef LIBVIDSTAB_FILE_FORMAT_VERSION
-    { "fileformat",   "transforms data file format",  OFFSET(fileformat),  AV_OPT_TYPE_INT,  {.i64 = BINARY_SERIALIZATION_MODE},  ASCII_SERIALIZATION_MODE,  BINARY_SERIALIZATION_MODE,  FLAGS,  "file_format"},
-    { "ascii",        "ASCII text",  0,  AV_OPT_TYPE_CONST,  {.i64 = ASCII_SERIALIZATION_MODE },  0,  0,  FLAGS,  "file_format"},
-    { "binary",       "binary",      0,  AV_OPT_TYPE_CONST,  {.i64 = BINARY_SERIALIZATION_MODE},  0,  0,  FLAGS,  "file_format"},
+    { "fileformat",   "transforms data file format",  OFFSET(fileformat),  AV_OPT_TYPE_INT,  {.i64 = BINARY_SERIALIZATION_MODE},  ASCII_SERIALIZATION_MODE,  BINARY_SERIALIZATION_MODE,  FLAGS,  .unit = "file_format"},
+    { "ascii",        "ASCII text",  0,  AV_OPT_TYPE_CONST,  {.i64 = ASCII_SERIALIZATION_MODE },  0,  0,  FLAGS,  .unit = "file_format"},
+    { "binary",       "binary",      0,  AV_OPT_TYPE_CONST,  {.i64 = BINARY_SERIALIZATION_MODE},  0,  0,  FLAGS,  .unit = "file_format"},
 #endif
     {NULL}
 };
@@ -180,7 +179,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     }
     if (vsMotionDetection(md, &localmotions, &frame) != VS_OK) {
         av_log(ctx, AV_LOG_ERROR, "motion detection failed");
-        return AVERROR(AVERROR_EXTERNAL);
+        return AVERROR_EXTERNAL;
     } else {
         if (vsWriteToFile(md, s->f, &localmotions) != VS_OK) {
             int ret = AVERROR(errno);
@@ -202,17 +201,17 @@ static const AVFilterPad avfilter_vf_vidstabdetect_inputs[] = {
     },
 };
 
-const AVFilter ff_vf_vidstabdetect = {
-    .name          = "vidstabdetect",
-    .description   = NULL_IF_CONFIG_SMALL("Extract relative transformations, "
+const FFFilter ff_vf_vidstabdetect = {
+    .p.name        = "vidstabdetect",
+    .p.description = NULL_IF_CONFIG_SMALL("Extract relative transformations, "
                                           "pass 1 of 2 for stabilization "
                                           "(see vidstabtransform for pass 2)."),
+    .p.flags       = AVFILTER_FLAG_METADATA_ONLY,
+    .p.priv_class  = &vidstabdetect_class,
     .priv_size     = sizeof(StabData),
     .init          = init,
     .uninit        = uninit,
-    .flags         = AVFILTER_FLAG_METADATA_ONLY,
     FILTER_INPUTS(avfilter_vf_vidstabdetect_inputs),
     FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(ff_vidstab_pix_fmts),
-    .priv_class    = &vidstabdetect_class,
 };

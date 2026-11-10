@@ -13,26 +13,48 @@
 // limitations under the License.
 
 import {VERSION} from '../gen/perfetto_version';
+import {exists} from './utils';
 
-export type ErrorType = 'ERROR'|'PROMISE_REJ'|'OTHER';
+export type ErrorType = 'ERROR' | 'PROMISE_REJ' | 'OTHER';
 export interface ErrorStackEntry {
-  name: string;      // e.g. renderCanvas
-  location: string;  // e.g. frontend_bundle.js:12:3
+  name: string; // e.g. renderCanvas
+  location: string; // e.g. frontend_bundle.js:12:3
 }
 export interface ErrorDetails {
   errType: ErrorType;
-  message: string;  // Uncaught StoreError: No such subtree: tracks,1374,state
+  message: string; // Uncaught StoreError: No such subtree: tracks,1374,state
   stack: ErrorStackEntry[];
 }
 
 export type ErrorHandler = (err: ErrorDetails) => void;
 const errorHandlers: ErrorHandler[] = [];
 
-export function assertExists<A>(value: A | null | undefined): A {
+export function assertExists<A>(
+  value: A | null | undefined,
+  optMsg?: string,
+): A {
   if (value === null || value === undefined) {
-    throw new Error('Value doesn\'t exist');
+    throw new Error(optMsg ?? "Value doesn't exist");
   }
   return value;
+}
+
+// assertExists trips over NULLs, but in many contexts NULL is a valid SQL value we have to work with.
+export function assertDefined<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('Value is undefined');
+  return value;
+}
+
+export function assertIsInstance<T>(
+  value: unknown,
+  clazz: Function,
+  optMsg?: string,
+): T {
+  assertTrue(
+    value instanceof clazz,
+    optMsg ?? `Value is not an instance of ${clazz.name}`,
+  );
+  return value as T;
 }
 
 export function assertTrue(value: boolean, optMsg?: string) {
@@ -45,13 +67,26 @@ export function assertFalse(value: boolean, optMsg?: string) {
   assertTrue(!value, optMsg);
 }
 
+// This function serves two purposes.
+// 1) A runtime check - if we are ever called, we throw an exception.
+// This is useful for checking that code we suspect should never be reached is
+// actually never reached.
+// 2) A compile time check where typescript asserts that the value passed can be
+// cast to the "never" type.
+// This is useful for ensuring we exhaustively check union types.
+export function assertUnreachable(value: never, optMsg?: string): never {
+  throw new Error(
+    optMsg ?? `This code should not be reachable ${value as unknown}`,
+  );
+}
+
 export function addErrorHandler(handler: ErrorHandler) {
   if (!errorHandlers.includes(handler)) {
     errorHandlers.push(handler);
   }
 }
 
-export function reportError(err: ErrorEvent|PromiseRejectionEvent|{}) {
+export function reportError(err: ErrorEvent | PromiseRejectionEvent | {}) {
   let errorObj = undefined;
   let errMsg = '';
   let errType: ErrorType;
@@ -60,20 +95,40 @@ export function reportError(err: ErrorEvent|PromiseRejectionEvent|{}) {
 
   if (err instanceof ErrorEvent) {
     errType = 'ERROR';
-    errMsg = err.message;
-    errorObj = err.error;
+    // In nominal cases the error is set in err.error{message,stack} and
+    // a toString() of the error object returns a meaningful one-line
+    // description. However, in the case of wasm errors, emscripten seems to
+    // wrap the error in an unusual way: err.error is null but err.message
+    // contains the whole one-line + stack trace.
+    if (err.error === null || err.error === undefined) {
+      // Wasm case.
+      const errLines = `${err.message}`.split('\n');
+      errMsg = errLines[0];
+      errorObj = {stack: errLines.slice(1).join('\n')};
+    } else {
+      // Standard JS case.
+      errMsg = `${err.error}`;
+      errorObj = err.error;
+    }
   } else if (err instanceof PromiseRejectionEvent) {
     errType = 'PROMISE_REJ';
-    errMsg = `PromiseRejection: ${err.reason}`;
+    errMsg = `${err.reason}`;
     errorObj = err.reason;
   } else {
     errType = 'OTHER';
-    errMsg = `Err: ${err}`;
+    errMsg = `${err}`;
   }
+
+  // Remove useless "Uncaught Error:" or "Error:" prefixes which just create
+  // noise in the bug tracker without adding any meaningful value.
+  errMsg = errMsg.replace(/^Uncaught Error:/, '');
+  errMsg = errMsg.replace(/^Error:/, '');
+  errMsg = errMsg.trim();
+
   if (errorObj !== undefined && errorObj !== null) {
     const maybeStack = (errorObj as {stack?: string}).stack;
     let errStack = maybeStack !== undefined ? `${maybeStack}` : '';
-    errStack = errStack.replaceAll(/\r/g, '');  // Strip Windows CR.
+    errStack = errStack.replaceAll(/\r/g, ''); // Strip Windows CR.
     for (let line of errStack.split('\n')) {
       if (errMsg.includes(line)) continue;
       // Chrome, Firefox and safari don't agree on the stack format:
@@ -113,6 +168,15 @@ export function reportError(err: ErrorEvent|PromiseRejectionEvent|{}) {
         entryLocation = entryLocation.replace(`/${VERSION}/`, '');
       }
       stack.push({name: entryName, location: entryLocation});
+    } // for (line in stack)
+
+    // Beautify the Wasm error message if possible. Most Wasm errors are of the
+    // form RuntimeError: unreachable or RuntimeError: abort. Those lead to bug
+    // titles that are undistinguishable from each other. Instead try using the
+    // first entry of the stack that contains a perfetto:: function name.
+    const wasmFunc = stack.find((e) => e.name.includes('perfetto::'))?.name;
+    if (errMsg.includes('RuntimeError') && exists(wasmFunc)) {
+      errMsg += ` @ ${wasmFunc.trim()}`;
     }
   }
   // Invoke all the handlers registered through addErrorHandler.
@@ -125,15 +189,4 @@ export function reportError(err: ErrorEvent|PromiseRejectionEvent|{}) {
       stack,
     } as ErrorDetails);
   }
-}
-
-// This function serves two purposes.
-// 1) A runtime check - if we are ever called, we throw an exception.
-// This is useful for checking that code we suspect should never be reached is
-// actually never reached.
-// 2) A compile time check where typescript asserts that the value passed can be
-// cast to the "never" type.
-// This is useful for ensuring we exhastively check union types.
-export function assertUnreachable(_x: never) {
-  throw new Error('This code should not be reachable');
 }

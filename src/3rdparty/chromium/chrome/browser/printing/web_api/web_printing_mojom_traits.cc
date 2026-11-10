@@ -6,9 +6,12 @@
 
 #include <cups/ipp.h>
 
+#include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mojo/public/cpp/bindings/type_converter.h"
+#include "printing/backend/cups_ipp_constants.h"
 #include "printing/mojom/print.mojom-shared.h"
+#include "printing/units.h"
 #include "third_party/blink/public/mojom/printing/web_printing.mojom.h"
 
 namespace mojo {
@@ -21,6 +24,13 @@ using printing::mojom::DuplexMode;
 // multiple-document-handling:
 using MultipleDocumentHandling =
     blink::mojom::WebPrintingMultipleDocumentHandling;
+
+// orientation-requested:
+using OrientationRequested = blink::mojom::WebPrintingOrientationRequested;
+
+// print-quality:
+using WebPrintQuality = blink::mojom::WebPrintQuality;
+using printing::mojom::Quality;
 
 // print-color-mode:
 using PrintColorMode = blink::mojom::WebPrintColorMode;
@@ -43,6 +53,36 @@ ColorModel PrintColorModeToColorModel(PrintColorMode print_color_mode) {
     case PrintColorMode::kMonochrome:
       return ColorModel::kColorModeMonochrome;
   }
+  NOTREACHED();
+}
+
+bool InferRequestedMedia(
+    blink::mojom::WebPrintJobTemplateAttributesDataView data,
+    printing::PrintSettings& settings) {
+  std::optional<std::string> media_source;
+  if (!data.ReadMediaSource(&media_source)) {
+    return false;
+  }
+  if (media_source) {
+    settings.advanced_settings().emplace(printing::kIppMediaSource,
+                                         *media_source);
+  }
+  blink::mojom::WebPrintingMediaCollectionRequestedDataView media_col;
+  data.GetMediaColDataView(&media_col);
+  if (media_col.is_null()) {
+    // media-col is an optional field.
+    return true;
+  }
+  gfx::Size media_size;
+  if (!media_col.ReadMediaSize(&media_size)) {
+    return false;
+  }
+  // The incoming size is specified in hundredths of millimeters (PWG units)
+  // whereas the printing subsystem operates on microns.
+  settings.set_requested_media(
+      {.size_microns = {media_size.width() * printing::kMicronsPerPwgUnit,
+                        media_size.height() * printing::kMicronsPerPwgUnit}});
+  return true;
 }
 
 }  // namespace
@@ -59,8 +99,9 @@ EnumTraits<WebPrintingSides, DuplexMode>::ToMojom(
     case DuplexMode::kShortEdge:
       return WebPrintingSides::kTwoSidedShortEdge;
     case DuplexMode::kUnknownDuplexMode:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
+  NOTREACHED();
 }
 
 // static
@@ -77,6 +118,40 @@ bool EnumTraits<WebPrintingSides, DuplexMode>::FromMojom(WebPrintingSides input,
       *output = DuplexMode::kShortEdge;
       return true;
   }
+  NOTREACHED();
+}
+
+// static
+blink::mojom::WebPrintQuality EnumTraits<WebPrintQuality, Quality>::ToMojom(
+    Quality input) {
+  switch (input) {
+    case Quality::kDraft:
+      return WebPrintQuality::kDraft;
+    case Quality::kNormal:
+      return WebPrintQuality::kNormal;
+    case Quality::kHigh:
+      return WebPrintQuality::kHigh;
+    case Quality::kUnknownQuality:
+      return WebPrintQuality::kNormal;
+  }
+  NOTREACHED();
+}
+
+// static
+bool EnumTraits<WebPrintQuality, Quality>::FromMojom(WebPrintQuality input,
+                                                     Quality* output) {
+  switch (input) {
+    case WebPrintQuality::kDraft:
+      *output = Quality::kDraft;
+      return true;
+    case WebPrintQuality::kNormal:
+      *output = Quality::kNormal;
+      return true;
+    case WebPrintQuality::kHigh:
+      *output = Quality::kHigh;
+      return true;
+  }
+  NOTREACHED();
 }
 
 // static
@@ -91,6 +166,7 @@ EnumTraits<blink::mojom::WebPrinterState, ipp_pstate_t>::ToMojom(
     case IPP_PSTATE_STOPPED:
       return blink::mojom::WebPrinterState::kStopped;
   }
+  NOTREACHED();
 }
 
 // static
@@ -169,6 +245,7 @@ EnumTraits<WebPrinterStateReason, PrinterStatusReason>::ToMojom(
     case PrinterStatusReason::kCupsPkiExpired:
       return WebPrinterStateReason::kCupsPkiExpired;
   }
+  NOTREACHED();
 }
 
 // static
@@ -195,6 +272,19 @@ bool StructTraits<blink::mojom::WebPrintJobTemplateAttributesDataView,
       settings->set_duplex_mode(*duplex_mode);
     }
   }
+  if (auto orientation = data.orientation_requested()) {
+    switch (*orientation) {
+      case OrientationRequested::kPortrait:
+        settings->SetOrientation(/*landscape=*/false);
+        break;
+      case OrientationRequested::kLandscape:
+        settings->SetOrientation(/*landscape=*/true);
+        break;
+    }
+  }
+  if (!InferRequestedMedia(data, *settings)) {
+    return false;
+  }
   if (auto mdh = data.multiple_document_handling()) {
     switch (*mdh) {
       case MultipleDocumentHandling::kSeparateDocumentsCollatedCopies:
@@ -217,6 +307,15 @@ bool StructTraits<blink::mojom::WebPrintJobTemplateAttributesDataView,
   }
   if (auto print_color_mode = data.print_color_mode()) {
     settings->set_color(PrintColorModeToColorModel(*print_color_mode));
+  }
+  {
+    std::optional<Quality> quality;
+    if (!data.ReadPrintQuality(&quality)) {
+      return false;
+    }
+    if (quality) {
+      settings->set_quality(*quality);
+    }
   }
 
   *out = std::move(settings);

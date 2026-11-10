@@ -32,42 +32,41 @@ class WebDataServiceConsumer;
 struct TokenResult {
   TokenResult();
   TokenResult(const TokenResult& other);
+  TokenResult& operator=(const TokenResult& other);
+  TokenResult(TokenResult&& other) noexcept;
+  TokenResult& operator=(TokenResult&& other) noexcept;
   ~TokenResult();
 
-  TokenServiceTable::Result db_result;
-  std::map<std::string, std::string> tokens;
+  TokenServiceTable::Result db_result =
+      TokenServiceTable::TOKEN_DB_RESULT_SQL_INVALID_STATEMENT;
+  std::map<std::string, TokenServiceTable::TokenWithBindingKey> tokens;
+  bool should_reencrypt = false;
 };
 
-// TokenWebData is a data repository for storage of authentication tokens.
-
+// `TokenWebData` is a data repository for storage of authentication tokens.
 class TokenWebData : public WebDataServiceBase {
  public:
   TokenWebData(scoped_refptr<WebDatabaseService> wdbs,
-               scoped_refptr<base::SequencedTaskRunner> ui_task_runner,
-               scoped_refptr<base::SequencedTaskRunner> db_task_runner);
-
-  TokenWebData(scoped_refptr<base::SequencedTaskRunner> ui_task_runner,
-               scoped_refptr<base::SequencedTaskRunner> db_task_runner);
+               scoped_refptr<base::SequencedTaskRunner> ui_task_runner);
 
   TokenWebData(const TokenWebData&) = delete;
   TokenWebData& operator=(const TokenWebData&) = delete;
 
   // Set a token to use for a specified service.
-  void SetTokenForService(const std::string& service, const std::string& token);
+  void SetTokenForService(const std::string& service,
+                          const std::string& token,
+                          const std::vector<uint8_t>& wrapped_binding_key);
 
   // Remove all tokens stored in the web database.
   void RemoveAllTokens();
 
-  // Removes a token related to |service| from the web database.
+  // Removes a token related to `service` from the web database.
   void RemoveTokenForService(const std::string& service);
 
-  // Null on failure. Success is WDResult<std::vector<std::string> >
+  // Null on failure. Success is `WDResult<std::vector<std::string>>`.
   virtual Handle GetAllTokens(WebDataServiceConsumer* consumer);
 
  protected:
-  // For unit tests, passes a null callback.
-  TokenWebData();
-
   ~TokenWebData() override;
 
  private:

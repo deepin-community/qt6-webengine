@@ -4,11 +4,11 @@
 
 #include "base/memory/raw_ptr_asan_hooks.h"
 
-#if BUILDFLAG(USE_ASAN_BACKUP_REF_PTR)
-
-#include <cstring>
+#if PA_BUILDFLAG(USE_ASAN_BACKUP_REF_PTR)
 
 #include <sanitizer/asan_interface.h>
+
+#include <cstring>
 
 #include "base/compiler_specific.h"
 #include "base/debug/alias.h"
@@ -31,7 +31,8 @@ bool IsFreedHeapPointer(uintptr_t address) {
       reinterpret_cast<void*>(address), nullptr, 0, &region_ptr, &region_size);
 
   auto region_base = reinterpret_cast<uintptr_t>(region_ptr);
-  if (strcmp(allocation_type, "heap") != 0 || address < region_base ||
+  if (UNSAFE_TODO(strcmp(allocation_type, "heap")) != 0 ||
+      address < region_base ||
       address >=
           region_base + region_size) {  // We exclude pointers one past the end
                                         // of an allocations from the analysis
@@ -125,4 +126,4 @@ const RawPtrHooks* GetRawPtrAsanHooks() {
 
 }  // namespace base::internal
 
-#endif  // BUILDFLAG(USE_ASAN_BACKUP_REF_PTR)
+#endif  // PA_BUILDFLAG(USE_ASAN_BACKUP_REF_PTR)

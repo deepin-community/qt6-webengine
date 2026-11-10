@@ -5,6 +5,7 @@
 #include "quiche/blind_sign_auth/cached_blind_sign_auth.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -13,12 +14,12 @@
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/synchronization/notification.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "quiche/blind_sign_auth/blind_sign_auth_interface.h"
 #include "quiche/blind_sign_auth/test_tools/mock_blind_sign_auth_interface.h"
-#include "quiche/common/platform/api/quiche_mutex.h"
 #include "quiche/common/platform/api/quiche_test.h"
 #include "quiche/common/test_tools/quiche_test_utils.h"
 
@@ -27,7 +28,6 @@ namespace test {
 namespace {
 
 using ::testing::_;
-using ::testing::InvokeArgument;
 using ::testing::Unused;
 
 class CachedBlindSignAuthTest : public QuicheTest {
@@ -63,22 +63,22 @@ class CachedBlindSignAuthTest : public QuicheTest {
 
   MockBlindSignAuthInterface mock_blind_sign_auth_interface_;
   std::unique_ptr<CachedBlindSignAuth> cached_blind_sign_auth_;
-  std::string oauth_token_ = "oauth_token";
+  std::optional<std::string> oauth_token_ = "oauth_token";
   std::vector<BlindSignToken> fake_tokens_;
 };
 
 TEST_F(CachedBlindSignAuthTest, TestGetTokensOneCallSuccessful) {
   EXPECT_CALL(mock_blind_sign_auth_interface_,
-              GetTokens(oauth_token_, kBlindSignAuthRequestMaxTokens, _, _))
+              GetTokens(oauth_token_, kBlindSignAuthRequestMaxTokens, _, _, _))
       .Times(1)
-      .WillOnce(
-          [this](Unused, int num_tokens, Unused, SignedTokenCallback callback) {
-            fake_tokens_ = MakeFakeTokens(num_tokens);
-            std::move(callback)(absl::MakeSpan(fake_tokens_));
-          });
+      .WillOnce([this](Unused, int num_tokens, Unused, Unused,
+                       SignedTokenCallback callback) {
+        fake_tokens_ = MakeFakeTokens(num_tokens);
+        std::move(callback)(absl::MakeSpan(fake_tokens_));
+      });
 
   int num_tokens = 5;
-  QuicheNotification done;
+  absl::Notification done;
   SignedTokenCallback callback =
       [num_tokens, &done](absl::StatusOr<absl::Span<BlindSignToken>> tokens) {
         QUICHE_EXPECT_OK(tokens);
@@ -89,23 +89,24 @@ TEST_F(CachedBlindSignAuthTest, TestGetTokensOneCallSuccessful) {
         done.Notify();
       };
 
-  cached_blind_sign_auth_->GetTokens(oauth_token_, num_tokens,
-                                     ProxyLayer::kProxyA, std::move(callback));
+  cached_blind_sign_auth_->GetTokens(
+      oauth_token_, num_tokens, ProxyLayer::kProxyA,
+      BlindSignAuthServiceType::kChromeIpBlinding, std::move(callback));
   done.WaitForNotification();
 }
 
 TEST_F(CachedBlindSignAuthTest, TestGetTokensMultipleRemoteCallsSuccessful) {
   EXPECT_CALL(mock_blind_sign_auth_interface_,
-              GetTokens(oauth_token_, kBlindSignAuthRequestMaxTokens, _, _))
+              GetTokens(oauth_token_, kBlindSignAuthRequestMaxTokens, _, _, _))
       .Times(2)
-      .WillRepeatedly(
-          [this](Unused, int num_tokens, Unused, SignedTokenCallback callback) {
-            fake_tokens_ = MakeFakeTokens(num_tokens);
-            std::move(callback)(absl::MakeSpan(fake_tokens_));
-          });
+      .WillRepeatedly([this](Unused, int num_tokens, Unused, Unused,
+                             SignedTokenCallback callback) {
+        fake_tokens_ = MakeFakeTokens(num_tokens);
+        std::move(callback)(absl::MakeSpan(fake_tokens_));
+      });
 
   int num_tokens = kBlindSignAuthRequestMaxTokens - 1;
-  QuicheNotification first;
+  absl::Notification first;
   SignedTokenCallback first_callback =
       [num_tokens, &first](absl::StatusOr<absl::Span<BlindSignToken>> tokens) {
         QUICHE_EXPECT_OK(tokens);
@@ -117,10 +118,11 @@ TEST_F(CachedBlindSignAuthTest, TestGetTokensMultipleRemoteCallsSuccessful) {
       };
 
   cached_blind_sign_auth_->GetTokens(
-      oauth_token_, num_tokens, ProxyLayer::kProxyA, std::move(first_callback));
+      oauth_token_, num_tokens, ProxyLayer::kProxyA,
+      BlindSignAuthServiceType::kChromeIpBlinding, std::move(first_callback));
   first.WaitForNotification();
 
-  QuicheNotification second;
+  absl::Notification second;
   SignedTokenCallback second_callback =
       [num_tokens, &second](absl::StatusOr<absl::Span<BlindSignToken>> tokens) {
         QUICHE_EXPECT_OK(tokens);
@@ -133,24 +135,24 @@ TEST_F(CachedBlindSignAuthTest, TestGetTokensMultipleRemoteCallsSuccessful) {
         second.Notify();
       };
 
-  cached_blind_sign_auth_->GetTokens(oauth_token_, num_tokens,
-                                     ProxyLayer::kProxyA,
-                                     std::move(second_callback));
+  cached_blind_sign_auth_->GetTokens(
+      oauth_token_, num_tokens, ProxyLayer::kProxyA,
+      BlindSignAuthServiceType::kChromeIpBlinding, std::move(second_callback));
   second.WaitForNotification();
 }
 
 TEST_F(CachedBlindSignAuthTest, TestGetTokensSecondRequestFilledFromCache) {
   EXPECT_CALL(mock_blind_sign_auth_interface_,
-              GetTokens(oauth_token_, kBlindSignAuthRequestMaxTokens, _, _))
+              GetTokens(oauth_token_, kBlindSignAuthRequestMaxTokens, _, _, _))
       .Times(1)
-      .WillOnce(
-          [this](Unused, int num_tokens, Unused, SignedTokenCallback callback) {
-            fake_tokens_ = MakeFakeTokens(num_tokens);
-            std::move(callback)(absl::MakeSpan(fake_tokens_));
-          });
+      .WillOnce([this](Unused, int num_tokens, Unused, Unused,
+                       SignedTokenCallback callback) {
+        fake_tokens_ = MakeFakeTokens(num_tokens);
+        std::move(callback)(absl::MakeSpan(fake_tokens_));
+      });
 
   int num_tokens = kBlindSignAuthRequestMaxTokens / 2;
-  QuicheNotification first;
+  absl::Notification first;
   SignedTokenCallback first_callback =
       [num_tokens, &first](absl::StatusOr<absl::Span<BlindSignToken>> tokens) {
         QUICHE_EXPECT_OK(tokens);
@@ -162,10 +164,11 @@ TEST_F(CachedBlindSignAuthTest, TestGetTokensSecondRequestFilledFromCache) {
       };
 
   cached_blind_sign_auth_->GetTokens(
-      oauth_token_, num_tokens, ProxyLayer::kProxyA, std::move(first_callback));
+      oauth_token_, num_tokens, ProxyLayer::kProxyA,
+      BlindSignAuthServiceType::kChromeIpBlinding, std::move(first_callback));
   first.WaitForNotification();
 
-  QuicheNotification second;
+  absl::Notification second;
   SignedTokenCallback second_callback =
       [num_tokens, &second](absl::StatusOr<absl::Span<BlindSignToken>> tokens) {
         QUICHE_EXPECT_OK(tokens);
@@ -177,24 +180,24 @@ TEST_F(CachedBlindSignAuthTest, TestGetTokensSecondRequestFilledFromCache) {
         second.Notify();
       };
 
-  cached_blind_sign_auth_->GetTokens(oauth_token_, num_tokens,
-                                     ProxyLayer::kProxyA,
-                                     std::move(second_callback));
+  cached_blind_sign_auth_->GetTokens(
+      oauth_token_, num_tokens, ProxyLayer::kProxyA,
+      BlindSignAuthServiceType::kChromeIpBlinding, std::move(second_callback));
   second.WaitForNotification();
 }
 
 TEST_F(CachedBlindSignAuthTest, TestGetTokensThirdRequestRefillsCache) {
   EXPECT_CALL(mock_blind_sign_auth_interface_,
-              GetTokens(oauth_token_, kBlindSignAuthRequestMaxTokens, _, _))
+              GetTokens(oauth_token_, kBlindSignAuthRequestMaxTokens, _, _, _))
       .Times(2)
-      .WillRepeatedly(
-          [this](Unused, int num_tokens, Unused, SignedTokenCallback callback) {
-            fake_tokens_ = MakeFakeTokens(num_tokens);
-            std::move(callback)(absl::MakeSpan(fake_tokens_));
-          });
+      .WillRepeatedly([this](Unused, int num_tokens, Unused, Unused,
+                             SignedTokenCallback callback) {
+        fake_tokens_ = MakeFakeTokens(num_tokens);
+        std::move(callback)(absl::MakeSpan(fake_tokens_));
+      });
 
   int num_tokens = kBlindSignAuthRequestMaxTokens / 2;
-  QuicheNotification first;
+  absl::Notification first;
   SignedTokenCallback first_callback =
       [num_tokens, &first](absl::StatusOr<absl::Span<BlindSignToken>> tokens) {
         QUICHE_EXPECT_OK(tokens);
@@ -206,10 +209,11 @@ TEST_F(CachedBlindSignAuthTest, TestGetTokensThirdRequestRefillsCache) {
       };
 
   cached_blind_sign_auth_->GetTokens(
-      oauth_token_, num_tokens, ProxyLayer::kProxyA, std::move(first_callback));
+      oauth_token_, num_tokens, ProxyLayer::kProxyA,
+      BlindSignAuthServiceType::kChromeIpBlinding, std::move(first_callback));
   first.WaitForNotification();
 
-  QuicheNotification second;
+  absl::Notification second;
   SignedTokenCallback second_callback =
       [num_tokens, &second](absl::StatusOr<absl::Span<BlindSignToken>> tokens) {
         QUICHE_EXPECT_OK(tokens);
@@ -221,12 +225,12 @@ TEST_F(CachedBlindSignAuthTest, TestGetTokensThirdRequestRefillsCache) {
         second.Notify();
       };
 
-  cached_blind_sign_auth_->GetTokens(oauth_token_, num_tokens,
-                                     ProxyLayer::kProxyA,
-                                     std::move(second_callback));
+  cached_blind_sign_auth_->GetTokens(
+      oauth_token_, num_tokens, ProxyLayer::kProxyA,
+      BlindSignAuthServiceType::kChromeIpBlinding, std::move(second_callback));
   second.WaitForNotification();
 
-  QuicheNotification third;
+  absl::Notification third;
   int third_request_tokens = 10;
   SignedTokenCallback third_callback =
       [third_request_tokens,
@@ -239,15 +243,15 @@ TEST_F(CachedBlindSignAuthTest, TestGetTokensThirdRequestRefillsCache) {
         third.Notify();
       };
 
-  cached_blind_sign_auth_->GetTokens(oauth_token_, third_request_tokens,
-                                     ProxyLayer::kProxyA,
-                                     std::move(third_callback));
+  cached_blind_sign_auth_->GetTokens(
+      oauth_token_, third_request_tokens, ProxyLayer::kProxyA,
+      BlindSignAuthServiceType::kChromeIpBlinding, std::move(third_callback));
   third.WaitForNotification();
 }
 
 TEST_F(CachedBlindSignAuthTest, TestGetTokensRequestTooLarge) {
   EXPECT_CALL(mock_blind_sign_auth_interface_,
-              GetTokens(oauth_token_, kBlindSignAuthRequestMaxTokens, _, _))
+              GetTokens(oauth_token_, kBlindSignAuthRequestMaxTokens, _, _, _))
       .Times(0);
 
   int num_tokens = kBlindSignAuthRequestMaxTokens + 1;
@@ -260,13 +264,14 @@ TEST_F(CachedBlindSignAuthTest, TestGetTokensRequestTooLarge) {
                             kBlindSignAuthRequestMaxTokens));
       };
 
-  cached_blind_sign_auth_->GetTokens(oauth_token_, num_tokens,
-                                     ProxyLayer::kProxyA, std::move(callback));
+  cached_blind_sign_auth_->GetTokens(
+      oauth_token_, num_tokens, ProxyLayer::kProxyA,
+      BlindSignAuthServiceType::kChromeIpBlinding, std::move(callback));
 }
 
 TEST_F(CachedBlindSignAuthTest, TestGetTokensRequestNegative) {
   EXPECT_CALL(mock_blind_sign_auth_interface_,
-              GetTokens(oauth_token_, kBlindSignAuthRequestMaxTokens, _, _))
+              GetTokens(oauth_token_, kBlindSignAuthRequestMaxTokens, _, _, _))
       .Times(0);
 
   int num_tokens = -1;
@@ -278,27 +283,28 @@ TEST_F(CachedBlindSignAuthTest, TestGetTokensRequestNegative) {
                                     num_tokens));
       };
 
-  cached_blind_sign_auth_->GetTokens(oauth_token_, num_tokens,
-                                     ProxyLayer::kProxyA, std::move(callback));
+  cached_blind_sign_auth_->GetTokens(
+      oauth_token_, num_tokens, ProxyLayer::kProxyA,
+      BlindSignAuthServiceType::kChromeIpBlinding, std::move(callback));
 }
 
 TEST_F(CachedBlindSignAuthTest, TestHandleGetTokensResponseErrorHandling) {
   EXPECT_CALL(mock_blind_sign_auth_interface_,
-              GetTokens(oauth_token_, kBlindSignAuthRequestMaxTokens, _, _))
+              GetTokens(oauth_token_, kBlindSignAuthRequestMaxTokens, _, _, _))
       .Times(2)
-      .WillOnce(
-          [](Unused, int num_tokens, Unused, SignedTokenCallback callback) {
-            std::move(callback)(absl::InternalError("AuthAndSign failed"));
-          })
-      .WillOnce(
-          [this](Unused, int num_tokens, Unused, SignedTokenCallback callback) {
-            fake_tokens_ = MakeFakeTokens(num_tokens);
-            fake_tokens_.pop_back();
-            std::move(callback)(absl::MakeSpan(fake_tokens_));
-          });
+      .WillOnce([](Unused, int num_tokens, Unused, Unused,
+                   SignedTokenCallback callback) {
+        std::move(callback)(absl::InternalError("AuthAndSign failed"));
+      })
+      .WillOnce([this](Unused, int num_tokens, Unused, Unused,
+                       SignedTokenCallback callback) {
+        fake_tokens_ = MakeFakeTokens(num_tokens);
+        fake_tokens_.pop_back();
+        std::move(callback)(absl::MakeSpan(fake_tokens_));
+      });
 
   int num_tokens = kBlindSignAuthRequestMaxTokens;
-  QuicheNotification first;
+  absl::Notification first;
   SignedTokenCallback first_callback =
       [&first](absl::StatusOr<absl::Span<BlindSignToken>> tokens) {
         EXPECT_THAT(tokens.status().code(), absl::StatusCode::kInternal);
@@ -307,10 +313,11 @@ TEST_F(CachedBlindSignAuthTest, TestHandleGetTokensResponseErrorHandling) {
       };
 
   cached_blind_sign_auth_->GetTokens(
-      oauth_token_, num_tokens, ProxyLayer::kProxyA, std::move(first_callback));
+      oauth_token_, num_tokens, ProxyLayer::kProxyA,
+      BlindSignAuthServiceType::kChromeIpBlinding, std::move(first_callback));
   first.WaitForNotification();
 
-  QuicheNotification second;
+  absl::Notification second;
   SignedTokenCallback second_callback =
       [&second](absl::StatusOr<absl::Span<BlindSignToken>> tokens) {
         EXPECT_THAT(tokens.status().code(),
@@ -318,15 +325,15 @@ TEST_F(CachedBlindSignAuthTest, TestHandleGetTokensResponseErrorHandling) {
         second.Notify();
       };
 
-  cached_blind_sign_auth_->GetTokens(oauth_token_, num_tokens,
-                                     ProxyLayer::kProxyA,
-                                     std::move(second_callback));
+  cached_blind_sign_auth_->GetTokens(
+      oauth_token_, num_tokens, ProxyLayer::kProxyA,
+      BlindSignAuthServiceType::kChromeIpBlinding, std::move(second_callback));
   second.WaitForNotification();
 }
 
 TEST_F(CachedBlindSignAuthTest, TestGetTokensZeroTokensRequested) {
   EXPECT_CALL(mock_blind_sign_auth_interface_,
-              GetTokens(oauth_token_, kBlindSignAuthRequestMaxTokens, _, _))
+              GetTokens(oauth_token_, kBlindSignAuthRequestMaxTokens, _, _, _))
       .Times(0);
 
   int num_tokens = 0;
@@ -336,22 +343,23 @@ TEST_F(CachedBlindSignAuthTest, TestGetTokensZeroTokensRequested) {
         EXPECT_EQ(tokens->size(), 0);
       };
 
-  cached_blind_sign_auth_->GetTokens(oauth_token_, num_tokens,
-                                     ProxyLayer::kProxyA, std::move(callback));
+  cached_blind_sign_auth_->GetTokens(
+      oauth_token_, num_tokens, ProxyLayer::kProxyA,
+      BlindSignAuthServiceType::kChromeIpBlinding, std::move(callback));
 }
 
 TEST_F(CachedBlindSignAuthTest, TestExpiredTokensArePruned) {
   EXPECT_CALL(mock_blind_sign_auth_interface_,
-              GetTokens(oauth_token_, kBlindSignAuthRequestMaxTokens, _, _))
+              GetTokens(oauth_token_, kBlindSignAuthRequestMaxTokens, _, _, _))
       .Times(1)
-      .WillOnce(
-          [this](Unused, int num_tokens, Unused, SignedTokenCallback callback) {
-            fake_tokens_ = MakeExpiredTokens(num_tokens);
-            std::move(callback)(absl::MakeSpan(fake_tokens_));
-          });
+      .WillOnce([this](Unused, int num_tokens, Unused, Unused,
+                       SignedTokenCallback callback) {
+        fake_tokens_ = MakeExpiredTokens(num_tokens);
+        std::move(callback)(absl::MakeSpan(fake_tokens_));
+      });
 
   int num_tokens = kBlindSignAuthRequestMaxTokens;
-  QuicheNotification first;
+  absl::Notification first;
   SignedTokenCallback first_callback =
       [&first](absl::StatusOr<absl::Span<BlindSignToken>> tokens) {
         EXPECT_THAT(tokens.status().code(),
@@ -360,22 +368,23 @@ TEST_F(CachedBlindSignAuthTest, TestExpiredTokensArePruned) {
       };
 
   cached_blind_sign_auth_->GetTokens(
-      oauth_token_, num_tokens, ProxyLayer::kProxyA, std::move(first_callback));
+      oauth_token_, num_tokens, ProxyLayer::kProxyA,
+      BlindSignAuthServiceType::kChromeIpBlinding, std::move(first_callback));
   first.WaitForNotification();
 }
 
 TEST_F(CachedBlindSignAuthTest, TestClearCacheRemovesTokens) {
   EXPECT_CALL(mock_blind_sign_auth_interface_,
-              GetTokens(oauth_token_, kBlindSignAuthRequestMaxTokens, _, _))
+              GetTokens(oauth_token_, kBlindSignAuthRequestMaxTokens, _, _, _))
       .Times(2)
-      .WillRepeatedly(
-          [this](Unused, int num_tokens, Unused, SignedTokenCallback callback) {
-            fake_tokens_ = MakeExpiredTokens(num_tokens);
-            std::move(callback)(absl::MakeSpan(fake_tokens_));
-          });
+      .WillRepeatedly([this](Unused, int num_tokens, Unused, Unused,
+                             SignedTokenCallback callback) {
+        fake_tokens_ = MakeExpiredTokens(num_tokens);
+        std::move(callback)(absl::MakeSpan(fake_tokens_));
+      });
 
   int num_tokens = kBlindSignAuthRequestMaxTokens / 2;
-  QuicheNotification first;
+  absl::Notification first;
   SignedTokenCallback first_callback =
       [&first](absl::StatusOr<absl::Span<BlindSignToken>> tokens) {
         EXPECT_THAT(tokens.status().code(),
@@ -384,12 +393,13 @@ TEST_F(CachedBlindSignAuthTest, TestClearCacheRemovesTokens) {
       };
 
   cached_blind_sign_auth_->GetTokens(
-      oauth_token_, num_tokens, ProxyLayer::kProxyA, std::move(first_callback));
+      oauth_token_, num_tokens, ProxyLayer::kProxyA,
+      BlindSignAuthServiceType::kChromeIpBlinding, std::move(first_callback));
   first.WaitForNotification();
 
   cached_blind_sign_auth_->ClearCache();
 
-  QuicheNotification second;
+  absl::Notification second;
   SignedTokenCallback second_callback =
       [&second](absl::StatusOr<absl::Span<BlindSignToken>> tokens) {
         EXPECT_THAT(tokens.status().code(),
@@ -397,9 +407,9 @@ TEST_F(CachedBlindSignAuthTest, TestClearCacheRemovesTokens) {
         second.Notify();
       };
 
-  cached_blind_sign_auth_->GetTokens(oauth_token_, num_tokens,
-                                     ProxyLayer::kProxyA,
-                                     std::move(second_callback));
+  cached_blind_sign_auth_->GetTokens(
+      oauth_token_, num_tokens, ProxyLayer::kProxyA,
+      BlindSignAuthServiceType::kChromeIpBlinding, std::move(second_callback));
   second.WaitForNotification();
 }
 

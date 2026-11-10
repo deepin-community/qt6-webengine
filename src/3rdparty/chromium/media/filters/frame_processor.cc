@@ -428,7 +428,7 @@ bool FrameProcessor::ProcessFrames(
   for (const auto& frame : frames) {
     // Skip any 0-byte audio or video buffers, since they cannot produce any
     // valid decode output (and are rejected by FFmpeg A/V decode.)
-    if (!frame->data_size()) {
+    if (!frame->size()) {
       LIMITED_MEDIA_LOG(DEBUG, media_log_, num_skipped_empty_frame_warnings_,
                         kMaxSkippedEmptyFrameWarnings)
           << "Discarding empty audio or video coded frame, PTS="
@@ -564,14 +564,15 @@ void FrameProcessor::OnPossibleAudioConfigUpdate(
   sample_duration_ =
       base::Seconds(1.0 / current_audio_config_.samples_per_second());
   has_dependent_audio_frames_ =
-      current_audio_config_.profile() == AudioCodecProfile::kXHE_AAC;
+      current_audio_config_.profile() == AudioCodecProfile::kXHE_AAC ||
+      current_audio_config_.codec() == AudioCodec::kDTSXP2;
   last_audio_pts_for_nonkeyframe_monotonicity_check_ = kNoTimestamp;
 }
 
 MseTrackBuffer* FrameProcessor::FindTrack(StreamParser::TrackId id) {
   auto itr = track_buffers_.find(id);
   if (itr == track_buffers_.end())
-    return NULL;
+    return nullptr;
 
   return itr->second.get();
 }
@@ -708,8 +709,10 @@ bool FrameProcessor::HandlePartialAppendWindowTrimming(
     // Mark the overlapping portion of the buffer for discard.
     // TODO(wolenetz): Is this correct to ignore any pre-existing discard
     // padding (e.g. WebM discard padding)? See https://crbug.com/969195.
+    auto existing_discard = buffer->discard_padding();
     buffer->set_discard_padding(
-        std::make_pair(buffer->discard_padding().first,
+        std::make_pair(existing_discard.has_value() ? existing_discard->first
+                                                    : base::TimeDelta(),
                        frame_end_timestamp - append_window_end));
 
     // Decrease the duration of the buffer to remove the discarded portion.
@@ -1186,8 +1189,6 @@ bool FrameProcessor::ProcessFrame(scoped_refptr<StreamParserBuffer> frame,
 
     return true;
   }
-
-  NOTREACHED_NORETURN();
 }
 
 }  // namespace media

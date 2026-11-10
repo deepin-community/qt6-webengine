@@ -32,8 +32,8 @@ SaveItem::SaveItem(const GURL& url,
                    bool is_outermost_main_frame,
                    SavePackage* package,
                    SaveFileCreateInfo::SaveFileSource save_source,
-                   int frame_tree_node_id,
-                   int container_frame_tree_node_id)
+                   FrameTreeNodeId frame_tree_node_id,
+                   FrameTreeNodeId container_frame_tree_node_id)
     : save_item_id_(GetNextSaveItemId()),
       url_(url),
       referrer_(referrer),
@@ -68,7 +68,6 @@ void SaveItem::UpdateSize(int64_t bytes_so_far) {
 void SaveItem::Update(int64_t bytes_so_far) {
   if (state_ != IN_PROGRESS) {
     NOTREACHED();
-    return;
   }
   UpdateSize(bytes_so_far);
 }

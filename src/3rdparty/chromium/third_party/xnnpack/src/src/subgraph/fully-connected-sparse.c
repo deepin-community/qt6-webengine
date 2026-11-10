@@ -4,28 +4,33 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
-#include <math.h>
+#include <inttypes.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#include <xnnpack.h>
-#include <xnnpack/log.h>
-#include <xnnpack/operator.h>
-#include <xnnpack/params.h>
-#include <xnnpack/requantization.h>
-#include <xnnpack/subgraph-validation.h>
-#include <xnnpack/subgraph.h>
+#include "include/xnnpack.h"
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/internal.h"
+#include "src/xnnpack/log.h"
+#include "src/xnnpack/node-type.h"
+#include "src/xnnpack/operator-type.h"
+#include "src/xnnpack/operator.h"
+#include "src/xnnpack/subgraph-validation.h"
+#include "src/xnnpack/subgraph.h"
+#include <pthreadpool.h>
 
 static enum xnn_status create_fully_connected_operator(
   const struct xnn_node* node,
-  const struct xnn_value* values,
+  const struct xnn_runtime_value* values,
   size_t num_values,
   struct xnn_operator_data* opdata,
-  struct xnn_code_cache* code_cache,
-  struct xnn_weights_cache* weights_cache)
+  xnn_weights_cache_t weights_cache)
 {
   assert(node->num_inputs >= 2);
   assert(node->num_inputs <= 3);
+  const uint32_t input_id = node->inputs[0];
+  assert(input_id != XNN_INVALID_VALUE_ID);
+  assert(input_id < num_values);
   const uint32_t filter_id = node->inputs[1];
   assert(filter_id != XNN_INVALID_VALUE_ID);
   assert(filter_id < num_values);
@@ -39,8 +44,9 @@ static enum xnn_status create_fully_connected_operator(
   assert(kernel_data != NULL);
 
   const void* bias_data = NULL;
+  uint32_t bias_id = XNN_INVALID_VALUE_ID;
   if (node->num_inputs > 2) {
-    const uint32_t bias_id = node->inputs[2];
+    bias_id = node->inputs[2];
     assert(bias_id != XNN_INVALID_VALUE_ID);
     assert(bias_id < num_values);
 
@@ -49,8 +55,13 @@ static enum xnn_status create_fully_connected_operator(
   }
 
   enum xnn_status status;
-  switch (node->compute_type) {
-    case xnn_compute_type_fp16:
+  enum xnn_datatype input_datatype = values[input_id].datatype;
+  const enum xnn_datatype filter_datatype = values[filter_id].datatype;
+  const enum xnn_datatype bias_datatype = bias_id != XNN_INVALID_VALUE_ID
+                                              ? values[filter_id].datatype
+                                              : xnn_datatype_invalid;
+  switch (input_datatype) {
+    case xnn_datatype_fp16:
     {
       status = xnn_create_convolution2d_nchw_f16(
         /*input_padding_top=*/0,
@@ -73,40 +84,62 @@ static enum xnn_status create_fully_connected_operator(
         node->activation.output_min,
         node->activation.output_max,
         node->flags | XNN_FLAG_FP32_STATIC_WEIGHTS,
-        code_cache,
         weights_cache,
         &opdata->operator_objects[0]);
       break;
     }
-    case xnn_compute_type_fp32:
-    {
-      assert(values[filter_id].datatype == xnn_datatype_fp32);
-      status = xnn_create_convolution2d_nchw_f32(
-        /*input_padding_top=*/0,
-        /*input_padding_right=*/0,
-        /*input_padding_bottom=*/0,
-        /*input_padding_left=*/0,
-        /*kernel_height=*/1,
-        /*kernel_width=*/1,
-        /*subsampling_height=*/1,
-        /*subsampling_width=*/1,
-        /*dilation_height=*/1,
-        /*dilation_width=*/1,
-        /*groups=*/1,
-        /*group_input_channels=*/input_channels,
-        /*group_output_channels=*/output_channels,
-        /*input_channel_stride=*/input_channels,
-        /*output_channel_stride=*/output_channels,
-        kernel_data,
-        bias_data,
-        node->activation.output_min,
-        node->activation.output_max,
-        node->flags,
-        code_cache,
-        weights_cache,
-        &opdata->operator_objects[0]);
-      break;
-    }
+    case xnn_datatype_fp32:
+      switch (filter_datatype) {
+        case xnn_datatype_fp32:
+          status = xnn_create_convolution2d_nchw_f32(
+              /*input_padding_top=*/0,
+              /*input_padding_right=*/0,
+              /*input_padding_bottom=*/0,
+              /*input_padding_left=*/0,
+              /*kernel_height=*/1,
+              /*kernel_width=*/1,
+              /*subsampling_height=*/1,
+              /*subsampling_width=*/1,
+              /*dilation_height=*/1,
+              /*dilation_width=*/1,
+              /*groups=*/1,
+              /*group_input_channels=*/input_channels,
+              /*group_output_channels=*/output_channels,
+              /*input_channel_stride=*/input_channels,
+              /*output_channel_stride=*/output_channels, kernel_data, bias_data,
+              node->activation.output_min, node->activation.output_max,
+              node->flags, weights_cache,
+              &opdata->operator_objects[0]);
+          break;
+        case xnn_datatype_fp16: {
+          uint32_t flags = node->flags;
+          if (bias_datatype == xnn_datatype_fp32) {
+            flags |= XNN_FLAG_FP32_STATIC_BIASES;
+          }
+          status = xnn_create_convolution2d_nchw_f32_f16(
+              /*input_padding_top=*/0,
+              /*input_padding_right=*/0,
+              /*input_padding_bottom=*/0,
+              /*input_padding_left=*/0,
+              /*kernel_height=*/1,
+              /*kernel_width=*/1,
+              /*subsampling_height=*/1,
+              /*subsampling_width=*/1,
+              /*dilation_height=*/1,
+              /*dilation_width=*/1,
+              /*groups=*/1,
+              /*group_input_channels=*/input_channels,
+              /*group_output_channels=*/output_channels,
+              /*input_channel_stride=*/input_channels,
+              /*output_channel_stride=*/output_channels, kernel_data, bias_data,
+              node->activation.output_min, node->activation.output_max,
+              flags, weights_cache,
+              &opdata->operator_objects[0]);
+          break;
+        }
+        default:
+          XNN_UNREACHABLE;
+      }
     default:
       XNN_UNREACHABLE;
   }
@@ -115,7 +148,7 @@ static enum xnn_status create_fully_connected_operator(
 
 static enum xnn_status reshape_fully_connected_operator(
   struct xnn_operator_data* opdata,
-  struct xnn_value* values,
+  struct xnn_runtime_value* values,
   size_t num_values,
   pthreadpool_t threadpool)
 {
@@ -126,27 +159,35 @@ static enum xnn_status reshape_fully_connected_operator(
   const size_t input_channels = values[filter_id].shape.dim[1];
   const size_t num_input_elements = xnn_shape_multiply_all_dims(&values[input_id].shape);
   const size_t batch_size = num_input_elements / input_channels;
+  const size_t old_workspace_size = opdata->workspace_size;
+  enum xnn_status status = xnn_status_invalid_state;
   switch (opdata->operator_objects[0]->type) {
     case xnn_operator_type_convolution_nchw_f16:
-      return xnn_reshape_convolution2d_nchw_f16(
+      status = xnn_reshape_convolution2d_nchw_f16(
         opdata->operator_objects[0],
         batch_size,
         1, 1, NULL, NULL,
         threadpool);
+      break;
     case xnn_operator_type_convolution_nchw_f32:
-      return xnn_reshape_convolution2d_nchw_f32(
+      status = xnn_reshape_convolution2d_nchw_f32(
         opdata->operator_objects[0],
         batch_size,
         1, 1, NULL, NULL,
         threadpool);
+      break;
     default:
       XNN_UNREACHABLE;
   }
+  if (status != xnn_status_success) {
+    return status;
+  }
+  return resize_fully_connected_output_tensor(opdata, values, num_values, old_workspace_size, threadpool);
 }
 
 static enum xnn_status setup_fully_connected_operator(
   const struct xnn_operator_data* opdata,
-  const struct xnn_value* values,
+  const struct xnn_runtime_value* values,
   size_t num_values,
   pthreadpool_t threadpool)
 {
@@ -158,11 +199,11 @@ static enum xnn_status setup_fully_connected_operator(
   assert(output_id != XNN_INVALID_VALUE_ID);
   assert(output_id < num_values);
 
-  const struct xnn_value* input_value = values + input_id;
+  const struct xnn_runtime_value* input_value = values + input_id;
   const void* input_data = input_value->data;
   assert(input_data != NULL);
 
-  const struct xnn_value* output_value = values + output_id;
+  const struct xnn_runtime_value* output_value = values + output_id;
   void* output_data = output_value->data;
   assert(output_data != NULL);
 
@@ -182,7 +223,7 @@ static enum xnn_status setup_fully_connected_operator(
   }
 }
 
-static inline enum xnn_compute_type validate_datatypes_with_bias(
+static inline bool validate_datatypes_with_bias(
   enum xnn_datatype input_datatype,
   enum xnn_datatype kernel_datatype,
   enum xnn_datatype bias_datatype,
@@ -194,16 +235,21 @@ static inline enum xnn_compute_type validate_datatypes_with_bias(
           bias_datatype == xnn_datatype_fp32 &&
           output_datatype == xnn_datatype_fp32)
       {
-        return xnn_compute_type_fp32;
+        return true;
+      } else if (input_datatype == xnn_datatype_fp16 &&
+          bias_datatype == xnn_datatype_fp32 &&
+          output_datatype == xnn_datatype_fp16) {
+        // Flag: XNN_FLAG_FP32_STATIC_WEIGHTS
+        return true;
       }
       break;
     default:
       XNN_UNREACHABLE;
   }
-  return xnn_compute_type_invalid;
+  return false;
 }
 
-static inline enum xnn_compute_type validate_datatypes_without_bias(
+static inline bool validate_datatypes_without_bias(
   enum xnn_datatype input_datatype,
   enum xnn_datatype kernel_datatype,
   enum xnn_datatype output_datatype)
@@ -211,13 +257,16 @@ static inline enum xnn_compute_type validate_datatypes_without_bias(
   switch (kernel_datatype) {
     case xnn_datatype_fp32:
       if (input_datatype == xnn_datatype_fp32 && output_datatype == xnn_datatype_fp32) {
-        return xnn_compute_type_fp32;
+        return true;
+      } else if (input_datatype == xnn_datatype_fp16 && output_datatype == xnn_datatype_fp16) {
+        // Flag: XNN_FLAG_FP32_STATIC_WEIGHTS
+        return true;
       }
       break;
     default:
       XNN_UNREACHABLE;
   }
-  return xnn_compute_type_invalid;
+  return false;
 }
 
 enum xnn_status xnn_define_fully_connected_sparse(
@@ -252,6 +301,7 @@ enum xnn_status xnn_define_fully_connected_sparse(
   }
 
   switch (input_value->datatype) {
+    case xnn_datatype_fp16:
     case xnn_datatype_fp32:
       break;
     default:
@@ -285,6 +335,7 @@ enum xnn_status xnn_define_fully_connected_sparse(
   }
 
   switch (kernel_value->datatype) {
+    case xnn_datatype_fp16:
     case xnn_datatype_fp32:
       break;
     default:
@@ -320,6 +371,7 @@ enum xnn_status xnn_define_fully_connected_sparse(
     }
 
     switch (bias_value->datatype) {
+      case xnn_datatype_fp16:
       case xnn_datatype_fp32:
         break;
       default:
@@ -343,6 +395,7 @@ enum xnn_status xnn_define_fully_connected_sparse(
   }
 
   switch (output_value->datatype) {
+    case xnn_datatype_fp16:
     case xnn_datatype_fp32:
       break;
     default:
@@ -353,11 +406,9 @@ enum xnn_status xnn_define_fully_connected_sparse(
       return xnn_status_invalid_parameter;
   }
 
-  enum xnn_compute_type compute_type = xnn_compute_type_invalid;
   if (bias_value != NULL) {
-    compute_type = validate_datatypes_with_bias(
-      input_value->datatype, kernel_value->datatype, bias_value->datatype, output_value->datatype);
-    if (compute_type == xnn_compute_type_invalid) {
+    if (!validate_datatypes_with_bias(
+        input_value->datatype, kernel_value->datatype, bias_value->datatype, output_value->datatype)) {
       xnn_log_error(
         "failed to define %s operator with input ID #%" PRIu32 ", filter ID #%" PRIu32 ", bias ID #%" PRIu32 ", and output ID #%" PRIu32
         ": mismatching datatypes across input (%s), filter (%s), bias (%s), and output (%s)",
@@ -369,9 +420,8 @@ enum xnn_status xnn_define_fully_connected_sparse(
       return xnn_status_invalid_parameter;
     }
   } else {
-    compute_type = validate_datatypes_without_bias(
-      input_value->datatype, kernel_value->datatype, output_value->datatype);
-    if (compute_type == xnn_compute_type_invalid) {
+    if (!validate_datatypes_without_bias(
+        input_value->datatype, kernel_value->datatype, output_value->datatype)) {
       xnn_log_error(
         "failed to define %s operator with input ID #%" PRIu32 ", filter ID #%" PRIu32 ", and output ID #%" PRIu32
         ": mismatching datatypes across input (%s), filter (%s), and output (%s)",
@@ -389,7 +439,6 @@ enum xnn_status xnn_define_fully_connected_sparse(
   }
 
   node->type = xnn_node_type_fully_connected_sparse;
-  node->compute_type = compute_type;
   node->activation.output_min = output_min;
   node->activation.output_max = output_max;
   node->num_inputs = 2 + (size_t) (bias_id != XNN_INVALID_VALUE_ID);

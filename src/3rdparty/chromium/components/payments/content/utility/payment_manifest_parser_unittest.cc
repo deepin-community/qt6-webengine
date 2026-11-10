@@ -238,6 +238,7 @@ TEST(PaymentManifestParserTest,
 
 // Web app manifest parsing:
 
+// Expect that input is valid JSON but not a valid web app manifest.
 void ExpectUnableToParseWebAppManifest(const std::string& input) {
   base::Value value = base::test::ParseJson(input);
   std::vector<WebAppManifestSection> sections;
@@ -391,22 +392,6 @@ TEST(PaymentManifestParserTest, NoFingerprintValueIsMalformed) {
       "    \"min_version\": \"1\", "
       "    \"fingerprints\": [{"
       "      \"type\": \"sha256_cert\""
-      "    }]"
-      "  }]"
-      "}");
-}
-
-TEST(PaymentManifestParserTest, VersionShouldNotHaveNullCharacters) {
-  ExpectUnableToParseWebAppManifest(
-      "{"
-      "  \"related_applications\": [{"
-      "    \"platform\": \"play\", "
-      "    \"id\": \"com.bobpay.app\", "
-      "    \"min_version\": \"1\01\", "
-      "    \"fingerprints\": [{"
-      "      \"type\": \"sha256_cert\", "
-      "      \"value\": \"00:01:02:03:04:05:06:07:08:09:A0:A1:A2:A3:A4:A5:A6:A7"
-      ":A8:A9:B0:B1:B2:B3:B4:B5:B6:B7:B8:B9:C0:C1\""
       "    }]"
       "  }]"
       "}");
@@ -782,6 +767,105 @@ TEST(PaymentManifestParserTest, MinimumWellFormedInstallInfo) {
       "  \"serviceworker\": {"
       "    \"src\": \"sw.js\""
       "  }"
+      "}",
+      expected_installation_info, expected_icons);
+}
+
+TEST(PaymentManifestParserTest, IgnoreNonDictionaryIcon) {
+  WebAppInstallationInfo expected_installation_info;
+  expected_installation_info.sw_js_url = "sw.js";
+  expected_installation_info.sw_scope = "";
+  expected_installation_info.sw_use_cache = false;
+
+  std::vector<PaymentManifestParser::WebAppIcon> expected_icons;
+
+  ExpectParsedInstallInfo(
+      "{"
+      "  \"serviceworker\": {"
+      "    \"src\": \"sw.js\""
+      "  },"
+      "  \"icons\": [\"This is a string, not a dictionary, so it is ignored\"]"
+      "}",
+      expected_installation_info, expected_icons);
+}
+
+TEST(PaymentManifestParserTest, IgnoreEmptyStringIconSource) {
+  WebAppInstallationInfo expected_installation_info;
+  expected_installation_info.sw_js_url = "sw.js";
+  expected_installation_info.sw_scope = "";
+  expected_installation_info.sw_use_cache = false;
+
+  std::vector<PaymentManifestParser::WebAppIcon> expected_icons;
+
+  ExpectParsedInstallInfo(
+      "{"
+      "  \"serviceworker\": {"
+      "    \"src\": \"sw.js\""
+      "  },"
+      "  \"icons\": [{\"src\": \"\"}]"
+      "}",
+      expected_installation_info, expected_icons);
+}
+
+TEST(PaymentManifestParserTest, IconSizeAndTypeAreOptional) {
+  WebAppInstallationInfo expected_installation_info;
+  expected_installation_info.sw_js_url = "sw.js";
+  expected_installation_info.sw_scope = "";
+  expected_installation_info.sw_use_cache = false;
+
+  std::vector<PaymentManifestParser::WebAppIcon> expected_icons(1);
+  expected_icons.back().src = "https://example.test/icon.png";
+
+  ExpectParsedInstallInfo(
+      "{"
+      "  \"serviceworker\": {"
+      "    \"src\": \"sw.js\""
+      "  },"
+      "  \"icons\": [{\"src\": \"https://example.test/icon.png\"}]"
+      "}",
+      expected_installation_info, expected_icons);
+}
+
+TEST(PaymentManifestParserTest, AllowEmptyIconSizesString) {
+  WebAppInstallationInfo expected_installation_info;
+  expected_installation_info.sw_js_url = "sw.js";
+  expected_installation_info.sw_scope = "";
+  expected_installation_info.sw_use_cache = false;
+
+  std::vector<PaymentManifestParser::WebAppIcon> expected_icons(1);
+  expected_icons.back().src = "https://example.test/icon.png";
+
+  ExpectParsedInstallInfo(
+      "{"
+      "  \"serviceworker\": {"
+      "    \"src\": \"sw.js\""
+      "  },"
+      "  \"icons\": [{"
+      "    \"src\": \"https://example.test/icon.png\","
+      "    \"sizes\": \"\""
+      "  }]"
+      "}",
+      expected_installation_info, expected_icons);
+}
+
+TEST(PaymentManifestParserTest, AllowEmptyIconTypeString) {
+  WebAppInstallationInfo expected_installation_info;
+  expected_installation_info.sw_js_url = "sw.js";
+  expected_installation_info.sw_scope = "";
+  expected_installation_info.sw_use_cache = false;
+
+  std::vector<PaymentManifestParser::WebAppIcon> expected_icons(1);
+  expected_icons.back().src = "https://example.test/icon.png";
+
+  ExpectParsedInstallInfo(
+      "{"
+      "  \"serviceworker\": {"
+      "    \"src\": \"sw.js\""
+      "  },"
+      "  \"icons\": [{"
+      "    \"src\": \"https://example.test/icon.png\","
+      "    \"type\": \"\""
+      "  }]"
       "}",
       expected_installation_info, expected_icons);
 }

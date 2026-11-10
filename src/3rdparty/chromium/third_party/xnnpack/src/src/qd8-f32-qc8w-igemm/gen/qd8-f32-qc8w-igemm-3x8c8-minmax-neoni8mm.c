@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-igemm/c8-neoni8mm.c.in
 //   Generator: tools/xngen
@@ -7,12 +8,15 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/igemm.h>
-#include <xnnpack/math.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/igemm.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
 
 
 void xnn_qd8_f32_qc8w_igemm_minmax_ukernel_3x8c8__neoni8mm(
@@ -28,8 +32,8 @@ void xnn_qd8_f32_qc8w_igemm_minmax_ukernel_3x8c8__neoni8mm(
     size_t a_offset,
     const int8_t* zero,
     const int8_t* zero_data,
-    const union xnn_f32_minmax_params params[restrict XNN_MIN_ELEMENTS(1)],
-    const struct xnn_qd8_quantization_params quantization_params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f32_minmax_params* restrict params,
+    const struct xnn_qd8_quantization_params* restrict quantization_params) XNN_OOB_READS
 {
   assert(mr != 0);
   assert(mr <= 3);
@@ -64,25 +68,14 @@ void xnn_qd8_f32_qc8w_igemm_minmax_ukernel_3x8c8__neoni8mm(
     const int32x4_t vksumzp2x0123 = vksumzp0x0123;
     const int32x4_t vksumzp2x4567 = vksumzp0x4567;
 
-    #if XNN_ARCH_ARM64
-      int32x4_t vacc01x01 = vreinterpretq_s32_u64(vtrn1q_u64(vreinterpretq_u64_s32(vksumzp0x0123), vreinterpretq_u64_s32(vksumzp1x0123)));
-      int32x4_t vacc01x23 = vreinterpretq_s32_u64(vtrn2q_u64(vreinterpretq_u64_s32(vksumzp0x0123), vreinterpretq_u64_s32(vksumzp1x0123)));
-      int32x4_t vacc01x45 = vreinterpretq_s32_u64(vtrn1q_u64(vreinterpretq_u64_s32(vksumzp0x4567), vreinterpretq_u64_s32(vksumzp1x4567)));
-      int32x4_t vacc01x67 = vreinterpretq_s32_u64(vtrn2q_u64(vreinterpretq_u64_s32(vksumzp0x4567), vreinterpretq_u64_s32(vksumzp1x4567)));
-      int32x4_t vacc23x01 = vreinterpretq_s32_u64(vtrn1q_u64(vreinterpretq_u64_s32(vksumzp2x0123), vreinterpretq_u64_s32(vksumzp2x0123)));
-      int32x4_t vacc23x23 = vreinterpretq_s32_u64(vtrn2q_u64(vreinterpretq_u64_s32(vksumzp2x0123), vreinterpretq_u64_s32(vksumzp2x0123)));
-      int32x4_t vacc23x45 = vreinterpretq_s32_u64(vtrn1q_u64(vreinterpretq_u64_s32(vksumzp2x4567), vreinterpretq_u64_s32(vksumzp2x4567)));
-      int32x4_t vacc23x67 = vreinterpretq_s32_u64(vtrn2q_u64(vreinterpretq_u64_s32(vksumzp2x4567), vreinterpretq_u64_s32(vksumzp2x4567)));
-    #else
-      int32x4_t vacc01x01 = vcombine_s32(vget_low_s32(vksumzp0x0123), vget_low_s32(vksumzp1x0123));
-      int32x4_t vacc01x23 = vcombine_s32(vget_high_s32(vksumzp0x0123), vget_high_s32(vksumzp1x0123));
-      int32x4_t vacc01x45 = vcombine_s32(vget_low_s32(vksumzp0x4567), vget_low_s32(vksumzp1x4567));
-      int32x4_t vacc01x67 = vcombine_s32(vget_high_s32(vksumzp0x4567), vget_high_s32(vksumzp1x4567));
-      int32x4_t vacc23x01 = vcombine_s32(vget_low_s32(vksumzp2x0123), vget_low_s32(vksumzp2x0123));
-      int32x4_t vacc23x23 = vcombine_s32(vget_high_s32(vksumzp2x0123), vget_high_s32(vksumzp2x0123));
-      int32x4_t vacc23x45 = vcombine_s32(vget_low_s32(vksumzp2x4567), vget_low_s32(vksumzp2x4567));
-      int32x4_t vacc23x67 = vcombine_s32(vget_high_s32(vksumzp2x4567), vget_high_s32(vksumzp2x4567));
-    #endif
+    int32x4_t vacc01x01 = vreinterpretq_s32_u64(vtrn1q_u64(vreinterpretq_u64_s32(vksumzp0x0123), vreinterpretq_u64_s32(vksumzp1x0123)));
+    int32x4_t vacc01x23 = vreinterpretq_s32_u64(vtrn2q_u64(vreinterpretq_u64_s32(vksumzp0x0123), vreinterpretq_u64_s32(vksumzp1x0123)));
+    int32x4_t vacc01x45 = vreinterpretq_s32_u64(vtrn1q_u64(vreinterpretq_u64_s32(vksumzp0x4567), vreinterpretq_u64_s32(vksumzp1x4567)));
+    int32x4_t vacc01x67 = vreinterpretq_s32_u64(vtrn2q_u64(vreinterpretq_u64_s32(vksumzp0x4567), vreinterpretq_u64_s32(vksumzp1x4567)));
+    int32x4_t vacc23x01 = vreinterpretq_s32_u64(vtrn1q_u64(vreinterpretq_u64_s32(vksumzp2x0123), vreinterpretq_u64_s32(vksumzp2x0123)));
+    int32x4_t vacc23x23 = vreinterpretq_s32_u64(vtrn2q_u64(vreinterpretq_u64_s32(vksumzp2x0123), vreinterpretq_u64_s32(vksumzp2x0123)));
+    int32x4_t vacc23x45 = vreinterpretq_s32_u64(vtrn1q_u64(vreinterpretq_u64_s32(vksumzp2x4567), vreinterpretq_u64_s32(vksumzp2x4567)));
+    int32x4_t vacc23x67 = vreinterpretq_s32_u64(vtrn2q_u64(vreinterpretq_u64_s32(vksumzp2x4567), vreinterpretq_u64_s32(vksumzp2x4567)));
 
     size_t p = ks;
     do {
@@ -118,18 +111,9 @@ void xnn_qd8_f32_qc8w_igemm_minmax_ukernel_3x8c8__neoni8mm(
       // 2x partial unrolled loop to load 8 bytes at a time.
       while (k >= 16 * sizeof(int8_t)) {
         // Load a 3x16 block of activations.
-        #if XNN_ARCH_ARM64
-          va01x0123456789ABCDEF = vld2q_lane_u64((const void*) a0, va01x0123456789ABCDEF, 0); a0 += 16;
-          va23x0123456789ABCDEF = vld2q_lane_u64((const void*) a2, va23x0123456789ABCDEF, 0); a2 += 16;
-          va01x0123456789ABCDEF = vld2q_lane_u64((const void*) a1, va01x0123456789ABCDEF, 1); a1 += 16;
-        #else
-          va01x0123456789ABCDEF.val[0] = vld1q_lane_u64((const void*) a0, va01x0123456789ABCDEF.val[0], 0); a0 += 8;
-          va01x0123456789ABCDEF.val[1] = vld1q_lane_u64((const void*) a0, va01x0123456789ABCDEF.val[1], 0); a0 += 8;
-          va23x0123456789ABCDEF.val[0] = vld1q_lane_u64((const void*) a2, va23x0123456789ABCDEF.val[0], 0); a2 += 8;
-          va23x0123456789ABCDEF.val[1] = vld1q_lane_u64((const void*) a2, va23x0123456789ABCDEF.val[1], 0); a2 += 8;
-          va01x0123456789ABCDEF.val[0] = vld1q_lane_u64((const void*) a1, va01x0123456789ABCDEF.val[0], 1); a1 += 8;
-          va01x0123456789ABCDEF.val[1] = vld1q_lane_u64((const void*) a1, va01x0123456789ABCDEF.val[1], 1); a1 += 8;
-        #endif
+        va01x0123456789ABCDEF = vld2q_lane_u64((const void*) a0, va01x0123456789ABCDEF, 0); a0 += 16;
+        va23x0123456789ABCDEF = vld2q_lane_u64((const void*) a2, va23x0123456789ABCDEF, 0); a2 += 16;
+        va01x0123456789ABCDEF = vld2q_lane_u64((const void*) a1, va01x0123456789ABCDEF, 1); a1 += 16;
 
         // Load a 16x8 block of weights.
         const int8x16_t vb01x01234567 = vld1q_s8(w); w = (const int8_t*) w + 16;
@@ -221,7 +205,7 @@ void xnn_qd8_f32_qc8w_igemm_minmax_ukernel_3x8c8__neoni8mm(
     vout1x4567 = vfmaq_f32(vbias4567, vout1x4567, vfilter_output_scale4567);
     vout2x4567 = vfmaq_f32(vbias4567, vout2x4567, vfilter_output_scale4567);
 
-    const float32x4_t voutput_min = vld1q_dup_f32(&params->scalar.min);
+    const float32x4_t voutput_min = vdupq_n_f32(params->scalar.min);
     vout0x0123 = vmaxq_f32(vout0x0123, voutput_min);
     vout0x4567 = vmaxq_f32(vout0x4567, voutput_min);
     vout1x0123 = vmaxq_f32(vout1x0123, voutput_min);
@@ -229,7 +213,7 @@ void xnn_qd8_f32_qc8w_igemm_minmax_ukernel_3x8c8__neoni8mm(
     vout2x0123 = vmaxq_f32(vout2x0123, voutput_min);
     vout2x4567 = vmaxq_f32(vout2x4567, voutput_min);
 
-    const float32x4_t voutput_max = vld1q_dup_f32(&params->scalar.max);
+    const float32x4_t voutput_max = vdupq_n_f32(params->scalar.max);
     vout0x0123 = vminq_f32(vout0x0123, voutput_max);
     vout0x4567 = vminq_f32(vout0x4567, voutput_max);
     vout1x0123 = vminq_f32(vout1x0123, voutput_max);

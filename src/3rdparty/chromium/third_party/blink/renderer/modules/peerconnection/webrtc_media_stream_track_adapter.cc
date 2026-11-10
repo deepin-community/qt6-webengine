@@ -9,6 +9,7 @@
 #include "base/task/single_thread_task_runner.h"
 #include "third_party/blink/public/platform/modules/webrtc/webrtc_logging.h"
 #include "third_party/blink/renderer/modules/mediastream/processed_local_audio_source.h"
+#include "third_party/blink/renderer/modules/mediastream/remote_media_stream_track_adapter.h"
 #include "third_party/blink/renderer/modules/peerconnection/media_stream_video_webrtc_sink.h"
 #include "third_party/blink/renderer/modules/peerconnection/peer_connection_dependency_factory.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_audio_track.h"
@@ -109,6 +110,17 @@ void WebRtcMediaStreamTrackAdapterTraits::Destruct(
 }
 
 void WebRtcMediaStreamTrackAdapter::Dispose() {
+  if (!main_thread_->BelongsToCurrentThread()) {
+    PostCrossThreadTask(
+        *main_thread_, FROM_HERE,
+        CrossThreadBindOnce(&WebRtcMediaStreamTrackAdapter::DisposeOnMainThread,
+                            WrapRefCounted(this)));
+    return;
+  }
+  DisposeOnMainThread();
+}
+
+void WebRtcMediaStreamTrackAdapter::DisposeOnMainThread() {
   DCHECK(main_thread_->BelongsToCurrentThread());
   DCHECK(is_initialized_);
   if (is_disposed_)
@@ -149,12 +161,12 @@ MediaStreamComponent* WebRtcMediaStreamTrackAdapter::track() {
   return component_.Get();
 }
 
-rtc::scoped_refptr<webrtc::MediaStreamTrackInterface>
+webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface>
 WebRtcMediaStreamTrackAdapter::webrtc_track() {
   DCHECK(main_thread_->BelongsToCurrentThread());
   DCHECK(webrtc_track_);
   EnsureTrackIsInitialized();
-  return rtc::scoped_refptr<webrtc::MediaStreamTrackInterface>(
+  return webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface>(
       webrtc_track_.get());
 }
 

@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 // Copyright 2013 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
@@ -95,7 +96,7 @@ void LoginDelegateQt::sendAuthToRequester(bool success, const QString &user, con
         if (success && web_contents())
             std::move(m_auth_required_callback).Run(net::AuthCredentials(toString16(user), toString16(password)));
         else
-            std::move(m_auth_required_callback).Run(absl::nullopt);
+            std::move(m_auth_required_callback).Run(std::nullopt);
     }
 }
 

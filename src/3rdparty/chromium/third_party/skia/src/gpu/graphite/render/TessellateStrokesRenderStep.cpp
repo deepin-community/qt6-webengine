@@ -8,21 +8,34 @@
 #include "src/gpu/graphite/render/TessellateStrokesRenderStep.h"
 
 #include "include/core/SkM44.h"
+#include "include/core/SkMatrix.h"
+#include "include/core/SkPath.h"
+#include "include/core/SkStrokeRec.h"
+#include "include/private/base/SkAssert.h"
+#include "include/private/base/SkDebug.h"
+#include "include/private/base/SkPoint_impl.h"
+#include "include/private/base/SkSpan_impl.h"
+#include "src/base/SkEnumBitMask.h"
 #include "src/base/SkVx.h"
 #include "src/core/SkGeometry.h"
-#include "src/sksl/SkSLString.h"
-
+#include "src/core/SkSLTypeShared.h"
+#include "src/gpu/graphite/Attribute.h"
+#include "src/gpu/graphite/DrawOrder.h"
 #include "src/gpu/graphite/DrawParams.h"
 #include "src/gpu/graphite/DrawTypes.h"
-#include "src/gpu/graphite/DrawWriter.h"
 #include "src/gpu/graphite/PipelineData.h"
+#include "src/gpu/graphite/ResourceTypes.h"
+#include "src/gpu/graphite/geom/Geometry.h"
+#include "src/gpu/graphite/geom/Shape.h"
+#include "src/gpu/graphite/geom/Transform.h"
 #include "src/gpu/graphite/render/CommonDepthStencilSettings.h"
 #include "src/gpu/graphite/render/DynamicInstancesPatchAllocator.h"
-
 #include "src/gpu/tessellate/FixedCountBufferUtils.h"
 #include "src/gpu/tessellate/PatchWriter.h"
 #include "src/gpu/tessellate/StrokeIterator.h"
-
+#include "src/gpu/tessellate/Tessellation.h"
+#include "src/gpu/tessellate/WangsFormula.h"
+#include "src/sksl/SkSLString.h"
 
 namespace skgpu::graphite {
 
@@ -59,7 +72,7 @@ static constexpr Attribute kBaseAttributes[] = {
         {"prevPoint", VertexAttribType::kFloat2, SkSLType::kFloat2},
         {"stroke", VertexAttribType::kFloat2, SkSLType::kFloat2},
         {"depth", VertexAttribType::kFloat, SkSLType::kFloat},
-        {"ssboIndices", VertexAttribType::kUShort2, SkSLType::kUShort2}};
+        {"ssboIndices", VertexAttribType::kUInt2, SkSLType::kUInt2}};
 
 static constexpr Attribute kAttributesWithCurveType[] = {
         {"p01", VertexAttribType::kFloat4, SkSLType::kFloat4},
@@ -68,7 +81,7 @@ static constexpr Attribute kAttributesWithCurveType[] = {
         {"stroke", VertexAttribType::kFloat2, SkSLType::kFloat2},
         {"depth", VertexAttribType::kFloat, SkSLType::kFloat},
         {"curveType", VertexAttribType::kFloat, SkSLType::kFloat},
-        {"ssboIndices", VertexAttribType::kUShort2, SkSLType::kUShort2}};
+        {"ssboIndices", VertexAttribType::kUInt2, SkSLType::kUInt2}};
 
 static constexpr SkSpan<const Attribute> kAttributes[2] = {kAttributesWithCurveType,
                                                            kBaseAttributes};
@@ -76,16 +89,16 @@ static constexpr SkSpan<const Attribute> kAttributes[2] = {kAttributesWithCurveT
 }  // namespace
 
 TessellateStrokesRenderStep::TessellateStrokesRenderStep(bool infinitySupport)
-        : RenderStep("TessellateStrokeRenderStep",
-                     "",
-                     Flags::kRequiresMSAA | Flags::kPerformsShading,
+        : RenderStep(RenderStepID::kTessellateStrokes,
+                     Flags::kRequiresMSAA | Flags::kPerformsShading |
+                     Flags::kAppendDynamicInstances,
                      /*uniforms=*/{{"affineMatrix", SkSLType::kFloat4},
                                    {"translate", SkSLType::kFloat2},
                                    {"maxScale", SkSLType::kFloat}},
                      PrimitiveType::kTriangleStrip,
                      kDirectDepthGreaterPass,
-                     /*vertexAttrs=*/  {},
-                     /*instanceAttrs=*/kAttributes[infinitySupport])
+                     /*staticAttrs=*/ {},
+                     /*appendAttrs=*/kAttributes[infinitySupport])
         , fInfinitySupport(infinitySupport) {}
 
 TessellateStrokesRenderStep::~TessellateStrokesRenderStep() {}
@@ -94,24 +107,22 @@ std::string TessellateStrokesRenderStep::vertexSkSL() const {
     // TODO: Assumes vertex ID support for now, max edges must equal
     // skgpu::tess::FixedCountStrokes::kMaxEdges -> (2^14 - 1) -> 16383
     return SkSL::String::printf(
-            R"(
-                float edgeID = float(sk_VertexID >> 1);
-                if ((sk_VertexID & 1) != 0) {
-                    edgeID = -edgeID;
-                }
-                float2x2 affine = float2x2(affineMatrix.xy, affineMatrix.zw);
-                float4 devAndLocalCoords = tessellate_stroked_curve(
-                        edgeID, 16383, affine, translate, maxScale, p01, p23, prevPoint,
-                        stroke, %s);
-                float4 devPosition = float4(devAndLocalCoords.xy, depth, 1.0);
-                stepLocalCoords = devAndLocalCoords.zw;
-            )",
+            "float edgeID = float(sk_VertexID >> 1);\n"
+            "if ((sk_VertexID & 1) != 0) {"
+                "edgeID = -edgeID;"
+            "}\n"
+            "float2x2 affine = float2x2(affineMatrix.xy, affineMatrix.zw);\n"
+            "float4 devAndLocalCoords = tessellate_stroked_curve("
+                    "edgeID, 16383, affine, translate, maxScale, p01, p23, prevPoint,"
+                    "stroke, %s);\n"
+            "float4 devPosition = float4(devAndLocalCoords.xy, depth, 1.0);\n"
+            "stepLocalCoords = devAndLocalCoords.zw;\n",
             fInfinitySupport ? "curve_type_using_inf_support(p23)" : "curveType");
 }
 
 void TessellateStrokesRenderStep::writeVertices(DrawWriter* dw,
                                                 const DrawParams& params,
-                                                skvx::ushort2 ssboIndices) const {
+                                                skvx::uint2 ssboIndices) const {
     SkPath path = params.geometry().shape().asPath(); // TODO: Iterate the Shape directly
 
     int patchReserveCount = FixedCountStrokes::PreallocCount(path.countVerbs());
@@ -240,7 +251,9 @@ void TessellateStrokesRenderStep::writeVertices(DrawWriter* dw,
 
 void TessellateStrokesRenderStep::writeUniformsAndTextures(const DrawParams& params,
                                                            PipelineDataGatherer* gatherer) const {
-    SkASSERT(params.transform().type() < Transform::Type::kProjection); // TODO: Implement perspective
+    SkDEBUGCODE(gatherer->checkRewind());
+    // TODO: Implement perspective
+    SkASSERT(params.transform().type() < Transform::Type::kPerspective);
 
     SkDEBUGCODE(UniformExpectationsValidator uev(gatherer, this->uniforms());)
 

@@ -2,15 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import '../../ui/legacy/components/data_grid/data_grid.js';
+
 import * as Host from '../../core/host/host.js';
 import * as i18n from '../../core/i18n/i18n.js';
 import * as Platform from '../../core/platform/platform.js';
 import * as SDK from '../../core/sdk/sdk.js';
+import type * as Protocol from '../../generated/protocol.js';
 import * as TextUtils from '../../models/text_utils/text_utils.js';
-import * as DataGrid from '../../ui/legacy/components/data_grid/data_grid.js';
 import * as UI from '../../ui/legacy/legacy.js';
+import {Directives, html, nothing, render} from '../../ui/lit/lit.js';
 
 import developerResourcesListViewStyles from './developerResourcesListView.css.js';
+
+const {ref} = Directives;
 
 const UIStrings = {
   /**
@@ -29,6 +34,10 @@ const UIStrings = {
    *@description Text in Coverage List View of the Coverage tab
    */
   totalBytes: 'Total Bytes',
+  /**
+   * @description Column header. The column contains the time it took to load a resource.
+   */
+  duration: 'Duration',
   /**
    *@description Text for errors
    */
@@ -62,266 +71,213 @@ const UIStrings = {
    *@description Accessible text for the value in bytes in memory allocation.
    */
   sBytes: '{n, plural, =1 {# byte} other {# bytes}}',
-};
+  /**
+   * @description Number of resource(s) match
+   */
+  numberOfResourceMatch: '{n, plural, =1 {# resource matches} other {# resources match}}',
+  /**
+   * @description No resource matches
+   */
+  noResourceMatches: 'No resource matches',
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/developer_resources/DeveloperResourcesListView.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
+const {withThousandsSeparator} = Platform.NumberUtilities;
+
+export interface ViewInput {
+  items: SDK.PageResourceLoader.PageResource[];
+  selectedItem: SDK.PageResourceLoader.PageResource|null;
+  highlight: (element: Element|undefined, textContent: string|undefined, columnId: string) => void;
+  filters: TextUtils.TextUtils.ParsedFilter[];
+  onContextMenu: (e: CustomEvent<{menu: UI.ContextMenu.ContextMenu, element: HTMLElement}>) => void;
+  onSelect: (e: CustomEvent<HTMLElement>) => void;
+  onInitiatorMouseEnter: (frameId: Protocol.Page.FrameId|null) => void;
+  onInitiatorMouseLeave: () => void;
+}
+
+export type View = (input: ViewInput, output: object, target: HTMLElement) => void;
+
+const DEFAULT_VIEW: View = (input, _output, target) => {
+  // clang-format off
+  render(html`
+      <style>${developerResourcesListViewStyles}</style>
+      <devtools-data-grid name=${i18nString(UIStrings.developerResources)} striped class="flex-auto"
+         .filters=${input.filters} @contextmenu=${input.onContextMenu} @selected=${input.onSelect}>
+        <table>
+          <tr>
+            <th id="status" sortable fixed width="60px">
+              ${i18nString(UIStrings.status)}
+            </th>
+            <th id="url" sortable width="250px">
+              ${i18nString(UIStrings.url)}
+            </th>
+            <th id="initiator" sortable width="80px">
+              ${i18nString(UIStrings.initiator)}
+            </th>
+            <th id="size" sortable fixed width="80px" align="right">
+              ${i18nString(UIStrings.totalBytes)}
+            </th>
+            <th id="duration" sortable fixed width="80px" align="right">
+              ${i18nString(UIStrings.duration)}
+            </th>
+            <th id="error-message" sortable width="200px">
+              ${i18nString(UIStrings.error)}
+            </th>
+          </tr>
+          ${input.items.map((item, index) => {
+            const splitURL = /^(.*)(\/[^/]*)$/.exec(item.url);
+            return html`
+            <tr selected=${(item === input.selectedItem) || nothing}
+                data-url=${item.url ?? nothing}
+                data-initiator-url=${item.initiator.initiatorUrl ?? nothing}
+                data-index=${index}>
+              <td>${item.success === true  ? i18nString(UIStrings.success) :
+                    item.success === false ? i18nString(UIStrings.failure) :
+                                             i18nString(UIStrings.pending)}</td>
+              <td title=${item.url} aria-label=${item.url}>
+                <div aria-hidden="true" part="url-outer"
+                     ${ref(e => input.highlight(e, item.url, 'url'))}>
+                  <div part="url-prefix">${splitURL ? splitURL[1] : item.url}</div>
+                  <div part="url-suffix">${splitURL ? splitURL[2] : ''}</div>
+                </div>
+              </td>
+              <td title=${item.initiator.initiatorUrl || ''}
+                  aria-label=${item.initiator.initiatorUrl || ''}
+                  @mouseenter=${() => input.onInitiatorMouseEnter(item.initiator.frameId)}
+                  @mouseleave=${input.onInitiatorMouseLeave}
+              >${item.initiator.initiatorUrl || ''}</td>
+              <td aria-label=${item.size !== null ? i18nString(UIStrings.sBytes, {n: item.size}) : nothing}
+                  data-value=${item.size ?? nothing}>${
+                item.size !== null ?  html`<span>${withThousandsSeparator(item.size)}</span>` : ''}</td>
+              <td aria-label=${item.duration !== null ? i18n.TimeUtilities.millisToString(item.duration) : nothing}
+                  data-value=${item.duration ?? nothing}>${
+                  item.duration !== null ? html`<span>${i18n.TimeUtilities.millisToString(item.duration)}</span>` : ''}</td>
+              <td class="error-message">
+                ${item.errorMessage ? html`
+                <span ${ref(e => input.highlight(e, item.errorMessage, 'error-message'))}>
+                  ${item.errorMessage}
+                </span>` : nothing}
+              </td>
+            </tr>`;
+          })}
+          </table>
+        </devtools-data-grid>`,
+        target);
+  // clang-format on
+};
 
 export class DeveloperResourcesListView extends UI.Widget.VBox {
-  private readonly nodeForItem: Map<SDK.PageResourceLoader.PageResource, GridNode>;
-  private readonly isVisibleFilter: (arg0: SDK.PageResourceLoader.PageResource) => boolean;
-  private highlightRegExp: RegExp|null;
-  private dataGrid: DataGrid.SortableDataGrid.SortableDataGrid<GridNode>;
-  constructor(isVisibleFilter: (arg0: SDK.PageResourceLoader.PageResource) => boolean) {
-    super(true);
-    this.nodeForItem = new Map();
-    this.isVisibleFilter = isVisibleFilter;
-    this.highlightRegExp = null;
-
-    const k = Platform.StringUtilities.kebab;
-    const columns = [
-      {id: k('status'), title: i18nString(UIStrings.status), width: '60px', fixedWidth: true, sortable: true},
-      {id: k('url'), title: i18nString(UIStrings.url), width: '250px', fixedWidth: false, sortable: true},
-      {id: k('initiator'), title: i18nString(UIStrings.initiator), width: '80px', fixedWidth: false, sortable: true},
-      {
-        id: k('size'),
-        title: i18nString(UIStrings.totalBytes),
-        width: '80px',
-        fixedWidth: true,
-        sortable: true,
-        align: DataGrid.DataGrid.Align.Right,
-      },
-      {
-        id: k('error-message'),
-        title: i18nString(UIStrings.error),
-        width: '200px',
-        fixedWidth: false,
-        sortable: true,
-      },
-    ];
-    this.dataGrid = new DataGrid.SortableDataGrid.SortableDataGrid({
-      displayName: i18nString(UIStrings.developerResources),
-      columns,
-      editCallback: undefined,
-      refreshCallback: undefined,
-      deleteCallback: undefined,
-    });
-    this.dataGrid.setResizeMethod(DataGrid.DataGrid.ResizeMethod.Last);
-    this.dataGrid.setStriped(true);
-    this.dataGrid.element.classList.add('flex-auto');
-    this.dataGrid.addEventListener(DataGrid.DataGrid.Events.SortingChanged, this.sortingChanged, this);
-    this.dataGrid.setRowContextMenuCallback(this.populateContextMenu.bind(this));
-
-    const dataGridWidget = this.dataGrid.asWidget();
-    dataGridWidget.show(this.contentElement);
-    this.setDefaultFocusedChild(dataGridWidget);
+  #items: SDK.PageResourceLoader.PageResource[] = [];
+  #selectedItem: SDK.PageResourceLoader.PageResource|null = null;
+  #onSelect: ((item: SDK.PageResourceLoader.PageResource|null) => void)|null = null;
+  readonly #view: View;
+  #filters: TextUtils.TextUtils.ParsedFilter[] = [];
+  constructor(element: HTMLElement, view = DEFAULT_VIEW) {
+    super(element, {useShadowDom: true});
+    this.#view = view;
   }
 
-  private populateContextMenu(
-      contextMenu: UI.ContextMenu.ContextMenu,
-      gridNode: DataGrid.DataGrid.DataGridNode<
-          DataGrid.ViewportDataGrid.ViewportDataGridNode<DataGrid.SortableDataGrid.SortableDataGridNode<GridNode>>>):
-      void {
-    const item = (gridNode as GridNode).item;
-    contextMenu.clipboardSection().appendItem(i18nString(UIStrings.copyUrl), () => {
-      Host.InspectorFrontendHost.InspectorFrontendHostInstance.copyText(item.url);
-    }, {jslogContext: 'copyURL'});
-    if (item.initiator.initiatorUrl) {
+  set selectedItem(item: SDK.PageResourceLoader.PageResource|null) {
+    this.#selectedItem = item;
+    this.requestUpdate();
+  }
+
+  set onSelect(onSelect: (item: SDK.PageResourceLoader.PageResource|null) => void) {
+    this.#onSelect = onSelect;
+  }
+
+  #populateContextMenu(contextMenu: UI.ContextMenu.ContextMenu, element: HTMLElement): void {
+    const url = element.dataset.url;
+    if (url) {
+      contextMenu.clipboardSection().appendItem(i18nString(UIStrings.copyUrl), () => {
+        Host.InspectorFrontendHost.InspectorFrontendHostInstance.copyText(url);
+      }, {jslogContext: 'copy-url'});
+    }
+
+    const initiatorUrl = element.dataset.initiatorUrl;
+    if (initiatorUrl) {
       contextMenu.clipboardSection().appendItem(i18nString(UIStrings.copyInitiatorUrl), () => {
-        Host.InspectorFrontendHost.InspectorFrontendHostInstance.copyText(item.initiator.initiatorUrl);
-      }, {jslogContext: 'copyInitiatorURL'});
+        Host.InspectorFrontendHost.InspectorFrontendHostInstance.copyText(initiatorUrl);
+      }, {jslogContext: 'copy-initiator-url'});
     }
   }
 
-  update(items: Iterable<SDK.PageResourceLoader.PageResource>): void {
-    let hadUpdates = false;
-    const rootNode = this.dataGrid.rootNode();
-    for (const item of items) {
-      let node = this.nodeForItem.get(item);
-      if (node) {
-        if (this.isVisibleFilter(node.item)) {
-          hadUpdates = node.refreshIfNeeded() || hadUpdates;
-        }
-        continue;
-      }
-      node = new GridNode(item);
-      this.nodeForItem.set(item, node);
-      if (this.isVisibleFilter(node.item)) {
-        rootNode.appendChild(node);
-        hadUpdates = true;
-      }
-    }
-    if (hadUpdates) {
-      this.sortingChanged();
-    }
+  set items(items: Iterable<SDK.PageResourceLoader.PageResource>) {
+    this.#items = [...items];
+    this.requestUpdate();
   }
 
   reset(): void {
-    this.nodeForItem.clear();
-    this.dataGrid.rootNode().removeChildren();
+    this.items = [];
+    this.requestUpdate();
   }
 
-  updateFilterAndHighlight(highlightRegExp: RegExp|null): void {
-    this.highlightRegExp = highlightRegExp;
-    let hadTreeUpdates = false;
-    for (const node of this.nodeForItem.values()) {
-      const shouldBeVisible = this.isVisibleFilter(node.item);
-      const isVisible = Boolean(node.parent);
-      if (shouldBeVisible) {
-        node.setHighlight(this.highlightRegExp);
-      }
-      if (shouldBeVisible === isVisible) {
-        continue;
-      }
-      hadTreeUpdates = true;
-      if (!shouldBeVisible) {
-        node.remove();
+  set filters(filters: TextUtils.TextUtils.ParsedFilter[]) {
+    this.#filters = filters;
+    this.requestUpdate();
+    void this.updateComplete.then(() => {
+      const numberOfResourceMatch =
+          Number(this.contentElement.querySelector('devtools-data-grid')?.getAttribute('aria-rowcount')) ?? 0;
+      let resourceMatch = '';
+      if (numberOfResourceMatch === 0) {
+        resourceMatch = i18nString(UIStrings.noResourceMatches);
       } else {
-        this.dataGrid.rootNode().appendChild(node);
+        resourceMatch = i18nString(UIStrings.numberOfResourceMatch, {n: numberOfResourceMatch});
       }
-    }
-    if (hadTreeUpdates) {
-      this.sortingChanged();
-    }
+      UI.ARIAUtils.LiveAnnouncer.alert(resourceMatch);
+    });
   }
 
-  private sortingChanged(): void {
-    const columnId = this.dataGrid.sortColumnId();
-    if (!columnId) {
+  override performUpdate(): void {
+    const input = {
+      items: this.#items,
+      selectedItem: this.#selectedItem,
+      filters: this.#filters,
+      highlight: this.#highlight.bind(this),
+      onContextMenu: (e: CustomEvent<{menu: UI.ContextMenu.ContextMenu, element: HTMLElement}>) => {
+        if (e.detail?.element) {
+          this.#populateContextMenu(e.detail.menu, e.detail.element);
+        }
+      },
+      onSelect: (e: CustomEvent<HTMLElement|null>) => {
+        this.#selectedItem = e.detail ? this.#items[Number(e.detail.dataset.index)] : null;
+        this.#onSelect?.(this.#selectedItem);
+      },
+      onInitiatorMouseEnter: (frameId: Protocol.Page.FrameId|null) => {
+        const frame = frameId ? SDK.FrameManager.FrameManager.instance().getFrame(frameId) : null;
+        if (frame) {
+          void frame.highlight();
+        }
+      },
+      onInitiatorMouseLeave: () => {
+        SDK.OverlayModel.OverlayModel.hideDOMNodeHighlight();
+      },
+    };
+    const output = {};
+    this.#view(input, output, this.contentElement);
+  }
+
+  #highlight(element: Element|undefined, textContent: string|undefined, columnId: string): void {
+    if (!element || !textContent) {
       return;
     }
-
-    const sortFunction = GridNode.sortFunctionForColumn(columnId) as (
-                             (arg0: DataGrid.SortableDataGrid.SortableDataGridNode<GridNode>,
-                              arg1: DataGrid.SortableDataGrid.SortableDataGridNode<GridNode>) => number) |
-        null;
-    if (sortFunction) {
-      this.dataGrid.sortNodes(sortFunction, !this.dataGrid.isSortOrderAscending());
+    const highlightContainers =
+        new Set<Element>([...element.querySelectorAll('.filter-highlight')].map(e => e.parentElement as Element));
+    for (const container of highlightContainers) {
+      container.textContent = container.textContent;
     }
-  }
-  override wasShown(): void {
-    super.wasShown();
-    this.registerCSSFiles([developerResourcesListViewStyles]);
-  }
-}
-
-class GridNode extends DataGrid.SortableDataGrid.SortableDataGridNode<GridNode> {
-  item: SDK.PageResourceLoader.PageResource;
-  private highlightRegExp: RegExp|null;
-  constructor(item: SDK.PageResourceLoader.PageResource) {
-    super();
-    this.item = item;
-    this.highlightRegExp = null;
-  }
-
-  setHighlight(highlightRegExp: RegExp|null): void {
-    if (this.highlightRegExp === highlightRegExp) {
+    const filter = this.#filters.find(filter => filter.key?.split(',')?.includes(columnId));
+    if (!filter?.regex) {
       return;
     }
-    this.highlightRegExp = highlightRegExp;
-    this.refresh();
-  }
-
-  refreshIfNeeded(): boolean {
-    this.refresh();
-    return true;
-  }
-
-  override createCell(columnId: string): HTMLElement {
-    const cell = this.createTD(columnId) as HTMLElement;
-    switch (columnId) {
-      case 'url': {
-        UI.Tooltip.Tooltip.install(cell, this.item.url);
-        const outer = cell.createChild('div', 'url-outer');
-        const prefix = outer.createChild('div', 'url-prefix');
-        const suffix = outer.createChild('div', 'url-suffix');
-        const splitURL = /^(.*)(\/[^/]*)$/.exec(this.item.url);
-        prefix.textContent = splitURL ? splitURL[1] : this.item.url;
-        suffix.textContent = splitURL ? splitURL[2] : '';
-        if (this.highlightRegExp) {
-          this.highlight(outer, this.item.url);
-        }
-        this.setCellAccessibleName(this.item.url, cell, columnId);
-        break;
-      }
-      case 'initiator': {
-        const url = this.item.initiator.initiatorUrl || '';
-        cell.textContent = url;
-        UI.Tooltip.Tooltip.install(cell, url);
-        this.setCellAccessibleName(url, cell, columnId);
-        cell.onmouseenter = (): void => {
-          const frameId = this.item.initiator.frameId;
-          const frame = frameId ? SDK.FrameManager.FrameManager.instance().getFrame(frameId) : null;
-          if (frame) {
-            void frame.highlight();
-          }
-        };
-        cell.onmouseleave = (): void => SDK.OverlayModel.OverlayModel.hideDOMNodeHighlight();
-        break;
-      }
-      case 'status': {
-        if (this.item.success === null) {
-          cell.textContent = i18nString(UIStrings.pending);
-        } else {
-          cell.textContent = this.item.success ? i18nString(UIStrings.success) : i18nString(UIStrings.failure);
-        }
-        break;
-      }
-      case 'size': {
-        const size = this.item.size;
-        if (size !== null) {
-          const sizeSpan = cell.createChild('span');
-          sizeSpan.textContent = Platform.NumberUtilities.withThousandsSeparator(size);
-          const sizeAccessibleName = i18nString(UIStrings.sBytes, {n: size});
-          this.setCellAccessibleName(sizeAccessibleName, cell, columnId);
-        }
-        break;
-      }
-      case 'error-message': {
-        cell.classList.add('error-message');
-        if (this.item.errorMessage) {
-          cell.textContent = this.item.errorMessage;
-          if (this.highlightRegExp) {
-            this.highlight(cell, this.item.errorMessage);
-          }
-        }
-        break;
-      }
-    }
-    return cell;
-  }
-
-  private highlight(element: Element, textContent: string): void {
-    if (!this.highlightRegExp) {
-      return;
-    }
-    const matches = this.highlightRegExp.exec(textContent);
-    if (!matches || !matches.length) {
+    const matches = filter.regex.exec(element.textContent ?? '');
+    if (!matches?.length) {
       return;
     }
     const range = new TextUtils.TextRange.SourceRange(matches.index, matches[0].length);
     UI.UIUtils.highlightRangesWithStyleClass(element, [range], 'filter-highlight');
-  }
-
-  static sortFunctionForColumn(columnId: string): ((arg0: GridNode, arg1: GridNode) => number)|null {
-    const nullToNegative = (x: boolean|number|null): number => x === null ? -1 : Number(x);
-    switch (columnId) {
-      case 'url':
-        return (a: GridNode, b: GridNode): number => a.item.url.localeCompare(b.item.url);
-      case 'status':
-        return (a: GridNode, b: GridNode): number => {
-          return nullToNegative(a.item.success) - nullToNegative(b.item.success);
-        };
-      case 'size':
-        return (a: GridNode, b: GridNode): number => nullToNegative(a.item.size) - nullToNegative(b.item.size);
-      case 'initiator':
-        return (a: GridNode, b: GridNode): number =>
-                   (a.item.initiator.initiatorUrl || '').localeCompare(b.item.initiator.initiatorUrl || '');
-      case 'error-message':
-        return (a: GridNode, b: GridNode): number =>
-                   (a.item.errorMessage || '').localeCompare(b.item.errorMessage || '');
-      default:
-        console.assert(false, 'Unknown sort field: ' + columnId);
-        return null;
+    for (const el of element.querySelectorAll('.filter-highlight')) {
+      el.setAttribute('part', 'filter-highlight');
     }
   }
 }

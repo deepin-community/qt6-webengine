@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-vsigmoid/neon-p5.c.in
 //   Generator: tools/xngen
@@ -7,36 +8,51 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/vunary.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vunary.h"
 
 
 void xnn_f32_vsigmoid_ukernel__neon_rr2_p5_nr2recps_u8(
     size_t batch,
     const float* input,
     float* output,
-    const union xnn_f32_sigmoid_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f32_default_params* restrict params) XNN_OOB_READS
 {
   assert(batch != 0);
   assert(batch % sizeof(float) == 0);
   assert(input != NULL);
   assert(output != NULL);
 
-  const float32x4_t vmagic_bias = vld1q_dup_f32(&params->neon_rr2_p5.magic_bias);
-  const float32x4_t vminus_log2e = vld1q_dup_f32(&params->neon_rr2_p5.minus_log2e);
-  const float32x4_t vln2_hi = vld1q_dup_f32(&params->neon_rr2_p5.ln2_hi);
-  const float32x4_t vln2_lo = vld1q_dup_f32(&params->neon_rr2_p5.ln2_lo);
-  const float32x4_t vc5 = vld1q_dup_f32(&params->neon_rr2_p5.c5);
-  const float32x4_t vc4 = vld1q_dup_f32(&params->neon_rr2_p5.c4);
-  const float32x4_t vc3 = vld1q_dup_f32(&params->neon_rr2_p5.c3);
-  const float32x4_t vc2 = vld1q_dup_f32(&params->neon_rr2_p5.c2);
-  const float32x4_t vc1 = vld1q_dup_f32(&params->neon_rr2_p5.c1);
+  const float32x4_t vmagic_bias = vmovq_n_f32(0x1.8000FEp23f);
+  const float32x4_t vminus_log2e = vmovq_n_f32(-0x1.715476p0f);
+  const float32x4_t vc5 = vmovq_n_f32(-0x1.0F9F9Cp-7f);
+  const float32x4_t vc4 = vmovq_n_f32(0x1.573A1Ap-5f);
+  const float32x4_t vc3 = vmovq_n_f32(-0x1.555A80p-3f);
+  const float32x4_t vc2 = vmovq_n_f32(0x1.FFFDC6p-2f);
+  const float32x4_t vc1 = vmovq_n_f32(-0x1.FFFFF6p-1f);
   const float32x4_t vone = vmovq_n_f32(1.0f);
-  const float32x4_t vdenorm_cutoff = vld1q_dup_f32(&params->neon_rr2_p5.denorm_cutoff);
+  const float32x4_t vdenorm_cutoff = vmovq_n_f32(0x1.5D589Ep+6f);
+
+  XNN_FORCE_REALIZATION(vmagic_bias);
+  XNN_FORCE_REALIZATION(vminus_log2e);
+  XNN_FORCE_REALIZATION(vc5);
+  XNN_FORCE_REALIZATION(vc4);
+  XNN_FORCE_REALIZATION(vc3);
+  XNN_FORCE_REALIZATION(vc2);
+  XNN_FORCE_REALIZATION(vc1);
+  XNN_FORCE_REALIZATION(vone);
+  XNN_FORCE_REALIZATION(vdenorm_cutoff);
+
+  const float32x4_t vln2_hi = vmovq_n_f32(0x1.62E400p-1f);
+  const float32x4_t vln2_lo = vmovq_n_f32(0x1.7F7D1Cp-20f);
+  XNN_FORCE_REALIZATION(vln2_hi);
+  XNN_FORCE_REALIZATION(vln2_lo);
 
   for (; batch >= 8 * sizeof(float); batch -= 8 * sizeof(float)) {
     const float32x4_t vx0123 = vld1q_f32(input); input += 4;

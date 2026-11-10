@@ -22,9 +22,10 @@
 #include "base/metrics/user_metrics_action.h"
 #include "base/values.h"
 #include "chrome/browser/ash/login/lock/screen_locker.h"
-#include "chrome/browser/ash/login/ui/user_adding_screen.h"
+#include "chrome/browser/extensions/profile_util.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/ash/keyboard/chrome_keyboard_controller_client.h"
+#include "chrome/browser/ui/ash/login/user_adding_screen.h"
 #include "chrome/browser/ui/settings_window_manager_chromeos.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "chromeos/crosapi/mojom/clipboard_history.mojom.h"
@@ -74,7 +75,6 @@ keyboard::ContainerType ConvertKeyboardModeToContainerType(
   }
 
   NOTREACHED();
-  return keyboard::ContainerType::kFullWidth;
 }
 
 // Returns the ui::TextInputClient of the active InputMethod or nullptr.
@@ -112,9 +112,9 @@ bool SendKeyEventImpl(const std::string& type,
                       aura::WindowTreeHost* host) {
   ui::EventType event_type;
   if (type == kKeyDown)
-    event_type = ui::ET_KEY_PRESSED;
+    event_type = ui::EventType::kKeyPressed;
   else if (type == kKeyUp)
-    event_type = ui::ET_KEY_RELEASED;
+    event_type = ui::EventType::kKeyReleased;
   else
     return false;
 
@@ -123,17 +123,17 @@ bool SendKeyEventImpl(const std::string& type,
   if (code == ui::VKEY_UNKNOWN) {
     // Handling of special printable characters (e.g. accented characters) for
     // which there is no key code.
-    if (event_type == ui::ET_KEY_RELEASED) {
+    if (event_type == ui::EventType::kKeyReleased) {
       // This can be null if no text input field is focused.
       ui::TextInputClient* tic = GetFocusedTextInputClient();
 
-      SendProcessKeyEvent(ui::ET_KEY_PRESSED, host);
+      SendProcessKeyEvent(ui::EventType::kKeyPressed, host);
 
       ui::KeyEvent char_event = ui::KeyEvent::FromCharacter(
           key_value, code, ui::DomCode::NONE, ui::EF_NONE);
       if (tic)
         tic->InsertChar(char_event);
-      SendProcessKeyEvent(ui::ET_KEY_RELEASED, host);
+      SendProcessKeyEvent(ui::EventType::kKeyReleased, host);
     }
     return true;
   }
@@ -186,21 +186,6 @@ bool IsOndeviceHandwritingEnabledViaCommandLine() {
   return command_line->HasSwitch(::switches::kOndeviceHandwritingSwitch) &&
          command_line->GetSwitchValueASCII(
              ::switches::kOndeviceHandwritingSwitch) == "use_rootfs";
-}
-
-bool IsHandwritingLegacyRecognitionEnabled() {
-  // Disable handwriting DLC flags if device does not have on-device handwriting
-  // (see b/316981973).
-  return IsOndeviceHandwritingEnabledViaCommandLine() &&
-         base::FeatureList::IsEnabled(
-             ash::features::kHandwritingLegacyRecognition);
-}
-
-bool IsHandwritingLibraryDlcEnabled() {
-  // Disable handwriting DLC flags if device does not have on-device handwriting
-  // (see b/316981973).
-  return IsOndeviceHandwritingEnabledViaCommandLine() &&
-         base::FeatureList::IsEnabled(ash::features::kHandwritingLibraryDlc);
 }
 
 }  // namespace
@@ -315,7 +300,7 @@ bool ChromeVirtualKeyboardDelegate::ShowLanguageSettings() {
   base::RecordAction(
       base::UserMetricsAction("VirtualKeyboard.OpenLanguageSettings"));
   chrome::SettingsWindowManager::GetInstance()->ShowOSSettings(
-      ProfileManager::GetActiveUserProfile(),
+      profile_util::GetActiveUserProfile(),
       chromeos::settings::mojom::kInputSubpagePath);
   return true;
 }
@@ -329,7 +314,7 @@ bool ChromeVirtualKeyboardDelegate::ShowSuggestionSettings() {
   base::RecordAction(
       base::UserMetricsAction("VirtualKeyboard.OpenSuggestionSettings"));
   chrome::SettingsWindowManager::GetInstance()->ShowOSSettings(
-      ProfileManager::GetActiveUserProfile(),
+      profile_util::GetActiveUserProfile(),
       chromeos::settings::mojom::kInputSubpagePath);
   return true;
 }
@@ -478,6 +463,14 @@ bool ChromeVirtualKeyboardDelegate::IsSettingsEnabled() {
 }
 
 void ChromeVirtualKeyboardDelegate::OnClipboardHistoryItemsUpdated() {
+  // Clipboard history is only used for multipaste in the virtual keyboard, so
+  // there is no need to act on clipboard history events when the virtual
+  // keyboard is disabled.
+  if (!ChromeKeyboardControllerClient::HasInstance() ||
+      !ChromeKeyboardControllerClient::Get()->is_keyboard_enabled()) {
+    return;
+  }
+
   EventRouter* router = GetRouterForEventName(
       browser_context_, keyboard_api::OnClipboardHistoryChanged::kEventName);
   if (!router)
@@ -525,42 +518,29 @@ void ChromeVirtualKeyboardDelegate::OnHasInputDevices(
   features.Append(GenerateFeatureFlag("spellcheck", config.spell_check));
   features.Append(GenerateFeatureFlag("handwriting", config.handwriting));
   features.Append(GenerateFeatureFlag(
-      "handwritinggesture",
-      base::FeatureList::IsEnabled(features::kHandwritingGesture)));
-  features.Append(GenerateFeatureFlag("handwritinglegacyrecognition",
-                                      IsHandwritingLegacyRecognitionEnabled()));
-  features.Append(GenerateFeatureFlag(
       "hindiinscriptlayout",
       base::FeatureList::IsEnabled(ash::features::kHindiInscriptLayout)));
   features.Append(GenerateFeatureFlag(
       "multiword",
       base::FeatureList::IsEnabled(ash::features::kAssistMultiWord)));
-  features.Append(GenerateFeatureFlag(
-      "stylushandwriting",
-      base::FeatureList::IsEnabled(ash::features::kImeStylusHandwriting)));
-  features.Append(GenerateFeatureFlag(
-      "newheader",
-      base::FeatureList::IsEnabled(ash::features::kVirtualKeyboardNewHeader)));
-  features.Append(GenerateFeatureFlag(
-      "roundCorners", base::FeatureList::IsEnabled(
-                          ash::features::kVirtualKeyboardRoundCorners)));
+  features.Append(GenerateFeatureFlag("stylushandwriting", false));
+  features.Append(GenerateFeatureFlag("roundCorners", false));
   features.Append(
       GenerateFeatureFlag("systemjapanesephysicaltyping",
                           base::FeatureList::IsEnabled(
                               ash::features::kSystemJapanesePhysicalTyping)));
   features.Append(GenerateFeatureFlag(
-      "multilingualtyping",
-      base::FeatureList::IsEnabled(ash::features::kMultilingualTyping)));
-  features.Append(GenerateFeatureFlag(
       "autocorrectparamstuning",
       base::FeatureList::IsEnabled(ash::features::kAutocorrectParamsTuning)));
-  features.Append(GenerateFeatureFlag("handwritinglibrarydlc",
-                                      IsHandwritingLibraryDlcEnabled()));
-  features.Append(
-      GenerateFeatureFlag("jelly", chromeos::features::IsJellyEnabled()));
+  features.Append(GenerateFeatureFlag("jelly", true));
   features.Append(GenerateFeatureFlag(
       "japanesefunctionrow",
       base::FeatureList::IsEnabled(ash::features::kJapaneseFunctionRow)));
+  features.Append(GenerateFeatureFlag(
+      "usemlservicefornonlongformhandwriting",
+      base::FeatureList::IsEnabled(
+          ash::features::kUseMlServiceForNonLongformHandwritingOnAllBoards) ||
+          IsOndeviceHandwritingEnabledViaCommandLine()));
 
   results.Set("features", std::move(features));
 

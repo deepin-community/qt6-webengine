@@ -3,64 +3,71 @@
 // found in the LICENSE file.
 
 #include "media/capture/video/linux/v4l2_gpu_memory_buffer_tracker.h"
+
+#include <optional>
+
+#include "components/viz/common/resources/shared_image_format.h"
+#include "gpu/command_buffer/client/client_shared_image.h"
+#include "gpu/command_buffer/client/shared_image_interface.h"
 #include "media/capture/video/video_capture_buffer_handle.h"
 #include "media/capture/video_capture_types.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace media {
 
 namespace {
-// Converts the video pixel format |pixel_format| to gfx::BufferFormat.
-absl::optional<gfx::BufferFormat> ToBufferFormat(
+// Converts the video pixel format |pixel_format| to viz::SharedImageFormat.
+std::optional<viz::SharedImageFormat> ToSharedImageFormat(
     VideoPixelFormat pixel_format) {
   switch (pixel_format) {
     case PIXEL_FORMAT_NV12:
-      return gfx::BufferFormat::YUV_420_BIPLANAR;
+      return viz::MultiPlaneFormat::kNV12;
     default:
-      return absl::nullopt;
+      return std::nullopt;
   }
 }
 
-gfx::BufferUsage GetBufferUsage(gfx::BufferFormat format) {
-  switch (format) {
-    case gfx::BufferFormat::YUV_420_BIPLANAR:
-      return gfx::BufferUsage::GPU_READ_CPU_READ_WRITE;
-    default:
-      // Default usage for YUV camera buffer.
-      return gfx::BufferUsage::SCANOUT_CPU_READ_WRITE;
+gfx::BufferUsage GetBufferUsage(viz::SharedImageFormat format) {
+  if (format == viz::MultiPlaneFormat::kNV12) {
+    return gfx::BufferUsage::GPU_READ_CPU_READ_WRITE;
   }
+  // Default usage for YUV camera buffer.
+  return gfx::BufferUsage::SCANOUT_CPU_READ_WRITE;
 }
 }  // namespace
 
 V4L2GpuMemoryBufferTracker::V4L2GpuMemoryBufferTracker() = default;
 V4L2GpuMemoryBufferTracker::~V4L2GpuMemoryBufferTracker() {
-  if (is_valid_) {
-    VideoCaptureGpuChannelHost::GetInstance().RemoveObserver(this);
-  }
+  VideoCaptureGpuChannelHost::GetInstance().RemoveObserver(this);
 }
 
 bool V4L2GpuMemoryBufferTracker::Init(const gfx::Size& dimensions,
                                       VideoPixelFormat format,
                                       const mojom::PlaneStridesPtr& strides) {
-  absl::optional<gfx::BufferFormat> gfx_format = ToBufferFormat(format);
-  if (!gfx_format) {
+  std::optional<viz::SharedImageFormat> si_format = ToSharedImageFormat(format);
+  if (!si_format) {
     DLOG(ERROR) << "Unsupported VideoPixelFormat "
                 << VideoPixelFormatToString(format);
     return false;
   }
-  gpu::GpuMemoryBufferManager* gpu_buffer_manager =
-      VideoCaptureGpuChannelHost::GetInstance().GetGpuMemoryBufferManager();
-  if (!gpu_buffer_manager) {
-    DLOG(ERROR) << "Invalid GPU memory buffer manager!";
+  gfx::BufferUsage usage = GetBufferUsage(*si_format);
+
+  auto sii =
+      VideoCaptureGpuChannelHost::GetInstance().GetSharedImageInterface();
+  if (!sii) {
+    LOG(ERROR) << "Failed to get SharedImageInterface.";
     return false;
   }
 
-  gfx::BufferUsage usage = GetBufferUsage(*gfx_format);
-  buffer_ = gpu_buffer_manager->CreateGpuMemoryBuffer(
-      dimensions, *gfx_format, usage, gpu::kNullSurfaceHandle, nullptr);
-  if (!buffer_) {
-    DLOG(ERROR) << "Failed to create GPU memory buffer";
+  // Setting some default usage in order to get a mappable shared image.
+  const auto si_usage = gpu::SHARED_IMAGE_USAGE_CPU_WRITE_ONLY |
+                        gpu::SHARED_IMAGE_USAGE_DISPLAY_READ;
+  shared_image_ = sii->CreateSharedImage(
+      {*si_format, dimensions, gfx::ColorSpace(),
+       gpu::SharedImageUsageSet(si_usage), "V4L2GpuMemoryBufferTracker"},
+      gpu::kNullSurfaceHandle, usage);
+  if (!shared_image_) {
+    LOG(ERROR) << "Failed to create a mappable shared image.";
     return false;
   }
 
@@ -77,28 +84,27 @@ bool V4L2GpuMemoryBufferTracker::IsReusableForFormat(
     return false;
   }
 
-  absl::optional<gfx::BufferFormat> gfx_format = ToBufferFormat(format);
-  if (!gfx_format) {
+  std::optional<viz::SharedImageFormat> si_format = ToSharedImageFormat(format);
+  if (!si_format) {
     return false;
   }
-  return (*gfx_format == buffer_->GetFormat() &&
-          dimensions == buffer_->GetSize());
+  return (*si_format == shared_image_->format() &&
+          dimensions == shared_image_->size());
 }
 
 std::unique_ptr<VideoCaptureBufferHandle>
 V4L2GpuMemoryBufferTracker::GetMemoryMappedAccess() {
-  NOTREACHED_NORETURN() << "Unsupported operation";
+  NOTREACHED() << "Unsupported operation";
 }
 
 base::UnsafeSharedMemoryRegion
 V4L2GpuMemoryBufferTracker::DuplicateAsUnsafeRegion() {
-  NOTREACHED_NORETURN() << "Unsupported operation";
+  NOTREACHED() << "Unsupported operation";
 }
 
 gfx::GpuMemoryBufferHandle
 V4L2GpuMemoryBufferTracker::GetGpuMemoryBufferHandle() {
-  DCHECK(buffer_);
-  return buffer_->CloneHandle();
+  return shared_image_->CloneGpuMemoryBufferHandle();
 }
 
 VideoCaptureBufferType V4L2GpuMemoryBufferTracker::GetBufferType() {
@@ -106,13 +112,10 @@ VideoCaptureBufferType V4L2GpuMemoryBufferTracker::GetBufferType() {
 }
 
 uint32_t V4L2GpuMemoryBufferTracker::GetMemorySizeInBytes() {
-  DCHECK(buffer_);
-  switch (buffer_->GetFormat()) {
-    case gfx::BufferFormat::YUV_420_BIPLANAR:
-      return buffer_->GetSize().width() * buffer_->GetSize().height() * 3 / 2;
-    default:
-      NOTREACHED_NORETURN() << "Unsupported gfx buffer format";
+  if (shared_image_->format() == viz::MultiPlaneFormat::kNV12) {
+    return shared_image_->format().EstimatedSizeInBytes(shared_image_->size());
   }
+  NOTREACHED() << "Unsupported shared image format";
 }
 
 void V4L2GpuMemoryBufferTracker::OnContextLost() {

@@ -18,15 +18,16 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <utility>
 #include <vector>
 
-#include "./centipede/defs.h"
 #include "./centipede/execution_metadata.h"
 #include "./centipede/knobs.h"
 #include "./centipede/mutation_input.h"
+#include "./common/defs.h"
 
-namespace centipede {
+namespace fuzztest::internal {
 
 //============= CmpDictionary ===============
 bool CmpDictionary::SetFromMetadata(const ExecutionMetadata &metadata) {
@@ -320,18 +321,18 @@ void ByteArrayMutator::CrossOver(ByteArray &data, const ByteArray &other) {
 // TODO(kcc): add tests with different values of knobs.
 const KnobId knob_mutate_or_crossover = Knobs::NewId("mutate_or_crossover");
 
-void ByteArrayMutator::MutateMany(const std::vector<MutationInputRef> &inputs,
-                                  size_t num_mutants,
-                                  std::vector<ByteArray> &mutants) {
+std::vector<ByteArray> ByteArrayMutator::MutateMany(
+    const std::vector<MutationInputRef> &inputs, size_t num_mutants) {
   if (inputs.empty()) abort();
   // TODO(xinhaoyuan): Consider metadata in other inputs instead of always the
   // first one.
   SetMetadata(inputs[0].metadata != nullptr ? *inputs[0].metadata
                                             : ExecutionMetadata());
   size_t num_inputs = inputs.size();
-  mutants.resize(num_mutants);
-  for (auto &mutant : mutants) {
-    mutant = inputs[rng_() % num_inputs].data;
+  std::vector<ByteArray> mutants;
+  mutants.reserve(num_mutants);
+  for (size_t i = 0; i < num_mutants; ++i) {
+    auto mutant = inputs[rng_() % num_inputs].data;
     if (mutant.size() <= max_len_ &&
         knobs_.GenerateBool(knob_mutate_or_crossover, rng_())) {
       // Do crossover only if the mutant is not over the max_len_.
@@ -342,7 +343,9 @@ void ByteArrayMutator::MutateMany(const std::vector<MutationInputRef> &inputs,
       // Perform mutation.
       Mutate(mutant);
     }
+    mutants.push_back(std::move(mutant));
   }
+  return mutants;
 }
 
-}  // namespace centipede
+}  // namespace fuzztest::internal

@@ -13,6 +13,7 @@
 #import "base/sequence_checker.h"
 #import "base/test/bind.h"
 #import "base/test/gmock_callback_support.h"
+#import "base/test/task_environment.h"
 #import "base/uuid.h"
 #import "components/download/internal/background_service/test/background_download_test_base.h"
 #import "components/download/public/background_service/download_params.h"
@@ -31,7 +32,7 @@ namespace download {
 class BackgroundDownloadTaskHelperTest
     : public test::BackgroundDownloadTestBase {
  protected:
-  BackgroundDownloadTaskHelperTest() {}
+  BackgroundDownloadTaskHelperTest() = default;
   ~BackgroundDownloadTaskHelperTest() override = default;
 
   void SetUp() override {
@@ -56,11 +57,12 @@ class BackgroundDownloadTaskHelperTest
   BackgroundDownloadTaskHelper* helper() { return helper_.get(); }
 
  private:
+  base::test::TaskEnvironment task_environment_;
   std::unique_ptr<BackgroundDownloadTaskHelper> helper_;
 };
 
 // Verifies download can be finished.
-// TODO(crbug/1367306): Re-enable the test.
+// TODO(crbug.com/40239993): Re-enable the test.
 TEST_F(BackgroundDownloadTaskHelperTest, DISABLED_DownloadComplete) {
   base::RunLoop loop;
   std::string guid = base::Uuid::GenerateRandomV4().AsLowercaseString();
@@ -86,7 +88,7 @@ TEST_F(BackgroundDownloadTaskHelperTest, DISABLED_DownloadComplete) {
 }
 
 // Verifies non success http code is treated as error.
-// TODO(crbug/1367306): Re-enable the test.
+// TODO(crbug.com/40239993): Re-enable the test.
 TEST_F(BackgroundDownloadTaskHelperTest,
        DISABLED_DownloadErrorNonSuccessHttpCode) {
   base::RunLoop loop;
@@ -104,7 +106,7 @@ TEST_F(BackgroundDownloadTaskHelperTest,
 }
 
 // Verifies data URL should result in failure.
-// TODO(crbug/1367306): Re-enable the test.
+// TODO(crbug.com/40239993): Re-enable the test.
 TEST_F(BackgroundDownloadTaskHelperTest, DISABLED_DataURL) {
   base::RunLoop loop;
   std::string guid = base::Uuid::GenerateRandomV4().AsLowercaseString();

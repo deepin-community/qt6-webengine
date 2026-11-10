@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "partition_alloc/partition_alloc_base/time/time.h"
 
 #import <Foundation/Foundation.h>
@@ -15,11 +20,11 @@
 #include <cstdint>
 #include <ctime>
 
-#if BUILDFLAG(IS_IOS)
+#if PA_BUILDFLAG(IS_IOS)
 #include <cerrno>
 #endif
 
-#include "build/build_config.h"
+#include "partition_alloc/build_config.h"
 #include "partition_alloc/partition_alloc_base/check.h"
 #include "partition_alloc/partition_alloc_base/logging.h"
 #include "partition_alloc/partition_alloc_base/numerics/safe_conversions.h"
@@ -31,7 +36,7 @@ namespace {
 
 // Returns a pointer to the initialized Mach timebase info struct.
 mach_timebase_info_data_t* MachTimebaseInfo() {
-  static mach_timebase_info_data_t timebase_info = []() {
+  static mach_timebase_info_data_t timebase_info = [] {
     mach_timebase_info_data_t info;
     kern_return_t kr = mach_timebase_info(&info);
     PA_BASE_DCHECK(kr == KERN_SUCCESS) << "mach_timebase_info";

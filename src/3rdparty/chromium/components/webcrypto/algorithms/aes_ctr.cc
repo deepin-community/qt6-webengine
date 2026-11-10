@@ -10,10 +10,10 @@
 #include <memory>
 
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/numerics/safe_math.h"
-#include "base/strings/string_piece.h"
 #include "components/webcrypto/algorithms/aes.h"
 #include "components/webcrypto/algorithms/util.h"
 #include "components/webcrypto/blink_key_handle.h"
@@ -64,7 +64,8 @@ Status AesCtrEncrypt128BitCounter(const EVP_CIPHER* cipher,
     return Status::OperationError();
   }
   int final_output_chunk_len = 0;
-  if (!EVP_CipherFinal_ex(context.get(), output.data() + output_len,
+  if (!EVP_CipherFinal_ex(context.get(),
+                          UNSAFE_TODO(output.data() + output_len),
                           &final_output_chunk_len)) {
     return Status::OperationError();
   }
@@ -84,19 +85,20 @@ T CeilDiv(T a, T b) {
 
 // Extracts the counter as a `absl::uint128`. The counter is the rightmost
 // `counter_length_bits` of the block, interpreted as a big-endian number.
-absl::uint128 GetCounter(base::span<const uint8_t, 16> counter_block,
-                         unsigned int counter_length_bits) {
+absl::uint128 GetCounter(
+    base::span<const uint8_t, AES_BLOCK_SIZE> counter_block,
+    unsigned int counter_length_bits) {
   unsigned int counter_length_remainder_bits = counter_length_bits % 8;
   unsigned int byte_length = CeilDiv(counter_length_bits, 8u);
   DCHECK_GT(byte_length, 0u);
 
-  base::span<const uint8_t> suffix = counter_block.last(byte_length);
+  base::span suffix = counter_block.last(byte_length);
   absl::uint128 ret = suffix[0];
   // The first byte may be partial.
   if (counter_length_remainder_bits != 0) {
     ret &= ~(0xFF << counter_length_remainder_bits);
   }
-  for (uint8_t b : suffix.subspan(1)) {
+  for (uint8_t b : suffix.subspan<1>()) {
     ret = (ret << 8) | b;
   }
   return ret;
@@ -110,10 +112,12 @@ std::array<uint8_t, AES_BLOCK_SIZE> BlockWithZeroedCounter(
   unsigned int counter_length_bits_remainder = counter_length_bits % 8;
 
   std::array<uint8_t, AES_BLOCK_SIZE> new_counter_block;
-  memcpy(new_counter_block.data(), counter_block.data(), AES_BLOCK_SIZE);
+  UNSAFE_TODO(
+      memcpy(new_counter_block.data(), counter_block.data(), AES_BLOCK_SIZE));
 
   size_t index = new_counter_block.size() - counter_length_bytes;
-  memset(&new_counter_block.front() + index, 0, counter_length_bytes);
+  UNSAFE_TODO(
+      memset(&new_counter_block.front() + index, 0, counter_length_bytes));
 
   if (counter_length_bits_remainder) {
     new_counter_block[index - 1] &= 0xFF << counter_length_bits_remainder;
@@ -146,8 +150,8 @@ Status AesCtrEncryptDecrypt(const blink::WebCryptoAlgorithm& algorithm,
 
   if (params->Counter().size() != AES_BLOCK_SIZE)
     return Status::ErrorIncorrectSizeAesCtrCounter();
-  base::span<const uint8_t, AES_BLOCK_SIZE> counter_block(
-      params->Counter().data(), params->Counter().size());
+  auto counter_block =
+      *base::span(params->Counter()).to_fixed_extent<AES_BLOCK_SIZE>();
 
   unsigned int counter_length_bits = params->LengthBits();
   if (counter_length_bits < 1 || counter_length_bits > 128)
@@ -205,10 +209,8 @@ Status AesCtrEncryptDecrypt(const blink::WebCryptoAlgorithm& algorithm,
   size_t input_size_part1 =
       static_cast<size_t>(num_blocks_until_reset * AES_BLOCK_SIZE);
   DCHECK_LT(input_size_part1, data.size());
-  base::span<uint8_t> output_part1 =
-      base::make_span(*buffer).first(input_size_part1);
-  base::span<uint8_t> output_part2 =
-      base::make_span(*buffer).subspan(input_size_part1);
+  const auto [output_part1, output_part2] =
+      base::span(*buffer).split_at(input_size_part1);
 
   // Encrypt the first part (before wrap-around).
   Status status =

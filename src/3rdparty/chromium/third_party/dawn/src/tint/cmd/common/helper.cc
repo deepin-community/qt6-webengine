@@ -27,6 +27,7 @@
 
 #include "src/tint/cmd/common/helper.h"
 
+#include <cstdio>
 #include <iostream>
 #include <utility>
 #include <vector>
@@ -37,7 +38,6 @@
 #endif
 
 #if TINT_BUILD_WGSL_WRITER
-#include "src/tint/lang/wgsl/writer/ir_to_program/ir_to_program.h"
 #include "src/tint/lang/wgsl/writer/writer.h"
 #endif
 
@@ -45,10 +45,13 @@
 #include "src/tint/lang/wgsl/reader/reader.h"
 #endif
 
+#include "src/tint/lang/core/ir/disassembler.h"
 #include "src/tint/utils/diagnostic/formatter.h"
-#include "src/tint/utils/diagnostic/printer.h"
+#include "src/tint/utils/rtti/traits.h"
 #include "src/tint/utils/text/string.h"
-#include "src/tint/utils/traits/traits.h"
+#include "src/tint/utils/text/styled_text.h"
+#include "src/tint/utils/text/styled_text_printer.h"
+#include "src/tint/utils/text/text_style.h"
 
 namespace tint::cmd {
 namespace {
@@ -63,7 +66,8 @@ enum class InputFormat {
 /// @param out the stream to write to
 /// @param value the InputFormat
 /// @returns @p out so calls can be chained
-template <typename STREAM, typename = traits::EnableIfIsOStream<STREAM>>
+template <typename STREAM>
+    requires(traits::IsOStream<STREAM>)
 auto& operator<<(STREAM& out, InputFormat value) {
     switch (value) {
         case InputFormat::kUnknown:
@@ -93,47 +97,44 @@ InputFormat InputFormatFromFilename(const std::string& filename) {
 void PrintBindings(tint::inspector::Inspector& inspector, const std::string& ep_name) {
     auto bindings = inspector.GetResourceBindings(ep_name);
     if (!inspector.error().empty()) {
-        std::cerr << "Failed to get bindings from Inspector: " << inspector.error() << std::endl;
+        std::cerr << "Failed to get bindings from Inspector: " << inspector.error() << "\n";
         exit(1);
     }
     for (auto& binding : bindings) {
-        std::cout << "\t[" << binding.bind_group << "][" << binding.binding << "]:" << std::endl;
-        std::cout << "\t\t resource_type = " << ResourceTypeToString(binding.resource_type)
-                  << std::endl;
-        std::cout << "\t\t dim = " << TextureDimensionToString(binding.dim) << std::endl;
-        std::cout << "\t\t sampled_kind = " << SampledKindToString(binding.sampled_kind)
-                  << std::endl;
-        std::cout << "\t\t image_format = " << TexelFormatToString(binding.image_format)
-                  << std::endl;
-
-        std::cout << std::endl;
+        std::cout << "\t[" << binding.bind_group << "][" << binding.binding << "]:\n"
+                  << "\t\t resource_type = " << ResourceTypeToString(binding.resource_type) << "\n"
+                  << "\t\t dim = " << TextureDimensionToString(binding.dim) << "\n"
+                  << "\t\t sampled_kind = " << SampledKindToString(binding.sampled_kind) << "\n"
+                  << "\t\t image_format = " << TexelFormatToString(binding.image_format) << "\n\n";
     }
 }
 
 #if TINT_BUILD_SPV_READER
 tint::Program ReadSpirv(const std::vector<uint32_t>& data, const LoadProgramOptions& opts) {
-    if (opts.use_ir) {
+    if (opts.use_ir_reader) {
 #if TINT_BUILD_WGSL_WRITER
         // Parse the SPIR-V binary to a core Tint IR module.
-        auto result = tint::spirv::reader::ReadIR(data);
+        auto result = tint::spirv::reader::ReadIR(data, opts.spirv_reader_options);
         if (result != Success) {
             std::cerr << "Failed to parse SPIR-V: " << result.Failure() << "\n";
             exit(1);
         }
 
-        // Convert the IR module to a WGSL AST program.
-        tint::wgsl::writer::ProgramOptions options;
-        options.allow_non_uniform_derivatives =
+        // Convert the IR module to a Program.
+        tint::wgsl::writer::ProgramOptions writer_options;
+        writer_options.allow_non_uniform_derivatives =
             opts.spirv_reader_options.allow_non_uniform_derivatives;
-        options.allowed_features = opts.spirv_reader_options.allowed_features;
-        auto ast = tint::wgsl::writer::IRToProgram(result.Get(), options);
-        if (!ast.IsValid() || ast.Diagnostics().contains_errors()) {
-            std::cerr << "Failed to convert IR to AST:\n\n" << ast.Diagnostics() << "\n";
+        writer_options.allowed_features = opts.spirv_reader_options.allowed_features;
+        auto prog_result = tint::wgsl::writer::ProgramFromIR(result.Get(), writer_options);
+        if (prog_result != Success) {
+            std::cerr << "Failed to convert IR to Program:\n\n" << prog_result.Failure() << "\n\n";
+            std::cerr << tint::core::ir::Disassembler(result.Get()).Plain() << "\n";
             exit(1);
         }
-        return ast;
+
+        return prog_result.Move();
 #else
-        std::cerr << "Tint not built with the WGSL writer enabled" << std::endl;
+        std::cerr << "Tint not built with the WGSL writer enabled\n";
         exit(1);
 #endif  // TINT_BUILD_WGSL_READER
     } else {
@@ -144,30 +145,14 @@ tint::Program ReadSpirv(const std::vector<uint32_t>& data, const LoadProgramOpti
 
 }  // namespace
 
-[[noreturn]] void TintInternalCompilerErrorReporter(const InternalCompilerError& err) {
-    auto printer = diag::Printer::create(stderr, true);
-    diag::Style bold_red{diag::Color::kRed, true};
-    printer->write(err.Error(), bold_red);
-    constexpr const char* please_file_bug = R"(
-********************************************************************
-*  The tint shader compiler has encountered an unexpected error.   *
-*                                                                  *
-*  Please help us fix this issue by submitting a bug report at     *
-*  crbug.com/tint with the source program that triggered the bug.  *
-********************************************************************
-)";
-    printer->write(please_file_bug, bold_red);
-    exit(1);
-}
-
 void PrintWGSL(std::ostream& out, const tint::Program& program) {
 #if TINT_BUILD_WGSL_WRITER
     tint::wgsl::writer::Options options;
     auto result = tint::wgsl::writer::Generate(program, options);
     if (result == Success) {
-        out << std::endl << result->wgsl << std::endl;
+        out << "\n" << result->wgsl << "\n";
     } else {
-        out << result.Failure() << std::endl;
+        out << result.Failure() << "\n";
     }
 #else
     (void)out;
@@ -201,7 +186,7 @@ ProgramInfo LoadProgramInfo(const LoadProgramOptions& opts) {
                     /* source_file */ std::move(file),
                 };
 #else
-                std::cerr << "Tint not built with the WGSL reader enabled" << std::endl;
+                std::cerr << "Tint not built with the WGSL reader enabled\n";
                 exit(1);
 #endif  // TINT_BUILD_WGSL_READER
             }
@@ -217,7 +202,7 @@ ProgramInfo LoadProgramInfo(const LoadProgramOptions& opts) {
                     /* source_file */ nullptr,
                 };
 #else
-                std::cerr << "Tint not built with the SPIR-V reader enabled" << std::endl;
+                std::cerr << "Tint not built with the SPIR-V reader enabled\n";
                 exit(1);
 #endif  // TINT_BUILD_SPV_READER
             }
@@ -231,8 +216,7 @@ ProgramInfo LoadProgramInfo(const LoadProgramOptions& opts) {
                 spvtools::SpirvTools tools(SPV_ENV_VULKAN_1_1);
                 tools.SetMessageConsumer([](spv_message_level_t, const char*,
                                             const spv_position_t& pos, const char* msg) {
-                    std::cerr << (pos.line + 1) << ":" << (pos.column + 1) << ": " << msg
-                              << std::endl;
+                    std::cerr << (pos.line + 1) << ":" << (pos.column + 1) << ": " << msg << "\n";
                 });
                 std::vector<uint32_t> data;
                 if (!tools.Assemble(text.data(), text.size(), &data,
@@ -248,28 +232,35 @@ ProgramInfo LoadProgramInfo(const LoadProgramOptions& opts) {
                     /* source_file */ std::move(file),
                 };
 #else
-                std::cerr << "Tint not built with the SPIR-V reader enabled" << std::endl;
+                std::cerr << "Tint not built with the SPIR-V reader enabled\n";
                 exit(1);
 #endif  // TINT_BUILD_SPV_READER
             }
         }
 
-        std::cerr << "Unknown input format: " << input_format << std::endl;
+        std::cerr << "Unknown input format: " << input_format << "\n";
         exit(1);
     };
 
     ProgramInfo info = load();
 
-    if (info.program.Diagnostics().count() > 0) {
+    if (info.program.Diagnostics().Count() > 0) {
         if (!info.program.IsValid() && input_format != InputFormat::kWgsl) {
             // Invalid program from a non-wgsl source.
             // Print the WGSL, to help understand the diagnostics.
             PrintWGSL(std::cout, info.program);
         }
 
-        auto diag_printer = tint::diag::Printer::create(stderr, true);
-        tint::diag::Formatter diag_formatter;
-        diag_formatter.format(info.program.Diagnostics(), diag_printer.get());
+        tint::diag::Formatter formatter;
+        if (opts.printer) {
+            opts.printer->Print(formatter.Format(info.program.Diagnostics()));
+        } else {
+            tint::StyledTextPrinter::Create(stderr)->Print(
+                formatter.Format(info.program.Diagnostics()));
+        }
+        // Flush any diagnostics written to stderr. We depend on these being emitted to the console
+        // before the program for end-to-end tests.
+        fflush(stderr);
     }
 
     if (!info.program.IsValid()) {
@@ -282,23 +273,22 @@ ProgramInfo LoadProgramInfo(const LoadProgramOptions& opts) {
 void PrintInspectorData(tint::inspector::Inspector& inspector) {
     auto entry_points = inspector.GetEntryPoints();
     if (!inspector.error().empty()) {
-        std::cerr << "Failed to get entry points from Inspector: " << inspector.error()
-                  << std::endl;
+        std::cerr << "Failed to get entry points from Inspector: " << inspector.error() << "\n";
         exit(1);
     }
 
     for (auto& entry_point : entry_points) {
         std::cout << "Entry Point = " << entry_point.name << " ("
-                  << EntryPointStageToString(entry_point.stage) << ")" << std::endl;
+                  << EntryPointStageToString(entry_point.stage) << ")\n";
 
         if (entry_point.workgroup_size) {
             std::cout << "  Workgroup Size (" << entry_point.workgroup_size->x << ", "
                       << entry_point.workgroup_size->y << ", " << entry_point.workgroup_size->z
-                      << ")" << std::endl;
+                      << ")\n";
         }
 
         if (!entry_point.input_variables.empty()) {
-            std::cout << "  Input Variables:" << std::endl;
+            std::cout << "  Input Variables:\n";
 
             for (const auto& var : entry_point.input_variables) {
                 std::cout << "\t";
@@ -310,11 +300,11 @@ void PrintInspectorData(tint::inspector::Inspector& inspector) {
                 if (auto color = var.attributes.color) {
                     std::cout << "@color(" << color.value() << ") ";
                 }
-                std::cout << var.name << std::endl;
+                std::cout << var.name << "\n";
             }
         }
         if (!entry_point.output_variables.empty()) {
-            std::cout << "  Output Variables:" << std::endl;
+            std::cout << "  Output Variables:\n";
 
             for (const auto& var : entry_point.output_variables) {
                 std::cout << "\t";
@@ -322,49 +312,47 @@ void PrintInspectorData(tint::inspector::Inspector& inspector) {
                 if (auto location = var.attributes.location) {
                     std::cout << "@location(" << location.value() << ") ";
                 }
-                std::cout << var.name << std::endl;
+                std::cout << var.name << "\n";
             }
         }
         if (!entry_point.overrides.empty()) {
-            std::cout << "  Overrides:" << std::endl;
+            std::cout << "  Overrides:\n";
 
             for (const auto& var : entry_point.overrides) {
-                std::cout << "\tname: " << var.name << std::endl;
-                std::cout << "\tid: " << var.id.value << std::endl;
+                std::cout << "\tname: " << var.name << "\n";
+                std::cout << "\tid: " << var.id.value << "\n";
             }
         }
 
         auto bindings = inspector.GetResourceBindings(entry_point.name);
         if (!inspector.error().empty()) {
-            std::cerr << "Failed to get bindings from Inspector: " << inspector.error()
-                      << std::endl;
+            std::cerr << "Failed to get bindings from Inspector: " << inspector.error() << "\n";
             exit(1);
         }
 
         if (!bindings.empty()) {
-            std::cout << "  Bindings:" << std::endl;
+            std::cout << "  Bindings:\n";
             PrintBindings(inspector, entry_point.name);
-            std::cout << std::endl;
+            std::cout << "\n";
         }
 
-        std::cout << std::endl;
+        std::cout << "\n";
     }
 }
 
 void PrintInspectorBindings(tint::inspector::Inspector& inspector) {
-    std::cout << std::string(80, '-') << std::endl;
+    std::cout << std::string(80, '-') << "\n";
     auto entry_points = inspector.GetEntryPoints();
     if (!inspector.error().empty()) {
-        std::cerr << "Failed to get entry points from Inspector: " << inspector.error()
-                  << std::endl;
+        std::cerr << "Failed to get entry points from Inspector: " << inspector.error() << "\n";
         exit(1);
     }
 
     for (auto& entry_point : entry_points) {
-        std::cout << "Entry Point = " << entry_point.name << std::endl;
+        std::cout << "Entry Point = " << entry_point.name << "\n";
         PrintBindings(inspector, entry_point.name);
     }
-    std::cout << std::string(80, '-') << std::endl;
+    std::cout << std::string(80, '-') << "\n";
 }
 
 std::string EntryPointStageToString(tint::inspector::PipelineStage stage) {
@@ -439,6 +427,10 @@ std::string TexelFormatToString(tint::inspector::ResourceBinding::TexelFormat fo
             return "Rg32Sint";
         case tint::inspector::ResourceBinding::TexelFormat::kRg32Float:
             return "Rg32Float";
+        case tint::inspector::ResourceBinding::TexelFormat::kRgba16Unorm:
+            return "Rgba16Unorm";
+        case tint::inspector::ResourceBinding::TexelFormat::kRgba16Snorm:
+            return "Rgba16Snorm";
         case tint::inspector::ResourceBinding::TexelFormat::kRgba16Uint:
             return "Rgba16Uint";
         case tint::inspector::ResourceBinding::TexelFormat::kRgba16Sint:
@@ -451,6 +443,48 @@ std::string TexelFormatToString(tint::inspector::ResourceBinding::TexelFormat fo
             return "Rgba32Sint";
         case tint::inspector::ResourceBinding::TexelFormat::kRgba32Float:
             return "Rgba32Float";
+        case tint::inspector::ResourceBinding::TexelFormat::kR8Unorm:
+            return "R8Unorm";
+        case tint::inspector::ResourceBinding::TexelFormat::kR8Snorm:
+            return "R8Snorm";
+        case tint::inspector::ResourceBinding::TexelFormat::kR8Uint:
+            return "R8Uint";
+        case tint::inspector::ResourceBinding::TexelFormat::kR8Sint:
+            return "R8Sint";
+        case tint::inspector::ResourceBinding::TexelFormat::kRg8Unorm:
+            return "Rg8Unorm";
+        case tint::inspector::ResourceBinding::TexelFormat::kRg8Snorm:
+            return "Rg8Snorm";
+        case tint::inspector::ResourceBinding::TexelFormat::kRg8Uint:
+            return "Rg8Uint";
+        case tint::inspector::ResourceBinding::TexelFormat::kRg8Sint:
+            return "Rg8Sint";
+        case tint::inspector::ResourceBinding::TexelFormat::kR16Unorm:
+            return "R16Unorm";
+        case tint::inspector::ResourceBinding::TexelFormat::kR16Snorm:
+            return "R16Snorm";
+        case tint::inspector::ResourceBinding::TexelFormat::kR16Uint:
+            return "R16Uint";
+        case tint::inspector::ResourceBinding::TexelFormat::kR16Sint:
+            return "R16Sint";
+        case tint::inspector::ResourceBinding::TexelFormat::kR16Float:
+            return "R16Float";
+        case tint::inspector::ResourceBinding::TexelFormat::kRg16Unorm:
+            return "Rg16Unorm";
+        case tint::inspector::ResourceBinding::TexelFormat::kRg16Snorm:
+            return "Rg16Snorm";
+        case tint::inspector::ResourceBinding::TexelFormat::kRg16Uint:
+            return "Rg16Uint";
+        case tint::inspector::ResourceBinding::TexelFormat::kRg16Sint:
+            return "Rg16Sint";
+        case tint::inspector::ResourceBinding::TexelFormat::kRg16Float:
+            return "Rg16Float";
+        case tint::inspector::ResourceBinding::TexelFormat::kRgb10A2Uint:
+            return "Rgb10A2Uint";
+        case tint::inspector::ResourceBinding::TexelFormat::kRgb10A2Unorm:
+            return "Rgb10A2Unorm";
+        case tint::inspector::ResourceBinding::TexelFormat::kRg11B10Ufloat:
+            return "Rg11B10Ufloat";
         case tint::inspector::ResourceBinding::TexelFormat::kNone:
             return "None";
     }
@@ -485,6 +519,12 @@ std::string ResourceTypeToString(tint::inspector::ResourceBinding::ResourceType 
             return "DepthMultisampledTexture";
         case tint::inspector::ResourceBinding::ResourceType::kExternalTexture:
             return "ExternalTexture";
+        case tint::inspector::ResourceBinding::ResourceType::kReadOnlyTexelBuffer:
+            return "ReadOnlyTexelBuffer";
+        case tint::inspector::ResourceBinding::ResourceType::kReadWriteTexelBuffer:
+            return "ReadWriteTexelBuffer";
+        case tint::inspector::ResourceBinding::ResourceType::kInputAttachment:
+            return "InputAttachment";
     }
 
     return "Unknown";
@@ -548,6 +588,10 @@ std::string InterpolationSamplingToString(tint::inspector::InterpolationSampling
             return "centroid";
         case tint::inspector::InterpolationSampling::kSample:
             return "sample";
+        case tint::inspector::InterpolationSampling::kFirst:
+            return "first";
+        case tint::inspector::InterpolationSampling::kEither:
+            return "either";
     }
     return "unknown";
 }
@@ -566,6 +610,10 @@ std::string OverrideTypeToString(tint::inspector::Override::Type type) {
             return "i32";
     }
     return "unknown";
+}
+
+bool IsStdout(const std::string& name) {
+    return name.empty() || name == "-";
 }
 
 }  // namespace tint::cmd

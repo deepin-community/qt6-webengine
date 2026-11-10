@@ -51,12 +51,12 @@ WebDOMMessageEvent::WebDOMMessageEvent(
     const WebString& origin,
     const WebFrame* source_frame,
     const WebDocument& target_document,
-    WebVector<MessagePortChannel> channels)
+    std::vector<MessagePortChannel> channels)
     : WebDOMMessageEvent(MessageEvent::Create()) {
   DOMWindow* window = nullptr;
   if (source_frame)
     window = WebFrame::ToCoreFrame(*source_frame)->DomWindow();
-  MessagePortArray* ports = nullptr;
+  GCedMessagePortArray* ports = nullptr;
   if (!target_document.IsNull()) {
     Document* core_document = target_document;
     ports = MessagePort::EntanglePorts(*core_document->GetExecutionContext(),
@@ -66,12 +66,12 @@ WebDOMMessageEvent::WebDOMMessageEvent(
   // right?
   Unwrap<MessageEvent>()->initMessageEvent(
       event_type_names::kMessage, false, false, message_data, origin,
-      "" /*lastEventId*/, window, ports, nullptr /*user_activation*/,
-      mojom::blink::DelegatedCapability::kNone);
+      MessageEvent::kMessageIsSameOrigin, "" /*lastEventId*/, window, ports,
+      nullptr /*user_activation*/, mojom::blink::DelegatedCapability::kNone);
 }
 
-WebString WebDOMMessageEvent::Origin() const {
-  return WebString(ConstUnwrap<MessageEvent>()->origin());
+WebString WebDOMMessageEvent::Origin() {
+  return WebString(Unwrap<MessageEvent>()->origin());
 }
 
 }  // namespace blink

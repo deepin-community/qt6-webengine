@@ -1,5 +1,6 @@
 // Copyright (C) 2018 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 // Copyright (c) 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
@@ -33,7 +34,7 @@ private:
     ~ExtensionSystemFactoryQt() override;
 
     // BrowserContextKeyedServiceFactory implementation:
-    KeyedService *BuildServiceInstanceFor(content::BrowserContext *context) const override;
+    std::unique_ptr<KeyedService> BuildServiceInstanceForBrowserContext(content::BrowserContext *context) const override;
     content::BrowserContext *GetBrowserContextToUse(content::BrowserContext *context) const override;
     bool ServiceIsCreatedWithBrowserContext() const override;
 };

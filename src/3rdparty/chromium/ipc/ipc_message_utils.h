@@ -11,13 +11,15 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
-#include <optional>
 #include "base/check.h"
 #include "base/compiler_specific.h"
 #include "base/component_export.h"
@@ -32,7 +34,6 @@
 #include "base/types/id_type.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "ipc/ipc_buildflags.h"
 #include "ipc/ipc_param_traits.h"
 #include "third_party/abseil-cpp/absl/container/inlined_vector.h"
 
@@ -47,10 +48,6 @@
 
 #if BUILDFLAG(IS_WIN)
 #include "base/strings/string_util_win.h"
-#endif
-
-#if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
-#include "ipc/ipc_message.h"
 #endif
 
 namespace base {
@@ -115,7 +112,7 @@ struct CheckedTuple {
 template <class P>
 inline void WriteParam(base::Pickle* m, const P& p) {
   typedef typename SimilarTypeTraits<P>::Type Type;
-  ParamTraits<Type>::Write(m, static_cast<const Type& >(p));
+  ParamTraits<Type>::Write(m, static_cast<const Type&>(p));
 }
 
 template <class P>
@@ -330,7 +327,7 @@ struct ParamTraits<P[Size]> {
 template <>
 struct ParamTraits<std::string> {
   typedef std::string param_type;
-  static void Write(base::Pickle* m, const param_type& p) { m->WriteString(p); }
+  static void Write(base::Pickle* m, std::string_view p) { m->WriteString(p); }
   static bool Read(const base::Pickle* m,
                    base::PickleIterator* iter,
                    param_type* r) {
@@ -339,10 +336,18 @@ struct ParamTraits<std::string> {
   COMPONENT_EXPORT(IPC) static void Log(const param_type& p, std::string* l);
 };
 
+// Allow calling `WriteParam()` directly with a `std::string_view` argument
+// instead of forcing callers to explicitly construct a `std::string` just to
+// have the `Write()` specialization above turn it back into a
+// `std::string_view`.
+inline void WriteParam(base::Pickle* m, std::string_view sv) {
+  ParamTraits<std::string>::Write(m, sv);
+}
+
 template <>
 struct ParamTraits<std::u16string> {
   typedef std::u16string param_type;
-  static void Write(base::Pickle* m, const param_type& p) {
+  static void Write(base::Pickle* m, std::u16string_view p) {
     m->WriteString16(p);
   }
   static bool Read(const base::Pickle* m,
@@ -352,6 +357,14 @@ struct ParamTraits<std::u16string> {
   }
   COMPONENT_EXPORT(IPC) static void Log(const param_type& p, std::string* l);
 };
+
+// Allow calling `WriteParam()` directly with a `std::u16string_view` argument
+// instead of forcing callers to explicitly construct a `std::u16string` just to
+// have the `Write()` specialization above turn it back into a
+// `std::u16string_view`.
+inline void WriteParam(base::Pickle* m, std::u16string_view sv) {
+  ParamTraits<std::u16string>::Write(m, sv);
+}
 
 #if BUILDFLAG(IS_WIN)
 template <>
@@ -1004,8 +1017,8 @@ struct ParamTraits<std::optional<P>> {
 };
 
 template <>
-struct ParamTraits<absl::monostate> {
-  typedef absl::monostate param_type;
+struct ParamTraits<std::monostate> {
+  typedef std::monostate param_type;
   static void Write(base::Pickle* m, const param_type& p) {}
   static bool Read(const base::Pickle* m,
                    base::PickleIterator* iter,
@@ -1118,41 +1131,6 @@ struct COMPONENT_EXPORT(IPC) ParamTraits<MSG> {
 //-----------------------------------------------------------------------------
 // Generic message subclasses
 
-// defined in ipc_logging.cc
-COMPONENT_EXPORT(IPC)
-void GenerateLogData(const Message& message, LogData* data, bool get_params);
-
-#if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
-inline void AddOutputParamsToLog(const Message* msg, std::string* l) {
-  const std::string& output_params = msg->output_params();
-  if (!l->empty() && !output_params.empty())
-    l->append(", ");
-
-  l->append(output_params);
-}
-
-template <class ReplyParamType>
-inline void LogReplyParamsToMessage(const ReplyParamType& reply_params,
-                                    const Message* msg) {
-  if (msg->received_time() != 0) {
-    std::string output_params;
-    LogParam(reply_params, &output_params);
-    msg->set_output_params(output_params);
-  }
-}
-
-inline void ConnectMessageAndReply(const Message* msg, Message* reply) {
-  if (msg->sent_time()) {
-    // Don't log the sync message after dispatch, as we don't have the
-    // output parameters at that point.  Instead, save its data and log it
-    // with the outgoing reply message when it's sent.
-    LogData* data = new LogData;
-    GenerateLogData(*msg, data, true);
-    msg->set_dont_log();
-    reply->set_sync_log_data(data);
-  }
-}
-#else
 inline void AddOutputParamsToLog(const Message* msg, std::string* l) {}
 
 template <class ReplyParamType>
@@ -1160,7 +1138,6 @@ inline void LogReplyParamsToMessage(const ReplyParamType& reply_params,
                                     const Message* msg) {}
 
 inline void ConnectMessageAndReply(const Message* msg, Message* reply) {}
-#endif
 
 }  // namespace IPC
 

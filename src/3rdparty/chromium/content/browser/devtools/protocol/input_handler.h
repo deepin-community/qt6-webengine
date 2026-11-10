@@ -13,6 +13,8 @@
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
 #include "base/containers/unique_ptr_adapters.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
 #include "content/browser/devtools/protocol/devtools_domain_handler.h"
 #include "content/browser/devtools/protocol/input.h"
@@ -77,20 +79,20 @@ class InputHandler : public DevToolsDomainHandler, public Input::Backend {
 
   void DispatchKeyEvent(
       const std::string& type,
-      Maybe<int> modifiers,
-      Maybe<double> timestamp,
-      Maybe<std::string> text,
-      Maybe<std::string> unmodified_text,
-      Maybe<std::string> key_identifier,
-      Maybe<std::string> code,
-      Maybe<std::string> key,
-      Maybe<int> windows_virtual_key_code,
-      Maybe<int> native_virtual_key_code,
-      Maybe<bool> auto_repeat,
-      Maybe<bool> is_keypad,
-      Maybe<bool> is_system_key,
-      Maybe<int> location,
-      Maybe<Array<std::string>> commands,
+      std::optional<int> modifiers,
+      std::optional<double> timestamp,
+      std::optional<std::string> text,
+      std::optional<std::string> unmodified_text,
+      std::optional<std::string> key_identifier,
+      std::optional<std::string> code,
+      std::optional<std::string> key,
+      std::optional<int> windows_virtual_key_code,
+      std::optional<int> native_virtual_key_code,
+      std::optional<bool> auto_repeat,
+      std::optional<bool> is_keypad,
+      std::optional<bool> is_system_key,
+      std::optional<int> location,
+      std::unique_ptr<Array<std::string>> commands,
       std::unique_ptr<DispatchKeyEventCallback> callback) override;
 
   void InsertText(const std::string& text,
@@ -100,27 +102,27 @@ class InputHandler : public DevToolsDomainHandler, public Input::Backend {
       const std::string& text,
       int selection_start,
       int selection_end,
-      Maybe<int> replacement_start,
-      Maybe<int> replacement_end,
+      std::optional<int> replacement_start,
+      std::optional<int> replacement_end,
       std::unique_ptr<ImeSetCompositionCallback> callback) override;
 
   void DispatchMouseEvent(
       const std::string& event_type,
       double x,
       double y,
-      Maybe<int> modifiers,
-      Maybe<double> timestamp,
-      Maybe<std::string> button,
-      Maybe<int> buttons,
-      Maybe<int> click_count,
-      Maybe<double> force,
-      Maybe<double> tangential_pressure,
-      Maybe<double> tilt_x,
-      Maybe<double> tilt_y,
-      Maybe<int> twist,
-      Maybe<double> delta_x,
-      Maybe<double> delta_y,
-      Maybe<std::string> pointer_type,
+      std::optional<int> modifiers,
+      std::optional<double> timestamp,
+      std::optional<std::string> button,
+      std::optional<int> buttons,
+      std::optional<int> click_count,
+      std::optional<double> force,
+      std::optional<double> tangential_pressure,
+      std::optional<double> tilt_x,
+      std::optional<double> tilt_y,
+      std::optional<int> twist,
+      std::optional<double> delta_x,
+      std::optional<double> delta_y,
+      std::optional<std::string> pointer_type,
       std::unique_ptr<DispatchMouseEventCallback> callback) override;
 
   void DispatchDragEvent(
@@ -128,14 +130,14 @@ class InputHandler : public DevToolsDomainHandler, public Input::Backend {
       double x,
       double y,
       std::unique_ptr<Input::DragData> data,
-      Maybe<int> modifiers,
+      std::optional<int> modifiers,
       std::unique_ptr<DispatchDragEventCallback> callback) override;
 
   void DispatchTouchEvent(
       const std::string& type,
       std::unique_ptr<Array<Input::TouchPoint>> touch_points,
-      protocol::Maybe<int> modifiers,
-      protocol::Maybe<double> timestamp,
+      std::optional<int> modifiers,
+      std::optional<double> timestamp,
       std::unique_ptr<DispatchTouchEventCallback> callback) override;
 
   void CancelDragging(
@@ -145,11 +147,11 @@ class InputHandler : public DevToolsDomainHandler, public Input::Backend {
                                       int x,
                                       int y,
                                       const std::string& button,
-                                      Maybe<double> timestamp,
-                                      Maybe<double> delta_x,
-                                      Maybe<double> delta_y,
-                                      Maybe<int> modifiers,
-                                      Maybe<int> click_count) override;
+                                      std::optional<double> timestamp,
+                                      std::optional<double> delta_x,
+                                      std::optional<double> delta_y,
+                                      std::optional<int> modifiers,
+                                      std::optional<int> click_count) override;
 
   Response SetIgnoreInputEvents(bool ignore) override;
   Response SetInterceptDrags(bool enabled) override;
@@ -158,31 +160,31 @@ class InputHandler : public DevToolsDomainHandler, public Input::Backend {
       double x,
       double y,
       double scale_factor,
-      Maybe<int> relative_speed,
-      Maybe<std::string> gesture_source_type,
+      std::optional<int> relative_speed,
+      std::optional<std::string> gesture_source_type,
       std::unique_ptr<SynthesizePinchGestureCallback> callback) override;
 
   void SynthesizeScrollGesture(
       double x,
       double y,
-      Maybe<double> x_distance,
-      Maybe<double> y_distance,
-      Maybe<double> x_overscroll,
-      Maybe<double> y_overscroll,
-      Maybe<bool> prevent_fling,
-      Maybe<int> speed,
-      Maybe<std::string> gesture_source_type,
-      Maybe<int> repeat_count,
-      Maybe<int> repeat_delay_ms,
-      Maybe<std::string> interaction_marker_name,
+      std::optional<double> x_distance,
+      std::optional<double> y_distance,
+      std::optional<double> x_overscroll,
+      std::optional<double> y_overscroll,
+      std::optional<bool> prevent_fling,
+      std::optional<int> speed,
+      std::optional<std::string> gesture_source_type,
+      std::optional<int> repeat_count,
+      std::optional<int> repeat_delay_ms,
+      std::optional<std::string> interaction_marker_name,
       std::unique_ptr<SynthesizeScrollGestureCallback> callback) override;
 
   void SynthesizeTapGesture(
       double x,
       double y,
-      Maybe<int> duration,
-      Maybe<int> tap_count,
-      Maybe<std::string> gesture_source_type,
+      std::optional<int> duration,
+      std::optional<int> tap_count,
+      std::optional<std::string> gesture_source_type,
       std::unique_ptr<SynthesizeTapGestureCallback> callback) override;
 
  private:
@@ -261,7 +263,7 @@ class InputHandler : public DevToolsDomainHandler, public Input::Backend {
         base::WeakPtr<RenderWidgetHostViewBase> view,
         std::optional<gfx::PointF> maybe_point);
 
-    InputHandler& handler_;
+    const raw_ref<InputHandler> handler_;
 
     // These get used for starting a drag.
     std::unique_ptr<InitialState> initial_state_;
@@ -274,15 +276,15 @@ class InputHandler : public DevToolsDomainHandler, public Input::Backend {
   void DispatchWebTouchEvent(
       const std::string& type,
       std::unique_ptr<Array<Input::TouchPoint>> touch_points,
-      protocol::Maybe<int> modifiers,
-      protocol::Maybe<double> timestamp,
+      std::optional<int> modifiers,
+      std::optional<double> timestamp,
       std::unique_ptr<DispatchTouchEventCallback> callback);
 
   void DispatchSyntheticPointerActionTouch(
       const std::string& type,
       std::unique_ptr<Array<Input::TouchPoint>> touch_points,
-      protocol::Maybe<int> modifiers,
-      protocol::Maybe<double> timestamp,
+      std::optional<int> modifiers,
+      std::optional<double> timestamp,
       std::unique_ptr<DispatchTouchEventCallback> callback);
 
   void OnWidgetForDispatchMouseEvent(
@@ -296,7 +298,7 @@ class InputHandler : public DevToolsDomainHandler, public Input::Backend {
       double x,
       double y,
       std::unique_ptr<Input::DragData> data,
-      Maybe<int> modifiers,
+      std::optional<int> modifiers,
       std::unique_ptr<DispatchDragEventCallback> callback,
       base::WeakPtr<RenderWidgetHostViewBase> target,
       std::optional<gfx::PointF> point);
@@ -346,9 +348,9 @@ class InputHandler : public DevToolsDomainHandler, public Input::Backend {
 
   float ScaleFactor();
 
-  RenderFrameHostImpl* host_ = nullptr;
+  raw_ptr<RenderFrameHostImpl> host_ = nullptr;
   // WebContents associated with the |host_|.
-  WebContentsImpl* web_contents_ = nullptr;
+  raw_ptr<WebContentsImpl> web_contents_ = nullptr;
   std::unique_ptr<Input::Frontend> frontend_;
   base::flat_set<std::unique_ptr<InputInjector>, base::UniquePtrComparator>
       injectors_;

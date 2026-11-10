@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
@@ -87,8 +88,8 @@ void ImplementationBase::GenSyncToken(GLbyte* sync_token) {
     return;
   }
 
-  uint64_t fence_sync = gpu_control_->GenerateFenceSyncRelease();
-  helper_->InsertFenceSync(fence_sync);
+  uint64_t fence_sync = helper_->InsertFenceSync(
+      [this]() { return gpu_control_->GenerateFenceSyncRelease(); });
   helper_->CommandBufferHelper::OrderingBarrier();
   gpu_control_->EnsureWorkVisible();
 
@@ -96,7 +97,7 @@ void ImplementationBase::GenSyncToken(GLbyte* sync_token) {
   SyncToken sync_token_data(gpu_control_->GetNamespaceID(),
                             gpu_control_->GetCommandBufferID(), fence_sync);
   sync_token_data.SetVerifyFlush();
-  memcpy(sync_token, &sync_token_data, sizeof(sync_token_data));
+  UNSAFE_TODO(memcpy(sync_token, &sync_token_data, sizeof(sync_token_data)));
 }
 
 void ImplementationBase::GenUnverifiedSyncToken(GLbyte* sync_token) {
@@ -106,22 +107,22 @@ void ImplementationBase::GenUnverifiedSyncToken(GLbyte* sync_token) {
     return;
   }
 
-  uint64_t fence_sync = gpu_control_->GenerateFenceSyncRelease();
-  helper_->InsertFenceSync(fence_sync);
+  uint64_t fence_sync = helper_->InsertFenceSync(
+      [this]() { return gpu_control_->GenerateFenceSyncRelease(); });
   helper_->CommandBufferHelper::OrderingBarrier();
 
   // Copy the data over after setting the data to ensure alignment.
   SyncToken sync_token_data(gpu_control_->GetNamespaceID(),
                             gpu_control_->GetCommandBufferID(), fence_sync);
-  memcpy(sync_token, &sync_token_data, sizeof(sync_token_data));
+  UNSAFE_TODO(memcpy(sync_token, &sync_token_data, sizeof(sync_token_data)));
 }
 
 void ImplementationBase::VerifySyncTokens(GLbyte** sync_tokens, GLsizei count) {
   bool requires_synchronization = false;
   for (GLsizei i = 0; i < count; ++i) {
-    if (sync_tokens[i]) {
+    if (UNSAFE_TODO(sync_tokens[i])) {
       SyncToken sync_token;
-      memcpy(&sync_token, sync_tokens[i], sizeof(sync_token));
+      UNSAFE_TODO(memcpy(&sync_token, sync_tokens[i], sizeof(sync_token)));
 
       if (sync_token.HasData() && !sync_token.verified_flush()) {
         if (!GetVerifiedSyncTokenForIPC(sync_token, &sync_token)) {
@@ -136,7 +137,7 @@ void ImplementationBase::VerifySyncTokens(GLbyte** sync_tokens, GLsizei count) {
       // Set verify bit on empty sync tokens too.
       sync_token.SetVerifyFlush();
 
-      memcpy(sync_tokens[i], &sync_token, sizeof(sync_token));
+      UNSAFE_TODO(memcpy(sync_tokens[i], &sync_token, sizeof(sync_token)));
     }
   }
 
@@ -151,7 +152,7 @@ void ImplementationBase::WaitSyncToken(const GLbyte* sync_token_data) {
 
   // Copy the data over before data access to ensure alignment.
   SyncToken sync_token, verified_sync_token;
-  memcpy(&sync_token, sync_token_data, sizeof(SyncToken));
+  UNSAFE_TODO(memcpy(&sync_token, sync_token_data, sizeof(SyncToken)));
 
   if (!sync_token.HasData())
     return;
@@ -204,7 +205,7 @@ bool ImplementationBase::OnMemoryDump(
           ->GetTracingProcessId();
 
   MemoryAllocatorDump* dump = pmd->CreateAllocatorDump(base::StringPrintf(
-      "gpu/transfer_buffer_memory/buffer_%d", transfer_buffer_->GetShmId()));
+      "gpu/transfer_buffer_memory/buffer_0x%x", transfer_buffer_->GetShmId()));
   dump->AddScalar(MemoryAllocatorDump::kNameSize,
                   MemoryAllocatorDump::kUnitsBytes,
                   transfer_buffer_->GetSize());
@@ -307,7 +308,7 @@ bool ImplementationBase::GetBucketContents(uint32_t bucket_id,
         }
       }
       uint32_t size_to_copy = std::min(size, buffer.size());
-      memcpy(&(*data)[offset], buffer.address(), size_to_copy);
+      UNSAFE_TODO(memcpy(&(*data)[offset], buffer.address(), size_to_copy));
       offset += size_to_copy;
       size -= size_to_copy;
       buffer.Release();
@@ -332,8 +333,9 @@ void ImplementationBase::SetBucketContents(uint32_t bucket_id,
       if (!buffer.valid()) {
         return;
       }
-      memcpy(buffer.address(), static_cast<const int8_t*>(data) + offset,
-             buffer.size());
+      UNSAFE_TODO(memcpy(buffer.address(),
+                         static_cast<const int8_t*>(data) + offset,
+                         buffer.size()));
       helper_->SetBucketData(bucket_id, offset, buffer.size(), buffer.shm_id(),
                              buffer.offset());
       offset += buffer.size();
@@ -367,7 +369,7 @@ bool ImplementationBase::GetBucketAsString(uint32_t bucket_id,
   if (data.empty()) {
     return false;
   }
-  str->assign(&data[0], &data[0] + data.size() - 1);
+  str->assign(&data[0], UNSAFE_TODO(&data[0] + data.size() - 1));
   return true;
 }
 
@@ -415,6 +417,26 @@ void ImplementationBase::WillCallGLFromSkia() {
 void ImplementationBase::DidCallGLFromSkia() {
   // Should only be called on subclasses that have GrContextSupport
   NOTREACHED();
+}
+
+void RelaxedAtomicWriteMemcpyImageRowsSkippingPadding(base::span<uint8_t> dst,
+                                                      base::span<uint8_t> src,
+                                                      size_t row_bytes,
+                                                      size_t height,
+                                                      size_t stride) {
+  // We need to use `RelaxedAtomicWriteMemcpy` because we might be writing into
+  // memory observed by JS at the same time.
+  if (row_bytes == stride) {
+    base::subtle::RelaxedAtomicWriteMemcpy(dst, src);
+  } else {
+    // If there's padding between rows, copy each row separately to leave
+    // padding untouched
+    for (size_t y = 0; y < height; ++y) {
+      base::subtle::RelaxedAtomicWriteMemcpy(
+          dst.subspan(y * stride, row_bytes),
+          src.subspan(y * stride, row_bytes));
+    }
+  }
 }
 
 }  // namespace gpu

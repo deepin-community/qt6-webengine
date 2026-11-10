@@ -5,8 +5,11 @@
 #ifndef QUICHE_QUIC_CORE_QUIC_PING_MANAGER_H_
 #define QUICHE_QUIC_CORE_QUIC_PING_MANAGER_H_
 
+#include <cstdint>
+
 #include "quiche/quic/core/quic_alarm.h"
 #include "quiche/quic/core/quic_alarm_factory.h"
+#include "quiche/quic/core/quic_connection_alarms.h"
 #include "quiche/quic/core/quic_constants.h"
 #include "quiche/quic/core/quic_one_block_arena.h"
 #include "quiche/quic/core/quic_time.h"
@@ -38,12 +41,11 @@ class QUICHE_EXPORT QuicPingManager {
   };
 
   QuicPingManager(Perspective perspective, Delegate* delegate,
-                  QuicConnectionArena* arena, QuicAlarmFactory* alarm_factory,
-                  QuicConnectionContext* context);
+                  QuicAlarmProxy alarm);
 
   // Called to set |alarm_|.
   void SetAlarm(QuicTime now, bool should_keep_alive,
-                bool has_in_flight_packets);
+                bool has_in_flight_packets, QuicTime::Delta pto_delay);
 
   // Called when |alarm_| fires.
   void OnAlarm();
@@ -52,18 +54,24 @@ class QUICHE_EXPORT QuicPingManager {
   void Stop();
 
   void set_keep_alive_timeout(QuicTime::Delta keep_alive_timeout) {
-    QUICHE_DCHECK(!alarm_->IsSet());
+    QUICHE_DCHECK(!alarm_.IsSet());
     keep_alive_timeout_ = keep_alive_timeout;
   }
 
   void set_initial_retransmittable_on_wire_timeout(
       QuicTime::Delta retransmittable_on_wire_timeout) {
-    QUICHE_DCHECK(!alarm_->IsSet());
+    QUICHE_DCHECK(!alarm_.IsSet());
     initial_retransmittable_on_wire_timeout_ = retransmittable_on_wire_timeout;
   }
 
   void reset_consecutive_retransmittable_on_wire_count() {
     consecutive_retransmittable_on_wire_count_ = 0;
+  }
+
+  void set_num_ptos_for_retransmittable_on_wire_timeout(
+      uint8_t num_ptos_for_retransmittable_on_wire_timeout) {
+    num_ptos_for_retransmittable_on_wire_timeout_ =
+        num_ptos_for_retransmittable_on_wire_timeout;
   }
 
  private:
@@ -72,7 +80,7 @@ class QUICHE_EXPORT QuicPingManager {
 
   // Update |retransmittable_on_wire_deadline_| and |keep_alive_deadline_|.
   void UpdateDeadlines(QuicTime now, bool should_keep_alive,
-                       bool has_in_flight_packets);
+                       bool has_in_flight_packets, QuicTime::Delta pto_delay);
 
   // Get earliest deadline of |retransmittable_on_wire_deadline_| and
   // |keep_alive_deadline_|. Returns 0 if both deadlines are not initialized.
@@ -100,7 +108,9 @@ class QUICHE_EXPORT QuicPingManager {
 
   QuicTime keep_alive_deadline_ = QuicTime::Zero();
 
-  QuicArenaScopedPtr<QuicAlarm> alarm_;
+  QuicAlarmProxy alarm_;
+
+  uint8_t num_ptos_for_retransmittable_on_wire_timeout_ = 0;
 };
 
 }  // namespace quic

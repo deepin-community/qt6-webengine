@@ -5,7 +5,7 @@
 #include "components/segmentation_platform/embedder/tab_fetcher.h"
 
 #include "base/memory/raw_ptr.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "base/time/time.h"
 #include "components/sync_sessions/open_tabs_ui_delegate.h"
 #include "components/sync_sessions/synced_session.h"
@@ -120,16 +120,16 @@ size_t TabFetcher::GetRemoteTabsCountAfterTime(
   return all_tabs.size();
 }
 
-absl::optional<base::Time> TabFetcher::GetLatestRemoteSessionModifiedTime() {
+std::optional<base::Time> TabFetcher::GetLatestRemoteSessionModifiedTime() {
   auto* open_ui_delegate = session_sync_service_->GetOpenTabsUIDelegate();
   if (!open_ui_delegate) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   std::vector<raw_ptr<const sync_sessions::SyncedSession, VectorExperimental>>
       sessions;
   open_ui_delegate->GetAllForeignSessions(&sessions);
   if (sessions.empty()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   // Get latest session modified time.
   return sessions[0]->GetModifiedTime();

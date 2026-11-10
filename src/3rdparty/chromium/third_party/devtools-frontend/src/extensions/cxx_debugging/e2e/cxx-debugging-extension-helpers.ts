@@ -40,6 +40,7 @@ export interface Step {
 export interface TestSpec {
   name: string;
   test: string;
+  // eslint-disable-next-line @typescript-eslint/naming-convention
   extension_parameters?: string;
   script?: Step[];
   file?: string;
@@ -56,11 +57,6 @@ export function getTestsuiteResourcesPath() {
 }
 
 export function loadTests() {
-  const TEST_SUITE = process.env['TEST_SUITE'];
-  if (!TEST_SUITE) {
-    return [];
-  }
-
-  const tests = JSON.parse(fs.readFileSync(path.join(TEST_SUITE, 'tests.json')).toString());
+  const tests = JSON.parse(fs.readFileSync(path.join(__dirname, 'tests.json')).toString());
   return tests as TestSpec[];
 }

@@ -50,10 +50,14 @@ uint64_t SetExternalMemoryReservation(WGPUDevice device,
                                       MemorySegment memorySegment) {
     Device* backendDevice = ToBackend(FromAPI(device));
 
-    auto deviceLock(backendDevice->GetScopedLock());
+    auto deviceGuard = backendDevice->GetGuard();
 
     return backendDevice->GetResidencyManager()->SetExternalMemoryReservation(
         memorySegment, requestedReservationSize);
+}
+
+Microsoft::WRL::ComPtr<ID3D12Resource> TextureImplToID3D12Resource(WGPUTexture &texture) {
+    return ToBackend(FromAPI(texture))->GetD3D12Resource();
 }
 
 }  // namespace dawn::native::d3d12

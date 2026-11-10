@@ -5,6 +5,7 @@
 #include "fuchsia_web/webengine/web_engine_main_delegate.h"
 
 #include <utility>
+#include <variant>
 
 #include "base/base_paths.h"
 #include "base/command_line.h"
@@ -35,7 +36,7 @@ void InitializeResources() {
   constexpr char kCommonResourcesPakPath[] = "web_engine_common_resources.pak";
 
   constexpr char kWebUiGeneratedResourcesPakPath[] =
-      "ui/resources/webui_resources.pak";
+      "ui/webui/resources/webui_resources.pak";
 
   base::FilePath asset_root;
   bool result = base::PathService::Get(base::DIR_ASSETS, &asset_root);
@@ -80,15 +81,6 @@ std::optional<int> WebEngineMainDelegate::BasicStartupComplete() {
     return 1;
   }
 
-  if (command_line->HasSwitch(switches::kGoogleApiKey)) {
-#if BUILDFLAG(SUPPORT_EXTERNAL_GOOGLE_API_KEY)
-    google_apis::SetAPIKey(
-        command_line->GetSwitchValueASCII(switches::kGoogleApiKey));
-#else
-    LOG(WARNING) << "Ignored " << switches::kGoogleApiKey;
-#endif
-  }
-
   SetCorsExemptHeaders(base::SplitString(
       base::CommandLine::ForCurrentProcess()->GetSwitchValueNative(
           switches::kCorsExemptHeaders),
@@ -110,7 +102,21 @@ void WebEngineMainDelegate::PreSandboxStartup() {
   InitializeResources();
 }
 
-absl::variant<int, content::MainFunctionParams>
+std::optional<int> WebEngineMainDelegate::PreBrowserMain() {
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  if (command_line->HasSwitch(switches::kGoogleApiKey)) {
+#if BUILDFLAG(SUPPORT_EXTERNAL_GOOGLE_API_KEY)
+    google_apis::InitializeAndOverrideAPIKey(
+        command_line->GetSwitchValueASCII(switches::kGoogleApiKey));
+#else
+    LOG(WARNING) << "Ignored " << switches::kGoogleApiKey;
+#endif
+  }
+
+  return std::nullopt;
+}
+
+std::variant<int, content::MainFunctionParams>
 WebEngineMainDelegate::RunProcess(
     const std::string& process_type,
     content::MainFunctionParams main_function_params) {

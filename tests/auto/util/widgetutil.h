@@ -1,6 +1,9 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
 
+#ifndef WIDGETUTIL_H
+#define WIDGETUTIL_H
+
 // Functions and macros that really need to be in QTestLib
 
 #include "util.h"
@@ -21,8 +24,9 @@ int main(int argc, char *argv[]) \
     \
     QApplication app(w_argc, const_cast<char **>(w_argv.data())); \
     app.setAttribute(Qt::AA_Use96Dpi, true); \
-    QTEST_DISABLE_KEYPAD_NAVIGATION \
     TestObject tc; \
     QTEST_SET_MAIN_SOURCE_PATH \
     return QTest::qExec(&tc, argc, argv); \
 }
+
+#endif /* WIDGETUTIL_H */

@@ -265,7 +265,7 @@ export function showPanel(panel) {
  */
 export function createKeyEvent(key, ctrlKey, altKey, shiftKey, metaKey) {
   return new KeyboardEvent('keydown', {
-    key: key,
+    key,
     bubbles: true,
     cancelable: true,
     ctrlKey: Boolean(ctrlKey),
@@ -394,8 +394,12 @@ export function textContentWithoutStyles(node) {
     if (!currentNode) {
       break;
     }
-    if (currentNode.nodeType === Node.TEXT_NODE) {
+    if (currentNode.nodeType === Node.TEXT_NODE && currentNode.parentElement?.tagName !== 'STYLE') {
       buffer += currentNode.nodeValue;
+    } else if (currentNode.tagName === 'DEVTOOLS-TOOLTIP') {
+      // <devtools-tooltip> holds popover contents in-line in a slot, so its contents appear in textContent. This is
+      // not what the tests expect, so step over its contents entirely.
+      currentNode = currentNode.lastChild?.traverseNextNode(node) ?? currentNode.traverseNextNode(node);
     } else if (currentNode.nodeName === 'STYLE') {
       currentNode = currentNode.traverseNextNode(node);
     }
@@ -446,13 +450,26 @@ export async function _evaluateInPage(code) {
     code += `//# sourceURL=${sourceURL}`;
   }
   const response = await TestRunner.RuntimeAgent.invoke_evaluate({expression: code, objectGroup: 'console'});
-  const error = response[ProtocolClient.InspectorBackend.ProtocolError];
+  const error = response.getError();
   if (error) {
     addResult('Error: ' + error);
     completeTest();
     return;
   }
   return response;
+}
+
+function logResponseError(response) {
+  let errorMessage = 'Error: ';
+  if (response.getError()) {
+    errorMessage += response.getError();
+  } else if (response.exceptionDetails) {
+    errorMessage += response.exceptionDetails.text;
+    if (response.exceptionDetails.exception) {
+      errorMessage += ' ' + response.exceptionDetails.exception.description;
+    }
+  }
+  addResult(errorMessage);
 }
 
 /**
@@ -465,12 +482,10 @@ export async function _evaluateInPage(code) {
 export async function evaluateInPageAnonymously(code, userGesture) {
   const response =
       await TestRunner.RuntimeAgent.invoke_evaluate({expression: code, objectGroup: 'console', userGesture});
-  if (!response[ProtocolClient.InspectorBackend.ProtocolError]) {
+  if (response && !response.exceptionDetails && !response.getError()) {
     return response.result.value;
   }
-  addResult(
-      'Error: ' +
-      (response.exceptionDetails && response.exceptionDetails.text || 'exception from evaluateInPageAnonymously.'));
+  logResponseError(response);
   completeTest();
 }
 
@@ -490,20 +505,10 @@ export async function evaluateInPageAsync(code) {
   const response = await TestRunner.RuntimeAgent.invoke_evaluate(
       {expression: code, objectGroup: 'console', includeCommandLineAPI: false, awaitPromise: true});
 
-  const error = response[ProtocolClient.InspectorBackend.ProtocolError];
-  if (!error && !response.exceptionDetails) {
+  if (response && !response.exceptionDetails && !response.getError()) {
     return response.result.value;
   }
-  let errorMessage = 'Error: ';
-  if (error) {
-    errorMessage += error;
-  } else if (response.exceptionDetails) {
-    errorMessage += response.exceptionDetails.text;
-    if (response.exceptionDetails.exception) {
-      errorMessage += ' ' + response.exceptionDetails.exception.description;
-    }
-  }
-  addResult(errorMessage);
+  logResponseError(response);
   completeTest();
 }
 
@@ -536,7 +541,7 @@ export function evaluateFunctionInOverlay(func, callback) {
   mainContext
       .evaluate(
           {
-            expression: expression,
+            expression,
             objectGroup: '',
             includeCommandLineAPI: false,
             silent: false,

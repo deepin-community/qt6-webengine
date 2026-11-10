@@ -28,11 +28,15 @@
 #include "src/tint/lang/core/type/external_texture.h"
 
 #include "src/tint/lang/core/type/depth_texture.h"
+#include "src/tint/lang/core/type/f32.h"
 #include "src/tint/lang/core/type/helper_test.h"
+#include "src/tint/lang/core/type/input_attachment.h"
+#include "src/tint/lang/core/type/manager.h"
 #include "src/tint/lang/core/type/multisampled_texture.h"
 #include "src/tint/lang/core/type/sampled_texture.h"
 #include "src/tint/lang/core/type/storage_texture.h"
 #include "src/tint/lang/core/type/texture_dimension.h"
+#include "src/tint/lang/core/type/void.h"
 
 namespace tint::core::type {
 namespace {
@@ -40,20 +44,23 @@ namespace {
 using ExternalTextureTest = TestHelper;
 
 TEST_F(ExternalTextureTest, Creation) {
-    auto* a = create<ExternalTexture>();
-    auto* b = create<ExternalTexture>();
+    Manager ty;
+    auto* a = ty.external_texture();
+    auto* b = ty.external_texture();
     EXPECT_EQ(a, b);
 }
 
 TEST_F(ExternalTextureTest, Hash) {
-    auto* a = create<ExternalTexture>();
-    auto* b = create<ExternalTexture>();
+    Manager ty;
+    auto* a = ty.external_texture();
+    auto* b = ty.external_texture();
     EXPECT_EQ(a->unique_hash, b->unique_hash);
 }
 
 TEST_F(ExternalTextureTest, Equals) {
-    auto* a = create<ExternalTexture>();
-    auto* b = create<ExternalTexture>();
+    Manager ty;
+    auto* a = ty.external_texture();
+    auto* b = ty.external_texture();
     EXPECT_TRUE(a->Equals(*b));
     EXPECT_FALSE(a->Equals(Void{}));
 }
@@ -64,6 +71,7 @@ TEST_F(ExternalTextureTest, IsTexture) {
     Texture* ty = &s;
     EXPECT_FALSE(ty->Is<DepthTexture>());
     EXPECT_TRUE(ty->Is<ExternalTexture>());
+    EXPECT_FALSE(ty->Is<InputAttachment>());
     EXPECT_FALSE(ty->Is<MultisampledTexture>());
     EXPECT_FALSE(ty->Is<SampledTexture>());
     EXPECT_FALSE(ty->Is<StorageTexture>());
@@ -72,7 +80,7 @@ TEST_F(ExternalTextureTest, IsTexture) {
 TEST_F(ExternalTextureTest, Dim) {
     F32 f32;
     ExternalTexture s;
-    EXPECT_EQ(s.dim(), TextureDimension::k2d);
+    EXPECT_EQ(s.Dim(), TextureDimension::k2d);
 }
 
 TEST_F(ExternalTextureTest, FriendlyName) {
@@ -81,7 +89,8 @@ TEST_F(ExternalTextureTest, FriendlyName) {
 }
 
 TEST_F(ExternalTextureTest, Clone) {
-    auto* a = create<ExternalTexture>();
+    Manager ty;
+    auto* a = ty.external_texture();
 
     core::type::Manager mgr;
     core::type::CloneContext ctx{{nullptr}, {nullptr, &mgr}};

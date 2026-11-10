@@ -38,7 +38,7 @@ namespace rx
 namespace vk
 {{
 
-void Format::initialize(RendererVk *renderer,
+void Format::initialize(Renderer *renderer,
                         const angle::Format &angleFormat)
 {{
     switch (angleFormat.id)
@@ -50,13 +50,13 @@ void Format::initialize(RendererVk *renderer,
     }}
 }}
 
-VkFormat GetVkFormatFromFormatID(angle::FormatID formatID)
+VkFormat GetVkFormatFromFormatID(const Renderer *renderer, angle::FormatID formatID)
 {{
     static constexpr angle::FormatMap<VkFormat> kMap = {{
 {format_id_cases}
     }};
 
-    return kMap[formatID];
+    return AdjustASTCFormatForHDR(renderer, kMap[formatID]);
 }}
 
 angle::FormatID GetFormatIDFromVkFormat(VkFormat vkFormat)
@@ -92,7 +92,7 @@ image_external_template = """mActualSampleOnlyImageFormatID = {image};
 mActualRenderableImageFormatID = {image};
 mImageInitializerFunction = {image_initializer};"""
 
-image_struct_template = "{{{image}, {image_initializer}}}"
+image_struct_template = "{cond_begin}{{{image}, {image_initializer}}},{cond_end}"
 
 image_fallback_template = """{{
 static constexpr ImageFormatInitInfo kInfo[] = {{{image_list}}};
@@ -181,15 +181,19 @@ def gen_format_case(angle, internal_format, vk_json_data):
         fallbacks += compressed
 
         if format in vk_map:
+            assert format not in fallbacks
             fallbacks = [format] + fallbacks
 
         return (fallbacks, len(fallbacks) - len(compressed))
 
     def image_args(format):
+        is_astc_fallback = angle.startswith("ASTC") and not format.startswith("ASTC")
         return dict(
             image="angle::FormatID::" + format,
             image_initializer=angle_format.get_internal_format_initializer(
-                internal_format, format))
+                internal_format, format),
+            cond_begin="#ifdef ANGLE_HAS_ASTCENC\n" if is_astc_fallback else "",
+            cond_end="\n#endif\n" if is_astc_fallback else "")
 
     def buffer_args(format):
         vk_buffer_format = vk_map[format]
@@ -210,7 +214,7 @@ def gen_format_case(angle, internal_format, vk_json_data):
     elif len(images) > 1:
         args.update(
             image_template=image_fallback_template,
-            image_list=", ".join(image_struct_template.format(**image_args(i)) for i in images))
+            image_list="\n".join(image_struct_template.format(**image_args(i)) for i in images))
 
     buffers, buffers_compressed_offset = get_formats(angle, "buffer")
     if len(buffers) == 1:

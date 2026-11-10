@@ -13,9 +13,9 @@
 #include "core/fpdfapi/parser/cpdf_indirect_object_holder.h"
 #include "core/fpdfapi/parser/cpdf_parser.h"
 #include "core/fpdfapi/parser/cpdf_reference.h"
+#include "core/fxcrt/check.h"
 #include "core/fxcrt/fx_string.h"
-#include "third_party/base/check.h"
-#include "third_party/base/notreached.h"
+#include "core/fxcrt/notreached.h"
 
 CPDF_Object::~CPDF_Object() = default;
 
@@ -26,11 +26,12 @@ static_assert(CPDF_Parser::kMaxObjectNumber < static_cast<uint32_t>(1) << 31,
               "Need a smaller kMaxObjNumber for cache keys");
 
 uint64_t CPDF_Object::KeyForCache() const {
-  if (IsInline())
+  if (IsInline()) {
     return (static_cast<uint64_t>(1) << 63) | reinterpret_cast<uint64_t>(this);
+  }
 
-  return (static_cast<uint64_t>(m_ObjNum) << 32) |
-         static_cast<uint64_t>(m_GenNum);
+  return (static_cast<uint64_t>(obj_num_) << 32) |
+         static_cast<uint64_t>(gen_num_);
 }
 
 RetainPtr<CPDF_Object> CPDF_Object::GetMutableDirect() {
@@ -89,7 +90,7 @@ const CPDF_Dictionary* CPDF_Object::GetDictInternal() const {
 }
 
 void CPDF_Object::SetString(const ByteString& str) {
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 CPDF_Array* CPDF_Object::AsMutableArray() {

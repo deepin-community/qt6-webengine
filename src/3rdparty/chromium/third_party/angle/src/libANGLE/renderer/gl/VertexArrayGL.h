@@ -25,8 +25,13 @@ struct VertexArrayStateGL;
 class VertexArrayGL : public VertexArrayImpl
 {
   public:
-    VertexArrayGL(const gl::VertexArrayState &data, GLuint id);
-    VertexArrayGL(const gl::VertexArrayState &data, GLuint id, VertexArrayStateGL *sharedState);
+    VertexArrayGL(const gl::VertexArrayState &data,
+                  GLuint id,
+                  const gl::VertexArrayBuffers &vertexArrayBuffers);
+    VertexArrayGL(const gl::VertexArrayState &data,
+                  GLuint id,
+                  const gl::VertexArrayBuffers &vertexArrayBuffers,
+                  VertexArrayStateGL *sharedState);
     ~VertexArrayGL() override;
 
     void destroy(const gl::Context *context) override;
@@ -47,6 +52,7 @@ class VertexArrayGL : public VertexArrayImpl
 
     GLuint getVertexArrayID() const;
     VertexArrayStateGL *getNativeState() const;
+    bool syncsToSharedState() const { return !mOwnsNativeState; }
 
     angle::Result syncState(const gl::Context *context,
                             const gl::VertexArray::DirtyBits &dirtyBits,
@@ -85,11 +91,13 @@ class VertexArrayGL : public VertexArrayImpl
 
     // Returns the amount of space needed to stream all attributes that need streaming
     // and the data size of the largest attribute
-    void computeStreamingAttributeSizes(const gl::AttributesMask &attribsToStream,
-                                        GLsizei instanceCount,
-                                        const gl::IndexRange &indexRange,
-                                        size_t *outStreamingDataSize,
-                                        size_t *outMaxAttributeDataSize) const;
+    void computeStreamingAttributeSizes(
+        const gl::AttributesMask &attribsToStream,
+        GLsizei instanceCount,
+        const gl::IndexRange &indexRange,
+        size_t *outStreamingDataSize,
+        size_t *outMaxAttributeDataSize,
+        bool applyExtraOffsetWorkaroundForInstancedAttributes) const;
 
     // Stream attributes that have client data
     angle::Result streamAttributes(const gl::Context *context,
@@ -120,7 +128,7 @@ class VertexArrayGL : public VertexArrayImpl
                                           GLuint attribIndex,
                                           const gl::VertexAttribute &attrib,
                                           GLsizei stride,
-                                          GLintptr offset) const;
+                                          uintptr_t offset) const;
 
     angle::Result recoverForcedStreamingAttributesForDrawArraysInstanced(
         const gl::Context *context,

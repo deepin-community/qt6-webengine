@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "ssl_host_state_delegate_qt.h"
 
@@ -73,12 +74,12 @@ content::SSLHostStateDelegate::CertJudgment SSLHostStateDelegateQt::QueryPolicy(
 }
 
 // Records that a host has run insecure content.
-void SSLHostStateDelegateQt::HostRanInsecureContent(const std::string &host, int pid, InsecureContentType content_type)
+void SSLHostStateDelegateQt::HostRanInsecureContent(const std::string &host, InsecureContentType content_type)
 {
 }
 
 // Returns whether the specified host ran insecure content.
-bool SSLHostStateDelegateQt::DidHostRunInsecureContent(const std::string &host, int pid, InsecureContentType content_type)
+bool SSLHostStateDelegateQt::DidHostRunInsecureContent(const std::string &host, InsecureContentType content_type)
 {
     return false;
 }

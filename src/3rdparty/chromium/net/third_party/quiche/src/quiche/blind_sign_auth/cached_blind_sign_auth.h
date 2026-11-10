@@ -8,11 +8,12 @@
 #include <string>
 #include <vector>
 
+#include "absl/base/thread_annotations.h"
 #include "absl/status/statusor.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
 #include "quiche/blind_sign_auth/blind_sign_auth_interface.h"
 #include "quiche/common/platform/api/quiche_export.h"
-#include "quiche/common/platform/api/quiche_mutex.h"
 #include "quiche/common/quiche_circular_deque.h"
 
 namespace quiche {
@@ -36,30 +37,42 @@ class QUICHE_EXPORT CachedBlindSignAuth : public BlindSignAuthInterface {
   // Tokens are single-use. They will not be usable after the expiration time.
   //
   // The GetTokens callback may be called synchronously on the calling thread,
-  // or asynchronously on BlindSignAuth's BlindSignHttpInterface thread.
+  // or asynchronously on BlindSignAuth's BlindSignMessageInterface thread.
   // The GetTokens callback must not acquire any locks that the calling thread
   // owns, otherwise the callback will deadlock.
-  void GetTokens(std::string oauth_token, int num_tokens,
-                 ProxyLayer proxy_layer, SignedTokenCallback callback) override;
+  void GetTokens(std::optional<std::string> oauth_token, int num_tokens,
+                 ProxyLayer proxy_layer, BlindSignAuthServiceType service_type,
+                 SignedTokenCallback callback) override;
 
   // Removes all tokens in the cache.
   void ClearCache() {
-    QuicheWriterMutexLock lock(&mutex_);
+    absl::WriterMutexLock lock(&mutex_);
     cached_tokens_.clear();
   }
+
+  // Returns an attestation challenge in a callback.
+  // GetAttestationTokens callbacks will run on the same thread as the
+  // BlindSignMessageInterface callbacks.
+  // Callers can make multiple concurrent requests to GetTokens.
+  // ProxyLayer must be either ProxyB or TerminalLayer, NOT ProxyA.
+  // AttestationDataCallback should call AttestAndSign with a separate callback
+  // in order to complete the token issuance protocol.
+  void GetAttestationTokens(int num_tokens, ProxyLayer layer,
+                            AttestationDataCallback callback,
+                            SignedTokenCallback token_callback) override;
 
  private:
   void HandleGetTokensResponse(
       SignedTokenCallback callback, int num_tokens,
       absl::StatusOr<absl::Span<BlindSignToken>> tokens);
   std::vector<BlindSignToken> CreateOutputTokens(int num_tokens)
-      QUICHE_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
-  void RemoveExpiredTokens() QUICHE_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  void RemoveExpiredTokens() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   BlindSignAuthInterface* blind_sign_auth_;
   int max_tokens_per_request_;
-  QuicheMutex mutex_;
-  QuicheCircularDeque<BlindSignToken> cached_tokens_ QUICHE_GUARDED_BY(mutex_);
+  absl::Mutex mutex_;
+  QuicheCircularDeque<BlindSignToken> cached_tokens_ ABSL_GUARDED_BY(mutex_);
 };
 
 }  // namespace quiche

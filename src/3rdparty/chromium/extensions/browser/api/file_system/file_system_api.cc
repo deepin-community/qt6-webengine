@@ -6,12 +6,14 @@
 
 #include <stddef.h>
 
+#include <array>
 #include <memory>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "base/auto_reset.h"
 #include "base/containers/contains.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -20,6 +22,7 @@
 #include "base/json/values_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/notimplemented.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -46,9 +49,11 @@
 #include "extensions/browser/app_window/app_window_registry.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_util.h"
+#include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/granted_file_entry.h"
 #include "extensions/browser/path_util.h"
 #include "extensions/common/api/file_system.h"
+#include "extensions/common/extension_id.h"
 #include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "net/base/mime_util.h"
@@ -68,9 +73,9 @@
 #include "base/apple/foundation_util.h"
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #include "extensions/browser/api/file_handlers/non_native_file_system_delegate.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
 using storage::IsolatedContext;
 
@@ -162,16 +167,16 @@ bool GetFileTypesFromAcceptOption(
 
 // Key for the path of the directory of the file last chosen by the user in
 // response to a chrome.fileSystem.chooseEntry() call.
-const char kLastChooseEntryDirectory[] = "last_choose_file_directory";
+constexpr char kLastChooseEntryDirectory[] = "last_choose_file_directory";
 
-const int kGraylistedPaths[] = {
+constexpr auto kGraylistedPaths = std::to_array<int>({
     base::DIR_HOME,
 #if BUILDFLAG(IS_WIN)
     base::DIR_PROGRAM_FILES,
     base::DIR_PROGRAM_FILESX86,
     base::DIR_WINDOWS,
 #endif
-};
+});
 
 using FileInfoOptCallback =
     base::OnceCallback<void(std::unique_ptr<base::File::Info>)>;
@@ -244,7 +249,7 @@ base::FilePath GenerateUniqueSavePath(const base::FilePath& path) {
 namespace file_system_api {
 
 base::FilePath GetLastChooseEntryDirectory(const ExtensionPrefs* prefs,
-                                           const std::string& extension_id) {
+                                           const ExtensionId& extension_id) {
   base::FilePath path;
   std::string string_path;
   if (prefs->ReadPrefAsString(extension_id, kLastChooseEntryDirectory,
@@ -255,7 +260,7 @@ base::FilePath GetLastChooseEntryDirectory(const ExtensionPrefs* prefs,
 }
 
 void SetLastChooseEntryDirectory(ExtensionPrefs* prefs,
-                                 const std::string& extension_id,
+                                 const ExtensionId& extension_id,
                                  const base::FilePath& path) {
   prefs->UpdateExtensionPref(extension_id, kLastChooseEntryDirectory,
                              ::base::FilePathToValue(path));
@@ -510,7 +515,7 @@ void FileSystemChooseEntryFunction::FilesSelected(
   if (is_directory_) {
     DCHECK_EQ(paths.size(), 1u);
     bool non_native_path = false;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     NonNativeFileSystemDelegate* delegate =
         ExtensionsAPIClient::Get()->GetNonNativeFileSystemDelegate();
     non_native_path = delegate && delegate->IsUnderNonNativeLocalPath(
@@ -545,12 +550,15 @@ void FileSystemChooseEntryFunction::ConfirmDirectoryAccessAsync(
     return;
   }
 
-  for (size_t i = 0; i < std::size(kGraylistedPaths); i++) {
+  for (const int graylisted_path_key : kGraylistedPaths) {
     base::FilePath graylisted_path;
-    if (!base::PathService::Get(kGraylistedPaths[i], &graylisted_path))
+    if (!base::PathService::Get(graylisted_path_key, &graylisted_path)) {
       continue;
-    if (check_path != graylisted_path && !check_path.IsParent(graylisted_path))
+    }
+    if (check_path != graylisted_path &&
+        !check_path.IsParent(graylisted_path)) {
       continue;
+    }
 
     if (g_test_options && g_test_options->skip_directory_confirmation) {
       if (g_test_options->allow_directory_access) {
@@ -806,7 +814,7 @@ ExtensionFunction::ResponseAction FileSystemChooseEntryFunction::Run() {
       previous_path, suggested_name, file_type_info, picker_type);
 
 // Check whether the |previous_path| is a non-native directory.
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   NonNativeFileSystemDelegate* delegate =
       ExtensionsAPIClient::Get()->GetNonNativeFileSystemDelegate();
   if (delegate &&

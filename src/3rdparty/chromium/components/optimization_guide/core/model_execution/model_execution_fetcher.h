@@ -5,6 +5,7 @@
 #define COMPONENTS_OPTIMIZATION_GUIDE_CORE_MODEL_EXECUTION_MODEL_EXECUTION_FETCHER_H_
 
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -14,6 +15,7 @@
 #include "base/sequence_checker.h"
 #include "base/time/time.h"
 #include "base/types/expected.h"
+#include "components/optimization_guide/core/model_execution/feature_keys.h"
 #include "components/optimization_guide/core/model_execution/optimization_guide_model_execution_error.h"
 #include "components/optimization_guide/proto/model_execution.pb.h"
 #include "url/gurl.h"
@@ -47,15 +49,17 @@ class ModelExecutionFetcher {
 
   ~ModelExecutionFetcher();
 
-  void ExecuteModel(proto::ModelExecutionFeature feature,
+  void ExecuteModel(ModelBasedCapabilityKey feature,
                     signin::IdentityManager* identity_manager,
                     const google::protobuf::MessageLite& request_metadata,
+                    std::optional<base::TimeDelta> timeout,
                     ModelExecuteResponseCallback callback);
 
  private:
   // Invoked when the access token is received, to continue with the model
   // execution request.
   void OnAccessTokenReceived(const std::string& serialized_request,
+                             std::optional<base::TimeDelta> timeout,
                              const std::string& access_token);
 
   // URL loader completion callback.
@@ -79,8 +83,7 @@ class ModelExecutionFetcher {
   base::TimeTicks fetch_start_time_;
 
   // The model execution feature the fetch is happening for.
-  proto::ModelExecutionFeature model_execution_feature_ =
-      proto::ModelExecutionFeature::MODEL_EXECUTION_FEATURE_UNSPECIFIED;
+  std::optional<ModelBasedCapabilityKey> model_execution_feature_;
 
   // Owned by OptimizationGuideKeyedService and outlives `this`.
   raw_ptr<OptimizationGuideLogger> optimization_guide_logger_;

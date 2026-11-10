@@ -73,6 +73,10 @@ BlinkAXEventIntent BlinkAXEventIntent::FromEditCommand(
       input_event_type =
           ax::mojom::blink::InputEventType::kInsertCompositionText;
       break;
+    case InputEvent::InputType::kInsertLink:
+      command = ax::mojom::blink::Command::kInsert;
+      input_event_type = ax::mojom::blink::InputEventType::kInsertLink;
+      break;
 
     // Deletion.
     case InputEvent::InputType::kDeleteWordBackward:
@@ -194,7 +198,6 @@ BlinkAXEventIntent BlinkAXEventIntent::FromEditCommand(
     case InputEvent::InputType::kNumberOfInputTypes:
       NOTREACHED()
           << "Should never be assigned as an input type to |edit_command|.";
-      return BlinkAXEventIntent();
   }
 
   return BlinkAXEventIntent(command, input_event_type);
@@ -257,7 +260,6 @@ BlinkAXEventIntent BlinkAXEventIntent::FromModifiedSelection(
       switch (move_direction) {
         case ax::mojom::blink::MoveDirection::kNone:
           NOTREACHED();
-          return BlinkAXEventIntent();
         case ax::mojom::blink::MoveDirection::kBackward:
           // All platforms behave the same when moving backward by word.
           text_boundary = ax::mojom::blink::TextBoundary::kWordStart;
@@ -299,7 +301,6 @@ BlinkAXEventIntent BlinkAXEventIntent::FromModifiedSelection(
       switch (move_direction) {
         case ax::mojom::blink::MoveDirection::kNone:
           NOTREACHED();
-          return BlinkAXEventIntent();
         case ax::mojom::blink::MoveDirection::kBackward:
           text_boundary = ax::mojom::blink::TextBoundary::kSentenceStart;
           break;
@@ -314,7 +315,6 @@ BlinkAXEventIntent BlinkAXEventIntent::FromModifiedSelection(
       switch (move_direction) {
         case ax::mojom::blink::MoveDirection::kNone:
           NOTREACHED();
-          return BlinkAXEventIntent();
         case ax::mojom::blink::MoveDirection::kBackward:
           text_boundary = ax::mojom::blink::TextBoundary::kLineStart;
           break;
@@ -329,7 +329,6 @@ BlinkAXEventIntent BlinkAXEventIntent::FromModifiedSelection(
       switch (move_direction) {
         case ax::mojom::blink::MoveDirection::kNone:
           NOTREACHED();
-          return BlinkAXEventIntent();
         case ax::mojom::blink::MoveDirection::kBackward:
           text_boundary = ax::mojom::blink::TextBoundary::kParagraphStart;
           break;
@@ -402,7 +401,7 @@ BlinkAXEventIntent::BlinkAXEventIntent(
     ax::mojom::blink::MoveDirection move_direction)
     : intent_(command, text_boundary, move_direction), is_initialized_(true) {}
 
-BlinkAXEventIntent::BlinkAXEventIntent(WTF::HashTableDeletedValueType type)
+BlinkAXEventIntent::BlinkAXEventIntent(HashTableDeletedValueType type)
     : is_initialized_(true), is_deleted_(true) {}
 
 BlinkAXEventIntent::~BlinkAXEventIntent() = default;
@@ -447,13 +446,11 @@ unsigned int BlinkAXEventIntentHashTraits::GetHash(
     return std::numeric_limits<unsigned>::max();
 
   unsigned hash = 1u;
-  WTF::AddIntToHash(hash, static_cast<const unsigned>(key.intent().command));
-  WTF::AddIntToHash(hash,
-                    static_cast<const unsigned>(key.intent().input_event_type));
-  WTF::AddIntToHash(hash,
-                    static_cast<const unsigned>(key.intent().text_boundary));
-  WTF::AddIntToHash(hash,
-                    static_cast<const unsigned>(key.intent().move_direction));
+  AddIntToHash(hash, static_cast<const unsigned>(key.intent().command));
+  AddIntToHash(hash,
+               static_cast<const unsigned>(key.intent().input_event_type));
+  AddIntToHash(hash, static_cast<const unsigned>(key.intent().text_boundary));
+  AddIntToHash(hash, static_cast<const unsigned>(key.intent().move_direction));
   return hash;
 }
 

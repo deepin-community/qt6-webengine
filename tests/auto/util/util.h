@@ -1,5 +1,8 @@
-// Copyright (C) 2016 The Qt Company Ltd.
+// Copyright (C) 2016-2026 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR GPL-3.0-only
+
+#ifndef UTIL_H
+#define UTIL_H
 
 // Functions and macros that really need to be in QTestLib
 
@@ -8,12 +11,18 @@
 #endif
 
 #include <QEventLoop>
+#include <QFile>
+#include <QMimeDatabase>
+#include <QMimeType>
 #include <QPoint>
 #include <QRect>
 #include <QSignalSpy>
 #include <QTimer>
 #include <qwebenginefindtextresult.h>
 #include <qwebenginepage.h>
+#include <qwebengineurlrequestjob.h>
+#include <qwebengineurlscheme.h>
+#include <qwebengineurlschemehandler.h>
 
 // Disconnect signal on destruction.
 class ScopedConnection
@@ -131,6 +140,13 @@ static inline QVariant evaluateJavaScriptSync(QWebEnginePage *page, const QStrin
     return spy.waitForResult();
 }
 
+static inline QVariant evaluateJavaScriptSync(QWebEngineFrame *frame, const QString &script)
+{
+    CallbackSpy<QVariant> spy;
+    frame->runJavaScript(script, spy.ref());
+    return spy.waitForResult();
+}
+
 static inline QVariant evaluateJavaScriptSyncInWorld(QWebEnginePage *page, const QString &script, int worldId)
 {
     CallbackSpy<QVariant> spy;
@@ -145,11 +161,28 @@ static inline QUrl baseUrlSync(QWebEnginePage *page)
     return spy.waitForResult().toUrl();
 }
 
-static inline bool loadSync(QWebEnginePage *page, const QUrl &url, bool ok = true)
+static inline bool loadSync(QWebEnginePage *page, const QUrl &url, bool ok = true,
+                            int timeout = 20000)
 {
     QSignalSpy spy(page, &QWebEnginePage::loadFinished);
     page->load(url);
-    return (!spy.empty() || spy.wait(20000)) && (spy.front().value(0).toBool() == ok);
+    return (!spy.empty() || spy.wait(timeout)) && (spy.front().value(0).toBool() == ok);
+}
+
+static inline bool setHtmlSync(QWebEnginePage *page, const QString &html,
+                               const QUrl &baseUrl = QUrl())
+{
+    QSignalSpy spy(page, &QWebEnginePage::loadFinished);
+    page->setHtml(html, baseUrl);
+    return (!spy.empty() || spy.wait(20000)) && spy.front().value(0).toBool();
+}
+
+static inline bool webActionLoadSync(QWebEnginePage *page, QWebEnginePage::WebAction action,
+                                     bool ok = true, int timeout = 20000)
+{
+    QSignalSpy spy(page, &QWebEnginePage::loadFinished);
+    page->triggerAction(action);
+    return (!spy.empty() || spy.wait(timeout)) && (spy.front().value(0).toBool() == ok);
 }
 
 static inline QRect elementGeometry(QWebEnginePage *page, const QString &id)
@@ -175,4 +208,44 @@ static inline QPoint elementCenter(QWebEnginePage *page, const QString &id)
     return elementGeometry(page, id).center();
 }
 
-#define W_QSKIP(a, b) QSKIP(a)
+// A qrc resource fetcher
+class ResourceHandler : public QWebEngineUrlSchemeHandler
+{
+public:
+    void requestStarted(QWebEngineUrlRequestJob *job) override
+    {
+        const QByteArray requestMethod = job->requestMethod();
+        if (requestMethod != "GET") {
+            job->fail(QWebEngineUrlRequestJob::RequestDenied);
+            return;
+        }
+
+        const QUrl requestUrl = job->requestUrl();
+        const QString requestPath = requestUrl.path();
+        auto file = std::make_unique<QFile>(u":resources/" + requestPath, job);
+        if (!file->exists() || file->size() == 0) {
+            qWarning("QResource '%s' not found or is empty", qUtf8Printable(requestPath));
+            job->fail(QWebEngineUrlRequestJob::UrlNotFound);
+            return;
+        }
+        QFileInfo fileInfo(*file);
+        QMimeDatabase mimeDatabase;
+        QMimeType mimeType = mimeDatabase.mimeTypeForFile(fileInfo);
+        if (mimeType.name() == "application/x-extension-html")
+            job->reply("text/html", file.release());
+        else
+            job->reply(mimeType.name().toUtf8(), file.release());
+    }
+
+    static void registerUrlScheme()
+    {
+        QWebEngineUrlScheme webUiScheme(schemeName);
+        webUiScheme.setSyntax(QWebEngineUrlScheme::Syntax::Path);
+        webUiScheme.setFlags(QWebEngineUrlScheme::CorsEnabled | QWebEngineUrlScheme::SecureScheme);
+        QWebEngineUrlScheme::registerScheme(webUiScheme);
+    }
+
+    const static inline QByteArray schemeName = QByteArrayLiteral("resources");
+};
+
+#endif /* UTIL_H */

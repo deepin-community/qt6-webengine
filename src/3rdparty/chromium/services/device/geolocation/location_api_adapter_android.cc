@@ -10,8 +10,10 @@
 #include "base/location.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
-#include "services/device/geolocation/geolocation_jni_headers/LocationProviderAdapter_jni.h"
 #include "services/device/geolocation/location_provider_android.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "services/device/geolocation/geolocation_jni_headers/LocationProviderAdapter_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::JavaParamRef;
@@ -114,8 +116,9 @@ void LocationApiAdapterAndroid::OnNewLocationAvailable(double latitude,
 }
 
 // static
-void LocationApiAdapterAndroid::OnNewErrorAvailable(JNIEnv* env,
-                                                    jstring message) {
+void LocationApiAdapterAndroid::OnNewErrorAvailable(
+    JNIEnv* env,
+    const base::android::JavaRef<jstring>& message) {
   LocationApiAdapterAndroid* self = GetInstance();
   self->task_runner_->PostTask(
       FROM_HERE,
@@ -124,7 +127,7 @@ void LocationApiAdapterAndroid::OnNewErrorAvailable(JNIEnv* env,
           base::Unretained(self),
           mojom::GeopositionResult::NewError(mojom::GeopositionError::New(
               mojom::GeopositionErrorCode::kPositionUnavailable,
-              base::android::ConvertJavaStringToUTF8(env, message),
+              base::android::ConvertJavaStringToUTF8(message),
               /*error_technical=*/""))));
 }
 

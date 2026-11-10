@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-qs8-vcvt/avx2.c.in
 //   Generator: tools/xngen
@@ -8,30 +9,41 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <immintrin.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/vcvt.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vcvt.h"
 
 
 void xnn_f32_qu8_vcvt_ukernel__avx2_u48(
     size_t batch,
     const float* input,
     uint8_t* output,
-    const union xnn_f32_qu8_cvt_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const struct xnn_f32_qu8_cvt_params* restrict params)
 {
   assert(batch != 0);
   assert(batch % sizeof(float) == 0);
   assert(input != NULL);
   assert(output != NULL);
 
-  const __m256 vscale = _mm256_load_ps(params->avx2.scale);
-  const __m256 voutput_max_less_zero_point = _mm256_load_ps(params->avx2.output_max_less_zero_point);
-  const __m256i voutput_zero_point = _mm256_load_si256((const __m256i*) params->avx2.output_zero_point);
-  const __m256i vshuffle_mask = _mm256_load_si256((const __m256i*) params->avx2.shuffle_mask);
-  const __m256i voutput_min = _mm256_load_si256((const __m256i*) params->avx2.output_min);
+  static const int32_t mask_table[14] = {-1, -1, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0};
+
+  // *cvtps_epi32 maps all floats out of bounds of int to INT_MIN, so we need to clamp at the max to avoid overflow.
+  // INT16_MAX is exactly representable as a float, and is plenty large (this clamp is applied after scaling).
+  const __m256 voverflow_max = _mm256_set1_ps((float) INT16_MAX);
+  XNN_FORCE_REALIZATION(voverflow_max);
+
+  const __m256 vscale = _mm256_set1_ps(params->scalar.scale);
+  const __m256i voutput_zero_point = _mm256_set1_epi16(params->scalar.output_zero_point);
+  XNN_ALIGN(32) static const uint32_t shuffle_mask[8] = {0, 4, 1, 5, 2, 6, 3, 7};
+  const __m256i vshuffle_mask = _mm256_load_si256((const __m256i*) shuffle_mask);
+  XNN_FORCE_REALIZATION(vscale);
+  XNN_FORCE_REALIZATION(voutput_zero_point);
 
   for (; batch >= 48 * sizeof(float); batch -= 48 * sizeof(float)) {
     __m256 vx01 = _mm256_loadu_ps(input);
@@ -49,12 +61,12 @@ void xnn_f32_qu8_vcvt_ukernel__avx2_u48(
     vx89 = _mm256_mul_ps(vx89, vscale);
     vxAB = _mm256_mul_ps(vxAB, vscale);
 
-    vx01 = _mm256_min_ps(vx01, voutput_max_less_zero_point);
-    vx23 = _mm256_min_ps(vx23, voutput_max_less_zero_point);
-    vx45 = _mm256_min_ps(vx45, voutput_max_less_zero_point);
-    vx67 = _mm256_min_ps(vx67, voutput_max_less_zero_point);
-    vx89 = _mm256_min_ps(vx89, voutput_max_less_zero_point);
-    vxAB = _mm256_min_ps(vxAB, voutput_max_less_zero_point);
+    vx01 = _mm256_min_ps(vx01, voverflow_max);
+    vx23 = _mm256_min_ps(vx23, voverflow_max);
+    vx45 = _mm256_min_ps(vx45, voverflow_max);
+    vx67 = _mm256_min_ps(vx67, voverflow_max);
+    vx89 = _mm256_min_ps(vx89, voverflow_max);
+    vxAB = _mm256_min_ps(vxAB, voverflow_max);
 
     const __m256i vacc01 = _mm256_cvtps_epi32(vx01);
     const __m256i vacc23 = _mm256_cvtps_epi32(vx23);
@@ -77,9 +89,6 @@ void xnn_f32_qu8_vcvt_ukernel__avx2_u48(
     __m256i vy01234567 = _mm256_permutevar8x32_epi32(vy02461357, vshuffle_mask);
     __m128i vy89AB = _mm_shuffle_epi32(vy8A9B, _MM_SHUFFLE(3, 1, 2, 0));
 
-    vy01234567 = _mm256_max_epu8(vy01234567, voutput_min);
-    vy89AB = _mm_max_epu8(vy89AB, _mm256_castsi256_si128(voutput_min));
-
     _mm256_storeu_si256((__m256i*) output, vy01234567);
     _mm_storeu_si128((__m128i*) (output + 32), vy89AB);
     output += 48;
@@ -87,7 +96,7 @@ void xnn_f32_qu8_vcvt_ukernel__avx2_u48(
   for (; batch >= 8 * sizeof(float); batch -= 8 * sizeof(float)) {
     __m256 vx = _mm256_loadu_ps(input);
     vx = _mm256_mul_ps(vx, vscale);
-    vx = _mm256_min_ps(vx, voutput_max_less_zero_point);
+    vx = _mm256_min_ps(vx, voverflow_max);
     input += 8;
 
     const __m256i vacc = _mm256_cvtps_epi32(vx);
@@ -95,7 +104,6 @@ void xnn_f32_qu8_vcvt_ukernel__avx2_u48(
     __m128i vy = _mm_packs_epi32(_mm256_castsi256_si128(vacc), _mm256_extracti128_si256(vacc, 1));
     vy = _mm_adds_epi16(vy, _mm256_castsi256_si128(voutput_zero_point));
     vy = _mm_packus_epi16(vy, vy);
-    vy = _mm_max_epu8(vy, _mm256_castsi256_si128(voutput_min));
 
     _mm_storel_epi64((__m128i*) output, vy);
     output += 8;
@@ -103,18 +111,17 @@ void xnn_f32_qu8_vcvt_ukernel__avx2_u48(
   if XNN_UNLIKELY(batch != 0) {
     assert(batch >= 1 * sizeof(float));
     assert(batch <= 7 * sizeof(float));
-    const __m256i vmask = _mm256_loadu_si256((const __m256i*) ((uintptr_t) &params->avx2.mask_table[7] - batch));
+    const __m256i vmask = _mm256_loadu_si256((const __m256i*) ((uintptr_t) &mask_table[7] - batch));
 
     __m256 vx = _mm256_maskload_ps(input, vmask);
     vx = _mm256_mul_ps(vx, vscale);
-    vx = _mm256_min_ps(vx, voutput_max_less_zero_point);
+    vx = _mm256_min_ps(vx, voverflow_max);
 
     const __m256i vacc = _mm256_cvtps_epi32(vx);
 
     __m128i vy = _mm_packs_epi32(_mm256_castsi256_si128(vacc), _mm256_extracti128_si256(vacc, 1));
     vy = _mm_adds_epi16(vy, _mm256_castsi256_si128(voutput_zero_point));
     vy = _mm_packus_epi16(vy, vy);
-    vy = _mm_max_epu8(vy, _mm256_castsi256_si128(voutput_min));
 
     if (batch & (4 * sizeof(float))) {
       _mm_storeu_si32(output, vy);

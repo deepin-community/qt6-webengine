@@ -9,14 +9,15 @@
 #include <optional>
 
 #include "base/files/file_path.h"
-#include "base/files/file_path_watcher.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/observer_list_types.h"
 #include "base/sequence_checker.h"
+#include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
+#include "content/browser/file_system_access/file_path_watcher/file_path_watcher.h"
 #include "content/browser/file_system_access/file_system_access_watch_scope.h"
 #include "content/common/content_export.h"
 #include "storage/browser/file_system/file_system_context.h"
@@ -29,9 +30,9 @@ namespace content {
 // This class must constructed, used, and destroyed on the same sequence.
 class CONTENT_EXPORT FileSystemAccessChangeSource {
  public:
-  using ChangeInfo = base::FilePathWatcher::ChangeInfo;
-  using ChangeType = base::FilePathWatcher::ChangeType;
-  using FilePathType = base::FilePathWatcher::FilePathType;
+  using ChangeInfo = FilePathWatcher::ChangeInfo;
+  using ChangeType = FilePathWatcher::ChangeType;
+  using FilePathType = FilePathWatcher::FilePathType;
 
   class RawChangeObserver : public base::CheckedObserver {
    public:
@@ -43,7 +44,15 @@ class CONTENT_EXPORT FileSystemAccessChangeSource {
     // change source.
     virtual void OnRawChange(const storage::FileSystemURL& changed_url,
                              bool error,
-                             const ChangeInfo& change_info) = 0;
+                             const ChangeInfo& change_info,
+                             FileSystemAccessWatchScope scope) = 0;
+
+    // Called when the `FileSystemAccessChangeSource` underlying OS usage
+    // changes from `old_usage` to `new_usage`. `scope` is used to identify the
+    // `ChangeSource`.
+    virtual void OnUsageChange(size_t old_usage,
+                               size_t new_usage,
+                               FileSystemAccessWatchScope scope) = 0;
 
     virtual void OnSourceBeingDestroyed(
         FileSystemAccessChangeSource* source) = 0;
@@ -63,7 +72,7 @@ class CONTENT_EXPORT FileSystemAccessChangeSource {
   // `scope_`. This may fail if the scope cannot be watched.
   // `on_source_initialized` is run with a error status indicating whether
   // setting up this source succeeds.
-  // TODO(https://crbug.com/1019297): Assert that this is called before
+  // TODO(crbug.com/341095544): Assert that this is called before
   // notifying of changes.
   void EnsureInitialized(
       base::OnceCallback<void(blink::mojom::FileSystemAccessErrorPtr)>
@@ -72,11 +81,16 @@ class CONTENT_EXPORT FileSystemAccessChangeSource {
   base::WeakPtr<FileSystemAccessChangeSource> AsWeakPtr();
 
   const FileSystemAccessWatchScope& scope() const { return scope_; }
-  storage::FileSystemContext* file_system_context() const {
-    return file_system_context_.get();
-  }
+  storage::SandboxFileSystemBackendDelegate* sandbox_delegate() const;
+
+  static size_t quota_limit() { return FilePathWatcher::quota_limit(); }
+  virtual size_t current_usage() const;
 
  protected:
+  // Call this when the observer is no long needed. It will break a cycle of
+  // `sscoped_refptr`s which can lead to a memory leak.
+  void reset_file_system_context();
+
   virtual void Initialize(
       base::OnceCallback<void(blink::mojom::FileSystemAccessErrorPtr)>
           on_source_initialized) = 0;
@@ -94,6 +108,9 @@ class CONTENT_EXPORT FileSystemAccessChangeSource {
                       bool error,
                       const ChangeInfo& change_info);
 
+  // Called by subclasses to report changes to their underlying OS usage.
+  void NotifyOfUsageChange(size_t old_usage, size_t new_usage);
+
   SEQUENCE_CHECKER(sequence_checker_);
 
  private:
@@ -101,7 +118,9 @@ class CONTENT_EXPORT FileSystemAccessChangeSource {
 
   const FileSystemAccessWatchScope scope_;
 
-  scoped_refptr<storage::FileSystemContext> file_system_context_;
+  mutable base::Lock file_system_context_lock_;
+  scoped_refptr<storage::FileSystemContext> file_system_context_
+      GUARDED_BY(file_system_context_lock_);
 
   std::optional<blink::mojom::FileSystemAccessErrorPtr> initialization_result_;
   std::list<base::OnceCallback<void(blink::mojom::FileSystemAccessErrorPtr)>>

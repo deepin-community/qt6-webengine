@@ -24,8 +24,6 @@
 
 namespace content {
 
-class ServiceWorkerInstalledScriptsSender;
-
 // ServiceWorkerCacheStorageMatcher is a helper class to have a fetch API
 // response that matches the given fetch API request from the cache storage
 // API. It is used with the ServiceWorker static routing API to provide the
@@ -48,9 +46,12 @@ class CONTENT_EXPORT ServiceWorkerCacheStorageMatcher {
 
   void Run();
 
+  base::TimeTicks cache_lookup_start() { return cache_lookup_start_; }
+  base::TimeDelta cache_lookup_duration() { return cache_lookup_duration_; }
+
  private:
   void FailFallback();
-  void DidMatch(blink::mojom::MatchResultPtr result);
+  void DidMatch(blink::mojom::CacheStorage::MatchResult result);
   void RunCallback(blink::ServiceWorkerStatusCode status,
                    ServiceWorkerFetchDispatcher::FetchEventResult fetch_result,
                    blink::mojom::FetchAPIResponsePtr response,
@@ -63,10 +64,8 @@ class CONTENT_EXPORT ServiceWorkerCacheStorageMatcher {
   ServiceWorkerFetchDispatcher::FetchCallback fetch_callback_;
 
   mojo::Remote<blink::mojom::CacheStorage> remote_;
-  base::TimeTicks dispatch_event_time_;
-
-  std::unique_ptr<ServiceWorkerInstalledScriptsSender>
-      installed_scripts_sender_;
+  base::TimeTicks cache_lookup_start_;
+  base::TimeDelta cache_lookup_duration_;
 
   SEQUENCE_CHECKER(sequence_checker_);
   base::WeakPtrFactory<ServiceWorkerCacheStorageMatcher> weak_ptr_factory_{

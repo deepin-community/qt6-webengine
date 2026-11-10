@@ -12,12 +12,14 @@ Alexander Potapenko <glider@google.com>
 Alexander Voronov <avoronov@graphics.cs.msu.ru>
 Alexandra Hájková <alexandra.khirnova@gmail.com>
 Aℓex Converse <alexconv@twitch.tv>
+Alex Davicenko <alex.davicenko@arm.com>
 Alexis Ballier <aballier@gentoo.org>
 Alok Ahuja <waveletcoeff@gmail.com>
 Alpha Lam <hclam@google.com>
 A.Mahfoodh <ab.mahfoodh@gmail.com>
 Ami Fischman <fischman@chromium.org>
 Andoni Morales Alastruey <ylatuya@gmail.com>
+Andres Calderon Jaramillo <andrescj@chromium.org>
 Andres Mejia <mcitadel@gmail.com>
 Andrew Lewis <andrewlewis@google.com>
 Andrew Russell <anrussell@google.com>
@@ -25,27 +27,35 @@ Andrew Salkeld <andrew.salkeld@arm.com>
 Angie Chen <yunqi@google.com>
 Angie Chiang <angiebird@google.com>
 Anton Venema <anton.venema@liveswitch.com>
+Anupam Pandey <anupam.pandey@ittiam.com>
 Aron Rosenberg <arosenberg@logitech.com>
 Attila Nagy <attilanagy@google.com>
 Birk Magnussen <birk.magnussen@googlemail.com>
 Bohan Li <bohanli@google.com>
 Brian Foley <bpfoley@google.com>
 Brion Vibber <bvibber@wikimedia.org>
+Casey Smalley <casey.smalley@arm.com>
 changjun.yang <changjun.yang@intel.com>
 Charles 'Buck' Krasic <ckrasic@google.com>
 Cheng Chen <chengchen@google.com>
+Chen Wang <wangchen20@iscas.ac.cn>
+Cherma Rajan A <cherma.rajan@ittiam.com>
 Chi Yo Tsai <chiyotsai@google.com>
 chm <chm@rock-chips.com>
 Chris Cunningham <chcunningham@chromium.org>
 Christian Duvivier <cduvivier@google.com>
 Chunbo Hua <chunbo.hua@intel.com>
+Chun-Min Chang <chun.m.chang@gmail.com>
 Clement Courbet <courbet@google.com>
+Daniel Cheng <dcheng@chromium.org>
 Daniele Castagna <dcastagna@chromium.org>
 Daniel Kang <ddkang@google.com>
 Daniel Sommermann <dcsommer@gmail.com>
 Dan Zhu <zxdan@google.com>
+David Benjamin <davidben@google.com>
 Deb Mukherjee <debargha@google.com>
 Deepa K G <deepa.kg@ittiam.com>
+Diksha Singh <diksha.singh@ittiam.com>
 Dim Temp <dimtemp0@gmail.com>
 Dmitry Kovalev <dkovalev@google.com>
 Dragan Mrdjan <dmrdjan@mips.com>
@@ -54,12 +64,16 @@ Ehsan Akhgari <ehsan.akhgari@gmail.com>
 Elliott Karpilovsky <elliottk@google.com>
 Erik Niemeyer <erik.a.niemeyer@intel.com>
 Fabio Pedretti <fabio.ped@libero.it>
+Feng, Feifei <Feifei.Feng@partner.bmw.de>
+Florian Mayer <fmayer@google.com>
 Frank Galligan <fgalligan@google.com>
 Fredrik Söderquist <fs@opera.com>
 Fritz Koenig <frkoenig@google.com>
 Fyodor Kyslov <kyslov@google.com>
 Gabriel Marin <gmx@chromium.org>
 Gaute Strokkenes <gaute.strokkenes@broadcom.com>
+George Steed <george.steed@arm.com>
+Gerda Zsejke More <gerdazsejke.more@arm.com>
 Geza Lore <gezalore@gmail.com>
 Ghislain MARY <ghislainmary2@gmail.com>
 Giuseppe Scrivano <gscrivano@gnu.org>
@@ -67,10 +81,12 @@ Gordana Cmiljanovic <gordana.cmiljanovic@imgtec.com>
 Gregor Jasny <gjasny@gmail.com>
 Guillaume Martres <gmartres@google.com>
 Guillermo Ballester Valor <gbvalor@gmail.com>
+Hang Nguyen <hnt@google.com>
 Hangyu Kuang <hkuang@google.com>
 Hanno Böck <hanno@hboeck.de>
 Han Shen <shenhan@google.com>
 Hao Chen <chenhao@loongson.cn>
+Hari Limaye <hari.limaye@arm.com>
 Harish Mahendrakar <harish.mahendrakar@ittiam.com>
 Henrik Lundin <hlundin@google.com>
 Hien Ho <hienho@google.com>
@@ -92,6 +108,7 @@ Jean-Yves Avenard <jyavenard@mozilla.com>
 Jeff Faust <jfaust@google.com>
 Jeff Muizelaar <jmuizelaar@mozilla.com>
 Jeff Petkau <jpet@chromium.org>
+Jeremy Dorfman <jdorfman@google.com>
 Jeremy Leconte <jleconte@google.com>
 Jerome Jiang <jianj@google.com>
 Jia Jia <jia.jia@linaro.org>
@@ -103,6 +120,7 @@ Jin Bo <jinbo@loongson.cn>
 Jingning Han <jingning@google.com>
 Joel Fernandes <joelaf@google.com>
 Joey Parrish <joeyparrish@google.com>
+Johann <johann@duck.com>
 Johann Koenig <johannkoenig@google.com>
 John Koleszar <jkoleszar@google.com>
 Johnny Klonaris <google@jawknee.com>
@@ -116,11 +134,14 @@ Julia Robson <juliamrobson@gmail.com>
 Justin Clift <justin@salasaga.org>
 Justin Lebar <justin.lebar@gmail.com>
 Kaustubh Raste <kaustubh.raste@imgtec.com>
+Kexy Biscuit <kexybiscuit@aosc.io>
 KO Myung-Hun <komh@chollian.net>
 Konstantinos Margaritis <konma@vectorcamp.gr>
 Kyle Siefring <kylesiefring@gmail.com>
 Lawrence Velázquez <larryv@macports.org>
+L. E. Segovia <amy@amyspark.me>
 Linfeng Zhang <linfengz@google.com>
+Lin Zheng <linzhen@google.com>
 Liu Peng <pengliu.mail@gmail.com>
 Lou Quillio <louquillio@google.com>
 Luca Barbato <lu_zero@gentoo.org>
@@ -136,6 +157,7 @@ Matthew Heaney <matthewjheaney@chromium.org>
 Matthias Räncker <theonetruecamper@gmx.de>
 Michael Horowitz <mhoro@webrtc.org>
 Michael Kohler <michaelkohler@live.com>
+Michał Janiszewski <janisozaur@gmail.com>
 Mike Frysinger <vapier@chromium.org>
 Mike Hommey <mhommey@mozilla.com>
 Mikhal Shemer <mikhal@google.com>
@@ -147,6 +169,7 @@ Mirko Bonadei <mbonadei@google.com>
 Moriyoshi Koizumi <mozo@mozo.jp>
 Morton Jonuschat <yabawock@gmail.com>
 Nathan E. Egge <negge@mozilla.com>
+Neeraj Gadgil <neeraj.gadgil@ittiam.com>
 Neil Birkbeck <neil.birkbeck@gmail.com>
 Nico Weber <thakis@chromium.org>
 Niveditha Rau <niveditha.rau@gmail.com>
@@ -162,6 +185,8 @@ Peter Collingbourne <pcc@chromium.org>
 Peter de Rivaz <peter.derivaz@gmail.com>
 Peter Kasting <pkasting@chromium.org>
 Philip Jägenstedt <philipj@opera.com>
+Philippe Antoine <p.antoine@catenacyber.fr>
+Philipp Hancke <phancke@meta.com>
 Priit Laes <plaes@plaes.org>
 Rafael Ávila de Espíndola <rafael.espindola@gmail.com>
 Rafaël Carré <funman@videolan.org>
@@ -213,9 +238,11 @@ Vitaly Buka <vitalybuka@chromium.org>
 Vlad Tsyrklevich <vtsyrklevich@chromium.org>
 Wan-Teh Chang <wtc@google.com>
 Wonkap Jang <wonkap@google.com>
-xiwei gu <guxiwei-hf@loongson.cn>
+Xiahong Bao <xiahong.bao@nxp.com>
+Xiwei Gu <guxiwei-hf@loongson.cn>
 Yaowu Xu <yaowu@google.com>
 Yi Luo <luoyi@google.com>
+Yongseok Jeon <ysjeon741@gmail.com>
 Yongzhe Wang <yongzhe@google.com>
 yuanhecai <yuanhecai@loongson.cn>
 Yue Chen <yuec@google.com>
@@ -223,6 +250,8 @@ Yun Liu <yliuyliu@google.com>
 Yunqing Wang <yunqingwang@google.com>
 Yury Gitman <yuryg@google.com>
 Zoe Liu <zoeliu@google.com>
+Zoltan Kuscsik <zoltan@s57.io>
+zuxy <zuxy.meng@gmail.com>
 Google Inc.
 The Mozilla Foundation
 The Xiph.Org Foundation

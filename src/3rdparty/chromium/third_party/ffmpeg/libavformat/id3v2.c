@@ -36,6 +36,7 @@
 #include "libavutil/bprint.h"
 #include "libavutil/dict.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "libavcodec/png.h"
 #include "avio_internal.h"
 #include "demux.h"
@@ -136,6 +137,7 @@ const CodecMime ff_id3v2_mime_tags[] = {
     { "image/png",  AV_CODEC_ID_PNG   },
     { "image/tiff", AV_CODEC_ID_TIFF  },
     { "image/bmp",  AV_CODEC_ID_BMP   },
+    { "image/webp", AV_CODEC_ID_WEBP  },
     { "JPG",        AV_CODEC_ID_MJPEG }, /* ID3v2.2  */
     { "PNG",        AV_CODEC_ID_PNG   }, /* ID3v2.2  */
     { "",           AV_CODEC_ID_NONE  },
@@ -302,7 +304,7 @@ static int decode_str(AVFormatContext *s, AVIOContext *pb, int encoding,
         }
         break;
     default:
-        av_log(s, AV_LOG_WARNING, "Unknown encoding\n");
+        av_log(s, AV_LOG_WARNING, "Unknown encoding %d\n", encoding);
     }
 
     if (ch)
@@ -370,7 +372,7 @@ static void read_uslt(AVFormatContext *s, AVIOContext *pb, int taglen,
     int encoding;
     int ok = 0;
 
-    if (taglen < 1)
+    if (taglen < 4)
         goto error;
 
     encoding = avio_r8(pb);

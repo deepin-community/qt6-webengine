@@ -78,6 +78,7 @@ void QuicTraceVisitor::OnPacketSent(
       case MTU_DISCOVERY_FRAME:
       case STOP_WAITING_FRAME:
       case ACK_FRAME:
+      case IMMEDIATE_ACK_FRAME:
         QUIC_BUG(quic_bug_12732_1)
             << "Frames of type are not retransmittable and are not supposed "
                "to be in retransmittable_frames";
@@ -94,6 +95,7 @@ void QuicTraceVisitor::OnPacketSent(
       case MESSAGE_FRAME:
       case CRYPTO_FRAME:
       case NEW_TOKEN_FRAME:
+      case RESET_STREAM_AT_FRAME:
         break;
 
       // Ignore gQUIC-specific frames.
@@ -226,6 +228,8 @@ void QuicTraceVisitor::PopulateFrameInfo(const QuicFrame& frame,
     case CRYPTO_FRAME:
     case NEW_TOKEN_FRAME:
     case ACK_FREQUENCY_FRAME:
+    case IMMEDIATE_ACK_FRAME:
+    case RESET_STREAM_AT_FRAME:
       break;
 
     case NUM_FRAME_TYPES:

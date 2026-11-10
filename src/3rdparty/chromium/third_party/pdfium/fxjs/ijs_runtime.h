@@ -8,11 +8,11 @@
 #define FXJS_IJS_RUNTIME_H_
 
 #include <memory>
+#include <optional>
 
 #include "core/fxcrt/fx_memory.h"
 #include "core/fxcrt/unowned_ptr.h"
 #include "core/fxcrt/widestring.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 class CJS_Runtime;
 class CPDFSDK_FormFillEnvironment;
@@ -38,12 +38,12 @@ class IJS_Runtime {
     explicit ScopedEventContext(IJS_Runtime* pRuntime);
     ~ScopedEventContext();
 
-    IJS_EventContext* Get() const { return m_pContext; }
-    IJS_EventContext* operator->() const { return m_pContext; }
+    IJS_EventContext* Get() const { return context_; }
+    IJS_EventContext* operator->() const { return context_; }
 
    private:
-    UnownedPtr<IJS_Runtime> const m_pRuntime;
-    UnownedPtr<IJS_EventContext> m_pContext;
+    UnownedPtr<IJS_Runtime> const runtime_;
+    UnownedPtr<IJS_EventContext> context_;
   };
 
   static void Initialize(unsigned int slot, void* isolate, void* platform);
@@ -57,7 +57,7 @@ class IJS_Runtime {
   virtual IJS_EventContext* NewEventContext() = 0;
   virtual void ReleaseEventContext(IJS_EventContext* pContext) = 0;
   virtual CPDFSDK_FormFillEnvironment* GetFormFillEnv() const = 0;
-  virtual absl::optional<JS_Error> ExecuteScript(const WideString& script) = 0;
+  virtual std::optional<JS_Error> ExecuteScript(const WideString& script) = 0;
 
  protected:
   IJS_Runtime() = default;

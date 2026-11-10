@@ -1,4 +1,4 @@
-// Copyright 2019 The Chromium Authors
+// Copyright 2024 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -9,17 +9,22 @@
 
 namespace browsing_data::features {
 
-// Enable BrowsingDataLifetimeManager that periodically delete browsing data as
-// defined by the BrowsingDataLifetime policy.
-BASE_DECLARE_FEATURE(kEnableBrowsingDataLifetimeManager);
+// Pipes down the BrowsingDataModel to power site settings on Android.
+#if BUILDFLAG(IS_ANDROID)
+BASE_DECLARE_FEATURE(kBrowsingDataModel);
+#endif  // BUILDFLAG(IS_ANDROID)
 
-// Deprecate CookiesTReeModel and use BrowsingDataModel as the only browsing
-// data interface.
-BASE_DECLARE_FEATURE(kDeprecateCookiesTreeModel);
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+// Enables a revamped Delete Browsing Data dialog. This includes UI changes,
+// updates to history counter logic and removal of the bulk password deletion
+// option from the dialog.
+BASE_DECLARE_FEATURE(kDbdRevampDesktop);
 
-// Enables `BrowsingDataModel` to be the sole handler for storage i.e. local
-// storage and quota managed storage.
-BASE_DECLARE_FEATURE(kMigrateStorageToBDM);
+// Enables the Browsing History Actor Integration M1 feature. This feature
+// introduces new ui and functionality related to the history integration in
+// Chrome.
+BASE_DECLARE_FEATURE(kBrowsingHistoryActorIntegrationM1);
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
 }  // namespace browsing_data::features
 
 #endif  // COMPONENTS_BROWSING_DATA_CORE_FEATURES_H_

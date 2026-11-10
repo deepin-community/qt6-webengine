@@ -30,17 +30,14 @@
 
 import * as Platform from '../../core/platform/platform.js';
 import * as Root from '../../core/root/root.js';
-import * as Acorn from '../../third_party/acorn/acorn.js';
-
 // This file is required to bring some types into scope, even though it
 // is not used.
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import type * as CodeMirrorModule from '../../third_party/codemirror/codemirror-legacy.js';
 
-import {AcornTokenizer, ECMA_VERSION} from './AcornTokenizer.js';
 import {CSSFormatter} from './CSSFormatter.js';
 import {FormattedContentBuilder} from './FormattedContentBuilder.js';
-import {FormattableMediaTypes, type FormatResult} from './FormatterActions.js';
+import {type FormatResult, FormattableMediaTypes} from './FormatterActions.js';
 import {HTMLFormatter} from './HTMLFormatter.js';
 import {IdentityFormatter} from './IdentityFormatter.js';
 import {JavaScriptFormatter} from './JavaScriptFormatter.js';
@@ -58,9 +55,7 @@ export type ChunkCallback = (arg0: Chunk) => void;
 
 export function createTokenizer(mimeType: string): (
     arg0: string, arg1: (arg0: string, arg1: string|null, arg2: number, arg3: number) => (Object | undefined | void)) =>
-    // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    any {
+    void {
   const mode = CodeMirror.getMode({indentUnit: 2}, mimeType);
   const state = CodeMirror.startState(mode);
 
@@ -73,7 +68,7 @@ export function createTokenizer(mimeType: string): (
   }
 
   return (line: string,
-          callback: (arg0: string, arg1: string|null, arg2: number, arg3: number) => void|Object|undefined): void => {
+          callback: (arg0: string, arg1: string|null, arg2: number, arg3: number) => void|Object|undefined) => {
     const stream = new CodeMirror.StringStream(line);
     while (!stream.eol()) {
       const style = mode.token(stream, state);
@@ -87,57 +82,6 @@ export function createTokenizer(mimeType: string): (
 }
 
 export const AbortTokenization = {};
-
-export function evaluatableJavaScriptSubstring(content: string): string {
-  try {
-    const tokenizer = Acorn.tokenizer(content, {ecmaVersion: ECMA_VERSION});
-    let token = tokenizer.getToken();
-    while (AcornTokenizer.punctuator(token)) {
-      token = tokenizer.getToken();
-    }
-
-    const startIndex = token.start;
-    let endIndex = token.end;
-    while (token.type !== Acorn.tokTypes.eof) {
-      const isIdentifier = token.type === Acorn.tokTypes.name || token.type === Acorn.tokTypes.privateId;
-      const isThis = AcornTokenizer.keyword(token, 'this');
-      const isString = token.type === Acorn.tokTypes.string;
-      if (!isThis && !isIdentifier && !isString) {
-        break;
-      }
-
-      endIndex = token.end;
-      token = tokenizer.getToken();
-
-      while (AcornTokenizer.punctuator(token, '[')) {
-        let openBracketCounter = 0;
-        do {
-          if (AcornTokenizer.punctuator(token, '[')) {
-            ++openBracketCounter;
-          }
-          token = tokenizer.getToken();
-          if (AcornTokenizer.punctuator(token, ']')) {
-            if (--openBracketCounter === 0) {
-              endIndex = token.end;
-              token = tokenizer.getToken();
-              break;
-            }
-          }
-        } while (token.type !== Acorn.tokTypes.eof);
-      }
-
-      if (!AcornTokenizer.punctuator(token, '.')) {
-        break;
-      }
-
-      token = tokenizer.getToken();
-    }
-    return content.substring(startIndex, endIndex);
-  } catch (e) {
-    console.error(e);
-    return '';
-  }
-}
 
 export function format(mimeType: string, text: string, indentString?: string): FormatResult {
   // Default to a 4-space indent.
@@ -153,8 +97,7 @@ export function format(mimeType: string, text: string, indentString?: string): F
         formatter.format(text, lineEndings);
         break;
       }
-      case FormattableMediaTypes.TEXT_CSS:
-      case FormattableMediaTypes.TEXT_X_SCSS: {
+      case FormattableMediaTypes.TEXT_CSS: {
         const formatter = new CSSFormatter(builder);
         formatter.format(text, lineEndings, 0, text.length);
         break;
@@ -192,7 +135,7 @@ export function format(mimeType: string, text: string, indentString?: string): F
 
 (function disableLoggingForTest(): void {
   if (Root.Runtime.Runtime.queryParam('test')) {
-    console.error = (): undefined => undefined;
+    console.error = () => undefined;
   }
 })();
 

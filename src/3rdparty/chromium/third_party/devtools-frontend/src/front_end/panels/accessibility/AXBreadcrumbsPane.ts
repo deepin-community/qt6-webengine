@@ -1,6 +1,7 @@
 // Copyright 2016 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import * as Common from '../../core/common/common.js';
 import * as Host from '../../core/host/host.js';
@@ -12,7 +13,7 @@ import * as Feedback from '../../ui/components/panel_feedback/panel_feedback.js'
 import * as UI from '../../ui/legacy/legacy.js';
 import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
-import {type AccessibilitySidebarView} from './AccessibilitySidebarView.js';
+import type {AccessibilitySidebarView} from './AccessibilitySidebarView.js';
 import {AccessibilitySubPane} from './AccessibilitySubPane.js';
 import axBreadcrumbsStyles from './axBreadcrumbs.css.js';
 
@@ -40,8 +41,8 @@ const UIStrings = {
   /**
    *@description Message saying that DevTools must be restarted before the experiment is enabled.
    */
-  reloadRequired: 'Reload required before the change takes effect.',
-};
+  reloadRequired: 'Reload required before the change takes effect',
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/accessibility/AXBreadcrumbsPane.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 export class AXBreadcrumbsPane extends AccessibilitySubPane {
@@ -55,9 +56,11 @@ export class AXBreadcrumbsPane extends AccessibilitySubPane {
 
   constructor(axSidebarView: AccessibilitySidebarView) {
     super(i18nString(UIStrings.accessibilityTree));
+    this.registerRequiredCSS(axBreadcrumbsStyles);
 
     this.element.classList.add('ax-subpane');
     this.element.tabIndex = -1;
+    this.element.setAttribute('jslog', `${VisualLogging.section('accessibility-tree')}`);
 
     this.axSidebarView = axSidebarView;
     this.preselectedBreadcrumb = null;
@@ -69,7 +72,7 @@ export class AXBreadcrumbsPane extends AccessibilitySubPane {
 
     this.hoveredBreadcrumb = null;
     const previewToggle = new Feedback.PreviewToggle.PreviewToggle();
-    previewToggle.setAttribute('jslog', `${VisualLogging.toggle().context('full-accessibility-tree')}`);
+    previewToggle.setAttribute('jslog', `${VisualLogging.toggle('full-accessibility-tree')}`);
     const name = i18nString(UIStrings.fullTreeExperimentName);
     const experiment = Root.Runtime.ExperimentName.FULL_ACCESSIBILITY_TREE;
     const onChangeCallback: (checked: boolean) => void = checked => {
@@ -307,7 +310,7 @@ export class AXBreadcrumbsPane extends AccessibilitySubPane {
       return;
     }
     const breadcrumb = elementsToAXBreadcrumb.get(breadcrumbElement);
-    if (!breadcrumb || !breadcrumb.isDOMNode()) {
+    if (!breadcrumb?.isDOMNode()) {
       return;
     }
     this.setHoveredBreadcrumb(breadcrumb);
@@ -415,17 +418,13 @@ export class AXBreadcrumbsPane extends AccessibilitySubPane {
         }
         void domNode.scrollIntoView();
       });
-    });
+    }, {jslogContext: 'scroll-into-view'});
 
     const deferredNode = axNode.deferredDOMNode();
     if (deferredNode) {
       contextMenu.appendApplicableItems(deferredNode);
     }
     void contextMenu.show();
-  }
-  override wasShown(): void {
-    super.wasShown();
-    this.registerCSSFiles([axBreadcrumbsStyles]);
   }
 }
 
@@ -449,7 +448,9 @@ export class AXBreadcrumb {
 
     this.elementInternal = document.createElement('div');
     this.elementInternal.classList.add('ax-breadcrumb');
-    this.elementInternal.setAttribute('jslog', `${VisualLogging.treeItem().track({click: true})}`);
+    this.elementInternal.setAttribute(
+        'jslog',
+        `${VisualLogging.treeItem().track({click: true, keydown: 'ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Enter'})}`);
     elementsToAXBreadcrumb.set(this.elementInternal, this);
 
     this.nodeElementInternal = document.createElement('div');
@@ -486,7 +487,7 @@ export class AXBreadcrumb {
     } else {
       this.appendRoleElement(this.axNodeInternal.role());
       const axNodeName = this.axNodeInternal.name();
-      if (axNodeName && axNodeName.value) {
+      if (axNodeName?.value) {
         this.nodeWrapper.createChild('span', 'separator').textContent = '\xA0';
         this.appendNameElement(axNodeName.value as string);
       }
@@ -495,7 +496,8 @@ export class AXBreadcrumb {
     if (!this.axNodeInternal.ignored() && this.axNodeInternal.hasOnlyUnloadedChildren()) {
       this.nodeElementInternal.classList.add('children-unloaded');
       UI.ARIAUtils.setExpanded(this.nodeElementInternal, false);
-      VisualLogging.registerLoggable(this.expandLoggable, `${VisualLogging.treeItemExpand()}`, this.elementInternal);
+      VisualLogging.registerLoggable(
+          this.expandLoggable, `${VisualLogging.expand()}`, this.elementInternal, new DOMRect(0, 0, 16, 16));
     }
 
     if (!this.axNodeInternal.isDOMNode()) {
@@ -517,7 +519,8 @@ export class AXBreadcrumb {
     this.nodeElementInternal.classList.add('parent');
     UI.ARIAUtils.setExpanded(this.nodeElementInternal, true);
     this.childrenGroupElement.appendChild(breadcrumb.element());
-    VisualLogging.registerLoggable(this.expandLoggable, `${VisualLogging.treeItemExpand()}`, this.elementInternal);
+    VisualLogging.registerLoggable(
+        this.expandLoggable, `${VisualLogging.expand()}`, this.elementInternal, new DOMRect(0, 0, 16, 16));
   }
 
   hasExpandedChildren(): number {
@@ -636,9 +639,7 @@ export class AXBreadcrumb {
   }
 }
 
-type RoleStyles = {
-  [type: string]: string,
-};
+type RoleStyles = Record<string, string>;
 
 export const RoleStyles: RoleStyles = {
   internalRole: 'ax-internal-role',

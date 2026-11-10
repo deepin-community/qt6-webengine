@@ -10,7 +10,7 @@
 
 #include "src/gpu/ganesh/GrOpsRenderPass.h"
 
-#include "include/gpu/GrTypes.h"
+#include "include/gpu/ganesh/GrTypes.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
 
 class GrD3DGpu;
@@ -22,7 +22,7 @@ public:
 
     ~GrD3DOpsRenderPass() override;
 
-    void inlineUpload(GrOpFlushState* state, GrDeferredTextureUploadFn& upload) override;
+    bool inlineUpload(GrOpFlushState* state, GrDeferredTextureUploadFn& upload) override;
 
     void onExecuteDrawable(std::unique_ptr<SkDrawable::GpuDrawHandler>) override {}
 

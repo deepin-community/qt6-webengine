@@ -6,8 +6,8 @@
 
 #include "build/build_config.h"
 #include "third_party/blink/renderer/core/css/css_length_resolver.h"
+#include "third_party/blink/renderer/core/css/css_value_clamping_utils.h"
 #include "third_party/blink/renderer/core/css/css_value_pool.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 #include "third_party/blink/renderer/platform/wtf/size_assertions.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
@@ -90,7 +90,6 @@ double CSSNumericLiteralValue::ComputeSeconds() const {
     return num_ / 1000;
   }
   NOTREACHED();
-  return 0;
 }
 
 double CSSNumericLiteralValue::ComputeDegrees() const {
@@ -107,7 +106,6 @@ double CSSNumericLiteralValue::ComputeDegrees() const {
       return Turn2deg(num_);
     default:
       NOTREACHED();
-      return 0;
   }
 }
 
@@ -117,6 +115,15 @@ double CSSNumericLiteralValue::ComputeDotsPerPixel() const {
 }
 
 double CSSNumericLiteralValue::ComputeInCanonicalUnit() const {
+  return DoubleValue() *
+         CSSPrimitiveValue::ConversionToCanonicalUnitsScaleFactor(GetType());
+}
+
+double CSSNumericLiteralValue::ComputeInCanonicalUnit(
+    const CSSLengthResolver& length_resolver) const {
+  if (IsLength()) {
+    return ComputeLengthPx(length_resolver);
+  }
   return DoubleValue() *
          CSSPrimitiveValue::ConversionToCanonicalUnitsScaleFactor(GetType());
 }
@@ -133,8 +140,17 @@ int CSSNumericLiteralValue::ComputeInteger() const {
 }
 
 double CSSNumericLiteralValue::ComputeNumber() const {
-  DCHECK(IsNumber());
-  return ClampTo<double>(num_);
+  DCHECK(IsNumber() || IsPercentage());
+  if (IsPercentage()) {
+    return ClampTo<double>(num_ / 100.0);
+  } else {
+    return ClampTo<double>(num_);
+  }
+}
+
+double CSSNumericLiteralValue::ComputePercentage() const {
+  DCHECK(IsPercentage());
+  return CSSValueClampingUtils::ClampDouble(num_);
 }
 
 bool CSSNumericLiteralValue::AccumulateLengthArray(CSSLengthArray& length_array,
@@ -198,7 +214,7 @@ static String FormatInfinityOrNaN(double number, const char* suffix) {
   }
 
   if (strlen(suffix) > 0) {
-    result = result + String::Format(" * 1%s", suffix);
+    result = StrCat({result, " * 1", suffix});
   }
   return result;
 }
@@ -210,7 +226,7 @@ String CSSNumericLiteralValue::CustomCSSText() const {
       // FIXME
       break;
     case UnitType::kInteger:
-      text = String::Number(GetIntValue());
+      text = String::Number(ComputeInteger());
       break;
     case UnitType::kNumber:
     case UnitType::kPercentage:
@@ -282,7 +298,7 @@ String CSSNumericLiteralValue::CustomCSSText() const {
       // be represented in non-exponential format with 6 digit precision.
       constexpr int kMinInteger = -999999;
       constexpr int kMaxInteger = 999999;
-      double value = To<CSSNumericLiteralValue>(this)->DoubleValue();
+      double value = DoubleValue();
       // If the value is small integer, go the fast path.
       if (value < kMinInteger || value > kMaxInteger ||
           std::trunc(value) != value) {
@@ -296,13 +312,12 @@ String CSSNumericLiteralValue::CustomCSSText() const {
         int int_value = value;
         const char* unit_type = UnitTypeToString(GetType());
         builder.AppendNumber(int_value);
-        builder.Append(unit_type, static_cast<unsigned>(strlen(unit_type)));
+        builder.Append(StringView(unit_type));
         text = builder.ReleaseString();
       }
     } break;
     default:
       NOTREACHED();
-      break;
   }
   return text;
 }
@@ -355,6 +370,11 @@ bool CSSNumericLiteralValue::Equals(const CSSNumericLiteralValue& other) const {
     default:
       return false;
   }
+}
+
+unsigned CSSNumericLiteralValue::CustomHash() const {
+  uint64_t val = base::bit_cast<uint64_t>(num_);
+  return HashInts(static_cast<unsigned>(GetType()), HashInts(val >> 32, val));
 }
 
 CSSPrimitiveValue::UnitType CSSNumericLiteralValue::CanonicalUnit() const {

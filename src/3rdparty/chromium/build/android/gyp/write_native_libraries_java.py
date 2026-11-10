@@ -73,10 +73,6 @@ def main():
                       required=True,
                       default='CPU_FAMILY_UNKNOWN',
                       help='CPU family.')
-  parser.add_argument(
-      '--main-component-library',
-      help='If used, the list of native libraries will only contain this '
-      'library. Dependencies are found in the library\'s "NEEDED" section.')
 
   parser.add_argument(
       '--output', required=True, help='Path to the generated srcjar file.')
@@ -90,10 +86,8 @@ def main():
   options = parser.parse_args(build_utils.ExpandFileArgs(sys.argv[1:]))
 
   native_libraries = []
-  if options.main_component_library:
-    native_libraries.append(options.main_component_library)
-  elif options.native_libraries_list:
-    with open(options.native_libraries_list) as f:
+  if options.native_libraries_list:
+    with open(options.native_libraries_list, encoding='utf-8') as f:
       native_libraries.extend(l.strip() for l in f)
 
   if options.enable_chromium_linker and len(native_libraries) > 1:

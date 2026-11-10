@@ -26,12 +26,10 @@
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/media/webrtc/media_device_salt_service_factory.h"
 #include "chrome/browser/media/webrtc/webrtc_log_uploader.h"
-#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/recently_audible_helper.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/buildflags.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "chrome/test/base/ui_test_utils.h"
 #include "components/media_device_salt/media_device_salt_service.h"
 #include "components/network_session_configurator/common/network_switches.h"
 #include "content/public/browser/audio_service.h"
@@ -41,6 +39,7 @@
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "extensions/browser/api_test_utils.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "media/audio/audio_device_description.h"
@@ -56,6 +55,8 @@
 #if BUILDFLAG(IS_WIN)
 #include "base/win/windows_version.h"
 #endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using base::JSONWriter;
 using content::RenderProcessHost;
@@ -94,12 +95,14 @@ class AudioWaitingExtensionTest : public ExtensionApiTest {
       auto* audible_helper = RecentlyAudibleHelper::FromWebContents(tab);
       audio_playing = audible_helper->WasRecentlyAudible();
       base::RunLoop().RunUntilIdle();
-      if (audio_playing)
+      if (audio_playing) {
         break;
+      }
       base::PlatformThread::Sleep(base::Milliseconds(100));
     }
-    if (!audio_playing)
+    if (!audio_playing) {
       FAIL() << "Audio did not start playing within ~5 seconds.";
+    }
   }
 };
 
@@ -294,17 +297,15 @@ IN_PROC_BROWSER_TEST_F(HangoutServicesBrowserTest,
   // This runs the end-to-end JavaScript test for the Hangout Services
   // component extension, which uses the webrtcAudioPrivate API among
   // others.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(
-      browser(),
-      https_server().GetURL("any-subdomain.google.com",
-                            "/extensions/hangout_services_test.html")));
+  ASSERT_TRUE(NavigateToURL(https_server().GetURL(
+      "meet.google.com", "/extensions/hangout_services_test.html")));
 
-  WebContents* tab = browser()->tab_strip_model()->GetActiveWebContents();
+  WebContents* tab = GetActiveWebContents();
   WaitUntilAudioIsPlaying(tab);
 
   // Use a test server URL for uploading.
   g_browser_process->webrtc_log_uploader()->SetUploadUrlForTesting(
-      https_server().GetURL("any-subdomain.google.com", kLogUploadUrlPath));
+      https_server().GetURL("meet.google.com", kLogUploadUrlPath));
 
   ASSERT_TRUE(content::ExecJs(tab, "browsertestRunAllTests();"));
 

@@ -5,10 +5,27 @@
 #ifndef CONTENT_COMMON_SERVICE_WORKER_SERVICE_WORKER_RESOURCE_LOADER_H_
 #define CONTENT_COMMON_SERVICE_WORKER_SERVICE_WORKER_RESOURCE_LOADER_H_
 
+#include <optional>
+
 #include "base/check_op.h"
-#include "base/metrics/histogram_macros.h"
 #include "content/common/content_export.h"
+#include "mojo/public/cpp/base/big_buffer.h"
+#include "services/network/public/cpp/cross_origin_embedder_policy.h"
+#include "services/network/public/cpp/document_isolation_policy.h"
+#include "services/network/public/mojom/cross_origin_embedder_policy.mojom-forward.h"
+#include "services/network/public/mojom/document_isolation_policy.mojom-forward.h"
+#include "services/network/public/mojom/service_worker_router_info.mojom-shared.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
+#include "third_party/blink/public/common/service_worker/service_worker_router_rule.h"
+#include "third_party/blink/public/mojom/fetch/fetch_api_response.mojom-forward.h"
+
+namespace net {
+struct RedirectInfo;
+}  // namespace net
+
+namespace network {
+struct ResourceRequest;
+}  // namespace network
 
 namespace content {
 // A common interface in between:
@@ -53,7 +70,7 @@ class CONTENT_EXPORT ServiceWorkerResourceLoader {
   // kNone: No preload request is triggered. This is the default state.
   // kRaceNetworkRequest:
   //    RaceNetworkRequest is triggered.
-  //    TODO(crbug.com/1420517) This will be passed to the renderer and block
+  //    TODO(crbug.com/40258805) This will be passed to the renderer and block
   //    the corresponding request from the ServiceWorker.
   // kNavigationPreload:
   //    Enabled when Navigation Preload is triggered.
@@ -67,13 +84,42 @@ class CONTENT_EXPORT ServiceWorkerResourceLoader {
     kAutoPreload,
   };
 
+  // Results of the CORP check for the static router's cache source.
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  enum class CORPCheckResult {
+    kSuccess = 0,    // Not blocked by policy.
+    kBlocked = 1,    // Blocked by policy, and feature flag enabled.
+    kViolation = 2,  // Blocked by policy, but feature flag disabled.
+    kMaxValue = kViolation,
+  };
+
+  // Static helper to validate the response from the Service Worker according
+  // to the Fetch spec (4.4 HTTP fetch, Step 3.5.6).
+  static bool IsValidServiceWorkerResponse(
+      network::mojom::RequestMode request_mode,
+      network::mojom::RedirectMode redirect_mode,
+      const blink::mojom::FetchAPIResponsePtr& response);
+
+  // Validates the response from the static router's cache source and records
+  // the result to UMA. Returns true if the response is valid.
+  bool IsValidStaticRouterResponse(
+      const network::ResourceRequest& resource_request,
+      const blink::mojom::FetchAPIResponsePtr& response,
+      const network::CrossOriginEmbedderPolicy& cross_origin_embedder_policy,
+      network::mojom::CrossOriginEmbedderPolicyReporter*
+          cross_origin_embedder_policy_reporter,
+      const network::DocumentIsolationPolicy& document_isolation_policy,
+      network::mojom::DocumentIsolationPolicyReporter*
+          document_isolation_policy_reporter);
+
   ServiceWorkerResourceLoader();
   virtual ~ServiceWorkerResourceLoader();
 
   void RecordFetchResponseFrom();
 
   FetchResponseFrom commit_responsibility() { return commit_responsibility_; }
-  void SetCommitResponsibility(FetchResponseFrom fetch_response_from);
+  virtual void SetCommitResponsibility(FetchResponseFrom fetch_response_from);
 
   DispatchedPreloadType dispatched_preload_type() {
     return dispatched_preload_type_;
@@ -82,10 +128,6 @@ class CONTENT_EXPORT ServiceWorkerResourceLoader {
 
   // Tells if the class is main resource's class or not.
   virtual bool IsMainResourceLoader() = 0;
-
-  // Calls url_loader_client_->OnReceiveResponse() with given |response_head|.
-  virtual void CommitResponseHeaders(
-      const network::mojom::URLResponseHeadPtr& response_head) = 0;
 
   // Calls url_loader_client_->OnReceiveResponse() with |response_body| and
   // |cached_metadata|.
@@ -107,9 +149,24 @@ class CONTENT_EXPORT ServiceWorkerResourceLoader {
       const net::RedirectInfo& redirect_info,
       const network::mojom::URLResponseHeadPtr& response_head) = 0;
 
+  // Determine if the fetch start should be recorded, by checking the matched
+  // source type of ServiceWorker static routing API. If no source is matched,
+  // or the source is matched to `race` or `fetch-event`, we should record fetch
+  // start time since these cases will start the ServiceWorker and trigger fetch
+  // event.
+  bool ShouldRecordServiceWorkerFetchStart();
+  bool IsMatchedRouterSourceType(
+      network::mojom::ServiceWorkerRouterSourceType type);
+  void set_matched_router_source_type(
+      network::mojom::ServiceWorkerRouterSourceType type) {
+    matched_router_source_type_ = type;
+  }
+
  private:
   FetchResponseFrom commit_responsibility_ = FetchResponseFrom::kNoResponseYet;
   DispatchedPreloadType dispatched_preload_type_ = DispatchedPreloadType::kNone;
+  std::optional<network::mojom::ServiceWorkerRouterSourceType>
+      matched_router_source_type_;
 };
 }  // namespace content
 

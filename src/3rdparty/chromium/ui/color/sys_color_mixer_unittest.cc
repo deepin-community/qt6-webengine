@@ -6,6 +6,7 @@
 
 #include <tuple>
 
+#include "base/compiler_specific.h"
 #include "base/strings/stringprintf.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/color/color_mixer.h"
@@ -36,7 +37,6 @@ class SysColorMixerTest
 
     AddRefColorMixer(&color_provider_, key);
     AddSysColorMixer(&color_provider_, key);
-    color_provider_.GenerateColorMap();
   }
 
  protected:
@@ -62,11 +62,11 @@ TEST_P(SysColorMixerTest, SysColorContrast) {
   };
 
   for (const ColorId* ids : minimum_visible_contrasting_ids) {
-    check_sufficient_contrast(ids[0], ids[1],
+    check_sufficient_contrast(ids[0], UNSAFE_TODO(ids[1]),
                               color_utils::kMinimumVisibleContrastRatio);
   }
   for (const ColorId* ids : minimum_readable_contrasting_ids) {
-    check_sufficient_contrast(ids[0], ids[1],
+    check_sufficient_contrast(ids[0], UNSAFE_TODO(ids[1]),
                               color_utils::kMinimumReadableContrastRatio);
   }
 }

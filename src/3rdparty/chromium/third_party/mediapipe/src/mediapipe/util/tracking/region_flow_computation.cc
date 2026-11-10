@@ -1722,7 +1722,7 @@ void RegionFlowComputation::AdaptiveGoodFeaturesToTrack(
           }
         }
       }  // end if use_fast
-    }    // end if e.
+    }  // end if e.
 
     if (use_fast) {
       // TODO: Perform grid based feature detection.
@@ -1834,15 +1834,15 @@ void RegionFlowComputation::AdaptiveGoodFeaturesToTrack(
                      // to successfully tracked features.
                 nullptr);
           }  // end bins.
-        }    // end while.
+        }  // end while.
 
         if (level + 1 < adaptive_levels) {
           level_width = (level_width + 1) / 2;
           level_height = (level_height + 1) / 2;
         }
       }  // end adaptive level.
-    }    // end use_fast
-  }      // end extraction level.
+    }  // end use_fast
+  }  // end extraction level.
 
   // If adaptive_levels or extraction_levels > 1, for 2nd or larger level, we
   // can potentially add corners above the max_features threshold. In this case

@@ -14,7 +14,6 @@
 #include "base/task/task_traits.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "components/performance_manager/graph/process_node_impl.h"
 #include "components/performance_manager/public/graph/node_data_describer_registry.h"
 #include "components/performance_manager/public/graph/process_node.h"
@@ -48,7 +47,7 @@ std::string ContentTypeToString(ProcessNode::ContentType content_type) {
 std::string HostedProcessTypesToString(
     ProcessNode::ContentTypes hosted_content_types) {
   std::vector<std::string> content_types_vector;
-  content_types_vector.reserve(hosted_content_types.Size());
+  content_types_vector.reserve(hosted_content_types.size());
   for (ProcessNode::ContentType content_type : hosted_content_types)
     content_types_vector.push_back(ContentTypeToString(content_type));
 
@@ -69,7 +68,7 @@ const char* GetProcessPriorityString(const base::Process& process) {
     case base::Process::Priority::kUserBlocking:
       return "User blocking";
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 #endif
 
@@ -90,7 +89,7 @@ base::Value GetProcessValueDict(const base::Process& process) {
     ret.Set("is_current", true);
   }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   if (process.GetPidInNamespace() != base::kNullProcessId) {
     ret.Set("pid_in_namespace", process.GetPidInNamespace());
   }

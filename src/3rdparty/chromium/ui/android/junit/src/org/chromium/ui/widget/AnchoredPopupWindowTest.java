@@ -38,6 +38,7 @@ import org.robolectric.shadows.ShadowView;
 
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.ui.R;
+import org.chromium.ui.base.LocalizationUtils;
 import org.chromium.ui.widget.AnchoredPopupWindow.HorizontalOrientation;
 import org.chromium.ui.widget.AnchoredPopupWindow.PopupSpec;
 import org.chromium.ui.widget.AnchoredPopupWindow.VerticalOrientation;
@@ -58,6 +59,7 @@ public final class AnchoredPopupWindowTest {
     private int mMarginPx;
     private int mMaxWidthPx;
     private int mDesiredWidthPx;
+    private int mDesiredHeightPx;
     private @HorizontalOrientation int mPreferredHorizontalOrientation;
     private @VerticalOrientation int mPreferredVerticalOrientation;
     private boolean mCurrentPositionBelow;
@@ -458,7 +460,7 @@ public final class AnchoredPopupWindowTest {
 
     @Test
     public void testCalcPopupRect_Margin() {
-        // TODO(https://crbug.com/1311850): Margin needs to be considered on Y axis.
+        // TODO(crbug.com/40831293): Margin needs to be considered on Y axis.
         mMarginPx = 10;
         // E.left = A.right + margin = 0 + 10 = 10
         // E.top = A.bottom = 0
@@ -550,7 +552,52 @@ public final class AnchoredPopupWindowTest {
     }
 
     @Test
-    public void testCalcPopupRect_PreferredHorizontalOrientation() {
+    public void testCalcPopupRect_DesiredHeight() {
+        mDesiredHeightPx = 500;
+        // E.left = A.right = 0
+        // E.top = A.bottom = 0
+        // E.right = A.right + w = 150
+        // E.bottom = A.bottom + desiredHeight = 500
+        doTestAnchoredPopupAtRect(
+                "Popup shown as desired height.",
+                /*anchorRect*/ new Rect(0, 0, 0, 0),
+                /*expectedPopupRect*/ new Rect(0, 0, 150, 500));
+
+        // E.left = A.right = 0
+        // E.top = A.top - desiredHeight = 100
+        // E.right = E.left + w = 150
+        // E.bottom = E.top + desiredHeight = 600
+        doTestAnchoredPopupAtRect(
+                "Shown as desired height even when available space is less.",
+                /*anchorRect*/ new Rect(0, 600, 0, 800),
+                /*expectedPopupRect*/ new Rect(0, 100, 150, 600));
+    }
+
+    @Test
+    public void testCalcPopupRect_DesiredSize() {
+        mDesiredWidthPx = 200;
+        mDesiredHeightPx = 500;
+        // E.left = A.right = 0
+        // E.top = A.bottom = 0
+        // E.right = A.right + desiredWidth = 200
+        // E.bottom = A.bottom + desiredHeight = 500
+        doTestAnchoredPopupAtRect(
+                "Popup shown as desired size.",
+                /*anchorRect*/ new Rect(0, 0, 0, 0),
+                /*expectedPopupRect*/ new Rect(0, 0, 200, 500));
+
+        // E.left = A.left - desiredWidth = 400
+        // E.top = A.top - desiredHeight = 500
+        // E.right = E.left + desiredWidth = 600
+        // E.bottom = E.top + desiredHeight = 1000
+        doTestAnchoredPopupAtRect(
+                "Shown as desired size even when available space is less.",
+                /*anchorRect*/ new Rect(600, 1000, 600, 1000),
+                /*expectedPopupRect*/ new Rect(400, 500, 600, 1000));
+    }
+
+    @Test
+    public void testCalcPopupRect_PreferredHorizontalOrientationCenter() {
         mPreferredHorizontalOrientation = HorizontalOrientation.CENTER;
 
         // E.left = (A.left + A.right) / 2 - w / 2 = (300 + 300) / 2 - 150 / 2 = 225
@@ -579,6 +626,31 @@ public final class AnchoredPopupWindowTest {
                 "Above and center the anchor rect.",
                 /*anchorRect*/ new Rect(400, 600, 500, 600),
                 /*expectedPopupRect*/ new Rect(375, 300, 525, 600));
+    }
+
+    @Test
+    public void testCalcPopupRect_PreferredHorizontalOrientationLayoutDirection() {
+        mPreferredHorizontalOrientation = HorizontalOrientation.LAYOUT_DIRECTION;
+
+        LocalizationUtils.setRtlForTesting(false);
+        // E.left = A.left + w = 300
+        // E.top = A.bottom = 0
+        // E.right = E.left + w  = 300 + 150 = 450
+        // E.bottom = A.bottom + h = 300
+        doTestAnchoredPopupAtRect(
+                "Right of anchor rect.",
+                /*anchorRect*/ new Rect(300, 0, 300, 0),
+                /*expectedPopupRect*/ new Rect(300, 0, 450, 300));
+
+        LocalizationUtils.setRtlForTesting(true);
+        // E.left = A.left - w = 300 - 150 = 150
+        // E.top = A.bottom = 0
+        // E.right = E.left = 300
+        // E.bottom = A.bottom + h = 300
+        doTestAnchoredPopupAtRect(
+                "Left of anchor rect.",
+                /*anchorRect*/ new Rect(300, 0, 300, 0),
+                /*expectedPopupRect*/ new Rect(150, 0, 300, 300));
     }
 
     @Test
@@ -805,6 +877,27 @@ public final class AnchoredPopupWindowTest {
     }
 
     @Test
+    public void testAllowVerySmallPopups() {
+        UiWidgetFactory mockFactory = mock(UiWidgetFactory.class);
+        UiWidgetFactory.setInstance(mockFactory);
+        PopupWindow mockPopup = mock(PopupWindow.class);
+        when(mockPopup.isShowing()).thenReturn(false);
+        when(mockPopup.getBackground()).thenReturn(mock(Drawable.class));
+        when(mockFactory.createPopupWindow(any())).thenReturn(mockPopup);
+        View contentView = mock(ViewGroup.class);
+        when(contentView.getMeasuredHeight()).thenReturn(1);
+        when(contentView.getMeasuredWidth()).thenReturn(1);
+        when(mockPopup.getContentView()).thenReturn(contentView);
+
+        AnchoredPopupWindow anchoredPopupWindow =
+                createAnchorPopupWindow(DisplayMetrics.DENSITY_HIGH);
+        anchoredPopupWindow.setAllowNonTouchableSize(true);
+        anchoredPopupWindow.show();
+
+        verify(mockPopup, times(1)).update(anyInt(), anyInt(), anyInt(), anyInt());
+    }
+
+    @Test
     public void testWebContentsRectChangesUpdatesPopup() {
         UiWidgetFactory mockFactory = mock(UiWidgetFactory.class);
         UiWidgetFactory.setInstance(mockFactory);
@@ -850,6 +943,7 @@ public final class AnchoredPopupWindowTest {
         mMarginPx = 0;
         mMaxWidthPx = 0;
         mDesiredWidthPx = 0;
+        mDesiredHeightPx = 0;
         mPreferredHorizontalOrientation = HorizontalOrientation.MAX_AVAILABLE_SPACE;
         mPreferredVerticalOrientation = VerticalOrientation.MAX_AVAILABLE_SPACE;
         mCurrentPositionBelow = false;
@@ -876,6 +970,7 @@ public final class AnchoredPopupWindowTest {
                         mMarginPx,
                         mMaxWidthPx,
                         mDesiredWidthPx,
+                        mDesiredHeightPx,
                         mPreferredHorizontalOrientation,
                         mPreferredVerticalOrientation,
                         mCurrentPositionBelow,

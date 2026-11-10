@@ -5,6 +5,7 @@
 #include "ui/views/animation/bounds_animator.h"
 
 #include <algorithm>
+#include <memory>
 #include <utility>
 
 #include "base/memory/raw_ptr.h"
@@ -72,10 +73,11 @@ class TestView : public View {
   void OnDidSchedulePaint(const gfx::Rect& r) override {
     ++repaint_count_;
 
-    if (dirty_rect_.IsEmpty())
+    if (dirty_rect_.IsEmpty()) {
       dirty_rect_ = r;
-    else
+    } else {
       dirty_rect_.Union(r);
+    }
   }
 
   const gfx::Rect& dirty_rect() const { return dirty_rect_; }
@@ -147,9 +149,8 @@ class BoundsAnimatorTest : public testing::Test {
   BoundsAnimatorTest()
       : task_environment_(
             base::test::TaskEnvironment::TimeSource::MOCK_TIME,
-            base::test::SingleThreadTaskEnvironment::MainThreadType::UI),
-        child_(new TestView()) {
-    parent_.AddChildView(child_.get());
+            base::test::SingleThreadTaskEnvironment::MainThreadType::UI) {
+    parent_.AddChildView(std::make_unique<TestView>());
     RecreateAnimator(/*use_transforms=*/false);
   }
 
@@ -157,7 +158,9 @@ class BoundsAnimatorTest : public testing::Test {
   BoundsAnimatorTest& operator=(const BoundsAnimatorTest&) = delete;
 
   TestView* parent() { return &parent_; }
-  TestView* child() { return child_; }
+  TestView* child() {
+    return static_cast<TestView*>(parent_.children()[0].get());
+  }
   BoundsAnimator* animator() { return animator_.get(); }
 
  protected:
@@ -189,8 +192,9 @@ class BoundsAnimatorTest : public testing::Test {
 
     // Run the message loop; the delegate exits the loop when the animation is
     // done.
-    if (use_long_duration)
+    if (use_long_duration) {
       task_environment_.FastForwardBy(animation_duration);
+    }
     loop.Run();
 
     // Make sure the bounds match of the view that was animated match and the
@@ -208,7 +212,6 @@ class BoundsAnimatorTest : public testing::Test {
 
  private:
   TestView parent_;
-  raw_ptr<TestView, DanglingUntriaged> child_;  // Owned by |parent_|.
   std::unique_ptr<BoundsAnimator> animator_;
 };
 
@@ -252,9 +255,9 @@ TEST_F(BoundsAnimatorTest, DeleteWhileAnimating) {
   EXPECT_TRUE(animator()->IsAnimating(child()));
 
   // Make sure that animation is removed upon deletion.
-  delete child();
-  EXPECT_FALSE(animator()->GetAnimationForView(child()));
-  EXPECT_FALSE(animator()->IsAnimating(child()));
+  std::unique_ptr<View> child_owning = parent()->RemoveChildViewT(child());
+  EXPECT_FALSE(animator()->GetAnimationForView(child_owning.get()));
+  EXPECT_FALSE(animator()->IsAnimating(child_owning.get()));
 }
 
 // Make sure an AnimationDelegate is deleted when canceled.

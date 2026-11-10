@@ -27,6 +27,12 @@
 
 #include "dawn/native/ExecutionQueue.h"
 
+#include <atomic>
+#include <utility>
+#include <vector>
+
+#include "dawn/common/Atomic.h"
+
 namespace dawn::native {
 
 ExecutionSerial ExecutionQueueBase::GetPendingCommandSerial() const {
@@ -38,7 +44,26 @@ ExecutionSerial ExecutionQueueBase::GetLastSubmittedCommandSerial() const {
 }
 
 ExecutionSerial ExecutionQueueBase::GetCompletedCommandSerial() const {
-    return mCompletedSerial;
+    return ExecutionSerial(mCompletedSerial.load(std::memory_order_acquire));
+}
+
+ResultOrError<bool> ExecutionQueueBase::WaitForQueueSerial(ExecutionSerial serial,
+                                                           Nanoseconds timeout) {
+    bool succeeded;
+    DAWN_TRY_ASSIGN(succeeded, WaitForQueueSerialImpl(serial, timeout));
+
+    if (!succeeded) {
+        return false;
+    }
+
+    // It's critical to update the completed serial right away. If fences are processed by another
+    // thread before CheckAndUpdateCompletedSerials() runs on the current thread,
+    // the fence list will be empty, preventing the current thread from determining the true latest
+    // serial. Pre-emptively updating mCompletedSerial ensures CheckAndUpdateCompletedSerials()
+    // returns an accurate value, preventing stale data.
+    FetchMax(mCompletedSerial, uint64_t(serial));
+
+    return true;
 }
 
 MaybeError ExecutionQueueBase::CheckPassedSerials() {
@@ -47,21 +72,75 @@ MaybeError ExecutionQueueBase::CheckPassedSerials() {
 
     DAWN_ASSERT(completedSerial <=
                 ExecutionSerial(mLastSubmittedSerial.load(std::memory_order_acquire)));
-    // completedSerial should not be less than mCompletedSerial unless it is 0.
-    // It can be 0 when there's no fences to check.
-    DAWN_ASSERT(completedSerial >= mCompletedSerial || completedSerial == ExecutionSerial(0));
 
-    if (completedSerial > mCompletedSerial) {
-        mCompletedSerial = completedSerial;
+    // Atomically set mCompletedSerial to completedSerial if completedSerial is larger.
+    FetchMax(mCompletedSerial, uint64_t(completedSerial));
+    return {};
+}
+
+MaybeError ExecutionQueueBase::UpdateCompletedSerial() {
+    ExecutionSerial completedSerial;
+    DAWN_TRY_ASSIGN(completedSerial, CheckAndUpdateCompletedSerials());
+
+    DAWN_ASSERT(completedSerial <=
+                ExecutionSerial(mLastSubmittedSerial.load(std::memory_order_acquire)));
+    UpdateCompletedSerialTo(completedSerial);
+    return {};
+}
+
+void ExecutionQueueBase::TrackSerialTask(ExecutionSerial serial, Task&& task) {
+    if (serial <= GetCompletedCommandSerial()) {
+        task();
+        return;
+    }
+    mWaitingTasks->Enqueue(std::move(task), serial);
+}
+
+void ExecutionQueueBase::UpdateCompletedSerialTo(ExecutionSerial completedSerial) {
+    // Atomically set mCompletedSerial to completedSerial if completedSerial is larger.
+    FetchMax(mCompletedSerial, uint64_t(completedSerial));
+
+    mWaitingTasks.Use([&](auto tasks) {
+        // Note that the callbacks need to be called while holding this lock to ensure that callback
+        // ordering is enforced. At the moment, that means that re-entrant callbacks that call async
+        // APIs will deadlock. In the future we may consider making this a recursive lock or
+        // providing some other mechanism in order to enable re-entrant async APIs.
+        for (auto task : tasks->IterateUpTo(completedSerial)) {
+            task();
+        }
+        tasks->ClearUpTo(completedSerial);
+    });
+}
+
+MaybeError ExecutionQueueBase::EnsureCommandsFlushed(ExecutionSerial serial) {
+    DAWN_ASSERT(serial <= GetPendingCommandSerial());
+    if (serial > GetLastSubmittedCommandSerial()) {
+        ForceEventualFlushOfCommands();
+        DAWN_TRY(SubmitPendingCommands());
+        DAWN_ASSERT(serial <= GetLastSubmittedCommandSerial());
+    }
+    return {};
+}
+
+MaybeError ExecutionQueueBase::SubmitPendingCommands() {
+    if (mInSubmit) {
+        return {};
     }
 
-    return {};
+    mInSubmit = true;
+    auto result = SubmitPendingCommandsImpl();
+    mInSubmit = false;
+
+    return result;
 }
 
 void ExecutionQueueBase::AssumeCommandsComplete() {
     // Bump serials so any pending callbacks can be fired.
-    uint64_t prev = mLastSubmittedSerial.fetch_add(1u, std::memory_order_release);
-    mCompletedSerial = ExecutionSerial(prev + 1);
+    // TODO(crbug.com/dawn/831): This is called during device destroy, which is not
+    // thread-safe yet. Two threads calling destroy would race setting these serials.
+    ExecutionSerial completed =
+        ExecutionSerial(mLastSubmittedSerial.fetch_add(1u, std::memory_order_release) + 1);
+    UpdateCompletedSerialTo(completed);
 }
 
 void ExecutionQueueBase::IncrementLastSubmittedCommandSerial() {
@@ -69,8 +148,8 @@ void ExecutionQueueBase::IncrementLastSubmittedCommandSerial() {
 }
 
 bool ExecutionQueueBase::HasScheduledCommands() const {
-    return ExecutionSerial(mLastSubmittedSerial.load(std::memory_order_acquire)) >
-               mCompletedSerial ||
+    return mLastSubmittedSerial.load(std::memory_order_acquire) >
+               mCompletedSerial.load(std::memory_order_acquire) ||
            HasPendingCommands();
 }
 

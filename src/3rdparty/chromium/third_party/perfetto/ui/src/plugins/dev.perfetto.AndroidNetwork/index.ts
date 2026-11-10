@@ -12,41 +12,37 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {EngineProxy} from '../../trace_processor/engine';
-import {
-  Plugin,
-  PluginContext,
-  PluginContextTrace,
-  PluginDescriptor,
-} from '../../public';
-import {addDebugSliceTrack} from '../../tracks/debug/slice_track';
+import {Trace} from '../../public/trace';
+import {PerfettoPlugin} from '../../public/plugin';
+import {addDebugSliceTrack} from '../../components/tracks/debug_tracks';
 
-
-class AndroidNetwork implements Plugin {
-  onActivate(_ctx: PluginContext): void {}
-
+export default class implements PerfettoPlugin {
+  static readonly id = 'dev.perfetto.AndroidNetwork';
   // Adds a debug track using the provided query and given columns. The columns
   // must be start with ts, dur, and a name column. The name column and all
   // following columns are shown as arguments in slice details.
   async addSimpleTrack(
-      engine: EngineProxy, trackName: string, tableOrQuery: string,
-      columns: string[]): Promise<void> {
-    await addDebugSliceTrack(
-        engine,
-        {
-          sqlSource: `SELECT ${columns.join(',')} FROM ${tableOrQuery}`,
-          columns: columns,
-        },
-        trackName,
-        {ts: columns[0], dur: columns[1], name: columns[2]},
-        columns.slice(2),
-    );
+    ctx: Trace,
+    trackName: string,
+    tableOrQuery: string,
+    columns: string[],
+  ): Promise<void> {
+    await addDebugSliceTrack({
+      trace: ctx,
+      data: {
+        sqlSource: `SELECT ${columns.join(',')} FROM ${tableOrQuery}`,
+        columns: columns,
+      },
+      title: trackName,
+      columns: {ts: columns[0], dur: columns[1], name: columns[2]},
+      argColumns: columns.slice(2),
+    });
   }
 
-  async onTraceLoad(ctx: PluginContextTrace): Promise<void> {
-    ctx.registerCommand({
+  async onTraceLoad(ctx: Trace): Promise<void> {
+    ctx.commands.registerCommand({
       id: 'dev.perfetto.AndroidNetwork#batteryEvents',
-      name: 'Run query: Pin battery events',
+      name: 'Add track: battery events',
       callback: async (track) => {
         if (track === undefined) {
           track = prompt('Battery Track', '');
@@ -55,18 +51,19 @@ class AndroidNetwork implements Plugin {
 
         await ctx.engine.query(`SELECT IMPORT('android.battery_stats');`);
         await this.addSimpleTrack(
-            ctx.engine,
-            track,
-            `(SELECT *
+          ctx,
+          track,
+          `(SELECT *
             FROM android_battery_stats_event_slices
             WHERE track_name = "${track}")`,
-            ['ts', 'dur', 'str_value', 'int_value']);
+          ['ts', 'dur', 'str_value', 'int_value'],
+        );
       },
     });
 
-    ctx.registerCommand({
+    ctx.commands.registerCommand({
       id: 'dev.perfetto.AndroidNetwork#activityTrack',
-      name: 'Run query: Visualize Network Activity',
+      name: 'Add track: network activity',
       callback: async (groupby, filter, trackName) => {
         if (groupby === undefined) {
           groupby = prompt('Group by', 'package_name');
@@ -93,16 +90,12 @@ class AndroidNetwork implements Plugin {
         // The first group column is used for the slice name.
         const groupCols = groupby.replaceAll(' ', '').split(',');
         await this.addSimpleTrack(
-            ctx.engine,
-            trackName || 'Network Activity',
-            `android_network_activity_${suffix}`,
-            ['ts', 'dur', ...groupCols, 'packet_length', 'packet_count']);
+          ctx,
+          trackName ?? 'Network Activity',
+          `android_network_activity_${suffix}`,
+          ['ts', 'dur', ...groupCols, 'packet_length', 'packet_count'],
+        );
       },
     });
   }
 }
-
-export const plugin: PluginDescriptor = {
-  pluginId: 'dev.perfetto.AndroidNetwork',
-  plugin: AndroidNetwork,
-};

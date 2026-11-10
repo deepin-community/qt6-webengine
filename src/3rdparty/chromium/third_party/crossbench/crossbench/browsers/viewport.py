@@ -4,13 +4,13 @@
 
 from __future__ import annotations
 
+import enum
 from argparse import ArgumentTypeError
-from typing import Tuple
-
-from crossbench import compat
+from typing import Any
 
 
-class ViewportMode(compat.StrEnum):
+@enum.unique
+class ViewportMode(enum.StrEnum):
   SIZE = "size"
   MAXIMIZED = "maximized"
   FULLSCREEN = "fullscreen"
@@ -22,6 +22,19 @@ class Viewport:
   MAXIMIZED: Viewport
   FULLSCREEN: Viewport
   HEADLESS: Viewport
+
+  @classmethod
+  def parse_sized(cls, value: Any) -> Viewport:
+    if isinstance(value, Viewport):
+      viewport = value
+    elif isinstance(value, str):
+      viewport = cls.parse(value)
+    else:
+      raise ArgumentTypeError(f"Expected str, but got '{type(value)}': {value}")
+    if not viewport.has_size:
+      raise ArgumentTypeError("Expected viewport with explicit size, "
+                              f"but got {viewport}")
+    return viewport
 
   @classmethod
   def parse(cls, value: str) -> Viewport:
@@ -51,7 +64,7 @@ class Viewport:
                height: int = 1000,
                x: int = 10,
                y: int = 50,
-               mode: ViewportMode = ViewportMode.SIZE):
+               mode: ViewportMode = ViewportMode.SIZE) -> None:
     self._width = width
     self._height = height
     self._x = x
@@ -104,12 +117,12 @@ class Viewport:
     return self._mode == ViewportMode.SIZE
 
   @property
-  def position(self) -> Tuple[int, int]:
+  def position(self) -> tuple[int, int]:
     assert self.has_size, f"Viewport has no explicit size: {self._mode}"
     return (self._x, self._y)
 
   @property
-  def size(self) -> Tuple[int, int]:
+  def size(self) -> tuple[int, int]:
     assert self.has_size, f"Viewport has no explicit size: {self._mode}"
     return (self._width, self._height)
 
@@ -138,7 +151,7 @@ class Viewport:
     return self._mode
 
   @property
-  def key(self) -> Tuple[Tuple, ...]:
+  def key(self) -> tuple[tuple, ...]:
     return (
         ("mode", str(self.mode)),
         ("x", self._x),

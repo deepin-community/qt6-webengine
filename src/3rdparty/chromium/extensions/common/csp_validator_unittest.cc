@@ -12,9 +12,11 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "extensions/common/constants.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/install_warning.h"
 #include "extensions/common/manifest_constants.h"
+#include "extensions/common/mojom/manifest.mojom-shared.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using extensions::ErrorUtils;
@@ -156,6 +158,12 @@ TEST(ExtensionCSPValidator, IsLegal) {
       "default-src 'self';\rscript-src http://www.google.com"));
   EXPECT_FALSE(ContentSecurityPolicyIsLegal(
       "default-src 'self';,script-src http://www.google.com"));
+  EXPECT_TRUE(ContentSecurityPolicyIsLegal(
+      "default-src 'self';\vscript-src http://www.google.com"));
+  EXPECT_TRUE(ContentSecurityPolicyIsLegal(
+      "default-src 'self';\tscript-src http://www.google.com"));
+  EXPECT_TRUE(ContentSecurityPolicyIsLegal(
+      "default-src 'self';\fscript-src http://www.google.com"));
 }
 
 TEST(ExtensionCSPValidator, IsSecure) {
@@ -568,8 +576,8 @@ TEST(ExtensionCSPValidator, ParseCSP) {
 
   std::vector<TestCase> cases;
 
-  cases.emplace_back("   \n \r \t ", DirectiveList());
-  cases.emplace_back("  ; \n ;\r \t ;;", DirectiveList());
+  cases.emplace_back("   \n \r \t \v \f ", DirectiveList());
+  cases.emplace_back("  ; \n ;\r \t \v \f ;;", DirectiveList());
 
   const char* policy = R"(  deFAULt-src   'self' ;
   img-src * ; media-src media1.com MEDIA2.com;
@@ -586,6 +594,20 @@ TEST(ExtensionCSPValidator, ParseCSP) {
   expected_directives.emplace_back("img-src 'self'", "img-src",
                                    std::vector<std::string_view>({"'self'"}));
   cases.emplace_back(policy, std::move(expected_directives));
+
+  const char* whitespace_policy =
+      "default-src\v'self';\tscript-src\fhttp://www.google.com";
+  DirectiveList whitespace_directives;
+  whitespace_directives.emplace_back(
+      /*directive_string=*/"default-src\v'self'",
+      /*directive_name=*/"default-src",
+      /*directive_values=*/std::vector<std::string_view>({"'self'"}));
+  whitespace_directives.emplace_back(
+      /*directive_string=*/"script-src\fhttp://www.google.com",
+      /*directive_name=*/"script-src",
+      /*directive_values=*/
+      std::vector<std::string_view>({"http://www.google.com"}));
+  cases.emplace_back(whitespace_policy, std::move(whitespace_directives));
 
   for (const auto& test_case : cases) {
     SCOPED_TRACE(test_case.policy);
@@ -633,12 +655,38 @@ TEST(ExtensionCSPValidator, DoesCSPDisallowRemoteCode) {
       {"script-src 'unsafe-eval'; worker-src; default-src;",
        insecure_value_error("script-src", "'unsafe-eval'")}};
 
+  std::string mock_extension_id = "abcd";
+  auto mock_location = extensions::mojom::ManifestLocation::kInternal;
   for (const auto& test_case : test_cases) {
     SCOPED_TRACE(test_case.policy);
     std::u16string error;
     bool result = extensions::csp_validator::DoesCSPDisallowRemoteCode(
-        test_case.policy, kManifestKey, &error);
+        mock_extension_id, mock_location, test_case.policy, kManifestKey,
+        &error);
     EXPECT_EQ(test_case.expected_error.empty(), result);
     EXPECT_EQ(base::ASCIIToUTF16(test_case.expected_error), error);
   }
+}
+
+TEST(ExtensionCSPValidator, DoesCSPDisallowRemoteCodeChromeResources) {
+  const char* kManifestKey = "mock_key";
+  auto location = extensions::mojom::ManifestLocation::kComponent;
+  const char* policy =
+      "default-src 'none'; script-src 'self' chrome://resources "
+      "'wasm-unsafe-eval';";
+  std::u16string error;
+
+  // ChromeVox is allowed to access scripts from chrome://resources.
+  EXPECT_TRUE(extensions::csp_validator::DoesCSPDisallowRemoteCode(
+      extension_misc::kChromeVoxExtensionId, location, policy, kManifestKey,
+      &error));
+  EXPECT_EQ(u"", error);
+
+  // Other component extensions do not get the same privilege.
+  std::string expected_error = ErrorUtils::FormatErrorMessage(
+      extensions::manifest_errors::kInvalidCSPInsecureValueError, kManifestKey,
+      "chrome://resources", "script-src");
+  EXPECT_FALSE(extensions::csp_validator::DoesCSPDisallowRemoteCode(
+      extension_misc::kPdfExtensionId, location, policy, kManifestKey, &error));
+  EXPECT_EQ(base::ASCIIToUTF16(expected_error), error);
 }

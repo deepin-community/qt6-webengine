@@ -9,10 +9,12 @@
 
 #include <stdint.h>
 
+#include <array>
 #include <memory>
 
 #include "core/fxcodec/fx_codec_def.h"
 #include "core/fxcrt/fx_coordinates.h"
+#include "core/fxcrt/span.h"
 #include "core/fxcrt/unowned_ptr.h"
 #include "core/fxcrt/unowned_ptr_exclusion.h"
 
@@ -31,21 +33,22 @@ class CJBig2_GRDProc {
 
     UnownedPtr<std::unique_ptr<CJBig2_Image>> pImage;
     UnownedPtr<CJBig2_ArithDecoder> pArithDecoder;
-    UnownedPtr<JBig2ArithCtx> gbContext;
+    pdfium::span<JBig2ArithCtx> gbContexts;
     UnownedPtr<PauseIndicatorIface> pPause;
   };
 
   CJBig2_GRDProc();
   ~CJBig2_GRDProc();
 
-  std::unique_ptr<CJBig2_Image> DecodeArith(CJBig2_ArithDecoder* pArithDecoder,
-                                            JBig2ArithCtx* gbContext);
+  std::unique_ptr<CJBig2_Image> DecodeArith(
+      CJBig2_ArithDecoder* pArithDecoder,
+      pdfium::span<JBig2ArithCtx> gbContexts);
 
   FXCODEC_STATUS StartDecodeArith(ProgressiveArithDecodeState* pState);
   FXCODEC_STATUS StartDecodeMMR(std::unique_ptr<CJBig2_Image>* pImage,
                                 CJBig2_BitStream* pStream);
   FXCODEC_STATUS ContinueDecode(ProgressiveArithDecodeState* pState);
-  const FX_RECT& GetReplaceRect() const { return m_ReplaceRect; }
+  const FX_RECT& GetReplaceRect() const { return replace_rect_; }
 
   bool MMR;
   bool TPGDON;
@@ -54,7 +57,7 @@ class CJBig2_GRDProc {
   uint32_t GBW;
   uint32_t GBH;
   UnownedPtr<CJBig2_Image> SKIP;
-  int8_t GBAT[8];
+  std::array<int8_t, 8> GBAT;
 
  private:
   bool UseTemplate0Opt3() const;
@@ -81,25 +84,25 @@ class CJBig2_GRDProc {
 
   std::unique_ptr<CJBig2_Image> DecodeArithOpt3(
       CJBig2_ArithDecoder* pArithDecoder,
-      JBig2ArithCtx* gbContext,
+      pdfium::span<JBig2ArithCtx> gbContexts,
       int OPT);
   std::unique_ptr<CJBig2_Image> DecodeArithTemplateUnopt(
       CJBig2_ArithDecoder* pArithDecoder,
-      JBig2ArithCtx* gbContext,
+      pdfium::span<JBig2ArithCtx> gbContexts,
       int UNOPT);
   std::unique_ptr<CJBig2_Image> DecodeArithTemplate3Opt3(
       CJBig2_ArithDecoder* pArithDecoder,
-      JBig2ArithCtx* gbContext);
+      pdfium::span<JBig2ArithCtx> gbContexts);
   std::unique_ptr<CJBig2_Image> DecodeArithTemplate3Unopt(
       CJBig2_ArithDecoder* pArithDecoder,
-      JBig2ArithCtx* gbContext);
+      pdfium::span<JBig2ArithCtx> gbContexts);
 
-  uint32_t m_loopIndex = 0;
-  UNOWNED_PTR_EXCLUSION uint8_t* m_pLine = nullptr;
-  FXCODEC_STATUS m_ProgressiveStatus;
-  uint16_t m_DecodeType = 0;
-  int m_LTP = 0;
-  FX_RECT m_ReplaceRect;
+  uint32_t loop_index_ = 0;
+  UNOWNED_PTR_EXCLUSION uint8_t* line_ = nullptr;
+  FXCODEC_STATUS progressive_status_;
+  uint16_t decode_type_ = 0;
+  int ltp_ = 0;
+  FX_RECT replace_rect_;
 };
 
 #endif  // CORE_FXCODEC_JBIG2_JBIG2_GRDPROC_H_

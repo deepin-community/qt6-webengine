@@ -4,6 +4,7 @@
 
 //! Paths and helpers for running within a Chromium checkout.
 
+use crate::crates::{Epoch, NormalizedName};
 use itertools::Itertools;
 use std::env;
 use std::io;
@@ -92,10 +93,10 @@ impl ChromiumPaths {
 fn check_path<'a>(root: &Path, p_str: &'a str) -> io::Result<&'a Path> {
     let p = Path::new(p_str);
     if !root.join(p).exists() {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("could not find {} (invoked from Chromium checkout root?)", p.display()),
-        ));
+        return Err(io::Error::other(format!(
+            "could not find {} (invoked from Chromium checkout root?)",
+            p.display()
+        )));
     }
 
     Ok(p)
@@ -106,13 +107,42 @@ fn check_path<'a>(root: &Path, p_str: &'a str) -> io::Result<&'a Path> {
 pub fn normalize_unix_path_separator(path: &Path) -> String {
     // `Path`s on windows use `\` separators and we need to use `/` in GN strings.
     path.iter()
-        .map(|comp| comp.to_str().unwrap_or_else(|| panic!("non-UTF-8 in path {:?}", path)))
+        .map(|comp| comp.to_str().unwrap_or_else(|| panic!("non-UTF-8 in path {path:?}")))
         .join("/")
+}
+
+/// Returns the name of a directory where we want to vendor a third-party crate
+/// with the given `name` and `version`.
+///
+/// Note that this can be quite an arbitrary name, because `cargo` will
+/// discover available crates by reading all the nested `Cargo.toml`
+/// files (rather than based on directory names).  See also
+/// https://crbug.com/396397336#comment7 and adjacent comments.
+pub fn get_vendor_dir_for_package(
+    paths: &ChromiumPaths,
+    name: &str,
+    version: &semver::Version,
+) -> PathBuf {
+    let epoch = Epoch::from_version(version);
+    paths.third_party_cargo_root.join("vendor").join(Path::new(&format!("{name}-{epoch}")))
+}
+
+/// Returns the name of a directory where we generate `BUILD.gn` (and also
+/// `README.chromium`).
+pub fn get_build_dir_for_package(
+    paths: &ChromiumPaths,
+    name: &str,
+    version: &semver::Version,
+) -> PathBuf {
+    paths
+        .third_party
+        .join(NormalizedName::from_crate_name(name).to_string())
+        .join(Epoch::from_version(version).to_string())
 }
 
 static RUST_THIRD_PARTY_DIR: &str = "third_party/rust";
 static RUST_SRC_LIBRARY_SUBDIR: &str = "library";
-static RUST_SRC_VENDOR_SUBDIR: &str = "vendor";
+static RUST_SRC_VENDOR_SUBDIR: &str = "library/vendor";
 static RUST_SRC_INSTALLED_DIR: &str = "third_party/rust-toolchain/lib/rustlib/src/rust";
 
 static STD_CONFIG_FILE: &str = "build/rust/std/gnrt_config.toml";

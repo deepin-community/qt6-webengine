@@ -16,7 +16,7 @@
 #include "components/reading_list/core/reading_list_model.h"
 #include "components/reading_list/core/reading_list_model_impl.h"
 #include "components/reading_list/core/reading_list_model_observer.h"
-#include "google_apis/gaia/core_account_id.h"
+#include "google_apis/gaia/gaia_id.h"
 #include "url/gurl.h"
 
 namespace reading_list {
@@ -49,9 +49,9 @@ class DualReadingListModel : public ReadingListModel,
 
   // ReadingListModel implementation.
   bool loaded() const override;
-  base::WeakPtr<syncer::ModelTypeControllerDelegate> GetSyncControllerDelegate()
+  base::WeakPtr<syncer::DataTypeControllerDelegate> GetSyncControllerDelegate()
       override;
-  base::WeakPtr<syncer::ModelTypeControllerDelegate>
+  base::WeakPtr<syncer::DataTypeControllerDelegate>
   GetSyncControllerDelegateForTransportMode() override;
   bool IsPerformingBatchUpdates() const override;
   std::unique_ptr<ScopedReadingListBatchUpdate> BeginBatchUpdates() override;
@@ -60,19 +60,21 @@ class DualReadingListModel : public ReadingListModel,
   size_t unread_size() const override;
   size_t unseen_size() const override;
   void MarkAllSeen() override;
-  bool DeleteAllEntries() override;
+  bool DeleteAllEntries(const base::Location& location) override;
   scoped_refptr<const ReadingListEntry> GetEntryByURL(
       const GURL& gurl) const override;
   bool IsUrlSupported(const GURL& url) override;
-  CoreAccountId GetAccountWhereEntryIsSavedTo(const GURL& url) override;
+  GaiaId GetAccountWhereEntryIsSavedTo(const GURL& url) override;
   bool NeedsExplicitUploadToSyncServer(const GURL& url) const override;
   void MarkAllForUploadToSyncServerIfNeeded() override;
   const ReadingListEntry& AddOrReplaceEntry(
       const GURL& url,
       const std::string& title,
       reading_list::EntrySource source,
-      base::TimeDelta estimated_read_time) override;
-  void RemoveEntryByURL(const GURL& url) override;
+      std::optional<base::TimeDelta> estimated_read_time,
+      std::optional<base::Time> creation_time) override;
+  void RemoveEntryByURL(const GURL& url,
+                        const base::Location& location) override;
   void SetReadStatusIfExists(const GURL& url, bool read) override;
   void SetEntryTitleIfExists(const GURL& url,
                              const std::string& title) override;
@@ -101,10 +103,6 @@ class DualReadingListModel : public ReadingListModel,
                                   const GURL& url) override;
   void ReadingListDidRemoveEntry(const ReadingListModel* model,
                                  const GURL& url) override;
-  void ReadingListWillMoveEntry(const ReadingListModel* model,
-                                const GURL& url) override;
-  void ReadingListDidMoveEntry(const ReadingListModel* model,
-                               const GURL& url) override;
   void ReadingListWillAddEntry(const ReadingListModel* model,
                                const ReadingListEntry& entry) override;
   void ReadingListDidAddEntry(const ReadingListModel* model,
@@ -136,6 +134,12 @@ class DualReadingListModel : public ReadingListModel,
   // sync.
   base::flat_set<GURL> GetKeysThatNeedUploadToSyncServer() const;
 
+  // Uploads entries corresponding to `keys` that required upload to sync
+  // server. The upload itself may take long to complete (depending on network
+  // connectivity and many other factors).
+  void MarkEntriesForUploadToSyncServerIfNeeded(
+      const base::flat_set<GURL>& keys);
+
   StorageStateForTesting GetStorageStateForURLForTesting(const GURL& url);
 
   // Returns the model responsible for the local/syncable reading list.
@@ -149,8 +153,6 @@ class DualReadingListModel : public ReadingListModel,
  private:
   void NotifyObserversWithWillRemoveEntry(const GURL& url);
   void NotifyObserversWithDidRemoveEntry(const GURL& url);
-  void NotifyObserversWithWillMoveEntry(const GURL& url);
-  void NotifyObserversWithDidMoveEntry(const GURL& url);
   void NotifyObserversWithWillUpdateEntry(const GURL& url);
   void NotifyObserversWithDidUpdateEntry(const GURL& url);
   void NotifyObserversWithDidApplyChanges();

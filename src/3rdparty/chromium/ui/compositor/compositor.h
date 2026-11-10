@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include <memory>
+#include <optional>
 #include <unordered_set>
 
 #include "base/containers/flat_map.h"
@@ -22,7 +23,6 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "cc/metrics/events_metrics_manager.h"
 #include "cc/metrics/frame_sequence_tracker.h"
 #include "cc/paint/element_id.h"
@@ -30,6 +30,7 @@
 #include "cc/trees/layer_tree_host_client.h"
 #include "cc/trees/layer_tree_host_single_thread_client.h"
 #include "cc/trees/paint_holding_reason.h"
+#include "cc/trees/property_tree.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "components/viz/common/surfaces/subtree_capture_id.h"
@@ -45,21 +46,21 @@
 #include "ui/compositor/compositor_animation_observer.h"
 #include "ui/compositor/compositor_export.h"
 #include "ui/compositor/compositor_lock.h"
+#include "ui/compositor/compositor_metrics_tracker_host.h"
 #include "ui/compositor/compositor_observer.h"
+#include "ui/compositor/compositor_property_tree_delegate.h"
+#include "ui/compositor/host_begin_frame_observer.h"
 #include "ui/compositor/layer_animator_collection.h"
-#include "ui/compositor/throughput_tracker.h"
-#include "ui/compositor/throughput_tracker_host.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/gfx/display_color_spaces.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/vector2d.h"
-#include "ui/gfx/gpu_memory_buffer.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/overlay_transform.h"
 
 namespace base {
 class SingleThreadTaskRunner;
-}
+}  // namespace base
 
 namespace cc {
 class AnimationHost;
@@ -80,16 +81,12 @@ class Rect;
 class Size;
 }  // namespace gfx
 
-namespace gpu {
-class GpuMemoryBufferManager;
-}
-
 namespace viz {
 namespace mojom {
 class DisplayPrivate;
 class ExternalBeginFrameController;
 }  // namespace mojom
-class ContextProvider;
+
 class HostFrameSinkManager;
 class LocalSurfaceId;
 class RasterContextProvider;
@@ -100,8 +97,8 @@ class Compositor;
 class Layer;
 class ScopedAnimationDurationScaleMode;
 class ScrollInputHandler;
-class ThroughputTracker;
-struct PendingBeginFrameArgs;
+class CompositorMetricsTracker;
+class CompositorPropertyTreeDelegate;
 
 constexpr int kCompositorLockTimeoutMs = 67;
 
@@ -119,19 +116,11 @@ class COMPOSITOR_EXPORT ContextFactory {
 
   // Return a reference to a shared offscreen context provider usable from the
   // main thread.
-  virtual scoped_refptr<viz::ContextProvider>
-  SharedMainThreadContextProvider() = 0;
-
-  // Return a reference to a shared offscreen context provider usable from the
-  // main thread.
   virtual scoped_refptr<viz::RasterContextProvider>
   SharedMainThreadRasterContextProvider() = 0;
 
   // Destroys per-compositor data.
   virtual void RemoveCompositor(Compositor* compositor) = 0;
-
-  // Gets the GPU memory buffer manager.
-  virtual gpu::GpuMemoryBufferManager* GetGpuMemoryBufferManager() = 0;
 
   // Gets the task graph runner.
   virtual cc::TaskGraphRunner* GetTaskGraphRunner() = 0;
@@ -146,6 +135,17 @@ class COMPOSITOR_EXPORT ContextFactory {
   virtual viz::HostFrameSinkManager* GetHostFrameSinkManager() = 0;
 };
 
+// Factory object to create a ExternalBeginFrameControllerClient on demand.
+class COMPOSITOR_EXPORT ExternalBeginFrameControllerClientFactory {
+ public:
+  virtual ~ExternalBeginFrameControllerClientFactory() = default;
+
+  // Create a new client.
+  virtual mojo::PendingAssociatedRemote<
+      viz::mojom::ExternalBeginFrameControllerClient>
+  CreateExternalBeginFrameControllerClient() = 0;
+};
+
 // Compositor object to take care of GPU painting.
 // A Browser compositor object is responsible for generating the final
 // displayable form of pixels comprising a single widget's contents. It draws an
@@ -155,7 +155,7 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
                                      public cc::LayerTreeHostClient,
                                      public cc::LayerTreeHostSingleThreadClient,
                                      public viz::HostFrameSinkClient,
-                                     public ThroughputTrackerHost {
+                                     public CompositorMetricsTrackerHost {
  public:
   Compositor(const viz::FrameSinkId& frame_sink_id,
              ui::ContextFactory* context_factory,
@@ -275,10 +275,6 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
     host_->SetLocalSurfaceIdFromParent(local_surface_id_from_parent);
   }
 
-  void SetExternalPageScaleFactor(float scale) {
-    host_->SetExternalPageScaleFactor(scale, false);
-  }
-
   // Returns the size of the widget that is being drawn to in pixel coordinates.
   const gfx::Size& size() const { return size_; }
 
@@ -307,11 +303,13 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
   void AddVSyncParameterObserver(
       mojo::PendingRemote<viz::mojom::VSyncParameterObserver> observer);
 
-  // Sets and caches the maximum vsync interval, to be applied to the
-  // |display_private_| when possible, for use with variable refresh rates. An
-  // absent value indicates that VRR is not enabled.
-  void SetMaxVrrInterval(
-      const absl::optional<base::TimeDelta>& max_vrr_interval);
+  // Sets and caches the |max_vsync_interval| and |vrr_state|, to be applied to
+  // the |display_private_| when possible, for use with variable refresh rates
+  // and/or virtual modes. An absent |max_vsync_interval| value indicates that
+  // the display is not capable of utilizing such features.
+  void SetMaxVSyncAndVrr(
+      const std::optional<base::TimeDelta>& max_vsync_interval,
+      display::VariableRefreshRateState vrr_state);
 
   // Sets the widget for the compositor to render into.
   void SetAcceleratedWidget(gfx::AcceleratedWidget widget);
@@ -371,21 +369,25 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
   // Registers a callback that is run when the next frame successfully makes it
   // to the screen (it's entirely possible some frames may be dropped between
   // the time this is called and the callback is run).
-  using SuccessfulPresentationTimeCallback =
-      base::OnceCallback<void(base::TimeTicks)>;
+  using SuccessfulPresentationTimeCallback = base::OnceCallback<void(
+      const viz::FrameTimingDetails& frame_timing_details)>;
   void RequestSuccessfulPresentationTimeForNextFrame(
       SuccessfulPresentationTimeCallback callback);
 
+#if BUILDFLAG(IS_IOS)
+  void IssueExternalBeginFrameNoAck(const viz::BeginFrameArgs& args);
+#else
   void IssueExternalBeginFrame(
       const viz::BeginFrameArgs& args,
       bool force,
       base::OnceCallback<void(const viz::BeginFrameAck&)> callback);
+#endif
 
-  // Creates a ThroughputTracker for tracking this Compositor.
-  ThroughputTracker RequestNewThroughputTracker();
+  // Creates a CompositorMetricsTracker for tracking this Compositor.
+  CompositorMetricsTracker RequestNewCompositorMetricsTracker();
 
-  // Returns a percentage of dropped frames of the last second.
-  double GetPercentDroppedFrames() const;
+  // Returns average throughput as measured by the FrameSorter.
+  double GetAverageThroughput() const;
 
   // Activates a scoped monitor for the current event to track its metrics.
   // `done_callback` is called when the monitor goes out of scope.
@@ -400,7 +402,7 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
   void OnDeferCommitsChanged(
       bool,
       cc::PaintHoldingReason,
-      absl::optional<cc::PaintHoldingCommitTrigger>) override {}
+      std::optional<cc::PaintHoldingCommitTrigger>) override {}
   void OnCommitRequested() override {}
   void WillUpdateLayers() override {}
   void DidUpdateLayers() override;
@@ -420,19 +422,18 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
                  base::TimeTicks,
                  base::TimeTicks) override;
   void DidCommitAndDrawFrame(int source_frame_number) override {}
-  void DidReceiveCompositorFrameAck() override;
+  void DidReceiveCompositorFrameAckDeprecatedForCompositor() override;
   void DidCompletePageScaleAnimation(int source_frame_number) override {}
   void DidPresentCompositorFrame(
       uint32_t frame_token,
-      const gfx::PresentationFeedback& feedback) override;
+      const viz::FrameTimingDetails& frame_timing_details) override;
   void RecordStartOfFrameMetrics() override {}
   void RecordEndOfFrameMetrics(
       base::TimeTicks frame_begin_time,
       cc::ActiveFrameSequenceTrackers trackers) override {}
   std::unique_ptr<cc::BeginMainFrameMetrics> GetBeginMainFrameMetrics()
       override;
-  std::unique_ptr<cc::WebVitalMetrics> GetWebVitalMetrics() override;
-  void NotifyThroughputTrackerResults(
+  void NotifyCompositorMetricsTrackerResults(
       cc::CustomTrackerResults results) override;
   void DidObserveFirstScrollDelay(
       int source_frame_number,
@@ -451,12 +452,12 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
   void OnFrameTokenChanged(uint32_t frame_token,
                            base::TimeTicks activation_time) override;
 
-  // ThroughputTrackerHost implementation.
-  void StartThroughputTracker(
+  // CompositorMetricsTrackerHost implementation.
+  void StartMetricsTracker(
       TrackerId tracker_id,
-      ThroughputTrackerHost::ReportCallback callback) override;
-  bool StopThroughtputTracker(TrackerId tracker_id) override;
-  void CancelThroughtputTracker(TrackerId tracker_id) override;
+      CompositorMetricsTrackerHost::ReportCallback callback) override;
+  bool StopMetricsTracker(TrackerId tracker_id) override;
+  void CancelMetricsTracker(TrackerId tracker_id) override;
 
   // base::PowerSuspendObserver:
   void OnResume() override;
@@ -467,6 +468,7 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
 
   bool IsLocked() { return lock_manager_.IsLocked(); }
 
+  bool output_is_secure() const { return output_is_secure_; }
   void SetOutputIsSecure(bool output_is_secure);
 
   const cc::LayerTreeDebugState& GetLayerTreeDebugState() const;
@@ -477,7 +479,6 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
   }
 
   const viz::FrameSinkId& frame_sink_id() const { return frame_sink_id_; }
-  int activated_frame_count() const { return activated_frame_count_; }
   float refresh_rate() const { return refresh_rate_; }
 
   bool use_external_begin_frame_control() const {
@@ -504,12 +505,66 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
     return host_->saved_events_metrics_count_for_testing();
   }
 
-  // Returns true if there are throughput trackers.
-  bool has_throughput_trackers_for_testing() const {
-    return !throughput_tracker_map_.empty();
+  // Returns true if there are compositor metrics trackers.
+  bool has_compositor_metrics_trackers_for_testing() const {
+    return !compositor_metrics_tracker_map_.empty();
   }
 
   const cc::LayerTreeHost* host_for_testing() const { return host_.get(); }
+
+  void AddSimpleBeginFrameObserver(
+      ui::HostBeginFrameObserver::SimpleBeginFrameObserver* obs);
+  void RemoveSimpleBeginFrameObserver(
+      ui::HostBeginFrameObserver::SimpleBeginFrameObserver* obs);
+
+  const std::optional<base::TimeDelta>& max_vsync_interval_for_testing() const {
+    return max_vsync_interval_;
+  }
+
+  display::VariableRefreshRateState vrr_state_for_testing() const {
+    return vrr_state_;
+  }
+
+#if BUILDFLAG(IS_CHROMEOS)
+  // Sets the list of refresh rates that the compositor may request to use.
+  void SetSeamlessRefreshRates(
+      const std::vector<float>& seamless_refresh_rates);
+
+  // Notifies observers of a new refresh rate preference.
+  void OnSetPreferredRefreshRate(float refresh_rate);
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
+  // While there are outstanding `ScopedKeepSurfaceAlive`, Compositor will
+  // attempt to ensure any pending `viz::CopyOutputRequest` in any part of the
+  // compositor surface tree are fulfilled in a timely manner. `surface_id`
+  // corresponds to the `Surface` being copied. The GPU contents of this
+  // `surface_id` are kept alive as long as there is an outstanding
+  // `ScopedKeepSurfaceAlive` for it.
+  using ScopedKeepSurfaceAliveCallback = base::ScopedClosureRunner;
+  ScopedKeepSurfaceAliveCallback TakeScopedKeepSurfaceAliveCallback(
+      const viz::SurfaceId& surface_id);
+
+  CompositorPropertyTreeDelegate* property_tree_delegate() {
+    return property_tree_delegate_.get();
+  }
+
+  const cc::PropertyTrees* property_trees() const;
+
+  ExternalBeginFrameControllerClientFactory*
+  external_begin_frame_controler_client_factory() {
+    return external_begin_frame_controler_client_factory_.get();
+  }
+
+  void SetExternalBeginFrameControllerClientFactory(
+      ExternalBeginFrameControllerClientFactory* factory) {
+    external_begin_frame_controler_client_factory_ = factory;
+  }
+
+  // TODO(crbug.com/389771428) - Right now the local property tree is
+  // an incomplete thing that only partially matches the one the LayerTreeHost
+  // actually uses. Eventually we want to make it completely match and then
+  // switch the LayerTreeHost to using it directly.
+  void CheckPropertyTrees() const;
 
  private:
   friend class base::RefCounted<Compositor>;
@@ -522,6 +577,19 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
   void ReportMetricsForTracker(
       int tracker_id,
       const cc::FrameSequenceMetrics::CustomReportData& data);
+
+  void MaybeUpdateObserveBeginFrame();
+
+  // Tracks a list of pending `viz::CopyOutputRequest`s.
+  using PendingSurfaceCopyId =
+      base::StrongAlias<struct PendingSurfaceCopyIdTag, uint32_t>;
+  void RemoveScopedKeepSurfaceAlive(
+      const PendingSurfaceCopyId& scoped_keep_surface_alive_id);
+
+  PendingSurfaceCopyId pending_surface_copy_id_ = PendingSurfaceCopyId(0u);
+  base::flat_map<PendingSurfaceCopyId,
+                 std::unique_ptr<cc::ScopedKeepSurfaceAlive>>
+      pending_surface_copies_;
 
   gfx::Size size_;
 
@@ -536,8 +604,31 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
   mojo::AssociatedRemote<viz::mojom::DisplayPrivate> display_private_;
   mojo::AssociatedRemote<viz::mojom::ExternalBeginFrameController>
       external_begin_frame_controller_;
+  raw_ptr<ExternalBeginFrameControllerClientFactory>
+      external_begin_frame_controler_client_factory_;
 
-  std::unique_ptr<PendingBeginFrameArgs> pending_begin_frame_args_;
+  // Used to hold on to IssueExternalBeginFrame(NoAck) arguments if
+  // |external_begin_frame_controller_| isn't ready yet.
+#if BUILDFLAG(IS_IOS)
+  using PendingBeginFrameArgs = viz::BeginFrameArgs;
+#else
+  struct PendingBeginFrameArgs {
+    PendingBeginFrameArgs(
+        const viz::BeginFrameArgs& args,
+        bool force,
+        base::OnceCallback<void(const viz::BeginFrameAck&)> callback);
+    ~PendingBeginFrameArgs();
+
+    const viz::BeginFrameArgs args;
+    const bool force;
+    base::OnceCallback<void(const viz::BeginFrameAck&)> callback;
+  };
+#endif
+  std::optional<PendingBeginFrameArgs> pending_begin_frame_args_;
+
+  ui::HostBeginFrameObserver::SimpleBeginFrameObserverList
+      simple_begin_frame_observers_;
+  std::unique_ptr<ui::HostBeginFrameObserver> host_begin_frame_observer_;
 
   // The root of the Layer tree drawn by this compositor.
   raw_ptr<Layer> root_layer_ = nullptr;
@@ -547,8 +638,6 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
       animation_observer_list_;
 
   gfx::AcceleratedWidget widget_ = gfx::kNullAcceleratedWidget;
-  // A sequence number of a current compositor frame for use with metrics.
-  int activated_frame_count_ = 0;
 
 #if BUILDFLAG(IS_MAC)
   // Current CGDirectDisplayID for the screen.
@@ -564,7 +653,7 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
   bool widget_valid_ = false;
   bool layer_tree_frame_sink_requested_ = false;
   const viz::FrameSinkId frame_sink_id_;
-  scoped_refptr<cc::Layer> root_web_layer_;
+  scoped_refptr<cc::Layer> root_cc_layer_;
   std::unique_ptr<cc::AnimationHost> animation_host_;
   std::unique_ptr<cc::LayerTreeHost> host_;
   base::WeakPtr<cc::InputHandler> input_handler_weak_;
@@ -574,7 +663,12 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
   base::TimeTicks vsync_timebase_;
   base::TimeDelta vsync_interval_ = viz::BeginFrameArgs::DefaultInterval();
   bool has_vsync_params_ = false;
-  absl::optional<base::TimeDelta> max_vrr_interval_ = absl::nullopt;
+  std::optional<base::TimeDelta> max_vsync_interval_ = std::nullopt;
+  display::VariableRefreshRateState vrr_state_ =
+      display::VariableRefreshRateState::kVrrNotCapable;
+#if BUILDFLAG(IS_CHROMEOS)
+  std::vector<float> seamless_refresh_rates_;
+#endif  // BUILDFLAG(IS_CHROMEOS)
 
   const bool use_external_begin_frame_control_;
   const bool force_software_compositor_;
@@ -608,14 +702,14 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
 
   bool animations_are_enabled_ = true;
 
-  // This together with the animatinos observer list carries the "last
+  // This together with the animations observer list carries the "last
   // animation finished" state to the next BeginMainFrame so that it could
   // notify observers if needed. It is set in AddAnimationObserver and
   // Cleared in BeginMainFrame when there are no animation observers.
   // See go/report-ux-metrics-at-painting for details.
   bool animation_started_ = false;
 
-  TrackerId next_throughput_tracker_id_ = 1u;
+  TrackerId next_compositor_metrics_tracker_id_ = 1u;
   struct TrackerState {
     TrackerState();
     TrackerState(TrackerState&&);
@@ -625,15 +719,27 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
     // Whether a tracker is waiting for report and `report_callback` should be
     // invoked. This is set to true when a tracker is stopped.
     bool should_report = false;
+
     // Whether the report for a tracker has happened. This is set when an
     // involuntary report happens before the tracker is stopped and set
     // `should_report` field above.
     bool report_attempted = false;
+
     // Invoked to send report to the owner of a tracker.
-    ThroughputTrackerHost::ReportCallback report_callback;
+    CompositorMetricsTrackerHost::ReportCallback report_callback;
   };
-  using ThroughputTrackerMap = base::flat_map<TrackerId, TrackerState>;
-  ThroughputTrackerMap throughput_tracker_map_;
+  using CompositorMetricsTrackerMap = base::flat_map<TrackerId, TrackerState>;
+  CompositorMetricsTrackerMap compositor_metrics_tracker_map_;
+
+  // TODO(crbug.com/389771428): This holds a transitional object that
+  // will be used to migrate from using layer trees to property trees and
+  // layer lists. We can remove this once the code has been
+  // fully converted to using property trees and layer lists and then
+  // go back to using the cc::Compositor's default logic for that mode.
+  bool uses_layer_lists_ = false;
+  std::unique_ptr<CompositorPropertyTreeDelegate> property_tree_delegate_;
+  std::optional<cc::PropertyTrees> property_trees_;
+  int viewport_clip_id_ = cc::kInvalidPropertyNodeId;
 
   base::WeakPtrFactory<Compositor> context_creation_weak_ptr_factory_{this};
   base::WeakPtrFactory<Compositor> weak_ptr_factory_{this};

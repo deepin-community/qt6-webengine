@@ -4,12 +4,13 @@
 
 #include "components/viz/common/quads/shared_quad_state.h"
 
+#include <optional>
+
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/traced_value.h"
 #include "base/values.h"
 #include "cc/base/math_util.h"
 #include "components/viz/common/traced_value.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkBlendMode.h"
 
 namespace viz {
@@ -37,7 +38,8 @@ bool SharedQuadState::Equals(const SharedQuadState& other) const {
          opacity == other.opacity && blend_mode == other.blend_mode &&
          sorting_context_id == other.sorting_context_id &&
          layer_id == other.layer_id &&
-         layer_namespace_id == other.layer_namespace_id;
+         layer_namespace_id == other.layer_namespace_id &&
+         offset_tag == other.offset_tag;
 }
 
 void SharedQuadState::SetAll(const SharedQuadState& other) {
@@ -53,13 +55,14 @@ void SharedQuadState::SetAll(const SharedQuadState& other) {
   layer_id = other.layer_id;
   layer_namespace_id = other.layer_namespace_id;
   is_fast_rounded_corner = other.is_fast_rounded_corner;
+  offset_tag = other.offset_tag;
 }
 
 void SharedQuadState::SetAll(const gfx::Transform& transform,
                              const gfx::Rect& layer_rect,
                              const gfx::Rect& visible_layer_rect,
                              const gfx::MaskFilterInfo& filter_info,
-                             const absl::optional<gfx::Rect>& clip,
+                             const std::optional<gfx::Rect>& clip,
                              bool contents_opaque,
                              float opacity_f,
                              SkBlendMode blend,
@@ -108,9 +111,13 @@ void SharedQuadState::AsValueInto(base::trace_event::TracedValue* value) const {
   value->SetInteger("layer_id", layer_id);
   value->SetInteger("layer_namespace_id", layer_id);
   value->SetBoolean("is_fast_rounded_corner", is_fast_rounded_corner);
+  if (offset_tag) {
+    value->SetString("offset_tag", offset_tag.ToString());
+  }
+
   TracedValue::MakeDictIntoImplicitSnapshotWithCategory(
       TRACE_DISABLED_BY_DEFAULT("viz.quads"), value, "viz::SharedQuadState",
-      this);
+      TracedValue::Id(this));
 }
 
 }  // namespace viz

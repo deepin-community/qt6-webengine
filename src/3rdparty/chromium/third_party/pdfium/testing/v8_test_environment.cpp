@@ -7,13 +7,17 @@
 #include <memory>
 #include <string>
 
+#include "core/fxcrt/check.h"
 #include "core/fxcrt/fx_system.h"
 #include "testing/v8_initializer.h"
-#include "third_party/base/check.h"
 #include "v8/include/libplatform/libplatform.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-platform.h"
 #include "v8/include/v8-snapshot.h"
+
+#ifdef V8_USE_EXTERNAL_STARTUP_DATA
+#include <stdlib.h>
+#endif  // V8_USE_EXTERNAL_STARTUP_DATA
 
 namespace {
 
@@ -32,8 +36,9 @@ V8TestEnvironment::~V8TestEnvironment() {
   DCHECK(g_environment);
 
 #ifdef V8_USE_EXTERNAL_STARTUP_DATA
-  if (startup_data_)
+  if (startup_data_) {
     free(const_cast<char*>(startup_data_->data));
+  }
 #endif  // V8_USE_EXTERNAL_STARTUP_DATA
 
   g_environment = nullptr;
@@ -47,8 +52,9 @@ V8TestEnvironment* V8TestEnvironment::GetInstance() {
 // static
 void V8TestEnvironment::PumpPlatformMessageLoop(v8::Isolate* isolate) {
   v8::Platform* platform = GetInstance()->platform();
-  while (v8::platform::PumpMessageLoop(platform, isolate))
+  while (v8::platform::PumpMessageLoop(platform, isolate)) {
     continue;
+  }
 }
 
 void V8TestEnvironment::SetUp() {

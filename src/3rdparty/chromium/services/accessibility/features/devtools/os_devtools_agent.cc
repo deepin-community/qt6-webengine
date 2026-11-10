@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/notimplemented.h"
 #include "services/accessibility/features/devtools/debug_command_queue.h"
 #include "services/accessibility/features/devtools/os_devtools_session.h"
 #include "services/accessibility/features/v8_manager.h"
@@ -67,11 +68,13 @@ void OSDevToolsAgent::AttachDevToolsSession(
         session_receiver,
     mojo::PendingReceiver<blink::mojom::DevToolsSession> io_session_receiver,
     blink::mojom::DevToolsSessionStatePtr reattach_session_state,
+    const std::string& script_to_evaluate_on_load,
     bool client_expects_binary_responses,
     bool client_is_trusted,
     const std::string& session_id,
     bool session_waits_for_debugger) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(v8_sequence_checker_);
+  CHECK(script_to_evaluate_on_load.empty());  // This is for frames only so far.
 
   auto session_destroyed_callback = base::BindOnce(
       &OSDevToolsAgent::SessionDestroyed, weak_ptr_factory_.GetWeakPtr());
@@ -96,12 +99,6 @@ void OSDevToolsAgent::ReportChildTargets(bool report,
                                          bool wait_for_debugger,
                                          ReportChildTargetsCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(v8_sequence_checker_);
-  NOTIMPLEMENTED();  // Should not be used with this.
-}
-
-void OSDevToolsAgent::GetUniqueFormControlId(
-    int32_t nodeId,
-    GetUniqueFormControlIdCallback callback) {
   NOTIMPLEMENTED();  // Should not be used with this.
 }
 

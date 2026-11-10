@@ -2,9 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "base/task/single_thread_task_runner.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/mojom/loader/code_cache.mojom-blink.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
 #include "third_party/blink/renderer/core/loader/resource/script_resource.h"
 #include "third_party/blink/renderer/platform/exported/wrapped_resource_response.h"
 #include "third_party/blink/renderer/platform/loader/fetch/cached_metadata.h"
@@ -18,6 +24,7 @@
 #include "third_party/blink/renderer/platform/scheduler/test/fake_task_runner.h"
 #include "third_party/blink/renderer/platform/testing/mock_context_lifecycle_notifier.h"
 #include "third_party/blink/renderer/platform/testing/noop_url_loader.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support_with_mock_scheduler.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/weborigin/scheme_registry.h"
@@ -36,7 +43,7 @@ class CodeCacheTestLoaderFactory : public ResourceFetcher::LoaderFactory {
       scoped_refptr<base::SingleThreadTaskRunner> freezable_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> unfreezable_task_runner,
       BackForwardCacheLoaderHelper* back_forward_cache_loader_helper,
-      const absl::optional<base::UnguessableToken>&
+      const std::optional<base::UnguessableToken>&
           service_worker_race_network_request_token,
       bool is_from_origin_dirty_style_sheet) override {
     return std::make_unique<NoopURLLoader>(std::move(freezable_task_runner));
@@ -61,9 +68,9 @@ class ResourceLoaderCodeCacheTest : public testing::Test {
         /*back_forward_cache_loader_helper=*/nullptr));
   }
 
-  void CommonSetup(const char* url_string = nullptr) {
+  void CommonSetup(v8::Isolate* isolate, const char* url_string = nullptr) {
 #if DCHECK_IS_ON()
-    WTF::SetIsBeforeThreadCreatedForTest();  // Required for next operation:
+    SetIsBeforeThreadCreatedForTest();  // Required for next operation:
 #endif
     SchemeRegistry::RegisterURLSchemeAsCodeCacheWithHashing(
         "codecachewithhashing");
@@ -84,16 +91,15 @@ class ResourceLoaderCodeCacheTest : public testing::Test {
     constexpr v8_compile_hints::V8CrowdsourcedCompileHintsConsumer*
         kNoCompileHintsConsumer = nullptr;
     resource_ = ScriptResource::Fetch(
-        params, fetcher, nullptr, ScriptResource::kNoStreaming,
-        kNoCompileHintsProducer, kNoCompileHintsConsumer);
+        params, fetcher, nullptr, isolate, ScriptResource::kNoStreaming,
+        kNoCompileHintsProducer, kNoCompileHintsConsumer,
+        v8_compile_hints::MagicCommentMode::kNone);
     loader_ = resource_->Loader();
 
     response_ = ResourceResponse(url);
     response_.SetHttpStatusCode(200);
     response_.SetResponseTime(base::Time::Now());
   }
-
-  static const size_t kSha256Bytes = 256 / 8;
 
   std::vector<uint8_t> MakeSerializedCodeCacheData(base::span<uint8_t> data) {
     const size_t kSerializedDataSize =
@@ -110,7 +116,7 @@ class ResourceLoaderCodeCacheTest : public testing::Test {
 
   std::vector<uint8_t> MakeSerializedCodeCacheDataWithHash(
       base::span<uint8_t> data,
-      absl::optional<String> source_text = {}) {
+      std::optional<String> source_text = {}) {
     const size_t kSerializedDataSize = sizeof(CachedMetadataHeaderWithHash) +
                                        sizeof(CachedMetadataHeader) +
                                        data.size();
@@ -122,8 +128,10 @@ class ResourceLoaderCodeCacheTest : public testing::Test {
     if (source_text.has_value()) {
       std::unique_ptr<ParkableStringImpl::SecureDigest> hash =
           ParkableStringImpl::HashString(source_text->Impl());
-      CHECK_EQ(hash->size(), kSha256Bytes);
-      memcpy(outer_header->hash, hash->data(), kSha256Bytes);
+      CHECK_EQ(hash->size(),
+               ScriptCachedMetadataHandlerWithHashing::kSha256Bytes);
+      memcpy(outer_header->hash, hash->data(),
+             ScriptCachedMetadataHandlerWithHashing::kSha256Bytes);
     }
     CachedMetadataHeader* inner_header =
         reinterpret_cast<CachedMetadataHeader*>(
@@ -136,6 +144,7 @@ class ResourceLoaderCodeCacheTest : public testing::Test {
     return serialized_data;
   }
 
+  test::TaskEnvironment task_environment_;
   ScopedTestingPlatformSupport<TestingPlatformSupportWithMockScheduler>
       platform_;
 
@@ -147,18 +156,21 @@ class ResourceLoaderCodeCacheTest : public testing::Test {
 };
 
 TEST_F(ResourceLoaderCodeCacheTest, WebUICodeCacheEmptyCachedMetadataInfo) {
-  CommonSetup();
+  V8TestingScope scope;
+  CommonSetup(scope.GetIsolate());
 
   loader_->DidReceiveResponse(WrappedResourceResponse(response_),
                               /*body=*/mojo::ScopedDataPipeConsumerHandle(),
-                              /*cached_metadata=*/absl::nullopt);
+                              /*cached_metadata=*/std::nullopt);
 
   // No code cache data was present.
   EXPECT_FALSE(resource_->CodeCacheSize());
 }
 
 TEST_F(ResourceLoaderCodeCacheTest, WebUICodeCacheFullResponse) {
-  CommonSetup();
+  V8TestingScope scope;
+  CommonSetup(scope.GetIsolate());
+
   std::vector<uint8_t> cache_data{2, 3, 4, 5, 6};
   loader_->DidReceiveResponse(
       WrappedResourceResponse(response_),
@@ -171,7 +183,8 @@ TEST_F(ResourceLoaderCodeCacheTest, WebUICodeCacheFullResponse) {
 }
 
 TEST_F(ResourceLoaderCodeCacheTest, CodeCacheFullHttpsScheme) {
-  CommonSetup("https://www.example.com/");
+  V8TestingScope scope;
+  CommonSetup(scope.GetIsolate(), "https://www.example.com/");
 
   std::vector<uint8_t> cache_data{2, 3, 4, 5, 6};
   loader_->DidReceiveResponse(
@@ -185,7 +198,8 @@ TEST_F(ResourceLoaderCodeCacheTest, CodeCacheFullHttpsScheme) {
 }
 
 TEST_F(ResourceLoaderCodeCacheTest, CodeCacheFullHttpsSchemeWithResponseFlag) {
-  CommonSetup("https://www.example.com/");
+  V8TestingScope scope;
+  CommonSetup(scope.GetIsolate(), "https://www.example.com/");
 
   std::vector<uint8_t> cache_data{2, 3, 4, 5, 6};
 
@@ -204,7 +218,8 @@ TEST_F(ResourceLoaderCodeCacheTest, CodeCacheFullHttpsSchemeWithResponseFlag) {
 }
 
 TEST_F(ResourceLoaderCodeCacheTest, WebUICodeCacheInvalidOuterType) {
-  CommonSetup();
+  V8TestingScope scope;
+  CommonSetup(scope.GetIsolate());
 
   std::vector<uint8_t> cache_data{2, 3, 4, 5, 6};
   loader_->DidReceiveResponse(
@@ -217,7 +232,8 @@ TEST_F(ResourceLoaderCodeCacheTest, WebUICodeCacheInvalidOuterType) {
 }
 
 TEST_F(ResourceLoaderCodeCacheTest, WebUICodeCacheHashCheckSuccess) {
-  CommonSetup();
+  V8TestingScope scope;
+  CommonSetup(scope.GetIsolate());
 
   std::vector<uint8_t> cache_data{2, 3, 4, 5, 6};
   String source_text("alert('hello world');");
@@ -240,15 +256,17 @@ TEST_F(ResourceLoaderCodeCacheTest, WebUICodeCacheHashCheckSuccess) {
   scoped_refptr<CachedMetadata> cached_metadata =
       resource_->CacheHandler()->GetCachedMetadata(0);
   EXPECT_TRUE(cached_metadata.get());
-  EXPECT_EQ(cached_metadata->size(), cache_data.size());
-  EXPECT_EQ(*(cached_metadata->Data() + 2), cache_data[2]);
+  base::span<const uint8_t> metadata = cached_metadata->Data();
+  EXPECT_EQ(metadata.size(), cache_data.size());
+  EXPECT_EQ(metadata[2], cache_data[2]);
 
   // But trying to load the metadata with the wrong data_type_id fails.
   EXPECT_FALSE(resource_->CacheHandler()->GetCachedMetadata(4));
 }
 
 TEST_F(ResourceLoaderCodeCacheTest, WebUICodeCacheHashCheckFailure) {
-  CommonSetup();
+  V8TestingScope scope;
+  CommonSetup(scope.GetIsolate());
 
   std::vector<uint8_t> cache_data{2, 3, 4, 5, 6};
   String source_text("alert('hello world');");
@@ -270,6 +288,58 @@ TEST_F(ResourceLoaderCodeCacheTest, WebUICodeCacheHashCheckFailure) {
   // The metadata has been cleared.
   EXPECT_FALSE(resource_->CodeCacheSize());
   EXPECT_FALSE(resource_->CacheHandler()->GetCachedMetadata(0));
+}
+
+class MockTestingPlatformForCodeCache : public TestingPlatformSupport {
+ public:
+  MockTestingPlatformForCodeCache() = default;
+  ~MockTestingPlatformForCodeCache() override = default;
+
+  // TestingPlatformSupport:
+  bool ShouldUseCodeCacheWithHashing(const WebURL& request_url) const override {
+    return should_use_code_cache_with_hashing_;
+  }
+
+  void set_should_use_code_cache_with_hashing(
+      bool should_use_code_cache_with_hashing) {
+    should_use_code_cache_with_hashing_ = should_use_code_cache_with_hashing;
+  }
+
+ private:
+  bool should_use_code_cache_with_hashing_ = true;
+};
+
+TEST_F(ResourceLoaderCodeCacheTest, WebUICodeCachePlatformOverride) {
+  ScopedTestingPlatformSupport<MockTestingPlatformForCodeCache> platform;
+  std::vector<uint8_t> cache_data{2, 3, 4, 5, 6};
+
+  {
+    platform->set_should_use_code_cache_with_hashing(true);
+    V8TestingScope scope;
+    CommonSetup(scope.GetIsolate());
+    loader_->DidReceiveResponse(
+        WrappedResourceResponse(response_),
+        /*body=*/mojo::ScopedDataPipeConsumerHandle(),
+        mojo_base::BigBuffer(MakeSerializedCodeCacheDataWithHash(cache_data)));
+
+    // Code cache data was present.
+    EXPECT_EQ(resource_->CodeCacheSize(),
+              cache_data.size() + sizeof(CachedMetadataHeader));
+  }
+
+  {
+    platform->set_should_use_code_cache_with_hashing(false);
+    V8TestingScope scope;
+    CommonSetup(scope.GetIsolate());
+    loader_->DidReceiveResponse(
+        WrappedResourceResponse(response_),
+        /*body=*/mojo::ScopedDataPipeConsumerHandle(),
+        mojo_base::BigBuffer(MakeSerializedCodeCacheDataWithHash(cache_data)));
+
+    // Code cache data was absent.
+    EXPECT_FALSE(resource_->CodeCacheSize());
+    EXPECT_FALSE(resource_->CacheHandler());
+  }
 }
 
 }  // namespace

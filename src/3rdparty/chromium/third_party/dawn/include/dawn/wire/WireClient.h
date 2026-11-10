@@ -29,6 +29,7 @@
 #define INCLUDE_DAWN_WIRE_WIRECLIENT_H_
 
 #include <memory>
+#include <string_view>
 #include <vector>
 
 #include "dawn/dawn_proc_table.h"
@@ -43,32 +44,27 @@ class MemoryTransferService;
 DAWN_WIRE_EXPORT const DawnProcTable& GetProcs();
 }  // namespace client
 
+struct ReservedBuffer {
+    WGPUBuffer buffer;
+    Handle handle;
+    Handle deviceHandle;
+};
+
 struct ReservedTexture {
     WGPUTexture texture;
-    uint32_t id;
-    uint32_t generation;
-    uint32_t deviceId;
-    uint32_t deviceGeneration;
+    Handle handle;
+    Handle deviceHandle;
 };
 
-struct ReservedSwapChain {
-    WGPUSwapChain swapchain;
-    uint32_t id;
-    uint32_t generation;
-    uint32_t deviceId;
-    uint32_t deviceGeneration;
-};
-
-struct ReservedDevice {
-    WGPUDevice device;
-    uint32_t id;
-    uint32_t generation;
+struct ReservedSurface {
+    WGPUSurface surface;
+    Handle instanceHandle;
+    Handle handle;
 };
 
 struct ReservedInstance {
     WGPUInstance instance;
-    uint32_t id;
-    uint32_t generation;
+    Handle handle;
 };
 
 struct DAWN_WIRE_EXPORT WireClientDescriptor {
@@ -83,20 +79,24 @@ class DAWN_WIRE_EXPORT WireClient : public CommandHandler {
 
     const volatile char* HandleCommands(const volatile char* commands, size_t size) override;
 
+    ReservedBuffer ReserveBuffer(WGPUDevice device, const WGPUBufferDescriptor* descriptor);
     ReservedTexture ReserveTexture(WGPUDevice device, const WGPUTextureDescriptor* descriptor);
-    ReservedSwapChain ReserveSwapChain(WGPUDevice device,
-                                       const WGPUSwapChainDescriptor* descriptor);
-    ReservedDevice ReserveDevice(WGPUInstance instance);
+    ReservedSurface ReserveSurface(WGPUInstance instance,
+                                   const WGPUSurfaceCapabilities* capabilities);
     ReservedInstance ReserveInstance(const WGPUInstanceDescriptor* descriptor = nullptr);
 
+    void ReclaimBufferReservation(const ReservedBuffer& reservation);
     void ReclaimTextureReservation(const ReservedTexture& reservation);
-    void ReclaimSwapChainReservation(const ReservedSwapChain& reservation);
-    void ReclaimDeviceReservation(const ReservedDevice& reservation);
+    void ReclaimSurfaceReservation(const ReservedSurface& reservation);
     void ReclaimInstanceReservation(const ReservedInstance& reservation);
+
+    Handle GetWireHandle(WGPUDevice device) const;
 
     // Disconnects the client.
     // Commands allocated after this point will not be sent.
     void Disconnect();
+
+    client::Client* GetImplForTesting();
 
   private:
     std::unique_ptr<client::Client> mImpl;
@@ -187,7 +187,7 @@ class DAWN_WIRE_EXPORT MemoryTransferService {
 };
 
 // Backdoor to get the order of the ProcMap for testing
-DAWN_WIRE_EXPORT std::vector<const char*> GetProcMapNamesForTesting();
+DAWN_WIRE_EXPORT std::vector<std::string_view> GetProcMapNamesForTesting();
 }  // namespace client
 }  // namespace dawn::wire
 

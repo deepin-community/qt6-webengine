@@ -9,6 +9,12 @@ typedef void (*__eglMustCastToProperFunctionPointerType)(void);
 extern __eglMustCastToProperFunctionPointerType EGL_GetProcAddress(const char *procname);
 }
 
+extern "C" {
+// The ANGLE internal eglGetProcAddress
+EGLAPI __eglMustCastToProperFunctionPointerType EGLAPIENTRY
+EGL_GetProcAddress(const char* procname);
+}
+
 namespace gl {
 namespace init {
 

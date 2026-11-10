@@ -6,13 +6,15 @@
 
 #include "third_party/blink/renderer/core/animation/css_interpolation_environment.h"
 #include "third_party/blink/renderer/core/animation/string_keyframe.h"
+#include "third_party/blink/renderer/core/animation/underlying_value_owner.h"
 #include "third_party/blink/renderer/core/css/resolver/style_builder.h"
 
 namespace blink {
 
 CSSDefaultNonInterpolableValue::CSSDefaultNonInterpolableValue(
-    const CSSValue* css_value)
-    : css_value_(css_value) {
+    const CSSValue* css_value,
+    AttrTainted is_attr_tainted)
+    : css_value_(css_value), is_attr_tainted_(is_attr_tainted) {
   DCHECK(css_value_);
 }
 
@@ -20,35 +22,51 @@ DEFINE_NON_INTERPOLABLE_VALUE_TYPE(CSSDefaultNonInterpolableValue);
 
 InterpolationValue CSSDefaultInterpolationType::MaybeConvertSingle(
     const PropertySpecificKeyframe& keyframe,
-    const InterpolationEnvironment& environment,
+    const CSSInterpolationEnvironment& environment,
     const InterpolationValue&,
     ConversionCheckers&) const {
-  const CSSValue* css_value = To<CSSPropertySpecificKeyframe>(keyframe).Value();
+  const auto& property_specific = To<CSSPropertySpecificKeyframe>(keyframe);
+  const CSSValue* css_value = property_specific.Value();
+  const TreeScope* tree_scope = property_specific.GetTreeScope();
 
   if (!css_value) {
     DCHECK(keyframe.IsNeutral());
     return nullptr;
   }
 
-  css_value = To<CSSInterpolationEnvironment>(environment)
-                  .Resolve(GetProperty(), css_value);
+  css_value = environment.Resolve(GetProperty(), css_value, tree_scope);
   if (!css_value)
     return nullptr;
 
-  return InterpolationValue(MakeGarbageCollected<InterpolableList>(0),
-                            CSSDefaultNonInterpolableValue::Create(css_value));
+  return InterpolationValue(
+      MakeGarbageCollected<InterpolableList>(0),
+      MakeGarbageCollected<CSSDefaultNonInterpolableValue>(
+          css_value, CSSDefaultNonInterpolableValue::AttrTainted(false)));
+}
+
+void CSSDefaultInterpolationType::Composite(
+    UnderlyingValueOwner& underlying_value_owner,
+    double underlying_fraction,
+    const InterpolationValue& value,
+    double interpolation_fraction) const {
+  underlying_value_owner.Set(this, value);
 }
 
 void CSSDefaultInterpolationType::Apply(
     const InterpolableValue&,
     const NonInterpolableValue* non_interpolable_value,
-    InterpolationEnvironment& environment) const {
+    CSSInterpolationEnvironment& environment) const {
   DCHECK(
       To<CSSDefaultNonInterpolableValue>(non_interpolable_value)->CssValue());
+  CSSProperty::ValueMode values_mode =
+      To<CSSDefaultNonInterpolableValue>(non_interpolable_value)
+              ->IsAttrTainted()
+          ? CSSProperty::ValueMode::kAttrTaintedAndAnimated
+          : CSSProperty::ValueMode::kAnimated;
   StyleBuilder::ApplyProperty(
-      GetProperty().GetCSSPropertyName(),
-      To<CSSInterpolationEnvironment>(environment).GetState(),
-      *To<CSSDefaultNonInterpolableValue>(non_interpolable_value)->CssValue());
+      GetProperty().GetCSSPropertyName(), environment.GetState(),
+      *To<CSSDefaultNonInterpolableValue>(non_interpolable_value)->CssValue(),
+      values_mode);
 }
 
 }  // namespace blink

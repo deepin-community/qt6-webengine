@@ -34,12 +34,15 @@
 #include "third_party/blink/renderer/core/css/css_border_image_slice_value.h"
 #include "third_party/blink/renderer/core/css/css_custom_ident_value.h"
 #include "third_party/blink/renderer/core/css/css_identifier_value.h"
+#include "third_party/blink/renderer/core/css/css_identifier_value_mappings.h"
+#include "third_party/blink/renderer/core/css/css_math_function_value.h"
+#include "third_party/blink/renderer/core/css/css_numeric_literal_value.h"
 #include "third_party/blink/renderer/core/css/css_primitive_value.h"
-#include "third_party/blink/renderer/core/css/css_primitive_value_mappings.h"
 #include "third_party/blink/renderer/core/css/css_quad_value.h"
 #include "third_party/blink/renderer/core/css/css_repeat_style_value.h"
 #include "third_party/blink/renderer/core/css/css_scroll_value.h"
 #include "third_party/blink/renderer/core/css/css_timing_function_value.h"
+#include "third_party/blink/renderer/core/css/css_to_length_conversion_data.h"
 #include "third_party/blink/renderer/core/css/css_value_pair.h"
 #include "third_party/blink/renderer/core/css/css_view_value.h"
 #include "third_party/blink/renderer/core/css/resolver/style_builder_converter.h"
@@ -146,17 +149,6 @@ void CSSToStyleMap::MapFillOrigin(StyleResolverState&,
   layer->SetOrigin(identifier_value->ConvertTo<EFillBox>());
 }
 
-namespace {
-
-CSSPropertyID MaskImageProperty() {
-  if (!RuntimeEnabledFeatures::CSSMaskingInteropEnabled()) {
-    return CSSPropertyID::kWebkitMaskImage;
-  }
-  return CSSPropertyID::kMaskImage;
-}
-
-}  // namespace
-
 void CSSToStyleMap::MapFillImage(StyleResolverState& state,
                                  FillLayer* layer,
                                  const CSSValue& value) {
@@ -167,7 +159,7 @@ void CSSToStyleMap::MapFillImage(StyleResolverState& state,
 
   CSSPropertyID property = layer->GetType() == EFillLayerType::kBackground
                                ? CSSPropertyID::kBackgroundImage
-                               : MaskImageProperty();
+                               : CSSPropertyID::kMaskImage;
   layer->SetImage(
       state.GetStyleImage(property, state.ResolveLightDarkPair(value)));
 }
@@ -318,9 +310,11 @@ void CSSToStyleMap::MapFillPositionY(StyleResolverState& state,
 
 namespace {
 
-Timing::Delay MapAnimationTimingDelay(const CSSValue& value) {
+Timing::Delay MapAnimationTimingDelay(const CSSLengthResolver& length_resolver,
+                                      const CSSValue& value) {
   if (const auto* primitive = DynamicTo<CSSPrimitiveValue>(value)) {
-    return Timing::Delay(AnimationTimeDelta(primitive->ComputeSeconds()));
+    return Timing::Delay(
+        ANIMATION_TIME_DELTA_FROM_SECONDS(primitive->ComputeSeconds(length_resolver)));
   }
 
   return Timing::Delay();
@@ -330,16 +324,12 @@ Timing::Delay MapAnimationTimingDelay(const CSSValue& value) {
 
 Timing::Delay CSSToStyleMap::MapAnimationDelayStart(StyleResolverState& state,
                                                     const CSSValue& value) {
-  return MapAnimationTimingDelay(value);
-}
-
-Timing::Delay CSSToStyleMap::MapAnimationDelayEnd(const CSSValue& value) {
-  return MapAnimationTimingDelay(value);
+  return MapAnimationTimingDelay(state.CssToLengthConversionData(), value);
 }
 
 Timing::Delay CSSToStyleMap::MapAnimationDelayEnd(StyleResolverState& state,
                                                   const CSSValue& value) {
-  return MapAnimationDelayEnd(value);
+  return MapAnimationTimingDelay(state.CssToLengthConversionData(), value);
 }
 
 Timing::PlaybackDirection CSSToStyleMap::MapAnimationDirection(
@@ -356,18 +346,18 @@ Timing::PlaybackDirection CSSToStyleMap::MapAnimationDirection(
       return Timing::PlaybackDirection::ALTERNATE_REVERSE;
     default:
       NOTREACHED();
-      return Timing::PlaybackDirection::NORMAL;
   }
 }
 
-absl::optional<double> CSSToStyleMap::MapAnimationDuration(
+std::optional<double> CSSToStyleMap::MapAnimationDuration(
     StyleResolverState& state,
     const CSSValue& value) {
   if (auto* identifier = DynamicTo<CSSIdentifierValue>(value);
       identifier && identifier->GetValueID() == CSSValueID::kAuto) {
-    return absl::nullopt;
+    return std::nullopt;
   }
-  return To<CSSPrimitiveValue>(value).ComputeSeconds();
+  return To<CSSPrimitiveValue>(value).ComputeSeconds(
+      state.CssToLengthConversionData());
 }
 
 Timing::FillMode CSSToStyleMap::MapAnimationFillMode(StyleResolverState& state,
@@ -383,7 +373,6 @@ Timing::FillMode CSSToStyleMap::MapAnimationFillMode(StyleResolverState& state,
       return Timing::FillMode::BOTH;
     default:
       NOTREACHED();
-      return Timing::FillMode::NONE;
   }
 }
 
@@ -394,7 +383,8 @@ double CSSToStyleMap::MapAnimationIterationCount(StyleResolverState& state,
       identifier_value->GetValueID() == CSSValueID::kInfinite) {
     return std::numeric_limits<double>::infinity();
   }
-  return To<CSSPrimitiveValue>(value).GetFloatValue();
+  return To<CSSPrimitiveValue>(value).ComputeNumber(
+      state.CssToLengthConversionData());
 }
 
 AtomicString CSSToStyleMap::MapAnimationName(StyleResolverState& state,
@@ -432,7 +422,8 @@ StyleTimeline CSSToStyleMap::MapAnimationTimeline(StyleResolverState& state,
   }
   if (auto* custom_ident = DynamicTo<CSSCustomIdentValue>(value)) {
     return StyleTimeline(MakeGarbageCollected<ScopedCSSName>(
-        custom_ident->Value(), custom_ident->GetTreeScope()));
+        custom_ident->ComputeIdent(state.CssToLengthConversionData()),
+        custom_ident->GetTreeScope()));
   }
   if (value.IsViewValue()) {
     const auto& view_value = To<cssvalue::CSSViewValue>(value);
@@ -473,12 +464,12 @@ EAnimPlayState CSSToStyleMap::MapAnimationPlayState(StyleResolverState& state,
 
 namespace {
 
-absl::optional<TimelineOffset> MapAnimationRange(StyleResolverState& state,
-                                                 const CSSValue& value,
-                                                 double default_percent) {
+std::optional<TimelineOffset> MapAnimationRange(StyleResolverState& state,
+                                                const CSSValue& value,
+                                                double default_percent) {
   if (auto* ident = DynamicTo<CSSIdentifierValue>(value);
       ident && ident->GetValueID() == CSSValueID::kNormal) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   const auto& list = To<CSSValueList>(value);
   DCHECK_GE(list.length(), 1u);
@@ -500,13 +491,13 @@ absl::optional<TimelineOffset> MapAnimationRange(StyleResolverState& state,
 
 }  // namespace
 
-absl::optional<TimelineOffset> CSSToStyleMap::MapAnimationRangeStart(
+std::optional<TimelineOffset> CSSToStyleMap::MapAnimationRangeStart(
     StyleResolverState& state,
     const CSSValue& value) {
   return MapAnimationRange(state, value, 0);
 }
 
-absl::optional<TimelineOffset> CSSToStyleMap::MapAnimationRangeEnd(
+std::optional<TimelineOffset> CSSToStyleMap::MapAnimationRangeEnd(
     StyleResolverState& state,
     const CSSValue& value) {
   return MapAnimationRange(state, value, 100);
@@ -545,6 +536,7 @@ CSSTransitionData::TransitionProperty CSSToStyleMap::MapAnimationProperty(
 }
 
 scoped_refptr<TimingFunction> CSSToStyleMap::MapAnimationTimingFunction(
+    const CSSLengthResolver& length_resolver,
     const CSSValue& value) {
   // FIXME: We should probably only call into this function with a valid
   // single timing function value which isn't initial or inherit. We can
@@ -575,7 +567,6 @@ scoped_refptr<TimingFunction> CSSToStyleMap::MapAnimationTimingFunction(
             StepsTimingFunction::StepPosition::END);
       default:
         NOTREACHED();
-        return CSSTimingData::InitialTimingFunction();
     }
   }
 
@@ -593,14 +584,21 @@ scoped_refptr<TimingFunction> CSSToStyleMap::MapAnimationTimingFunction(
 
   const auto& steps_timing_function =
       To<cssvalue::CSSStepsTimingFunctionValue>(value);
-  return StepsTimingFunction::Create(steps_timing_function.NumberOfSteps(),
+  int steps =
+      steps_timing_function.NumberOfSteps()->ComputeInteger(length_resolver);
+  if (steps_timing_function.GetStepPosition() ==
+          StepsTimingFunction::StepPosition::JUMP_NONE &&
+      steps < 2) {
+    steps = 2;
+  }
+  return StepsTimingFunction::Create(steps,
                                      steps_timing_function.GetStepPosition());
 }
 
 scoped_refptr<TimingFunction> CSSToStyleMap::MapAnimationTimingFunction(
     StyleResolverState& state,
     const CSSValue& value) {
-  return MapAnimationTimingFunction(value);
+  return MapAnimationTimingFunction(state.CssToLengthConversionData(), value);
 }
 
 void CSSToStyleMap::MapNinePieceImage(StyleResolverState& state,
@@ -664,35 +662,35 @@ void CSSToStyleMap::MapNinePieceImage(StyleResolverState& state,
     // about percentages, since we don't even support those on real borders yet.
     if (image.BorderSlices().Top().IsLength() &&
         image.BorderSlices().Top().length().IsFixed()) {
-      builder.SetBorderTopWidth(
-          LayoutUnit(image.BorderSlices().Top().length().Pixels()));
+      builder.SetBorderTopWidth(image.BorderSlices().Top().length().Pixels());
     }
     if (image.BorderSlices().Right().IsLength() &&
         image.BorderSlices().Right().length().IsFixed()) {
       builder.SetBorderRightWidth(
-          LayoutUnit(image.BorderSlices().Right().length().Pixels()));
+          image.BorderSlices().Right().length().Pixels());
     }
     if (image.BorderSlices().Bottom().IsLength() &&
         image.BorderSlices().Bottom().length().IsFixed()) {
       builder.SetBorderBottomWidth(
-          LayoutUnit(image.BorderSlices().Bottom().length().Pixels()));
+          image.BorderSlices().Bottom().length().Pixels());
     }
     if (image.BorderSlices().Left().IsLength() &&
         image.BorderSlices().Left().length().IsFixed()) {
-      builder.SetBorderLeftWidth(
-          LayoutUnit(image.BorderSlices().Left().length().Pixels()));
+      builder.SetBorderLeftWidth(image.BorderSlices().Left().length().Pixels());
     }
   }
 }
 
-static Length ConvertBorderImageSliceSide(const CSSPrimitiveValue& value) {
+static Length ConvertBorderImageSliceSide(
+    const CSSLengthResolver& length_resolver,
+    const CSSPrimitiveValue& value) {
   if (value.IsPercentage()) {
-    return Length::Percent(value.GetDoubleValue());
+    return Length::Percent(value.ComputePercentage(length_resolver));
   }
-  return Length::Fixed(round(value.GetDoubleValue()));
+  return Length::Fixed(round(value.ComputeNumber(length_resolver)));
 }
 
-void CSSToStyleMap::MapNinePieceImageSlice(StyleResolverState&,
+void CSSToStyleMap::MapNinePieceImageSlice(StyleResolverState& state,
                                            const CSSValue& value,
                                            NinePieceImage& image) {
   if (!IsA<cssvalue::CSSBorderImageSliceValue>(value)) {
@@ -706,13 +704,16 @@ void CSSToStyleMap::MapNinePieceImageSlice(StyleResolverState&,
   // Set up a length box to represent our image slices.
   LengthBox box;
   const CSSQuadValue& slices = border_image_slice.Slices();
-  box.top_ = ConvertBorderImageSliceSide(To<CSSPrimitiveValue>(*slices.Top()));
+  box.top_ = ConvertBorderImageSliceSide(state.CssToLengthConversionData(),
+                                         To<CSSPrimitiveValue>(*slices.Top()));
   box.bottom_ =
-      ConvertBorderImageSliceSide(To<CSSPrimitiveValue>(*slices.Bottom()));
-  box.left_ =
-      ConvertBorderImageSliceSide(To<CSSPrimitiveValue>(*slices.Left()));
+      ConvertBorderImageSliceSide(state.CssToLengthConversionData(),
+                                  To<CSSPrimitiveValue>(*slices.Bottom()));
+  box.left_ = ConvertBorderImageSliceSide(
+      state.CssToLengthConversionData(), To<CSSPrimitiveValue>(*slices.Left()));
   box.right_ =
-      ConvertBorderImageSliceSide(To<CSSPrimitiveValue>(*slices.Right()));
+      ConvertBorderImageSliceSide(state.CssToLengthConversionData(),
+                                  To<CSSPrimitiveValue>(*slices.Right()));
   image.SetImageSlices(box);
 
   // Set our fill mode.
@@ -723,7 +724,7 @@ static BorderImageLength ToBorderImageLength(const StyleResolverState& state,
                                              const CSSValue& value) {
   if (const auto* primitive_value = DynamicTo<CSSPrimitiveValue>(value)) {
     if (primitive_value->IsNumber()) {
-      return primitive_value->GetDoubleValue();
+      return primitive_value->ComputeNumber(state.CssToLengthConversionData());
     }
   }
   return StyleBuilderConverter::ConvertLengthOrAuto(state, value);
@@ -792,6 +793,93 @@ void CSSToStyleMap::MapNinePieceImageRepeat(StyleResolverState&,
       break;
   }
   image.SetVerticalRule(vertical_rule);
+}
+
+EAnimationTriggerBehavior CSSToStyleMap::MapAnimationTriggerBehavior(
+    StyleResolverState&,
+    const CSSValue& value) {
+  return To<CSSIdentifierValue>(value).ConvertTo<EAnimationTriggerBehavior>();
+}
+
+Persistent<const ScopedCSSName> CSSToStyleMap::MapAnimationTimelineTriggerName(
+    StyleResolverState& state,
+    const CSSValue& value) {
+  DCHECK(value.IsScopedValue());
+  if (auto* ident = DynamicTo<CSSIdentifierValue>(value)) {
+    DCHECK(ident->GetValueID() == CSSValueID::kNone);
+    return nullptr;
+  }
+  if (auto* custom_ident = DynamicTo<CSSCustomIdentValue>(value)) {
+    return MakeGarbageCollected<ScopedCSSName>(
+        custom_ident->ComputeIdent(state.CssToLengthConversionData()),
+        custom_ident->GetTreeScope());
+  }
+  return nullptr;
+}
+
+EAnimationTriggerBehavior CSSToStyleMap::MapAnimationTimelineTriggerBehavior(
+    StyleResolverState& state,
+    const CSSValue& value) {
+  return MapAnimationTriggerBehavior(state, value);
+}
+
+std::optional<TimelineOffset>
+CSSToStyleMap::MapAnimationTimelineTriggerRangeStart(StyleResolverState& state,
+                                                     const CSSValue& value) {
+  return MapAnimationRange(state, value, 0);
+}
+
+std::optional<TimelineOffset>
+CSSToStyleMap::MapAnimationTimelineTriggerRangeEnd(StyleResolverState& state,
+                                                   const CSSValue& value) {
+  return MapAnimationRange(state, value, 100);
+}
+
+TimelineOffsetOrAuto CSSToStyleMap::MapAnimationTimelineTriggerExitRangeStart(
+    StyleResolverState& state,
+    const CSSValue& value) {
+  if (auto* ident = DynamicTo<CSSIdentifierValue>(value);
+      ident && ident->GetValueID() == CSSValueID::kAuto) {
+    return TimelineOffsetOrAuto();
+  }
+  return TimelineOffsetOrAuto(MapAnimationRange(state, value, 0));
+}
+
+TimelineOffsetOrAuto CSSToStyleMap::MapAnimationTimelineTriggerExitRangeEnd(
+    StyleResolverState& state,
+    const CSSValue& value) {
+  if (auto* ident = DynamicTo<CSSIdentifierValue>(value);
+      ident && ident->GetValueID() == CSSValueID::kAuto) {
+    return TimelineOffsetOrAuto();
+  }
+  return TimelineOffsetOrAuto(MapAnimationRange(state, value, 100));
+}
+
+StyleTimeline CSSToStyleMap::MapAnimationTimelineTriggerTimeline(
+    StyleResolverState& state,
+    const CSSValue& value) {
+  return MapAnimationTimeline(state, value);
+}
+
+std::optional<Vector<AtomicString>> CSSToStyleMap::MapAnimationTriggerNames(
+    StyleResolverState&,
+    const CSSValue& animation_trigger_value) {
+  if (auto* ident = DynamicTo<CSSIdentifierValue>(animation_trigger_value);
+      ident && ident->GetValueID() == CSSValueID::kNone) {
+    return std::nullopt;
+  }
+
+  if (const CSSValueList* value_list =
+          DynamicTo<CSSValueList>(animation_trigger_value)) {
+    Vector<AtomicString> names_list;
+    for (const CSSValue* value : *value_list) {
+      const CSSCustomIdentValue* custom_ident = To<CSSCustomIdentValue>(value);
+      names_list.push_back(custom_ident->CustomCSSText());
+    }
+    return names_list;
+  }
+
+  return std::nullopt;
 }
 
 }  // namespace blink

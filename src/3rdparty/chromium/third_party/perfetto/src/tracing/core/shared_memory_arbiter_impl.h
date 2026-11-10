@@ -130,14 +130,13 @@ class SharedMemoryArbiterImpl : public SharedMemoryArbiter {
   // BufferExhaustedPolicy, this may return an invalid chunk if no valid free
   // chunk could be found in the SMB.
   SharedMemoryABI::Chunk GetNewChunk(const SharedMemoryABI::ChunkHeader&,
-                                     BufferExhaustedPolicy,
-                                     size_t size_hint = 0);
+                                     BufferExhaustedPolicy);
 
   // Puts back a Chunk that has been completed and sends a request to the
   // service to move it to the central tracing buffer. |target_buffer| is the
   // absolute trace buffer ID where the service should move the chunk onto (the
   // producer is just to copy back the same number received in the
-  // DataSourceConfig upon the StartDataSource() reques).
+  // DataSourceConfig upon the StartDataSource() request).
   // PatchList is a pointer to the list of patches for previous chunks. The
   // first patched entries will be removed from the patched list and sent over
   // to the service in the same CommitData() IPC request.
@@ -166,7 +165,7 @@ class SharedMemoryArbiterImpl : public SharedMemoryArbiter {
   // See include/perfetto/tracing/core/shared_memory_arbiter.h for comments.
   std::unique_ptr<TraceWriter> CreateTraceWriter(
       BufferID target_buffer,
-      BufferExhaustedPolicy = BufferExhaustedPolicy::kDefault) override;
+      BufferExhaustedPolicy) override;
   std::unique_ptr<TraceWriter> CreateStartupTraceWriter(
       uint16_t target_buffer_reservation_id) override;
   void BindToProducerEndpoint(TracingService::ProducerEndpoint*,
@@ -241,6 +240,19 @@ class SharedMemoryArbiterImpl : public SharedMemoryArbiter {
   void BindStartupTargetBufferImpl(std::unique_lock<std::mutex> scoped_lock,
                                    uint16_t target_buffer_reservation_id,
                                    BufferID target_buffer_id);
+
+  // Returns some statistics about chunks/pages in the shared memory buffer.
+  struct Stats {
+    size_t chunks_free = 0;
+    size_t chunks_being_written = 0;
+    size_t chunks_being_read = 0;
+    size_t chunks_complete = 0;
+
+    // No chunks are included from free/malformed pages.
+    size_t pages_free = 0;
+    size_t pages_unexpected = 0;
+  };
+  Stats GetStats();
 
   // If any flush callbacks were queued up while the arbiter or any target
   // buffer reservation was unbound, this wraps the pending callbacks into a new

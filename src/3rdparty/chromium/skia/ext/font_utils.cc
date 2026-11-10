@@ -13,6 +13,8 @@
 
 #if BUILDFLAG(IS_ANDROID)
 #include "third_party/skia/include/ports/SkFontMgr_android.h"
+#include "third_party/skia/include/ports/SkFontScanner_Fontations.h"
+#include "third_party/skia/include/ports/SkFontScanner_FreeType.h"
 #endif
 
 #if BUILDFLAG(IS_APPLE)
@@ -22,6 +24,8 @@
 #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
 #include "third_party/skia/include/ports/SkFontConfigInterface.h"
 #include "third_party/skia/include/ports/SkFontMgr_FontConfigInterface.h"
+#include "third_party/skia/include/ports/SkFontScanner_Fontations.h"
+#include "third_party/skia/include/ports/SkFontScanner_FreeType.h"
 #endif
 
 #if BUILDFLAG(IS_FUCHSIA)
@@ -57,12 +61,20 @@ static sk_sp<SkFontMgr> fontmgr_factory() {
     return sk_ref_sp(g_fontmgr_override);
   }
 #if BUILDFLAG(IS_ANDROID)
-  return SkFontMgr_New_Android(nullptr);
+  return SkFontMgr_New_Android(nullptr, SkFontScanner_Make_Fontations());
 #elif BUILDFLAG(IS_APPLE)
   return SkFontMgr_New_CoreText(nullptr);
 #elif BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
   sk_sp<SkFontConfigInterface> fci(SkFontConfigInterface::RefGlobal());
-  return fci ? SkFontMgr_New_FCI(std::move(fci)) : nullptr;
+#if defined(SK_TYPEFACE_FACTORY_FONTATIONS)
+  return fci ? SkFontMgr_New_FCI(std::move(fci),
+                                 SkFontScanner_Make_Fontations())
+             : nullptr;
+#else
+  return fci ? SkFontMgr_New_FCI(std::move(fci),
+                                 SkFontScanner_Make_FreeType())
+             : nullptr;
+#endif
 #elif BUILDFLAG(IS_FUCHSIA)
   fuchsia::fonts::ProviderSyncPtr provider;
   base::ComponentContextForProcess()->svc()->Connect(provider.NewRequest());
@@ -78,12 +90,12 @@ static sk_sp<SkFontMgr> fontmgr_factory() {
 
 sk_sp<SkFontMgr> DefaultFontMgr() {
   static std::once_flag flag;
-  static sk_sp<SkFontMgr> mgr;
+  static SkFontMgr* mgr;
   std::call_once(flag, [] {
-    mgr = fontmgr_factory();
+    mgr = fontmgr_factory().release();
     g_factory_called = true;
   });
-  return mgr;
+  return sk_ref_sp(mgr);
 }
 
 void OverrideDefaultSkFontMgr(sk_sp<SkFontMgr> fontmgr) {
@@ -118,11 +130,3 @@ SkFont DefaultFont() {
 }
 
 }  // namespace skia
-
-// TODO(b/305780908) Remove this after all dependencies on the default fontmgr
-// have been removed.
-#if !defined(SK_DISABLE_LEGACY_FONTMGR_FACTORY)
-SK_API sk_sp<SkFontMgr> SkFontMgr::Factory() {
-  return skia::DefaultFontMgr();
-}
-#endif

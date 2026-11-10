@@ -1,5 +1,6 @@
 // Copyright (C) 2018 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 // Portions copyright 2015 The Chromium Embedded Framework Authors.
 // Portions copyright 2014 The Chromium Authors. All rights reserved.
@@ -13,6 +14,7 @@
 
 namespace extensions {
 
+class DisplayInfoProvider;
 class FileSystemDelegate;
 class MessagingDelegate;
 
@@ -22,7 +24,7 @@ public:
     ExtensionsAPIClientQt();
 
     // ExtensionsAPIClient implementation.
-    AppViewGuestDelegate *CreateAppViewGuestDelegate() const override;
+    std::unique_ptr<AppViewGuestDelegate> CreateAppViewGuestDelegate() const override;
     FileSystemDelegate *GetFileSystemDelegate() override;
     std::unique_ptr<guest_view::GuestViewManagerDelegate>
     CreateGuestViewManagerDelegate() const override;
@@ -30,6 +32,8 @@ public:
     CreateMimeHandlerViewGuestDelegate(MimeHandlerViewGuest *guest) const override;
     void AttachWebContentsHelpers(content::WebContents *web_contents) const override;
     MessagingDelegate *GetMessagingDelegate() override;
+    std::unique_ptr<DisplayInfoProvider> CreateDisplayInfoProvider() const override;
+    ManagementAPIDelegate *CreateManagementAPIDelegate() const override;
 
 private:
     std::unique_ptr<FileSystemDelegate> m_fileSystemDelegate;

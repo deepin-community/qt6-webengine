@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef QQUICKWEBENGINEPROFILE_H
 #define QQUICKWEBENGINEPROFILE_H
@@ -18,6 +19,7 @@ class QQuickWebEngineSettings;
 class QWebEngineClientCertificateStore;
 class QWebEngineClientHints;
 class QWebEngineCookieStore;
+class QWebEngineExtensionManager;
 class QWebEngineNotification;
 class QWebEngineUrlRequestInterceptor;
 class QWebEngineUrlSchemeHandler;
@@ -42,12 +44,16 @@ class Q_WEBENGINEQUICK_EXPORT QQuickWebEngineProfile : public QObject {
     Q_PROPERTY(QString downloadPath READ downloadPath WRITE setDownloadPath NOTIFY downloadPathChanged FINAL REVISION(1,5))
     Q_PROPERTY(bool isPushServiceEnabled READ isPushServiceEnabled WRITE setPushServiceEnabled NOTIFY pushServiceEnabledChanged FINAL REVISION(6,5))
     Q_PROPERTY(QWebEngineClientHints *clientHints READ clientHints FINAL REVISION(6,8))
+#if QT_CONFIG(webengine_extensions)
+    Q_PROPERTY(QWebEngineExtensionManager *extensionManager READ extensionManager CONSTANT REVISION(6, 10))
+#endif
     QML_NAMED_ELEMENT(WebEngineProfile)
     QML_ADDED_IN_VERSION(1, 1)
     QML_EXTRA_VERSION(2, 0)
 
 public:
     QQuickWebEngineProfile(QObject *parent = nullptr);
+    explicit QQuickWebEngineProfile(const QString &storageName, QObject *parent = nullptr);
     ~QQuickWebEngineProfile();
 
     enum HttpCacheType {
@@ -60,7 +66,8 @@ public:
     enum PersistentCookiesPolicy {
         NoPersistentCookies,
         AllowPersistentCookies,
-        ForcePersistentCookies
+        ForcePersistentCookies,
+        OnlyPersistentCookies,
     };
     Q_ENUM(PersistentCookiesPolicy)
 
@@ -128,6 +135,7 @@ public:
 
     QWebEngineClientCertificateStore *clientCertificateStore();
     QWebEngineClientHints *clientHints() const;
+    QWebEngineExtensionManager *extensionManager();
 
     Q_REVISION(6,8) Q_INVOKABLE QWebEnginePermission queryPermission(const QUrl &securityOrigin, QWebEnginePermission::PermissionType permissionType) const;
     Q_REVISION(6,8) Q_INVOKABLE QList<QWebEnginePermission> listAllPermissions() const;
@@ -161,12 +169,12 @@ private:
     Q_DECLARE_PRIVATE(QQuickWebEngineProfile)
     QQuickWebEngineProfile(QQuickWebEngineProfilePrivate *, QObject *parent = nullptr);
     QQuickWebEngineSettings *settings() const;
-    void ensureQmlContext(const QObject *object);
 
     friend class FaviconImageRequester;
     friend class QQuickWebEngineSingleton;
     friend class QQuickWebEngineViewPrivate;
     friend class QQuickWebEngineView;
+    friend class QQuickWebEngineProfilePrototype;
     QScopedPointer<QQuickWebEngineProfilePrivate> d_ptr;
 };
 

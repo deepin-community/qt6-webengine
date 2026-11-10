@@ -56,7 +56,7 @@ extensions::api::passwords_private::PasswordStoreSet StoreSetFromCredential(
   if (credential.stored_in.contains(Store::kProfileStore)) {
     return extensions::api::passwords_private::PasswordStoreSet::kDevice;
   }
-  NOTREACHED();
+  DUMP_WILL_BE_NOTREACHED();
   return extensions::api::passwords_private::PasswordStoreSet::kDevice;
 }
 
@@ -80,7 +80,7 @@ int IdGenerator::GenerateId(CredentialUIEntry credential) {
   // Refresh the |credential| in the caches, as the |key_to_credential_| may
   // contain stale one.
   auto iterator_to_credential = id_to_credential_.find(id_for_key);
-  DCHECK(iterator_to_credential != id_to_credential_.end());
+  CHECK(iterator_to_credential != id_to_credential_.end());
   iterator_to_credential->second = std::move(credential);
 
   return id_for_key;

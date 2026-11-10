@@ -13,6 +13,7 @@
 #include "platform/api/network_interface.h"
 #include "platform/base/error.h"
 #include "platform/base/ip_address.h"
+#include "platform/base/span.h"
 #include "platform/base/udp_packet.h"
 
 namespace openscreen {
@@ -30,7 +31,6 @@ class UdpSocket {
   // Client for the UdpSocket class.
   class Client {
    public:
-
     // Method called when the UDP socket is bound. Default implementation
     // does nothing, as clients may not care about the socket bind state.
     virtual void OnBound(UdpSocket* socket) {}
@@ -41,10 +41,10 @@ class UdpSocket {
     //   UdpSocket::SetMulticastOutboundInterface(...)
     //   UdpSocket::JoinMulticastGroup(...)
     //   UdpSocket::SetDscp(...)
-    virtual void OnError(UdpSocket* socket, Error error) = 0;
+    virtual void OnError(UdpSocket* socket, const Error& error) = 0;
 
     // Method called when an error occurs during a SendMessage call.
-    virtual void OnSendError(UdpSocket* socket, Error error) = 0;
+    virtual void OnSendError(UdpSocket* socket, const Error& error) = 0;
 
     // Method called when a packet is read.
     virtual void OnRead(UdpSocket* socket, ErrorOr<UdpPacket> packet) = 0;
@@ -71,9 +71,9 @@ class UdpSocket {
   using Version = IPAddress::Version;
 
   // Creates a new, scoped UdpSocket within the IPv4 or IPv6 family.
-  // |local_endpoint| may be zero (see comments for Bind()). This method must be
-  // defined in the platform-level implementation. All |client| methods called
-  // will be queued on the provided |task_runner|. For this reason, the provided
+  // `local_endpoint` may be zero (see comments for Bind()). This method must be
+  // defined in the platform-level implementation. All `client` methods called
+  // will be queued on the provided `task_runner`. For this reason, the provided
   // TaskRunner and Client must exist for the duration of the created socket's
   // lifetime.
   static ErrorOr<std::unique_ptr<UdpSocket>> Create(
@@ -83,7 +83,7 @@ class UdpSocket {
 
   virtual ~UdpSocket();
 
-  // Returns true if |socket| belongs to the IPv4/IPv6 address family.
+  // Returns true if `socket` belongs to the IPv4/IPv6 address family.
   virtual bool IsIPv4() const = 0;
   virtual bool IsIPv6() const = 0;
 
@@ -110,9 +110,7 @@ class UdpSocket {
   // Sends a message. If the message is not sent, Client::OnSendError() will be
   // called to indicate this. Error::Code::kAgain indicates the operation would
   // block, which can be expected during normal operation.
-  virtual void SendMessage(const void* data,
-                           size_t length,
-                           const IPEndpoint& dest) = 0;
+  virtual void SendMessage(ByteView data, const IPEndpoint& dest) = 0;
 
   // Sets the DSCP value to use for all messages sent from this socket.
   virtual void SetDscp(DscpMode state) = 0;

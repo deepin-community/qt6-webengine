@@ -9,13 +9,22 @@
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
+#include <limits>
+
 namespace blink {
 
 bool BidiParagraph::SetParagraph(const String& text,
-                                 absl::optional<TextDirection> base_direction) {
+                                 std::optional<TextDirection> base_direction) {
+  // A workaround for integer overflow in ICU. See crbug.com/504629701.
+  // We can remove this after fixing the ICU issue, and rolling out the ICU
+  // update.
+  constexpr size_t kIcuRunSize = sizeof(int32_t) * 3;
+  CHECK_LE(text.length(), std::numeric_limits<int32_t>::max() / kIcuRunSize);
+
   DCHECK(!text.IsNull());
-  DCHECK(!ubidi_);
-  ubidi_ = UBidiPtr(ubidi_open());
+  if (!ubidi_) {
+    ubidi_ = UBidiPtr(ubidi_open());
+  }
 
   UBiDiLevel para_level;
   if (base_direction) {
@@ -26,12 +35,10 @@ bool BidiParagraph::SetParagraph(const String& text,
   }
 
   ICUError error;
-  ubidi_setPara(ubidi_.get(), text.Characters16(), text.length(), para_level,
+  ubidi_setPara(ubidi_.get(), text.Span16().data(), text.length(), para_level,
                 nullptr, &error);
   if (U_FAILURE(error)) {
     NOTREACHED();
-    ubidi_ = nullptr;
-    return false;
   }
 
   if (!base_direction) {
@@ -43,7 +50,7 @@ bool BidiParagraph::SetParagraph(const String& text,
 
 // static
 template <>
-absl::optional<TextDirection> BidiParagraph::BaseDirectionForString(
+std::optional<TextDirection> BidiParagraph::BaseDirectionForString(
     base::span<const LChar> text,
     bool (*stop_at)(UChar)) {
   for (const LChar ch : text) {
@@ -55,19 +62,19 @@ absl::optional<TextDirection> BidiParagraph::BaseDirectionForString(
       break;
     }
   }
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 // static
 template <>
-absl::optional<TextDirection> BidiParagraph::BaseDirectionForString(
+std::optional<TextDirection> BidiParagraph::BaseDirectionForString(
     base::span<const UChar> text,
     bool (*stop_at)(UChar)) {
   const UChar* data = text.data();
   const size_t len = text.size();
   for (size_t i = 0; i < len;) {
     UChar32 ch;
-    U16_NEXT(data, i, len, ch);
+    UNSAFE_TODO(U16_NEXT(data, i, len, ch));
     switch (u_charDirection(ch)) {
       case U_LEFT_TO_RIGHT:
         return TextDirection::kLtr;
@@ -82,11 +89,11 @@ absl::optional<TextDirection> BidiParagraph::BaseDirectionForString(
       break;
     }
   }
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 // static
-absl::optional<TextDirection> BidiParagraph::BaseDirectionForString(
+std::optional<TextDirection> BidiParagraph::BaseDirectionForString(
     const StringView& text,
     bool (*stop_at)(UChar)) {
   return text.Is8Bit() ? BaseDirectionForString(text.Span8(), stop_at)
@@ -98,10 +105,10 @@ String BidiParagraph::StringWithDirectionalOverride(const StringView& text,
                                                     TextDirection direction) {
   StringBuilder builder;
   builder.Reserve16BitCapacity(text.length() + 2);
-  builder.Append(IsLtr(direction) ? kLeftToRightOverrideCharacter
-                                  : kRightToLeftOverrideCharacter);
+  builder.Append(IsLtr(direction) ? uchar::kLeftToRightOverride
+                                  : uchar::kRightToLeftOverride);
   builder.Append(text);
-  builder.Append(kPopDirectionalFormattingCharacter);
+  builder.Append(uchar::kPopDirectionalFormatting);
   return builder.ToString();
 }
 

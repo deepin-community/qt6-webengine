@@ -28,9 +28,10 @@
 #include "perfetto/ext/tracing/core/client_identity.h"
 #include "perfetto/ext/tracing/core/trace_writer.h"
 #include "perfetto/ext/tracing/core/tracing_service.h"
+#include "perfetto/tracing/buffer_exhausted_policy.h"
 #include "perfetto/tracing/core/data_source_config.h"
 #include "perfetto/tracing/core/data_source_descriptor.h"
-#include "src/tracing/core/metatrace_writer.h"
+#include "src/tracing/service/metatrace_writer.h"
 
 #include "protos/perfetto/config/android/android_sdk_sysprop_guard_config.pbzero.h"
 
@@ -53,7 +54,8 @@ constexpr char kJavaHprofOomDataSourceName[] = "android.java_hprof.oom";
 constexpr char kTracedPerfDataSourceName[] = "linux.perf";
 constexpr char kLazyHeapprofdPropertyName[] = "traced.lazy.heapprofd";
 constexpr char kLazyTracedPerfPropertyName[] = "traced.lazy.traced_perf";
-constexpr char kJavaHprofOomActivePropertyName[] = "traced.oome_heap_session.count";
+constexpr char kJavaHprofOomActivePropertyName[] =
+    "traced.oome_heap_session.count";
 
 constexpr char kAndroidSdkSyspropGuardDataSourceName[] =
     "android.sdk_sysprop_guard";
@@ -226,7 +228,8 @@ void BuiltinProducer::StartDataSource(DataSourceInstanceID ds_id,
   // enabling metatrace early (relative to producers that are notified via IPC).
   if (ds_config.name() == MetatraceWriter::kDataSourceName) {
     auto writer = endpoint_->CreateTraceWriter(
-        static_cast<BufferID>(ds_config.target_buffer()));
+        static_cast<BufferID>(ds_config.target_buffer()),
+        BufferExhaustedPolicy::kStall);
 
     auto it_and_inserted = metatrace_.writers.emplace(
         std::piecewise_construct, std::make_tuple(ds_id), std::make_tuple());

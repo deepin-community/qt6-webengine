@@ -13,6 +13,7 @@
 #include <lib/sys/cpp/component_context.h>
 #include <lib/zx/eventpair.h>
 
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -24,10 +25,10 @@
 #include "base/fuchsia/mem_buffer_util.h"
 #include "base/fuchsia/scoped_service_binding.h"
 #include "base/functional/callback_helpers.h"
+#include "base/memory/raw_ref.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
-#include "base/strings/string_piece.h"
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
@@ -62,7 +63,7 @@ constexpr char kBlankAppUrl[] = "/defaultresponse";
 constexpr char kEchoHeaderPath[] = "/echoheader?Test";
 
 chromium::cast::ApplicationConfig CreateAppConfigWithTestData(
-    base::StringPiece app_id,
+    std::string_view app_id,
     GURL url) {
   fuchsia::web::ContentDirectoryProvider provider;
   provider.set_name("testdata");
@@ -200,7 +201,7 @@ class TestCastComponent {
   // the `ExecuteJavaScript()` API (see below).
   // Note that this function will not return until the activity has actually
   // launched.
-  void StartCastComponentWithQueryApi(base::StringPiece app_id = kTestAppId) {
+  void StartCastComponentWithQueryApi(std::string_view app_id = kTestAppId) {
     auto component_url = base::StrCat({"cast:", app_id});
     InjectQueryApi();
     StartCastComponent(component_url);
@@ -212,7 +213,7 @@ class TestCastComponent {
   // the activity has actually started (e.g. to interact with its
   // `ApplicationController`, etc), should normally use the
   // `StartCastComponentWithQueryApi()` call instead.
-  void StartCastComponent(base::StringPiece component_url) {
+  void StartCastComponent(std::string_view component_url) {
     ASSERT_FALSE(component_) << "Component may only be started once";
 
     fidl::InterfaceHandle<fuchsia::io::Directory> services;
@@ -224,11 +225,10 @@ class TestCastComponent {
       } else {
         // Create a `fuchsia.io.Directory` connected to the directory of fake
         // services.
-        zx_status_t status = services_->services.Serve(
-            fuchsia::io::OpenFlags::RIGHT_READABLE |
-                fuchsia::io::OpenFlags::RIGHT_WRITABLE |
-                fuchsia::io::OpenFlags::DIRECTORY,
-            services.NewRequest().TakeChannel());
+        zx_status_t status =
+            services_->services.Serve(fuchsia_io::wire::kPermReadable,
+                                      fidl::ServerEnd<fuchsia_io::Directory>(
+                                          services.NewRequest().TakeChannel()));
         ZX_CHECK(status == ZX_OK, status) << "Serve()";
       }
     }
@@ -238,7 +238,7 @@ class TestCastComponent {
     // at random to uniquely identify it, and supplied with `services` as
     // configured above.
     component_.emplace(
-        test_realm_services_.Connect<fuchsia::component::Realm>(),
+        test_realm_services_->Connect<fuchsia::component::Realm>(),
         test::CastRunnerLauncher::kTestCollectionName,
         base::Uuid::GenerateRandomV4().AsLowercaseString(), component_url,
         base::BindOnce(&TestCastComponent::OnComponentTeardown,
@@ -389,7 +389,7 @@ class TestCastComponent {
     }
   }
 
-  const sys::ServiceDirectory& test_realm_services_;
+  const raw_ref<const sys::ServiceDirectory> test_realm_services_;
 
   // True if the Cast component should be offered a service directory channel
   // that has already been closed, to simulate the providing agent having
@@ -426,7 +426,7 @@ class CastRunnerIntegrationTest : public testing::Test {
 
   // testing::Test overrides.
   void SetUp() override {
-    static constexpr base::StringPiece kTestServerRoot(
+    static constexpr std::string_view kTestServerRoot(
         "fuchsia_web/runners/cast/testdata");
     test_server_.ServeFilesFromSourceDirectory(kTestServerRoot);
     net::test_server::RegisterDefaultHandlers(&test_server_);
@@ -453,7 +453,7 @@ class CastRunnerIntegrationTest : public testing::Test {
   base::test::SingleThreadTaskEnvironment task_environment_{
       base::test::SingleThreadTaskEnvironment::MainThreadType::IO};
 
-  // TODO(https://crbug.com/1168538): Override the RunLoop timeout set by
+  // TODO(crbug.com/42050227): Override the RunLoop timeout set by
   // |task_environment_| to allow for the very high variability in web.Context
   // launch times.
   const base::test::ScopedRunLoopTimeout scoped_timeout_{
@@ -480,7 +480,7 @@ TEST_F(CastRunnerIntegrationTest, BasicRequest) {
 
 // Verify that the Runner can continue to be used even after its Context has
 // crashed. Regression test for https://crbug.com/1066826.
-// TODO(crbug.com/1066833): Replace this with a WebRunner test, ideally a
+// TODO(crbug.com/40682680): Replace this with a WebRunner test, ideally a
 //   unit-test, which can simulate Context disconnection more simply.
 TEST_F(CastRunnerIntegrationTest, CanRecreateContext) {
   TestCastComponent component(test_realm_services());
@@ -924,7 +924,7 @@ TEST_F(CastRunnerIntegrationTest, InitialMinConsoleLogSeverity_DEBUG) {
       FakeApplicationConfigManager::CreateConfig(kTestAppId, app_url);
 
   *app_config.mutable_initial_min_console_log_severity() =
-      fuchsia::diagnostics::Severity::DEBUG;
+      fuchsia::diagnostics::types::Severity::DEBUG;
   app_config_manager().AddAppConfig(std::move(app_config));
 
   component.StartCastComponentWithQueryApi();
@@ -974,8 +974,8 @@ TEST_F(CastRunnerIntegrationTest, MissingCorsExemptHeaderProvider) {
 // Verifies that CastRunner offers a chromium.cast.DataReset service.
 // Verifies that after the DeletePersistentData() API is invoked, no further
 // component-start requests are honoured.
-// TODO(crbug.com/1146474): Expand the test to verify that the persisted data is
-// correctly cleared (e.g. using a custom test HTML app that uses persisted
+// TODO(crbug.com/40730094): Expand the test to verify that the persisted data
+// is correctly cleared (e.g. using a custom test HTML app that uses persisted
 // data).
 TEST_F(CastRunnerIntegrationTest, DataReset_Service) {
   base::RunLoop loop;
@@ -1088,7 +1088,7 @@ TEST_F(CastRunnerIntegrationTest, FrameHostDebugging) {
 }
 
 #if defined(ARCH_CPU_ARM_FAMILY)
-// TODO(crbug.com/1377994): Enable on ARM64 when bots support Vulkan.
+// TODO(crbug.com/42050537): Enable on ARM64 when bots support Vulkan.
 #define MAYBE_VulkanCastRunnerIntegrationTest \
   DISABLED_VulkanCastRunnerIntegrationTest
 #else

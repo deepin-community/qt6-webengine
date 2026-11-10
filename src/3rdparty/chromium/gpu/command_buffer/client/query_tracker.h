@@ -12,12 +12,13 @@
 
 #include <bitset>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 
-#include <optional>
 #include "base/atomicops.h"
 #include "base/containers/circular_deque.h"
 #include "base/containers/flat_map.h"
+#include "base/functional/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "gles2_impl_export.h"
@@ -29,6 +30,8 @@ class CommandBufferHelper;
 class MappedMemoryManager;
 
 namespace gles2 {
+
+class GLES2ImplementationTest;
 
 // Manages buckets of QuerySync instances in mapped memory.
 class GLES2_IMPL_EXPORT QuerySyncManager {
@@ -55,7 +58,7 @@ class GLES2_IMPL_EXPORT QuerySyncManager {
 
   struct QueryInfo {
     QueryInfo(Bucket* bucket, uint32_t index)
-        : bucket(bucket), sync(bucket->syncs + index) {}
+        : bucket(bucket), sync(UNSAFE_TODO(bucket->syncs + index)) {}
     QueryInfo() = default;
 
     uint32_t index() const { return sync - bucket->syncs.get(); }
@@ -116,6 +119,7 @@ class GLES2_IMPL_EXPORT QueryTracker {
  public:
   class GLES2_IMPL_EXPORT Query {
    public:
+    friend class GLES2ImplementationTest;
     enum State {
       kUninitialized,  // never used
       kActive,         // between begin - end

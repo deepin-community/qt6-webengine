@@ -16,7 +16,7 @@
 #include "base/scoped_observation.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "ui/accessibility/ax_mode_observer.h"
+#include "ui/accessibility/platform/ax_mode_observer.h"
 #include "ui/accessibility/platform/ax_platform.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/views/controls/native/native_view_host.h"
@@ -48,7 +48,19 @@ class WEBVIEW_EXPORT WebView : public View,
   METADATA_HEADER(WebView, View)
 
  public:
+  // Whether the navigation should be allowed to be automatically upgraded to
+  // HTTPS. Only applies to initial loads.
+  enum class HttpsUpgradePolicy {
+    // Allows the navigation to be upgraded to HTTPS when possible.
+    kAllowUpgrade,
+    // Exempts the navigation from being upgraded to HTTPS (e.g. when loading
+    // a captive portal login page).
+    kNoUpgrade,
+  };
+
   using WebContentsAttachedCallback = base::RepeatingCallback<void(WebView*)>;
+  using WebContentsDetachedCallback = base::RepeatingCallback<void(WebView*)>;
+  using WebContentsFocusedCallback = base::RepeatingCallback<void(WebView*)>;
 
   explicit WebView(content::BrowserContext* browser_context = nullptr);
 
@@ -67,7 +79,7 @@ class WEBVIEW_EXPORT WebView : public View,
 
   // WebView does not assume ownership of WebContents set via this method, only
   // those it implicitly creates via GetWebContents() above.
-  void SetWebContents(content::WebContents* web_contents);
+  virtual void SetWebContents(content::WebContents* web_contents);
 
   content::BrowserContext* GetBrowserContext();
   void SetBrowserContext(content::BrowserContext* browser_context);
@@ -77,7 +89,11 @@ class WEBVIEW_EXPORT WebView : public View,
   // convenience for loading the initial URL, and so URLs are navigated with
   // PAGE_TRANSITION_AUTO_TOPLEVEL, so this is not intended as a general purpose
   // navigation method - use WebContents' API directly.
-  void LoadInitialURL(const GURL& url);
+  void LoadInitialURL(
+      const GURL& url,
+      HttpsUpgradePolicy https_upgrade_policy =
+          HttpsUpgradePolicy::kAllowUpgrade,
+      base::Location invoke_location = base::Location::Current());
 
   // Controls how the attached WebContents is resized.
   // false = WebContents' views' bounds are updated continuously as the
@@ -98,13 +114,21 @@ class WEBVIEW_EXPORT WebView : public View,
   // if the web contents is changed. The passed-in overlay view must be owned by
   // the client; this method never takes ownership of it.
   //
-  // TODO(https://crbug.com/1471674): This method should take ownership of
+  // TODO(crbug.com/40278361): This method should take ownership of
   // `crashed_overlay_view`.
   void SetCrashedOverlayView(View* crashed_overlay_view);
 
   // Adds a callback for when a WebContents is attached to this WebView.
   base::CallbackListSubscription AddWebContentsAttachedCallback(
       WebContentsAttachedCallback callback);
+
+  // Adds a callback for when a WebContents is detached from this WebView.
+  base::CallbackListSubscription AddWebContentsDetachedCallback(
+      WebContentsDetachedCallback callback);
+
+  // Adds a callback for when the attached WebContents is focused.
+  base::CallbackListSubscription AddWebContentsFocusedCallback(
+      WebContentsFocusedCallback callback);
 
   // Sets whether this is the primary web contents for the window.
   void set_is_primary_web_contents_for_window(bool is_primary) {
@@ -145,9 +169,6 @@ class WEBVIEW_EXPORT WebView : public View,
 
     ~ScopedWebContentsCreatorForTesting();
   };
-
-  // View:
-  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
  protected:
   // Called when letterboxing (scaling the native view to preserve aspect
@@ -234,6 +255,13 @@ class WEBVIEW_EXPORT WebView : public View,
   // List of subscriptions listening for new WebContents being attached to this
   // WebView.
   base::RepeatingCallbackList<void(WebView*)> web_contents_attached_callbacks_;
+
+  // List of subscriptions listening for the WebContents being detached from
+  // this WebView.
+  base::RepeatingCallbackList<void(WebView*)> web_contents_detached_callbacks_;
+
+  // List of subscriptions listening for attached WebContents being focused.
+  base::RepeatingCallbackList<void(WebView*)> web_contents_focused_callbacks_;
 };
 
 BEGIN_VIEW_BUILDER(WEBVIEW_EXPORT, WebView, View)

@@ -59,7 +59,7 @@ class ComplexSchur {
   enum {
     RowsAtCompileTime = MatrixType::RowsAtCompileTime,
     ColsAtCompileTime = MatrixType::ColsAtCompileTime,
-    Options = MatrixType::Options,
+    Options = internal::traits<MatrixType>::Options,
     MaxRowsAtCompileTime = MatrixType::MaxRowsAtCompileTime,
     MaxColsAtCompileTime = MatrixType::MaxColsAtCompileTime
   };
@@ -75,7 +75,7 @@ class ComplexSchur {
    * \c float or \c double) and just \c Scalar if #Scalar is
    * complex.
    */
-  typedef std::complex<RealScalar> ComplexScalar;
+  typedef internal::make_complex_t<Scalar> ComplexScalar;
 
   /** \brief Type for the matrices in the Schur decomposition.
    *
@@ -275,7 +275,7 @@ inline bool ComplexSchur<MatrixType>::subdiagonalEntryIsNeglegible(Index i) {
 template <typename MatrixType>
 typename ComplexSchur<MatrixType>::ComplexScalar ComplexSchur<MatrixType>::computeShift(Index iu, Index iter) {
   using std::abs;
-  if (iter == 10 || iter == 20) {
+  if ((iter == 10 || iter == 20) && iu > 1) {
     // exceptional shift, taken from http://www.netlib.org/eispack/comqr.f
     return abs(numext::real(m_matT.coeff(iu, iu - 1))) + abs(numext::real(m_matT.coeff(iu - 1, iu - 2)));
   }

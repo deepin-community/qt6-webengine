@@ -13,7 +13,7 @@ class ShadowList;
 
 class CSSShadowListInterpolationType : public CSSInterpolationType {
  public:
-  CSSShadowListInterpolationType(PropertyHandle property)
+  explicit CSSShadowListInterpolationType(PropertyHandle property)
       : CSSInterpolationType(property) {}
 
   InterpolationValue MaybeConvertStandardPropertyUnderlyingValue(
@@ -27,7 +27,11 @@ class CSSShadowListInterpolationType : public CSSInterpolationType {
                                   StyleResolverState&) const final;
 
  private:
-  InterpolationValue ConvertShadowList(const ShadowList*, double zoom) const;
+  InterpolationValue ConvertShadowList(
+      const ShadowList*,
+      double zoom,
+      mojom::blink::ColorScheme color_scheme,
+      const ui::ColorProvider* color_provider) const;
   InterpolationValue CreateNeutralValue() const;
 
   InterpolationValue MaybeConvertNeutral(const InterpolationValue& underlying,
@@ -37,7 +41,7 @@ class CSSShadowListInterpolationType : public CSSInterpolationType {
   InterpolationValue MaybeConvertInherit(const StyleResolverState&,
                                          ConversionCheckers&) const final;
   InterpolationValue MaybeConvertValue(const CSSValue&,
-                                       const StyleResolverState*,
+                                       const StyleResolverState&,
                                        ConversionCheckers&) const final;
   PairwiseInterpolationValue MaybeMergeSingles(
       InterpolationValue&& start,

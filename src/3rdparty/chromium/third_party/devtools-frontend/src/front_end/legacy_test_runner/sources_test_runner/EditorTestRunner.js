@@ -7,7 +7,7 @@ import * as UI from '../../ui/legacy/legacy.js';
 import {TestRunner} from '../test_runner/test_runner.js';
 
 /**
- * @fileoverview using private properties isn't a Closure violation in tests.
+ * @file using private properties isn't a Closure violation in tests.
  */
 
 export const createTestEditor = function(clientHeight, textEditorDelegate) {
@@ -120,7 +120,7 @@ function createCodeMirrorFakeEvent(editor, eventType, code, charCode, modifiers)
     _handled: false,
     type: eventType,
     keyCode: code,
-    charCode: charCode,
+    charCode,
     preventDefault: eventPreventDefault,
     stopPropagation: function() {},
     target: editor.codeMirror().display.input.textarea

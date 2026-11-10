@@ -4,6 +4,8 @@
 
 #include "third_party/blink/renderer/core/layout/table/table_layout_utils.h"
 
+#include <array>
+
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/layout/table/table_node.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
@@ -14,7 +16,7 @@ class TableLayoutUtilsTest : public RenderingTest {
  public:
   TableTypes::Column MakeColumn(int min_width,
                                 int max_width,
-                                absl::optional<float> percent = absl::nullopt,
+                                std::optional<float> percent = std::nullopt,
                                 bool is_constrained = false) {
     return {LayoutUnit(min_width),
             LayoutUnit(max_width),
@@ -29,17 +31,16 @@ class TableLayoutUtilsTest : public RenderingTest {
   TableTypes::Row MakeRow(int block_size,
                           bool is_constrained = false,
                           bool has_rowspan_start = false,
-                          absl::optional<float> percent = absl::nullopt) {
+                          std::optional<float> percent = std::nullopt) {
     return {LayoutUnit(block_size), 0,       0,
-            absl::nullopt,          percent, is_constrained,
+            std::nullopt,           percent, is_constrained,
             has_rowspan_start,      false};
   }
 
-  TableTypes::Section MakeSection(
-      TableTypes::Rows* rows,
-      int block_size,
-      wtf_size_t rowspan = 1,
-      absl::optional<float> percent = absl::nullopt) {
+  TableTypes::Section MakeSection(TableTypes::Rows* rows,
+                                  int block_size,
+                                  wtf_size_t rowspan = 1,
+                                  std::optional<float> percent = std::nullopt) {
     wtf_size_t start_row = rows->size();
     for (wtf_size_t i = 0; i < rowspan; i++)
       rows->push_back(MakeRow(10));
@@ -135,9 +136,9 @@ TEST_F(TableLayoutUtilsTest, DistributeColspanAutoSizeConstrained) {
   // Columns min/max: 0/10, 0/10, 0/20
   // Distribute 25, 25, 50
   column_constraints->data.Shrink(0);
-  column_constraints->data.push_back(MakeColumn(0, 10, absl::nullopt, true));
-  column_constraints->data.push_back(MakeColumn(10, 10, absl::nullopt, true));
-  column_constraints->data.push_back(MakeColumn(0, 20, absl::nullopt, true));
+  column_constraints->data.push_back(MakeColumn(0, 10, std::nullopt, true));
+  column_constraints->data.push_back(MakeColumn(10, 10, std::nullopt, true));
+  column_constraints->data.push_back(MakeColumn(0, 20, std::nullopt, true));
   DistributeColspanCellsToColumns(colspan_cells, LayoutUnit(), false,
                                   column_constraints.get());
   EXPECT_EQ(column_constraints->data[0].min_inline_size, 25);
@@ -150,22 +151,26 @@ TEST_F(TableLayoutUtilsTest, DistributeColspanAutoExactMaxSize) {
   // should not be redistributed at all.
   // The error occurs if widths are redistributed, and column widths
   // change due to floating point rounding.
-  LayoutUnit column_widths[] = {LayoutUnit(0.1), LayoutUnit(22.123456),
-                                LayoutUnit(33.789012), LayoutUnit(2000.345678)};
+  auto column_widths = std::to_array<LayoutUnit>({
+      LayoutUnit(0.1),
+      LayoutUnit(22.123456),
+      LayoutUnit(33.789012),
+      LayoutUnit(2000.345678),
+  });
   scoped_refptr<TableTypes::Columns> column_constraints =
       base::MakeRefCounted<TableTypes::Columns>();
   column_constraints->data.Shrink(0);
   column_constraints->data.push_back(
-      TableTypes::Column{LayoutUnit(0), column_widths[0], absl::nullopt,
+      TableTypes::Column{LayoutUnit(0), column_widths[0], std::nullopt,
                          LayoutUnit(), false, false, false, false});
   column_constraints->data.push_back(
-      TableTypes::Column{LayoutUnit(3.33333), column_widths[1], absl::nullopt,
+      TableTypes::Column{LayoutUnit(3.33333), column_widths[1], std::nullopt,
                          LayoutUnit(), false, false, false, false});
   column_constraints->data.push_back(
-      TableTypes::Column{LayoutUnit(3.33333), column_widths[2], absl::nullopt,
+      TableTypes::Column{LayoutUnit(3.33333), column_widths[2], std::nullopt,
                          LayoutUnit(), false, false, false, false});
   column_constraints->data.push_back(
-      TableTypes::Column{LayoutUnit(0), column_widths[3], absl::nullopt,
+      TableTypes::Column{LayoutUnit(0), column_widths[3], std::nullopt,
                          LayoutUnit(), false, false, false, false});
 
   LayoutUnit assignable_table_inline_size =

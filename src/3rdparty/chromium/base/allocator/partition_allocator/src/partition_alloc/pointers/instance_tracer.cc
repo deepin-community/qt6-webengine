@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "partition_alloc/pointers/instance_tracer.h"
 
 #include <atomic>
@@ -16,20 +21,22 @@
 
 namespace base::internal {
 
-#if BUILDFLAG(ENABLE_BACKUP_REF_PTR_INSTANCE_TRACER)
+#if PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_INSTANCE_TRACER)
 
-static_assert(BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT),
+static_assert(PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT),
               "Instance tracing requires BackupRefPtr support.");
 
 namespace {
 
 struct Info {
-  explicit Info(uintptr_t slot_count) : slot_count(slot_count) {
+  explicit Info(uintptr_t slot_count, bool may_dangle)
+      : slot_count(slot_count), may_dangle(may_dangle) {
     partition_alloc::internal::base::debug::CollectStackTrace(
         stack_trace.data(), stack_trace.size());
   }
 
   uintptr_t slot_count;
+  bool may_dangle;
   std::array<const void*, 32> stack_trace = {};
 };
 
@@ -49,16 +56,18 @@ auto& GetStorageMutex() {
 
 std::atomic<uint64_t> InstanceTracer::counter_ = 0;
 
-void InstanceTracer::TraceImpl(uint64_t owner_id, uintptr_t address) {
+void InstanceTracer::TraceImpl(uint64_t owner_id,
+                               bool may_dangle,
+                               uintptr_t address) {
   PA_CHECK(owner_id);
-  const std::pair<uintptr_t, size_t> slot_and_size =
+  const auto slot_and_size =
       partition_alloc::PartitionAllocGetSlotStartAndSizeInBRPPool(address);
   const uintptr_t slot_count = reinterpret_cast<uintptr_t>(
-      partition_alloc::PartitionRoot::RefCountPointerFromSlotStartAndSize(
-          slot_and_size.first, slot_and_size.second));
+      partition_alloc::PartitionRoot::InSlotMetadataPointerFromSlotStartAndSize(
+          slot_and_size.slot_start, slot_and_size.size));
 
   const std::lock_guard guard(GetStorageMutex());
-  GetStorage().insert({owner_id, Info(slot_count)});
+  GetStorage().insert({owner_id, Info(slot_count, may_dangle)});
 }
 
 void InstanceTracer::UntraceImpl(uint64_t owner_id) {
@@ -72,7 +81,7 @@ InstanceTracer::GetStackTracesForDanglingRefs(uintptr_t allocation) {
   std::vector<std::array<const void*, 32>> result;
   const std::lock_guard guard(GetStorageMutex());
   for (const auto& [id, info] : GetStorage()) {
-    if (info.slot_count == allocation) {
+    if (info.slot_count == allocation && !info.may_dangle) {
       result.push_back(info.stack_trace);
     }
   }
@@ -81,12 +90,12 @@ InstanceTracer::GetStackTracesForDanglingRefs(uintptr_t allocation) {
 
 std::vector<std::array<const void*, 32>>
 InstanceTracer::GetStackTracesForAddressForTest(const void* address) {
-  const std::pair<uintptr_t, size_t> slot_and_size =
+  const auto slot_and_size =
       partition_alloc::PartitionAllocGetSlotStartAndSizeInBRPPool(
           reinterpret_cast<uintptr_t>(address));
   const uintptr_t slot_count = reinterpret_cast<uintptr_t>(
-      partition_alloc::PartitionRoot::RefCountPointerFromSlotStartAndSize(
-          slot_and_size.first, slot_and_size.second));
+      partition_alloc::PartitionRoot::InSlotMetadataPointerFromSlotStartAndSize(
+          slot_and_size.slot_start, slot_and_size.size));
   return GetStackTracesForDanglingRefs(slot_count);
 }
 

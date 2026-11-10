@@ -53,10 +53,11 @@ class TextFieldInputType : public InputType,
   bool CanSetSuggestedValue() override;
   void HandleKeydownEvent(KeyboardEvent&) override;
 
+  bool IsInnerEditorValueEmpty() const final;
   void CreateShadowSubtree() override;
   void DestroyShadowSubtree() override;
   void ValueAttributeChanged() override;
-  void DisabledAttributeChanged() override;
+  void DisabledAttributeChanged(DisabledChangedReason) override;
   void ReadonlyAttributeChanged() override;
   bool SupportsReadOnly() const override;
   void ForwardEvent(Event&) override;
@@ -70,7 +71,7 @@ class TextFieldInputType : public InputType,
   void UpdateView() override;
   void AdjustStyle(ComputedStyleBuilder&) override;
   LayoutObject* CreateLayoutObject(const ComputedStyle&) const override;
-  ControlPart AutoAppearance() const override;
+  AppearanceValue AutoAppearance() const override;
 
   virtual bool NeedsContainer() const { return false; }
   virtual String ConvertFromVisibleValue(const String&) const;
@@ -83,11 +84,10 @@ class TextFieldInputType : public InputType,
   InputTypeView* CreateView() override;
   ValueMode GetValueMode() const override;
   bool MayTriggerVirtualKeyboard() const final;
-  bool IsTextField() const final;
   bool ShouldSubmitImplicitly(const Event&) final;
   bool ShouldRespectListAttribute() override;
   void ListAttributeTargetChanged() override;
-  void UpdatePlaceholderText(bool is_suggested_value) final;
+  HTMLElement* UpdatePlaceholderText(bool is_suggested_value) final;
   void SubtreeHasChanged() final;
   void OpenPopupView() override;
 
@@ -100,7 +100,7 @@ class TextFieldInputType : public InputType,
   void SpinButtonDidReleaseMouseCapture(SpinButtonElement::EventDispatch) final;
 
   SpinButtonElement* GetSpinButtonElement() const;
-  void DisabledOrReadonlyAttributeChanged();
+  void DisabledOrReadonlyAttributeChanged(DisabledChangedReason);
 };
 
 template <>

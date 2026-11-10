@@ -7,6 +7,7 @@
 #include <optional>
 
 #include "base/functional/callback_helpers.h"
+#include "base/memory/raw_ptr.h"
 #include "base/uuid.h"
 #include "components/services/storage/public/mojom/blob_storage_context.mojom.h"
 #include "content/browser/cache_storage/background_fetch_cache_entry_handler_impl.h"
@@ -15,6 +16,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "net/filter/source_stream.h"
+#include "net/filter/source_stream_type.h"
 #include "services/network/public/cpp/source_stream_to_data_pipe.h"
 #include "storage/browser/blob/blob_data_builder.h"
 #include "storage/browser/blob/blob_impl.h"
@@ -34,7 +36,7 @@ class DiskCacheStream : public net::SourceStream {
       CacheStorageCache::EntryIndex cache_index,
       uint64_t offset,
       uint64_t length)
-      : SourceStream(net::SourceStream::SourceType::TYPE_NONE),
+      : SourceStream(net::SourceStreamType::kNone),
         blob_entry_(blob_entry),
         cache_index_(cache_index),
         orig_offset_(offset),
@@ -195,7 +197,7 @@ int CacheStorageCacheEntryHandler::DiskCacheBlobEntry::Read(
                                      bytes_to_read, std::move(callback));
 }
 
-int CacheStorageCacheEntryHandler::DiskCacheBlobEntry::GetSize(
+int64_t CacheStorageCacheEntryHandler::DiskCacheBlobEntry::GetSize(
     CacheStorageCache::EntryIndex disk_cache_index) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!disk_cache_entry_)
@@ -337,9 +339,11 @@ void CacheStorageCacheEntryHandler::InvalidateDiskCacheBlobEntrys() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // Calling Invalidate() can cause the CacheStorageCacheEntryHandler to be
   // destroyed. Be careful not to touch |this| after calling Invalidate().
-  std::set<DiskCacheBlobEntry*> entries = std::move(blob_entries_);
-  for (auto* entry : entries)
+  std::set<raw_ptr<DiskCacheBlobEntry, SetExperimental>> entries =
+      std::move(blob_entries_);
+  for (DiskCacheBlobEntry* entry : entries) {
     entry->Invalidate();
+  }
 }
 
 void CacheStorageCacheEntryHandler::EraseDiskCacheBlobEntry(

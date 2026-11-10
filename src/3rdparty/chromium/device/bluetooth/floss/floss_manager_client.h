@@ -130,10 +130,6 @@ class DEVICE_BLUETOOTH_EXPORT FlossManagerClient
   // Invoke D-Bus API to enable or disable LL privacy.
   virtual void SetLLPrivacy(ResponseCallback<bool> callback, const bool enable);
 
-  // Invoke D-Bus API to enable or disable devcoredump.
-  virtual void SetDevCoredump(ResponseCallback<Void> callback,
-                              const bool enable);
-
   // Initializes the manager client.
   void Init(dbus::Bus* bus,
             const std::string& service_name,
@@ -161,7 +157,7 @@ class DEVICE_BLUETOOTH_EXPORT FlossManagerClient
   void SetFlossEnabled(bool enable,
                        int retry,
                        int retry_wait_ms,
-                       absl::optional<ResponseCallback<bool>> cb);
+                       std::optional<ResponseCallback<bool>> cb);
 
   // Make actual D-Bus call to retrieve Floss API version from daemon.
   void DoGetFlossApiVersion();

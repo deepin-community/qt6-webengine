@@ -4,6 +4,7 @@
 
 #include "services/network/cookie_access_delegate_impl.h"
 
+#include <optional>
 #include <set>
 
 #include "base/containers/flat_map.h"
@@ -16,7 +17,6 @@
 #include "net/first_party_sets/first_party_sets_cache_filter.h"
 #include "services/network/cookie_manager.h"
 #include "services/network/public/cpp/is_potentially_trustworthy.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace network {
 
@@ -54,6 +54,17 @@ net::CookieAccessSemantics CookieAccessDelegateImpl::GetAccessSemantics(
   }
 }
 
+net::CookieScopeSemantics CookieAccessDelegateImpl::GetScopeSemantics(
+    const std::string_view domain) const {
+  if (!cookie_settings_) {
+    return net::CookieScopeSemantics::UNKNOWN;
+  }
+  // TODO(crbug.com/378827534)  finish propagating string_view thru cookie
+  // settings.
+  return cookie_settings_->GetCookieScopeSemanticsForDomain(
+      std::string(domain));
+}
+
 bool CookieAccessDelegateImpl::ShouldIgnoreSameSiteRestrictions(
     const GURL& url,
     const net::SiteForCookies& site_for_cookies) const {
@@ -74,8 +85,8 @@ void CookieAccessDelegateImpl::AllowedByFilter(
     std::move(callback).Run(true);
 }
 
-absl::optional<std::pair<net::FirstPartySetMetadata,
-                         net::FirstPartySetsCacheFilter::MatchInfo>>
+std::optional<std::pair<net::FirstPartySetMetadata,
+                        net::FirstPartySetsCacheFilter::MatchInfo>>
 CookieAccessDelegateImpl::ComputeFirstPartySetMetadataMaybeAsync(
     const net::SchemefulSite& site,
     const net::SchemefulSite* top_frame_site,
@@ -90,7 +101,7 @@ CookieAccessDelegateImpl::ComputeFirstPartySetMetadataMaybeAsync(
       site, top_frame_site, std::move(callback));
 }
 
-absl::optional<FirstPartySetsAccessDelegate::EntriesResult>
+std::optional<FirstPartySetsAccessDelegate::EntriesResult>
 CookieAccessDelegateImpl::FindFirstPartySetEntries(
     const base::flat_set<net::SchemefulSite>& sites,
     base::OnceCallback<void(FirstPartySetsAccessDelegate::EntriesResult)>

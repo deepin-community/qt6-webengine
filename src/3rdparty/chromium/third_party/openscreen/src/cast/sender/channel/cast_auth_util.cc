@@ -9,7 +9,6 @@
 #include <algorithm>
 #include <memory>
 
-#include "absl/strings/str_cat.h"
 #include "cast/common/certificate/cast_cert_validator.h"
 #include "cast/common/certificate/cast_crl.h"
 #include "cast/common/certificate/date_time.h"
@@ -20,13 +19,14 @@
 #include "platform/base/error.h"
 #include "util/osp_logging.h"
 #include "util/span_util.h"
+#include "util/string_util.h"
 
 namespace openscreen::cast {
 
-using ::cast::channel::AuthResponse;
-using ::cast::channel::CastMessage;
-using ::cast::channel::DeviceAuthMessage;
-using ::cast::channel::HashAlgorithm;
+using proto::AuthResponse;
+using proto::CastMessage;
+using proto::DeviceAuthMessage;
+using proto::HashAlgorithm;
 
 namespace {
 
@@ -45,8 +45,7 @@ constexpr int kNonceExpirationTimeInHours = 24;
 // message.
 Error ParseAuthMessage(const CastMessage& challenge_reply,
                        DeviceAuthMessage* auth_message) {
-  if (challenge_reply.payload_type() !=
-      ::cast::channel::CastMessage_PayloadType_BINARY) {
+  if (challenge_reply.payload_type() != proto::CastMessage_PayloadType_BINARY) {
     return Error(Error::Code::kCastV2WrongPayloadType,
                  PARSE_ERROR_PREFIX "Wrong payload type in challenge reply");
   }
@@ -111,51 +110,53 @@ class CastNonce {
 // library client.  If crl_required is set to false, all revocation related
 // errors are ignored.
 //
-// TODO(https://issuetracker.google.com/issues/193164666): It would be simpler
+// TODO(issuetracker.google.com/193164666): It would be simpler
 // to just pass the underlying verification error directly to the client.
-Error MapToOpenscreenError(Error verify_error, bool crl_required) {
+Error MapToOpenscreenError(const Error& verify_error, bool crl_required) {
   switch (verify_error.code()) {
     case Error::Code::kErrCertsMissing:
       return Error(Error::Code::kCastV2PeerCertEmpty,
-                   absl::StrCat("Failed to locate certificates: ",
-                                verify_error.message()));
+                   string_util::StrCat({"Failed to locate certificates: ",
+                                        verify_error.message()}));
     case Error::Code::kErrCertsParse:
       return Error(Error::Code::kErrCertsParse,
-                   absl::StrCat("Failed to parse certificates: ",
-                                verify_error.message()));
+                   string_util::StrCat({"Failed to parse certificates: ",
+                                        verify_error.message()}));
     case Error::Code::kErrCertsDateInvalid:
-      return Error(
-          Error::Code::kCastV2CertNotSignedByTrustedCa,
-          absl::StrCat("Failed date validity check: ", verify_error.message()));
+      return Error(Error::Code::kCastV2CertNotSignedByTrustedCa,
+                   string_util::StrCat({"Failed date validity check: ",
+                                        verify_error.message()}));
     case Error::Code::kErrCertsVerifyGeneric:
       return Error(
           Error::Code::kCastV2CertNotSignedByTrustedCa,
-          absl::StrCat("Failed with a generic certificate verification error: ",
-                       verify_error.message()));
+          string_util::StrCat(
+              {"Failed with a generic certificate verification error: ",
+               verify_error.message()}));
     case Error::Code::kErrCertsRestrictions:
       return Error(Error::Code::kCastV2CertNotSignedByTrustedCa,
-                   absl::StrCat("Failed certificate restrictions: ",
-                                verify_error.message()));
+                   string_util::StrCat({"Failed certificate restrictions: ",
+                                        verify_error.message()}));
     case Error::Code::kErrCertsVerifyUntrustedCert:
       return Error(Error::Code::kCastV2CertNotSignedByTrustedCa,
-                   absl::StrCat("Failed with untrusted certificate: ",
-                                verify_error.message()));
+                   string_util::StrCat({"Failed with untrusted certificate: ",
+                                        verify_error.message()}));
     case Error::Code::kErrCrlInvalid:
-      // This error is only encountered if |crl_required| is true.
-      OSP_DCHECK(crl_required);
+      // This error is only encountered if `crl_required` is true.
+      OSP_CHECK(crl_required);
       return Error(Error::Code::kErrCrlInvalid,
-                   absl::StrCat("Failed to provide a valid CRL: ",
-                                verify_error.message()));
+                   string_util::StrCat({"Failed to provide a valid CRL: ",
+                                        verify_error.message()}));
     case Error::Code::kErrCertsRevoked:
       return Error(Error::Code::kErrCertsRevoked,
-                   absl::StrCat("Failed certificate revocation check: ",
-                                verify_error.message()));
+                   string_util::StrCat({"Failed certificate revocation check: ",
+                                        verify_error.message()}));
     case Error::Code::kNone:
       return Error::None();
     default:
-      return Error(Error::Code::kCastV2CertNotSignedByTrustedCa,
-                   absl::StrCat("Failed verifying cast device certificate: ",
-                                verify_error.message()));
+      return Error(
+          Error::Code::kCastV2CertNotSignedByTrustedCa,
+          string_util::StrCat({"Failed verifying cast device certificate: ",
+                               verify_error.message()}));
   }
 }
 
@@ -163,14 +164,14 @@ Error VerifyAndMapDigestAlgorithm(HashAlgorithm response_digest_algorithm,
                                   DigestAlgorithm* digest_algorithm,
                                   bool enforce_sha256_checking) {
   switch (response_digest_algorithm) {
-    case ::cast::channel::SHA1:
+    case proto::SHA1:
       if (enforce_sha256_checking) {
         return Error(Error::Code::kCastV2DigestUnsupported,
                      "Unsupported digest algorithm.");
       }
       *digest_algorithm = DigestAlgorithm::kSha1;
       break;
-    case ::cast::channel::SHA256:
+    case proto::SHA256:
       *digest_algorithm = DigestAlgorithm::kSha256;
       break;
     default:
@@ -197,7 +198,7 @@ AuthContext AuthContext::CreateForTest(const std::string& nonce_data) {
     }
     nonce.erase(kNonceSizeInBytes);
   }
-  OSP_DCHECK_EQ(nonce.size(), kNonceSizeInBytes);
+  OSP_CHECK_EQ(nonce.size(), kNonceSizeInBytes);
   return AuthContext(nonce);
 }
 
@@ -256,7 +257,7 @@ Error VerifyTLSCertificateValidity(const ParsedCertificate& peer_cert,
 
 ErrorOr<CastDeviceCertPolicy> VerifyCredentialsImpl(
     const AuthResponse& response,
-    const std::vector<uint8_t>& signature_input,
+    ByteView signature_input,
     const CRLPolicy& crl_policy,
     TrustStore* cast_trust_store,
     TrustStore* crl_trust_store,
@@ -334,24 +335,24 @@ ErrorOr<CastDeviceCertPolicy> AuthenticateChallengeReplyForTest(
 
 // This function does the following
 //
-// * Verifies that the certificate chain |response.client_auth_certificate| +
-//   |response.intermediate_certificate| is valid and chains to a trusted Cast
+// * Verifies that the certificate chain `response.client_auth_certificate` +
+//   `response.intermediate_certificate` is valid and chains to a trusted Cast
 //   root. The list of trusted Cast roots can be overrided by providing a
-//   non-nullptr |cast_trust_store|. The certificate is verified at
-//   |verification_time|.
+//   non-nullptr `cast_trust_store`. The certificate is verified at
+//   `verification_time`.
 //
 // * Verifies that none of the certificates in the chain are revoked based on
-//   the CRL provided in the response |response.crl|. The CRL is verified to be
+//   the CRL provided in the response `response.crl`. The CRL is verified to be
 //   valid and its issuer certificate chains to a trusted Cast CRL root. The
 //   list of trusted Cast CRL roots can be overrided by providing a non-nullptr
-//   |crl_trust_store|. If |crl_policy| is kCrlOptional then the result of
-//   revocation checking is ignored. The CRL is verified at |verification_time|.
+//   `crl_trust_store`. If `crl_policy` is kCrlOptional then the result of
+//   revocation checking is ignored. The CRL is verified at `verification_time`.
 //
-// * Verifies that |response.signature| matches the signature of
-//   |signature_input| by |response.client_auth_certificate|'s public key.
+// * Verifies that `response.signature` matches the signature of
+//   `signature_input` by `response.client_auth_certificate`'s public key.
 ErrorOr<CastDeviceCertPolicy> VerifyCredentialsImpl(
     const AuthResponse& response,
-    const std::vector<uint8_t>& signature_input,
+    ByteView signature_input,
     const CRLPolicy& crl_policy,
     TrustStore* cast_trust_store,
     TrustStore* crl_trust_store,
@@ -397,8 +398,8 @@ ErrorOr<CastDeviceCertPolicy> VerifyCredentialsImpl(
   }
 
   ByteView signature = ByteViewFromString(response.signature());
-  ByteView siginput(signature_input);
-  if (!target_cert->VerifySignedData(digest_algorithm, siginput, signature)) {
+  if (!target_cert->VerifySignedData(digest_algorithm, signature_input,
+                                     signature)) {
     return Error(Error::Code::kCastV2SignedBlobsMismatch,
                  "Failed verifying signature over data.");
   }
@@ -408,7 +409,7 @@ ErrorOr<CastDeviceCertPolicy> VerifyCredentialsImpl(
 
 ErrorOr<CastDeviceCertPolicy> VerifyCredentials(
     const AuthResponse& response,
-    const std::vector<uint8_t>& signature_input,
+    ByteView signature_input,
     TrustStore* cast_trust_store,
     TrustStore* crl_trust_store,
     bool enforce_revocation_checking,
@@ -424,7 +425,7 @@ ErrorOr<CastDeviceCertPolicy> VerifyCredentials(
 
 ErrorOr<CastDeviceCertPolicy> VerifyCredentialsForTest(
     const AuthResponse& response,
-    const std::vector<uint8_t>& signature_input,
+    ByteView signature_input,
     CRLPolicy crl_policy,
     TrustStore* cast_trust_store,
     TrustStore* crl_trust_store,

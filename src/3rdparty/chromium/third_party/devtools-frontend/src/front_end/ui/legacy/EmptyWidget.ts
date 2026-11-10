@@ -28,13 +28,13 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-import * as Host from '../../core/host/host.js';
+/* eslint-disable rulesdir/no-imperative-dom-api */
+
 import * as i18n from '../../core/i18n/i18n.js';
 import type * as Platform from '../../core/platform/platform.js';
 import * as VisualLogging from '../visual_logging/visual_logging.js';
 
-import emptyWidgetStyles from './emptyWidget.css.legacy.js';
-import {Infobar, Type} from './Infobar.js';
+import emptyWidgetStyles from './emptyWidget.css.js';
 import {VBox} from './Widget.js';
 import {XLink} from './XLink.js';
 
@@ -43,53 +43,53 @@ const UIStrings = {
    *@description Text that is usually a hyperlink to more documentation
    */
   learnMore: 'Learn more',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('ui/legacy/EmptyWidget.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
 export class EmptyWidget extends VBox {
-  private textElement: HTMLElement;
+  #headerElement: HTMLElement;
+  #textElement: HTMLElement;
+  #linkElement?: HTMLElement;
 
-  constructor(text: string) {
-    super();
+  constructor(headerOrElement: string|HTMLElement, text = '', element?: HTMLElement) {
+    const header = typeof headerOrElement === 'string' ? headerOrElement : '';
+    if (!element && headerOrElement instanceof HTMLElement) {
+      element = headerOrElement;
+    }
+    super(element);
     this.registerRequiredCSS(emptyWidgetStyles);
     this.element.classList.add('empty-view-scroller');
-    this.contentElement = this.element.createChild('div', 'empty-view') as HTMLDivElement;
-    this.contentElement.setAttribute('jslog', `${VisualLogging.section().context('empty-view')}`);
-    this.textElement = this.contentElement.createChild('div', 'empty-bold-text');
-    this.textElement.textContent = text;
+    this.contentElement = this.element.createChild('div', 'empty-state');
+    this.contentElement.setAttribute('jslog', `${VisualLogging.section('empty-view')}`);
+    this.#headerElement = this.contentElement.createChild('div', 'empty-state-header');
+    this.#headerElement.textContent = header;
+    this.#textElement = this.contentElement.createChild('div', 'empty-state-description').createChild('span');
+    this.#textElement.textContent = text;
   }
 
-  appendParagraph(): Element {
-    return this.contentElement.createChild('p');
-  }
-
-  appendLink(link: Platform.DevToolsPath.UrlString): HTMLElement {
-    const learnMoreLink = XLink.create(link, i18nString(UIStrings.learnMore), undefined, undefined, 'learn-more');
-    return this.contentElement.appendChild(learnMoreLink) as HTMLElement;
-  }
-
-  appendWarning(message: string, learnMoreLink: Platform.DevToolsPath.UrlString, jsLogContext?: string): Infobar {
-    function openLink(): void {
-      Host.InspectorFrontendHost.InspectorFrontendHostInstance.openInNewTab(learnMoreLink);
+  set link(link: Platform.DevToolsPath.UrlString|undefined|null) {
+    if (this.#linkElement) {
+      this.#linkElement.remove();
     }
-
-    const actions = learnMoreLink ? [{
-      text: 'Learn More',
-      highlight: true,
-      delegate: openLink,
-      dismiss: false,
-      jsLogContext: 'learn-more',
-    }] :
-                                    undefined;
-
-    const warningBar = new Infobar(Type.Warning, message, actions, undefined, undefined, jsLogContext);
-    warningBar.element.classList.add('warning');
-    this.element.prepend(warningBar.element);
-    return warningBar;
+    if (!link) {
+      return;
+    }
+    this.#linkElement = XLink.create(
+        link,
+        i18nString(UIStrings.learnMore),
+        undefined,
+        undefined,
+        'learn-more',
+    );
+    this.#textElement.insertAdjacentElement('afterend', this.#linkElement);
   }
 
   set text(text: string) {
-    this.textElement.textContent = text;
+    this.#textElement.textContent = text;
+  }
+
+  set header(header: string) {
+    this.#headerElement.textContent = header;
   }
 }

@@ -13,10 +13,11 @@
 #include "base/task/bind_post_task.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/token.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
-#include "content/common/buildflags.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/common/buildflags.h"
 #include "media/capture/mojom/video_capture_types.mojom.h"
 #include "media/media_buildflags.h"
 
@@ -26,11 +27,12 @@
 
 namespace {
 
-void StopAndReleaseDeviceOnDeviceThread(media::VideoCaptureDevice* device,
-                                        base::OnceClosure done_cb) {
+void StopAndReleaseDeviceOnDeviceThread(
+    std::unique_ptr<media::VideoCaptureDevice> device,
+    base::OnceClosure done_cb) {
   device->StopAndDeAllocate();
   DVLOG(3) << "StopAndReleaseDeviceOnDeviceThread";
-  delete device;
+  device.reset();
   std::move(done_cb).Run();
 }
 
@@ -47,10 +49,9 @@ InProcessLaunchedVideoCaptureDevice::InProcessLaunchedVideoCaptureDevice(
 InProcessLaunchedVideoCaptureDevice::~InProcessLaunchedVideoCaptureDevice() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(device_);
-  media::VideoCaptureDevice* device_ptr = device_.release();
   device_task_runner_->PostTask(
       FROM_HERE,
-      base::BindOnce(&StopAndReleaseDeviceOnDeviceThread, device_ptr,
+      base::BindOnce(&StopAndReleaseDeviceOnDeviceThread, std::move(device_),
                      base::DoNothingWithBoundArgs(device_task_runner_)));
 }
 
@@ -179,8 +180,7 @@ void InProcessLaunchedVideoCaptureDevice::
   DCHECK(device_task_runner_->BelongsToCurrentThread());
 #if defined(ENABLE_SCREEN_CAPTURE) && BUILDFLAG(ENABLE_WEBRTC) && \
     !BUILDFLAG(IS_ANDROID)
-  DesktopCaptureDevice* desktop_device =
-      static_cast<DesktopCaptureDevice*>(device);
+  auto* desktop_device = static_cast<DesktopCaptureDevice*>(device);
   desktop_device->SetNotificationWindowId(window_id);
   VLOG(2) << "Screen capture notification window passed on device thread.";
 #endif

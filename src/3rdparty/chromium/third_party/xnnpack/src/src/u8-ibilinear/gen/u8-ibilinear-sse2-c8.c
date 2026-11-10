@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/s8-ibilinear/sse.c.in
 //   Generator: tools/xngen
@@ -8,12 +9,14 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <emmintrin.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/ibilinear.h>
-#include <xnnpack/unaligned.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/ibilinear.h"
+#include "src/xnnpack/unaligned.h"
 
 
 void xnn_u8_ibilinear_ukernel__sse2_c8(

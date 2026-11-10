@@ -73,7 +73,6 @@ String TechnologyToString(CSSFontFaceSrcValue::FontTechnology font_technology) {
       return "color-sbix";
     case CSSFontFaceSrcValue::FontTechnology::kTechnologyUnknown:
       NOTREACHED();
-      return String();
   }
 }
 
@@ -143,7 +142,8 @@ FontResource& CSSFontFaceSrcValue::Fetch(ExecutionContext* context,
   if (!fetched_ || fetched_->Options().world_for_csp != world_) {
     const CSSUrlData& url_data = src_value_->UrlData();
     const Referrer& referrer = url_data.GetReferrer();
-    ResourceRequest resource_request(url_data.ResolvedUrl());
+    ResourceRequest resource_request(url_data.ResolveUrl(*context));
+
     resource_request.SetReferrerPolicy(
         ReferrerUtils::MojoReferrerPolicyResolveDefault(
             referrer.referrer_policy));
@@ -191,8 +191,7 @@ void CSSFontFaceSrcValue::RestoreCachedResourceIfNeeded(
   DCHECK(context);
   DCHECK(context->Fetcher());
   context->Fetcher()->EmulateLoadStartedForInspector(
-      fetched_, KURL(src_value_->UrlData().ResolvedUrl()),
-      mojom::blink::RequestContextType::FONT,
+      fetched_, mojom::blink::RequestContextType::FONT,
       network::mojom::RequestDestination::kFont,
       fetch_initiator_type_names::kCSS);
 }
@@ -206,6 +205,7 @@ bool CSSFontFaceSrcValue::Equals(const CSSFontFaceSrcValue& other) const {
 void CSSFontFaceSrcValue::TraceAfterDispatch(Visitor* visitor) const {
   visitor->Trace(src_value_);
   visitor->Trace(fetched_);
+  visitor->Trace(world_);
   CSSValue::TraceAfterDispatch(visitor);
 }
 

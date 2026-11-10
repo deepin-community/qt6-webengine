@@ -12,6 +12,10 @@
 #include "ui/base/ozone_buildflags.h"
 #include "ui/compositor/compositor_export.h"
 
+namespace viz {
+class SurfaceInfo;
+}
+
 namespace gfx {
 class Size;
 struct PresentationFeedback;
@@ -40,8 +44,14 @@ class COMPOSITOR_EXPORT CompositorObserver {
   virtual void OnCompositingStarted(Compositor* compositor,
                                     base::TimeTicks start_time) {}
 
-  // Called when compositing completes: the present to screen has completed.
-  virtual void OnCompositingEnded(Compositor* compositor) {}
+  // This is an inaccurate signal that has been used to represent that content
+  // was displayed. This actually maps to the removal of backpressure by the
+  // GPU. This can be signalled when the GPU attempts to Draw; when a submitted
+  // frame, that has not drawn, is being replaced by a newer one; or merged with
+  // future OnBeginFrames.
+  //
+  // To determine when presentation occurred see `OnDidPresentCompositorFrame`.
+  virtual void OnCompositingAckDeprecated(Compositor* compositor) {}
 
   // Called when a child of the compositor is resizing.
   virtual void OnCompositingChildResizing(Compositor* compositor) {}
@@ -79,6 +89,24 @@ class COMPOSITOR_EXPORT CompositorObserver {
 
   // Called at the end of the BeginMainFrame.
   virtual void OnDidBeginMainFrame(Compositor* compositor) {}
+
+  // Called when the compositor visibility is about to change, but before it is
+  // changed.
+  virtual void OnCompositorVisibilityChanging(Compositor* compositor,
+                                              bool visible) {}
+
+  // Called when the compositor visibility has changed.
+  virtual void OnCompositorVisibilityChanged(Compositor* compositor,
+                                             bool visible) {}
+
+  // Called when the compositor receives a new refresh rate preference.
+  virtual void OnSetPreferredRefreshRate(Compositor* compositor,
+                                         float refresh_rate) {}
+
+  // Called when a CompositorFrame with a new SurfaceId activates for the first
+  // time.
+  virtual void OnFirstSurfaceActivation(Compositor* compositor,
+                                        const viz::SurfaceInfo& surface_info) {}
 };
 
 }  // namespace ui

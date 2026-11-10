@@ -26,16 +26,14 @@
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
-namespace WTF {
+namespace blink {
+
 template <>
-struct CrossThreadCopier<blink::V8WorkerMemoryReporter::WorkerMemoryUsage>
+struct CrossThreadCopier<V8WorkerMemoryReporter::WorkerMemoryUsage>
     : public CrossThreadCopierPassThrough<
-          blink::V8WorkerMemoryReporter::WorkerMemoryUsage> {
+          V8WorkerMemoryReporter::WorkerMemoryUsage> {
   STATIC_ONLY(CrossThreadCopier);
 };
-}  // namespace WTF
-
-namespace blink {
 
 const base::TimeDelta V8WorkerMemoryReporter::kTimeout = base::Seconds(60);
 
@@ -75,7 +73,7 @@ class WorkerMeasurementDelegate : public v8::MeasureMemoryDelegate {
       std::unique_ptr<V8WorkerMemoryReporter::WorkerMemoryUsage> memory_usage);
   void NotifyMeasurementFailure();
   base::WeakPtr<V8WorkerMemoryReporter> worker_memory_reporter_;
-  raw_ptr<WorkerThread, ExperimentalRenderer> worker_thread_;
+  raw_ptr<WorkerThread> worker_thread_;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   bool did_notify_ = false;
 };

@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 #include "gpu/command_buffer/service/mocks.h"
+
+#include "base/compiler_specific.h"
 #include "base/threading/thread.h"
 #include "base/time/time.h"
 #include "gpu/command_buffer/service/command_buffer_direct.h"
@@ -60,7 +62,7 @@ error::Error AsyncAPIMock::FakeDoCommands(unsigned int num_commands,
 
     if (result != error::kDeferCommandUntilLater) {
       process_pos += header.size;
-      cmd_data += header.size;
+      UNSAFE_TODO(cmd_data += header.size);
     }
   }
 

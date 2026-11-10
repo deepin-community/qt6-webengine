@@ -39,30 +39,29 @@ import * as HeapSnapshotLoader from './HeapSnapshotLoader.js';
 
 interface DispatcherResponse {
   callId?: number;
-  // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  result: any;
+  result: unknown;
   error?: string;
   errorCallStack?: Object;
   errorMethodName?: string;
 }
+
 export class HeapSnapshotWorkerDispatcher {
   // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   #objects: any[];
-  readonly #postMessage: Function;
-  constructor(globalObject: Worker, postMessage: Function) {
+  readonly #postMessage: typeof Window.prototype.postMessage;
+  constructor(postMessage: typeof Window.prototype.postMessage) {
     this.#objects = [];
     this.#postMessage = postMessage;
   }
 
-  // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  sendEvent(name: string, data: any): void {
-    this.#postMessage({eventName: name, data: data});
+  sendEvent(name: string, data: unknown): void {
+    this.#postMessage({eventName: name, data});
   }
 
-  dispatchMessage({data}: {data: HeapSnapshotModel.HeapSnapshotModel.WorkerCommand}): void {
+  async dispatchMessage({data, ports}:
+                            {data: HeapSnapshotModel.HeapSnapshotModel.WorkerCommand, ports: readonly MessagePort[]}):
+      Promise<void> {
     const response: DispatcherResponse =
         {callId: data.callId, result: null, error: undefined, errorCallStack: undefined, errorMethodName: undefined};
     try {
@@ -82,7 +81,9 @@ export class HeapSnapshotWorkerDispatcher {
         }
         case 'factory': {
           const object = this.#objects[data.objectId];
-          const result = object[data.methodName].apply(object, data.methodArguments);
+          const args = data.methodArguments.slice();
+          args.push(...ports);
+          const result = await object[data.methodName].apply(object, args);
           if (result) {
             this.#objects[data.newObjectId] = result;
           }
@@ -97,19 +98,22 @@ export class HeapSnapshotWorkerDispatcher {
         case 'evaluateForTest': {
           try {
             // Make 'HeapSnapshotWorker' and 'HeapSnapshotModel' available to web tests. 'eval' can't use 'import'.
-            // @ts-ignore
+            // @ts-expect-error
             globalThis.HeapSnapshotWorker = {
               AllocationProfile,
               HeapSnapshot,
               HeapSnapshotLoader,
             };
-            // @ts-ignore
+            // @ts-expect-error
             globalThis.HeapSnapshotModel = HeapSnapshotModel;
-            response.result = self.eval(data.source);
+            response.result = await self.eval(data.source);
           } catch (error) {
             response.result = error.toString();
           }
           break;
+        }
+        case 'setupForSecondaryInit': {
+          this.#objects[data.objectId] = new HeapSnapshot.SecondaryInitManager(ports[0]);
         }
       }
     } catch (error) {

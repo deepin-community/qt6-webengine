@@ -154,12 +154,6 @@ const char *getBasicString(TBasicType t)
             return "isubpassInput";
         case EbtUSubpassInput:
             return "usubpassInput";
-        case EbtSubpassInputMS:
-            return "subpassInputMS";
-        case EbtISubpassInputMS:
-            return "isubpassInputMS";
-        case EbtUSubpassInputMS:
-            return "usubpassInputMS";
         default:
             UNREACHABLE();
             return "unknown type";
@@ -172,7 +166,7 @@ TType::TType() : TType(EbtVoid, 0, 0) {}
 TType::TType(TBasicType t, uint8_t ps, uint8_t ss) : TType(t, EbpUndefined, EvqGlobal, ps, ss) {}
 
 TType::TType(TBasicType t, TPrecision p, TQualifier q, uint8_t ps, uint8_t ss)
-    : TType(t, p, q, ps, ss, TSpan<const unsigned int>(), nullptr)
+    : TType(t, p, q, ps, ss, angle::Span<const unsigned int>(), nullptr)
 {}
 
 TType::TType(const TPublicType &p)
@@ -422,6 +416,11 @@ bool TType::isStructureContainingSamplers() const
     return mStructure ? mStructure->containsSamplers() : false;
 }
 
+bool TType::isStructureContainingOnlySamplers() const
+{
+    return mStructure ? mStructure->containsOnlySamplers() : false;
+}
+
 bool TType::isInterfaceBlockContainingType(TBasicType t) const
 {
     return isInterfaceBlock() ? mInterfaceBlock->containsType(t) : false;
@@ -465,6 +464,8 @@ const char *TType::buildMangledName() const
     }
     else
     {
+        constexpr char kStructMangledNameSeparator = ':';
+
         ASSERT(type == EbtStruct || type == EbtInterfaceBlock);
         switch (type)
         {
@@ -474,12 +475,14 @@ const char *TType::buildMangledName() const
                 {
                     mangledName += mStructure->name().data();
                 }
+                mangledName += kStructMangledNameSeparator;
                 mangledName += mStructure->mangledFieldList();
                 mangledName += '}';
                 break;
             case EbtInterfaceBlock:
                 mangledName += "{i";
                 mangledName += mInterfaceBlock->name().data();
+                mangledName += kStructMangledNameSeparator;
                 mangledName += mInterfaceBlock->mangledFieldList();
                 mangledName += '}';
                 break;
@@ -515,8 +518,10 @@ size_t TType::getObjectSize() const
 
     for (size_t arraySize : mArraySizes)
     {
-        if (arraySize > INT_MAX / totalSize)
-            totalSize = INT_MAX;
+        if (arraySize > std::numeric_limits<size_t>::max() / totalSize)
+        {
+            totalSize = std::numeric_limits<size_t>::max();
+        }
         else
             totalSize *= arraySize;
     }
@@ -602,7 +607,7 @@ bool TType::isElementTypeOf(const TType &arrayType) const
     return true;
 }
 
-void TType::sizeUnsizedArrays(const TSpan<const unsigned int> &newArraySizes)
+void TType::sizeUnsizedArrays(const angle::Span<const unsigned int> &newArraySizes)
 {
     ASSERT(!isArray() || mArraySizesStorage != nullptr);
     for (size_t i = 0u; i < getNumArraySizes(); ++i)
@@ -669,7 +674,7 @@ void TType::makeArray(unsigned int s)
     onArrayDimensionsChange(*mArraySizesStorage);
 }
 
-void TType::makeArrays(const TSpan<const unsigned int> &sizes)
+void TType::makeArrays(const angle::Span<const unsigned int> &sizes)
 {
     if (mArraySizesStorage == nullptr)
     {
@@ -708,7 +713,7 @@ void TType::toArrayBaseType()
     {
         mArraySizesStorage->clear();
     }
-    onArrayDimensionsChange(TSpan<const unsigned int>());
+    onArrayDimensionsChange(angle::Span<const unsigned int>());
 }
 
 void TType::toMatrixColumnType()
@@ -845,6 +850,20 @@ bool TFieldListCollection::containsSamplers() const
     return false;
 }
 
+bool TFieldListCollection::containsOnlySamplers() const
+{
+    for (const auto *field : *mFields)
+    {
+        const TType *fieldType = field->type();
+        if (!IsSampler(fieldType->getBasicType()) &&
+            !fieldType->isStructureContainingOnlySamplers())
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 TString TFieldListCollection::buildMangledFieldList() const
 {
     TString mangledName;
@@ -861,8 +880,10 @@ size_t TFieldListCollection::calculateObjectSize() const
     for (const TField *field : *mFields)
     {
         size_t fieldSize = field->type()->getObjectSize();
-        if (fieldSize > INT_MAX - size)
-            size = INT_MAX;
+        if (fieldSize > std::numeric_limits<size_t>::max() - size)
+        {
+            size = std::numeric_limits<size_t>::max();
+        }
         else
             size += fieldSize;
     }
@@ -981,6 +1002,56 @@ void TPublicType::clearArrayness()
 bool TPublicType::isAggregate() const
 {
     return isArray() || typeSpecifierNonArray.isMatrix() || typeSpecifierNonArray.isVector();
+}
+
+bool TPublicType::isUnsizedArray() const
+{
+    if (!arraySizes)
+    {
+        return false;
+    }
+    for (unsigned int arraySize : *arraySizes)
+    {
+        if (arraySize == 0u)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void TPublicType::sizeUnsizedArrays()
+{
+    auto *sizes = new TVector<unsigned int>(arraySizes->size(), 1);
+    for (size_t i = 0; i < arraySizes->size(); ++i)
+    {
+        auto value = (*arraySizes)[i];
+        if (value != 0)
+        {
+            (*sizes)[i] = value;
+        }
+    }
+    arraySizes = sizes;
+}
+
+void TPublicType::makeArrays(TVector<unsigned int> *sizes)
+{
+    if (arraySizes == nullptr)
+    {
+        arraySizes = sizes;
+        return;
+    }
+    auto *newSizes = new TVector<unsigned int>(arraySizes->size() + sizes->size());
+    size_t i       = 0;
+    for (; i < arraySizes->size(); ++i)
+    {
+        (*newSizes)[i] = (*arraySizes)[i];
+    }
+    for (size_t j = 0; j < sizes->size(); ++j, ++i)
+    {
+        (*newSizes)[i] = (*sizes)[j];
+    }
+    arraySizes = newSizes;
 }
 
 }  // namespace sh

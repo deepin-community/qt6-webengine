@@ -2,9 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "third_party/blink/renderer/modules/payments/payments_validators.h"
 
-#include <ostream>  // NOLINT
+#include <array>
+#include <ostream>
 
 #include "base/test/scoped_command_line.h"
 #include "services/network/public/cpp/is_potentially_trustworthy.h"
@@ -38,11 +40,11 @@ class PaymentsCurrencyValidatorTest
 };
 
 const char* LongString2049() {
-  static char long_string[2050];
+  static std::array<char, 2050> long_string;
   for (int i = 0; i < 2049; i++)
     long_string[i] = 'a';
   long_string[2049] = '\0';
-  return long_string;
+  return long_string.data();
 }
 
 TEST_P(PaymentsCurrencyValidatorTest, IsValidCurrencyCodeFormat) {

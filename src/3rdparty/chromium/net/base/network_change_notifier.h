@@ -13,10 +13,12 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/observer_list_threadsafe.h"
+#include "base/strings/cstring_view.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "net/base/net_export.h"
 #include "net/base/network_handle.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 #include "net/base/address_map_linux.h"
@@ -70,7 +72,7 @@ class NET_EXPORT NetworkChangeNotifier {
   // A Java counterpart will be generated for this enum.
   // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.net
   //
-  // TODO(crbug.com/1127134): Introduce subtypes for 5G networks once they can
+  // TODO(crbug.com/40148439): Introduce subtypes for 5G networks once they can
   // be detected.
   enum ConnectionSubtype {
     SUBTYPE_UNKNOWN = 0,
@@ -331,19 +333,10 @@ class NET_EXPORT NetworkChangeNotifier {
         observer_list_;
   };
 
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  // TODO(crbug.com/1347382): Remove this section and align the behavior
-  // with other platforms or confirm that Lacros needs to be separated.
-  static constexpr ConnectionType kDefaultInitialConnectionType =
-      CONNECTION_UNKNOWN;
-  static constexpr ConnectionSubtype kDefaultInitialConnectionSubtype =
-      SUBTYPE_UNKNOWN;
-#else
   static constexpr ConnectionType kDefaultInitialConnectionType =
       CONNECTION_NONE;
   static constexpr ConnectionSubtype kDefaultInitialConnectionSubtype =
       SUBTYPE_NONE;
-#endif
 
   NetworkChangeNotifier(const NetworkChangeNotifier&) = delete;
   NetworkChangeNotifier& operator=(const NetworkChangeNotifier&) = delete;
@@ -566,7 +559,7 @@ class NET_EXPORT NetworkChangeNotifier {
   static bool IsTestNotificationsOnly() { return test_notifications_only_; }
 
   // Returns a string equivalent to |type|.
-  static const char* ConnectionTypeToString(ConnectionType type);
+  static base::cstring_view ConnectionTypeToString(ConnectionType type);
 
   // Allows a second NetworkChangeNotifier to be created for unit testing, so
   // the test suite can create a MockNetworkChangeNotifier, but platform
@@ -685,13 +678,6 @@ class NET_EXPORT NetworkChangeNotifier {
   // as early as possible in the destructor to prevent races.
   void ClearGlobalPointer();
 
-  // Called whenever a new ConnectionCostObserver is added. This method is
-  // needed so that the implementation class can be notified and
-  // potentially take action when an observer gets added. Since the act of
-  // adding an observer and the observer list itself are both static, the
-  // implementation class has no direct capability to watch for changes.
-  virtual void ConnectionCostObserverAdded() {}
-
   // Listening for notifications of this type is expensive as they happen
   // frequently. For this reason, we report {de}registration to the
   // implementation class, so that it can decide to only listen to this type of
@@ -722,6 +708,8 @@ class NET_EXPORT NetworkChangeNotifier {
       handles::NetworkHandle network);
   void NotifyObserversOfConnectionCostChangeImpl(ConnectionCost cost);
   void NotifyObserversOfDefaultNetworkActiveImpl();
+
+  const perfetto::NamedTrack track_;
 
   raw_ptr<SystemDnsConfigChangeNotifier> system_dns_config_notifier_;
   std::unique_ptr<SystemDnsConfigObserver> system_dns_config_observer_;

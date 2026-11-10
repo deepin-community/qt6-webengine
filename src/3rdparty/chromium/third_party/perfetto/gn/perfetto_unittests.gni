@@ -22,9 +22,11 @@ perfetto_unittests_targets = [
   "src/protozero:unittests",
   "src/shared_lib:unittests",
   "src/tracing/core:unittests",
+  "src/tracing/service:unittests",
   "src/tracing:unittests",
   "src/profiling:unittests",
   "src/profiling/symbolizer:unittests",
+  "src/protovm:unittests",
 ]
 
 if ((is_linux || is_android) && !perfetto_build_with_embedder) {
@@ -47,6 +49,7 @@ if (enable_perfetto_platform_services) {
   perfetto_unittests_targets += [
     "src/perfetto_cmd:unittests",
     "src/traced/service:unittests",
+    "src/kernel_utils:unittests",
   ]
   if (enable_perfetto_traced_probes) {
     perfetto_unittests_targets += [
@@ -73,7 +76,7 @@ if (enable_perfetto_traced_perf) {
 
 if (enable_perfetto_trace_processor) {
   perfetto_unittests_targets += [ "src/trace_processor:unittests" ]
-  perfetto_unittests_targets += [ "src/traceconv:unittests" ]
+  perfetto_unittests_targets += [ "src/trace_config_utils:unittests" ]
 
   if (enable_perfetto_trace_processor_sqlite) {
     perfetto_unittests_targets += [ "src/trace_processor/metrics:unittests" ]
@@ -83,3 +86,10 @@ if (enable_perfetto_trace_processor) {
 if (enable_perfetto_traced_relay) {
   perfetto_unittests_targets += [ "src/traced_relay:unittests" ]
 }
+
+if (enable_perfetto_android_java_sdk) {
+  perfetto_unittests_targets +=
+      [ "src/android_sdk/perfetto_sdk_for_jni:unittests" ]
+}
+
+perfetto_unittests_targets += [ "src/trace_redaction:unittests" ]

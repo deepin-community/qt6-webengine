@@ -4,12 +4,14 @@
 
 #include "content/public/browser/media_device_id.h"
 
-#include "base/ranges/algorithm.h"
+#include <algorithm>
+
 #include "base/strings/string_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "content/browser/media/media_devices_util.h"
 #include "content/public/browser/browser_thread.h"
 #include "media/audio/audio_device_description.h"
+#include "third_party/blink/public/common/mediastream/media_device_id.h"
 
 namespace content {
 
@@ -51,19 +53,7 @@ void GetMediaDeviceIDForHMAC(
 }
 
 bool IsValidDeviceId(const std::string& device_id) {
-  constexpr int hash_size = 64;  // 32 bytes * 2 char/byte hex encoding
-  if (media::AudioDeviceDescription::IsDefaultDevice(device_id) ||
-      device_id == media::AudioDeviceDescription::kCommunicationsDeviceId) {
-    return true;
-  }
-
-  if (device_id.length() != hash_size) {
-    return false;
-  }
-
-  return base::ranges::all_of(device_id, [](const char& c) {
-    return base::IsAsciiLower(c) || base::IsAsciiDigit(c);
-  });
+  return blink::IsValidMediaDeviceId(device_id);
 }
 
 }  // namespace content

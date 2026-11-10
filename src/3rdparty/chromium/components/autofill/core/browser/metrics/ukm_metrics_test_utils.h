@@ -8,9 +8,10 @@
 #include <utility>
 #include <vector>
 
+#include "base/metrics/metrics_hashes.h"
 #include "components/autofill/core/browser/form_types.h"
+#include "components/autofill/core/browser/foundations/test_autofill_client.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics.h"
-#include "components/autofill/core/browser/test_autofill_client.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_interactions_flow.h"
 
@@ -22,7 +23,20 @@ struct ExpectedUkmMetricsPair : public std::pair<std::string, int64_t> {
       : ExpectedUkmMetricsPair(str, static_cast<int64_t>(mode)) {}
   ExpectedUkmMetricsPair(std::string str, HtmlFieldType type)
       : ExpectedUkmMetricsPair(str, static_cast<int64_t>(type)) {}
+  ExpectedUkmMetricsPair(std::string str, bool b)
+      : ExpectedUkmMetricsPair(str, static_cast<int64_t>(b)) {}
+
+  friend std::ostream& operator<<(std::ostream& os,
+                                  const ExpectedUkmMetricsPair& ukm_pair) {
+    return os << "(metric_name=" << ukm_pair.first
+              << ", hash=" << base::HashMetricName(ukm_pair.first)
+              << ", value=" << ukm_pair.second << ")";
+  }
 };
+
+FormSignature Collapse(FormSignature sig);
+
+FieldSignature Collapse(FieldSignature sig);
 
 void VerifyUkm(
     const ukm::TestUkmRecorder* ukm_recorder,
@@ -34,17 +48,13 @@ void VerifyDeveloperEngagementUkm(
     const ukm::TestUkmRecorder* ukm_recorder,
     const FormData& form,
     const bool is_for_credit_card,
-    const DenseSet<FormType>& form_types,
+    const DenseSet<FormTypeNameForLogging>& form_types,
     const std::vector<int64_t>& expected_metric_values);
 
-void VerifySubmitFormUkm(
-    const ukm::TestUkmRecorder* ukm_recorder,
-    const FormData& form,
-    AutofillMetrics::AutofillFormSubmittedState state,
-    bool is_for_credit_card,
-    bool has_upi_vpa_field,
-    const DenseSet<FormType>& form_types,
-    const FormInteractionCounts& form_interaction_counts = {});
+void AppendFormEventUkm(
+    const FormEvent& form_event,
+    const DenseSet<FormTypeNameForLogging>& form_types,
+    std::vector<std::vector<ExpectedUkmMetricsPair>>* expected_metrics);
 
 void AppendFieldFillStatusUkm(
     const FormData& form,

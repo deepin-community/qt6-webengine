@@ -109,6 +109,17 @@ void TestWithScope::SetupToolchain(Toolchain* toolchain, bool use_toc) {
   cxx_tool->set_command_launcher("launcher");
   toolchain->SetTool(std::move(cxx_tool));
 
+  // CXX_MODULE
+  std::unique_ptr<Tool> cxx_module_tool =
+      Tool::CreateTool(CTool::kCToolCxxModule);
+  SetCommandForTool(
+      "c++ {{source}} {{cflags}} {{cflags_cc}} {{defines}} {{include_dirs}} "
+      "-o {{output}}",
+      cxx_module_tool.get());
+  cxx_module_tool->set_outputs(SubstitutionList::MakeForTest(
+      "{{source_out_dir}}/{{target_output_name}}.{{source_name_part}}.pcm"));
+  toolchain->SetTool(std::move(cxx_module_tool));
+
   // OBJC
   std::unique_ptr<Tool> objc_tool = Tool::CreateTool(CTool::kCToolObjC);
   SetCommandForTool(
@@ -229,6 +240,7 @@ void TestWithScope::SetupToolchain(Toolchain* toolchain, bool use_toc) {
       rustc_tool.get());
   rustc_tool->set_outputs(SubstitutionList::MakeForTest(
       "{{root_out_dir}}/{{crate_name}}{{output_extension}}"));
+  rustc_tool->set_swiftmodule_switch("-Clink-arg=-swiftmodule=");
   toolchain->SetTool(std::move(rustc_tool));
 
   // SWIFT
@@ -254,6 +266,7 @@ void TestWithScope::SetupToolchain(Toolchain* toolchain, bool use_toc) {
   cdylib_tool->set_default_output_extension(".so");
   cdylib_tool->set_outputs(SubstitutionList::MakeForTest(
       "{{target_out_dir}}/{{target_output_name}}{{output_extension}}"));
+  cdylib_tool->set_swiftmodule_switch("-Clink-arg=-swiftmodule=");
   toolchain->SetTool(std::move(cdylib_tool));
 
   // RUST DYLIB
@@ -267,6 +280,7 @@ void TestWithScope::SetupToolchain(Toolchain* toolchain, bool use_toc) {
   dylib_tool->set_default_output_extension(".so");
   dylib_tool->set_outputs(SubstitutionList::MakeForTest(
       "{{target_out_dir}}/{{target_output_name}}{{output_extension}}"));
+  dylib_tool->set_swiftmodule_switch("-Clink-arg=-swiftmodule=");
   toolchain->SetTool(std::move(dylib_tool));
 
   // RUST_PROC_MACRO
@@ -281,6 +295,7 @@ void TestWithScope::SetupToolchain(Toolchain* toolchain, bool use_toc) {
   rust_proc_macro_tool->set_default_output_extension(".so");
   rust_proc_macro_tool->set_outputs(SubstitutionList::MakeForTest(
       "{{target_out_dir}}/{{target_output_name}}{{output_extension}}"));
+  rust_proc_macro_tool->set_swiftmodule_switch("-Clink-arg=-swiftmodule=");
   toolchain->SetTool(std::move(rust_proc_macro_tool));
 
   // RLIB

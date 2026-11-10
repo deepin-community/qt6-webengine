@@ -91,9 +91,13 @@ static float exp2f_(float x) {
 
 // Not static, as it's used by some test tools.
 float powf_(float x, float y) {
-    assert (x >= 0);
-    return (x == 0) || (x == 1) ? x
-                                : exp2f_(log2f_(x) * y);
+    if (x <= 0.f) {
+        return 0.f;
+    }
+    if (x == 1.f) {
+        return 1.f;
+    }
+    return exp2f_(log2f_(x) * y);
 }
 
 static float expf_(float x) {
@@ -157,6 +161,16 @@ static skcms_TFType classify(const skcms_TransferFunction& tf, TF_PQish*   pq = 
                     memcpy(hlg, &tf.a, sizeof(*hlg));
                 }
                 return skcms_TFType_HLGinvish;
+            case skcms_TFType_PQ:
+                if (tf.b != 0.f || tf.c != 0.f || tf.d != 0.f || tf.e != 0.f || tf.f != 0.f) {
+                    return skcms_TFType_Invalid;
+                }
+                return skcms_TFType_PQ;
+            case skcms_TFType_HLG:
+                if (tf.d != 0.f || tf.e != 0.f || tf.f != 0.f) {
+                    return skcms_TFType_Invalid;
+                }
+                return skcms_TFType_HLG;
         }
         return skcms_TFType_Invalid;
     }
@@ -188,6 +202,12 @@ bool skcms_TransferFunction_isPQish(const skcms_TransferFunction* tf) {
 bool skcms_TransferFunction_isHLGish(const skcms_TransferFunction* tf) {
     return classify(*tf) == skcms_TFType_HLGish;
 }
+bool skcms_TransferFunction_isPQ(const skcms_TransferFunction* tf) {
+    return classify(*tf) == skcms_TFType_PQ;
+}
+bool skcms_TransferFunction_isHLG(const skcms_TransferFunction* tf) {
+    return classify(*tf) == skcms_TFType_HLG;
+}
 
 bool skcms_TransferFunction_makePQish(skcms_TransferFunction* tf,
                                       float A, float B, float C,
@@ -205,6 +225,28 @@ bool skcms_TransferFunction_makeScaledHLGish(skcms_TransferFunction* tf,
     return true;
 }
 
+void skcms_TransferFunction_makePQ(
+    skcms_TransferFunction* tf,
+    float hdr_reference_white_luminance) {
+    *tf = { TFKind_marker(skcms_TFType_PQ),
+            hdr_reference_white_luminance,
+            0.f,0.f,0.f,0.f,0.f };
+    assert(skcms_TransferFunction_isPQ(tf));
+}
+
+void skcms_TransferFunction_makeHLG(
+    skcms_TransferFunction* tf,
+    float hdr_reference_white_luminance,
+    float peak_luminance,
+    float system_gamma) {
+    *tf = { TFKind_marker(skcms_TFType_HLG),
+            hdr_reference_white_luminance,
+            peak_luminance,
+            system_gamma,
+            0.f, 0.f, 0.f };
+    assert(skcms_TransferFunction_isHLG(tf));
+}
+
 float skcms_TransferFunction_eval(const skcms_TransferFunction* tf, float x) {
     float sign = x < 0 ? -1.0f : 1.0f;
     x *= sign;
@@ -213,6 +255,13 @@ float skcms_TransferFunction_eval(const skcms_TransferFunction* tf, float x) {
     TF_HLGish hlg;
     switch (classify(*tf, &pq, &hlg)) {
         case skcms_TFType_Invalid: break;
+
+        case skcms_TFType_HLG: {
+            const float a = 0.17883277f;
+            const float b = 0.28466892f;
+            const float c = 0.55991073f;
+            return sign * (x <= 0.5f ? x*x/3.f : (expf_((x-c)/a) + b) / 12.f);
+        }
 
         case skcms_TFType_HLGish: {
             const float K = hlg.K_minus_1 + 1.0f;
@@ -232,9 +281,19 @@ float skcms_TransferFunction_eval(const skcms_TransferFunction* tf, float x) {
             return sign * (x < tf->d ?       tf->c * x + tf->f
                                      : powf_(tf->a * x + tf->b, tf->g) + tf->e);
 
-        case skcms_TFType_PQish: return sign * powf_(fmaxf_(pq.A + pq.B * powf_(x, pq.C), 0)
-                                                         / (pq.D + pq.E * powf_(x, pq.C)),
-                                                     pq.F);
+        case skcms_TFType_PQ: {
+            const float c1 =  107 / 128.f;
+            const float c2 = 2413 / 128.f;
+            const float c3 = 2392 / 128.f;
+            const float m1 = 1305 / 8192.f;
+            const float m2 = 2523 / 32.f;
+            const float p = powf_(x, 1.f / m2);
+            return powf_((p - c1) / (c2 - c3 * p), 1.f / m1);
+        }
+
+        case skcms_TFType_PQish:
+            return sign *
+                   powf_((pq.A + pq.B * powf_(x, pq.C)) / (pq.D + pq.E * powf_(x, pq.C)), pq.F);
     }
     return 0;
 }
@@ -435,6 +494,69 @@ bool skcms_GetWTPT(const skcms_ICCProfile* profile, float xyz[3]) {
     skcms_ICCTag tag;
     return skcms_GetTagBySignature(profile, skcms_Signature_WTPT, &tag) &&
            read_tag_xyz(&tag, &xyz[0], &xyz[1], &xyz[2]);
+}
+
+static int data_color_space_channel_count(uint32_t data_color_space) {
+    switch (data_color_space) {
+        case skcms_Signature_CMYK:   return 4;
+        case skcms_Signature_Gray:   return 1;
+        case skcms_Signature_RGB:    return 3;
+        case skcms_Signature_Lab:    return 3;
+        case skcms_Signature_XYZ:    return 3;
+        case skcms_Signature_CIELUV: return 3;
+        case skcms_Signature_YCbCr:  return 3;
+        case skcms_Signature_CIEYxy: return 3;
+        case skcms_Signature_HSV:    return 3;
+        case skcms_Signature_HLS:    return 3;
+        case skcms_Signature_CMY:    return 3;
+        case skcms_Signature_2CLR:   return 2;
+        case skcms_Signature_3CLR:   return 3;
+        case skcms_Signature_4CLR:   return 4;
+        case skcms_Signature_5CLR:   return 5;
+        case skcms_Signature_6CLR:   return 6;
+        case skcms_Signature_7CLR:   return 7;
+        case skcms_Signature_8CLR:   return 8;
+        case skcms_Signature_9CLR:   return 9;
+        case skcms_Signature_10CLR:  return 10;
+        case skcms_Signature_11CLR:  return 11;
+        case skcms_Signature_12CLR:  return 12;
+        case skcms_Signature_13CLR:  return 13;
+        case skcms_Signature_14CLR:  return 14;
+        case skcms_Signature_15CLR:  return 15;
+        default:                     return -1;
+    }
+}
+
+int skcms_GetInputChannelCount(const skcms_ICCProfile* profile) {
+    int a2b_count = 0;
+    if (profile->has_A2B) {
+        a2b_count = profile->A2B.input_channels != 0
+                        ? static_cast<int>(profile->A2B.input_channels)
+                        : 3;
+    }
+
+    skcms_ICCTag tag;
+    int trc_count = 0;
+    if (skcms_GetTagBySignature(profile, skcms_Signature_kTRC, &tag)) {
+        trc_count = 1;
+    } else if (profile->has_trc) {
+        trc_count = 3;
+    }
+
+    int dcs_count = data_color_space_channel_count(profile->data_color_space);
+
+    if (dcs_count < 0) {
+        return -1;
+    }
+
+    if (a2b_count > 0 && a2b_count != dcs_count) {
+        return -1;
+    }
+    if (trc_count > 0 && trc_count != dcs_count) {
+        return -1;
+    }
+
+    return dcs_count;
 }
 
 static bool read_to_XYZD50(const skcms_ICCTag* rXYZ, const skcms_ICCTag* gXYZ,
@@ -1237,7 +1359,7 @@ static bool usable_as_src(const skcms_ICCProfile* profile) {
 bool skcms_ParseWithA2BPriority(const void* buf, size_t len,
                                 const int priority[], const int priorities,
                                 skcms_ICCProfile* profile) {
-    assert(SAFE_SIZEOF(header_Layout) == 132);
+    static_assert(SAFE_SIZEOF(header_Layout) == 132, "need to update header code");
 
     if (!profile) {
         return false;
@@ -1397,88 +1519,89 @@ const skcms_ICCProfile* skcms_sRGB_profile() {
 
         // We choose to represent sRGB with its canonical transfer function,
         // and with its canonical XYZD50 gamut matrix.
-        true,  // has_trc, followed by the 3 trc curves
-        {
+        {   // the 3 trc curves
             {{0, {2.4f, (float)(1/1.055), (float)(0.055/1.055), (float)(1/12.92), 0.04045f, 0, 0}}},
             {{0, {2.4f, (float)(1/1.055), (float)(0.055/1.055), (float)(1/12.92), 0.04045f, 0, 0}}},
             {{0, {2.4f, (float)(1/1.055), (float)(0.055/1.055), (float)(1/12.92), 0.04045f, 0, 0}}},
         },
 
-        true,  // has_toXYZD50, followed by 3x3 toXYZD50 matrix
-        {{
+        {{  // 3x3 toXYZD50 matrix
             { 0.436065674f, 0.385147095f, 0.143066406f },
             { 0.222488403f, 0.716873169f, 0.060607910f },
             { 0.013916016f, 0.097076416f, 0.714096069f },
         }},
 
-        false, // has_A2B, followed by A2B itself, which we don't care about.
-        {
-            0,
-            {
+        {   // an empty A2B
+            {   // input_curves
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
             },
-            {0,0,0,0},
-            nullptr,
-            nullptr,
+            nullptr,   // grid_8
+            nullptr,   // grid_16
+            0,         // input_channels
+            {0,0,0,0}, // grid_points
 
-            0,
-            {
+            {   // matrix_curves
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
             },
-            {{
+            {{  // matrix (3x4)
                 { 0,0,0,0 },
                 { 0,0,0,0 },
                 { 0,0,0,0 },
             }},
+            0,  // matrix_channels
 
-            0,
-            {
+            0,  // output_channels
+            {   // output_curves
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
             },
         },
 
-        false, // has_B2A, followed by B2A itself, which we also don't care about.
-        {
-            0,
-            {
+        {   // an empty B2A
+            {   // input_curves
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
             },
+            0,  // input_channels
 
-            0,
-            {{
+            0,  // matrix_channels
+            {   // matrix_curves
+                {{0, {0,0, 0,0,0,0,0}}},
+                {{0, {0,0, 0,0,0,0,0}}},
+                {{0, {0,0, 0,0,0,0,0}}},
+            },
+            {{  // matrix (3x4)
                 { 0,0,0,0 },
                 { 0,0,0,0 },
                 { 0,0,0,0 },
             }},
-            {
-                {{0, {0,0, 0,0,0,0,0}}},
-                {{0, {0,0, 0,0,0,0,0}}},
-                {{0, {0,0, 0,0,0,0,0}}},
-            },
 
-            0,
-            {0,0,0,0},
-            nullptr,
-            nullptr,
-            {
+            {   // output_curves
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
             },
+            nullptr,    // grid_8
+            nullptr,    // grid_16
+            {0,0,0,0},  // grid_points
+            0,          // output_channels
         },
 
-        false, // has_CICP, followed by cicp itself which we don't care about.
-        { 0, 0, 0, 0 },
+        { 0, 0, 0, 0 },  // an empty CICP
+
+        true,  // has_trc
+        true,  // has_toXYZD50
+        false, // has_A2B
+        false, // has B2A
+        false, // has_CICP
     };
     return &sRGB_profile;
 }
@@ -1493,88 +1616,89 @@ const skcms_ICCProfile* skcms_XYZD50_profile() {
         skcms_Signature_XYZ,   // pcs
         0,                     // tag count, moot here
 
-        true,  // has_trc, followed by the 3 trc curves
-        {
+        {   // the 3 trc curves
             {{0, {1,1, 0,0,0,0,0}}},
             {{0, {1,1, 0,0,0,0,0}}},
             {{0, {1,1, 0,0,0,0,0}}},
         },
 
-        true,  // has_toXYZD50, followed by 3x3 toXYZD50 matrix
-        {{
+        {{  // 3x3 toXYZD50 matrix
             { 1,0,0 },
             { 0,1,0 },
             { 0,0,1 },
         }},
 
-        false, // has_A2B, followed by A2B itself, which we don't care about.
-        {
-            0,
-            {
+        {   // an empty A2B
+            {   // input_curves
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
             },
-            {0,0,0,0},
-            nullptr,
-            nullptr,
+            nullptr,   // grid_8
+            nullptr,   // grid_16
+            0,         // input_channels
+            {0,0,0,0}, // grid_points
 
-            0,
-            {
+            {   // matrix_curves
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
             },
-            {{
+            {{  // matrix (3x4)
                 { 0,0,0,0 },
                 { 0,0,0,0 },
                 { 0,0,0,0 },
             }},
+            0,  // matrix_channels
 
-            0,
-            {
+            0,  // output_channels
+            {   // output_curves
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
             },
         },
 
-        false, // has_B2A, followed by B2A itself, which we also don't care about.
-        {
-            0,
-            {
+        {   // an empty B2A
+            {   // input_curves
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
             },
+            0,  // input_channels
 
-            0,
-            {{
+            0,  // matrix_channels
+            {   // matrix_curves
+                {{0, {0,0, 0,0,0,0,0}}},
+                {{0, {0,0, 0,0,0,0,0}}},
+                {{0, {0,0, 0,0,0,0,0}}},
+            },
+            {{  // matrix (3x4)
                 { 0,0,0,0 },
                 { 0,0,0,0 },
                 { 0,0,0,0 },
             }},
-            {
-                {{0, {0,0, 0,0,0,0,0}}},
-                {{0, {0,0, 0,0,0,0,0}}},
-                {{0, {0,0, 0,0,0,0,0}}},
-            },
 
-            0,
-            {0,0,0,0},
-            nullptr,
-            nullptr,
-            {
+            {   // output_curves
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
                 {{0, {0,0, 0,0,0,0,0}}},
             },
+            nullptr,    // grid_8
+            nullptr,    // grid_16
+            {0,0,0,0},  // grid_points
+            0,          // output_channels
         },
 
-        false, // has_CICP, followed by cicp itself which we don't care about.
-        { 0, 0, 0, 0 },
+        { 0, 0, 0, 0 },  // an empty CICP
+
+        true,  // has_trc
+        true,  // has_toXYZD50
+        false, // has_A2B
+        false, // has B2A
+        false, // has_CICP
     };
 
     return &XYZD50_profile;
@@ -1861,6 +1985,8 @@ bool skcms_TransferFunction_invert(const skcms_TransferFunction* src, skcms_Tran
     TF_HLGish hlg;
     switch (classify(*src, &pq, &hlg)) {
         case skcms_TFType_Invalid: return false;
+        case skcms_TFType_PQ:      return false;
+        case skcms_TFType_HLG:     return false;
         case skcms_TFType_sRGBish: break;  // handled below
 
         case skcms_TFType_PQish:
@@ -2389,6 +2515,11 @@ static OpAndArg select_curve_op(const skcms_Curve* curve, int channel) {
 
         switch (classify(tf)) {
             case skcms_TFType_Invalid:    return noop;
+            // TODO(https://issues.skia.org/issues/420956739): Consider adding
+            // support for PQ and HLG. Generally any code that goes through this
+            // path would also want tone mapping too.
+            case skcms_TFType_PQ:         return noop;
+            case skcms_TFType_HLG:        return noop;
             case skcms_TFType_sRGBish:    return OpAndArg{op.sRGBish,   &tf};
             case skcms_TFType_PQish:      return OpAndArg{op.PQish,     &tf};
             case skcms_TFType_HLGish:     return OpAndArg{op.HLGish,    &tf};
@@ -2444,25 +2575,27 @@ static int select_curve_ops(const skcms_Curve* curves, int numChannels, OpAndArg
 
 static size_t bytes_per_pixel(skcms_PixelFormat fmt) {
     switch (fmt >> 1) {   // ignore rgb/bgr
-        case skcms_PixelFormat_A_8             >> 1: return  1;
-        case skcms_PixelFormat_G_8             >> 1: return  1;
-        case skcms_PixelFormat_ABGR_4444       >> 1: return  2;
-        case skcms_PixelFormat_RGB_565         >> 1: return  2;
-        case skcms_PixelFormat_RGB_888         >> 1: return  3;
-        case skcms_PixelFormat_RGBA_8888       >> 1: return  4;
-        case skcms_PixelFormat_RGBA_8888_sRGB  >> 1: return  4;
-        case skcms_PixelFormat_RGBA_1010102    >> 1: return  4;
-        case skcms_PixelFormat_RGB_101010x_XR  >> 1: return  4;
-        case skcms_PixelFormat_RGB_161616LE    >> 1: return  6;
-        case skcms_PixelFormat_RGBA_16161616LE >> 1: return  8;
-        case skcms_PixelFormat_RGB_161616BE    >> 1: return  6;
-        case skcms_PixelFormat_RGBA_16161616BE >> 1: return  8;
-        case skcms_PixelFormat_RGB_hhh_Norm    >> 1: return  6;
-        case skcms_PixelFormat_RGBA_hhhh_Norm  >> 1: return  8;
-        case skcms_PixelFormat_RGB_hhh         >> 1: return  6;
-        case skcms_PixelFormat_RGBA_hhhh       >> 1: return  8;
-        case skcms_PixelFormat_RGB_fff         >> 1: return 12;
-        case skcms_PixelFormat_RGBA_ffff       >> 1: return 16;
+        case skcms_PixelFormat_A_8              >> 1: return  1;
+        case skcms_PixelFormat_G_8              >> 1: return  1;
+        case skcms_PixelFormat_GA_88            >> 1: return  2;
+        case skcms_PixelFormat_ABGR_4444        >> 1: return  2;
+        case skcms_PixelFormat_RGB_565          >> 1: return  2;
+        case skcms_PixelFormat_RGB_888          >> 1: return  3;
+        case skcms_PixelFormat_RGBA_8888        >> 1: return  4;
+        case skcms_PixelFormat_RGBA_8888_sRGB   >> 1: return  4;
+        case skcms_PixelFormat_RGBA_1010102     >> 1: return  4;
+        case skcms_PixelFormat_RGB_101010x_XR   >> 1: return  4;
+        case skcms_PixelFormat_RGB_161616LE     >> 1: return  6;
+        case skcms_PixelFormat_RGBA_10101010_XR >> 1: return  8;
+        case skcms_PixelFormat_RGBA_16161616LE  >> 1: return  8;
+        case skcms_PixelFormat_RGB_161616BE     >> 1: return  6;
+        case skcms_PixelFormat_RGBA_16161616BE  >> 1: return  8;
+        case skcms_PixelFormat_RGB_hhh_Norm     >> 1: return  6;
+        case skcms_PixelFormat_RGBA_hhhh_Norm   >> 1: return  8;
+        case skcms_PixelFormat_RGB_hhh          >> 1: return  6;
+        case skcms_PixelFormat_RGBA_hhhh        >> 1: return  8;
+        case skcms_PixelFormat_RGB_fff          >> 1: return 12;
+        case skcms_PixelFormat_RGBA_ffff        >> 1: return 16;
     }
     assert(false);
     return 0;
@@ -2555,24 +2688,26 @@ bool skcms_Transform(const void*             src,
 
     switch (srcFmt >> 1) {
         default: return false;
-        case skcms_PixelFormat_A_8             >> 1: add_op(Op::load_a8);         break;
-        case skcms_PixelFormat_G_8             >> 1: add_op(Op::load_g8);         break;
-        case skcms_PixelFormat_ABGR_4444       >> 1: add_op(Op::load_4444);       break;
-        case skcms_PixelFormat_RGB_565         >> 1: add_op(Op::load_565);        break;
-        case skcms_PixelFormat_RGB_888         >> 1: add_op(Op::load_888);        break;
-        case skcms_PixelFormat_RGBA_8888       >> 1: add_op(Op::load_8888);       break;
-        case skcms_PixelFormat_RGBA_1010102    >> 1: add_op(Op::load_1010102);    break;
-        case skcms_PixelFormat_RGB_101010x_XR  >> 1: add_op(Op::load_101010x_XR); break;
-        case skcms_PixelFormat_RGB_161616LE    >> 1: add_op(Op::load_161616LE);   break;
-        case skcms_PixelFormat_RGBA_16161616LE >> 1: add_op(Op::load_16161616LE); break;
-        case skcms_PixelFormat_RGB_161616BE    >> 1: add_op(Op::load_161616BE);   break;
-        case skcms_PixelFormat_RGBA_16161616BE >> 1: add_op(Op::load_16161616BE); break;
-        case skcms_PixelFormat_RGB_hhh_Norm    >> 1: add_op(Op::load_hhh);        break;
-        case skcms_PixelFormat_RGBA_hhhh_Norm  >> 1: add_op(Op::load_hhhh);       break;
-        case skcms_PixelFormat_RGB_hhh         >> 1: add_op(Op::load_hhh);        break;
-        case skcms_PixelFormat_RGBA_hhhh       >> 1: add_op(Op::load_hhhh);       break;
-        case skcms_PixelFormat_RGB_fff         >> 1: add_op(Op::load_fff);        break;
-        case skcms_PixelFormat_RGBA_ffff       >> 1: add_op(Op::load_ffff);       break;
+        case skcms_PixelFormat_A_8              >> 1: add_op(Op::load_a8);          break;
+        case skcms_PixelFormat_G_8              >> 1: add_op(Op::load_g8);          break;
+        case skcms_PixelFormat_GA_88            >> 1: add_op(Op::load_ga88);        break;
+        case skcms_PixelFormat_ABGR_4444        >> 1: add_op(Op::load_4444);        break;
+        case skcms_PixelFormat_RGB_565          >> 1: add_op(Op::load_565);         break;
+        case skcms_PixelFormat_RGB_888          >> 1: add_op(Op::load_888);         break;
+        case skcms_PixelFormat_RGBA_8888        >> 1: add_op(Op::load_8888);        break;
+        case skcms_PixelFormat_RGBA_1010102     >> 1: add_op(Op::load_1010102);     break;
+        case skcms_PixelFormat_RGB_101010x_XR   >> 1: add_op(Op::load_101010x_XR);  break;
+        case skcms_PixelFormat_RGBA_10101010_XR >> 1: add_op(Op::load_10101010_XR); break;
+        case skcms_PixelFormat_RGB_161616LE     >> 1: add_op(Op::load_161616LE);    break;
+        case skcms_PixelFormat_RGBA_16161616LE  >> 1: add_op(Op::load_16161616LE);  break;
+        case skcms_PixelFormat_RGB_161616BE     >> 1: add_op(Op::load_161616BE);    break;
+        case skcms_PixelFormat_RGBA_16161616BE  >> 1: add_op(Op::load_16161616BE);  break;
+        case skcms_PixelFormat_RGB_hhh_Norm     >> 1: add_op(Op::load_hhh);         break;
+        case skcms_PixelFormat_RGBA_hhhh_Norm   >> 1: add_op(Op::load_hhhh);        break;
+        case skcms_PixelFormat_RGB_hhh          >> 1: add_op(Op::load_hhh);         break;
+        case skcms_PixelFormat_RGBA_hhhh        >> 1: add_op(Op::load_hhhh);        break;
+        case skcms_PixelFormat_RGB_fff          >> 1: add_op(Op::load_fff);         break;
+        case skcms_PixelFormat_RGBA_ffff        >> 1: add_op(Op::load_ffff);        break;
 
         case skcms_PixelFormat_RGBA_8888_sRGB >> 1:
             add_op(Op::load_8888);
@@ -2587,12 +2722,17 @@ bool skcms_Transform(const void*             src,
         add_op(Op::swap_rb);
     }
     skcms_ICCProfile gray_dst_profile;
-    if ((dstFmt >> 1) == (skcms_PixelFormat_G_8 >> 1)) {
-        // When transforming to gray, stop at XYZ (by setting toXYZ to identity), then transform
-        // luminance (Y) by the destination transfer function.
-        gray_dst_profile = *dstProfile;
-        skcms_SetXYZD50(&gray_dst_profile, &skcms_XYZD50_profile()->toXYZD50);
-        dstProfile = &gray_dst_profile;
+    switch (dstFmt >> 1) {
+        case skcms_PixelFormat_G_8:
+        case skcms_PixelFormat_GA_88:
+            // When transforming to gray, stop at XYZ (by setting toXYZ to identity), then transform
+            // luminance (Y) by the destination transfer function.
+            gray_dst_profile = *dstProfile;
+            skcms_SetXYZD50(&gray_dst_profile, &skcms_XYZD50_profile()->toXYZD50);
+            dstProfile = &gray_dst_profile;
+            break;
+        default:
+            break;
     }
 
     if (srcProfile->data_color_space == skcms_Signature_CMYK) {
@@ -2752,24 +2892,26 @@ bool skcms_Transform(const void*             src,
     }
     switch (dstFmt >> 1) {
         default: return false;
-        case skcms_PixelFormat_A_8             >> 1: add_op(Op::store_a8);         break;
-        case skcms_PixelFormat_G_8             >> 1: add_op(Op::store_g8);         break;
-        case skcms_PixelFormat_ABGR_4444       >> 1: add_op(Op::store_4444);       break;
-        case skcms_PixelFormat_RGB_565         >> 1: add_op(Op::store_565);        break;
-        case skcms_PixelFormat_RGB_888         >> 1: add_op(Op::store_888);        break;
-        case skcms_PixelFormat_RGBA_8888       >> 1: add_op(Op::store_8888);       break;
-        case skcms_PixelFormat_RGBA_1010102    >> 1: add_op(Op::store_1010102);    break;
-        case skcms_PixelFormat_RGB_161616LE    >> 1: add_op(Op::store_161616LE);   break;
-        case skcms_PixelFormat_RGBA_16161616LE >> 1: add_op(Op::store_16161616LE); break;
-        case skcms_PixelFormat_RGB_161616BE    >> 1: add_op(Op::store_161616BE);   break;
-        case skcms_PixelFormat_RGBA_16161616BE >> 1: add_op(Op::store_16161616BE); break;
-        case skcms_PixelFormat_RGB_hhh_Norm    >> 1: add_op(Op::store_hhh);        break;
-        case skcms_PixelFormat_RGBA_hhhh_Norm  >> 1: add_op(Op::store_hhhh);       break;
-        case skcms_PixelFormat_RGB_101010x_XR  >> 1: add_op(Op::store_101010x_XR); break;
-        case skcms_PixelFormat_RGB_hhh         >> 1: add_op(Op::store_hhh);        break;
-        case skcms_PixelFormat_RGBA_hhhh       >> 1: add_op(Op::store_hhhh);       break;
-        case skcms_PixelFormat_RGB_fff         >> 1: add_op(Op::store_fff);        break;
-        case skcms_PixelFormat_RGBA_ffff       >> 1: add_op(Op::store_ffff);       break;
+        case skcms_PixelFormat_A_8              >> 1: add_op(Op::store_a8);          break;
+        case skcms_PixelFormat_G_8              >> 1: add_op(Op::store_g8);          break;
+        case skcms_PixelFormat_GA_88            >> 1: add_op(Op::store_ga88);        break;
+        case skcms_PixelFormat_ABGR_4444        >> 1: add_op(Op::store_4444);        break;
+        case skcms_PixelFormat_RGB_565          >> 1: add_op(Op::store_565);         break;
+        case skcms_PixelFormat_RGB_888          >> 1: add_op(Op::store_888);         break;
+        case skcms_PixelFormat_RGBA_8888        >> 1: add_op(Op::store_8888);        break;
+        case skcms_PixelFormat_RGBA_1010102     >> 1: add_op(Op::store_1010102);     break;
+        case skcms_PixelFormat_RGB_161616LE     >> 1: add_op(Op::store_161616LE);    break;
+        case skcms_PixelFormat_RGBA_16161616LE  >> 1: add_op(Op::store_16161616LE);  break;
+        case skcms_PixelFormat_RGB_161616BE     >> 1: add_op(Op::store_161616BE);    break;
+        case skcms_PixelFormat_RGBA_16161616BE  >> 1: add_op(Op::store_16161616BE);  break;
+        case skcms_PixelFormat_RGB_hhh_Norm     >> 1: add_op(Op::store_hhh);         break;
+        case skcms_PixelFormat_RGBA_hhhh_Norm   >> 1: add_op(Op::store_hhhh);        break;
+        case skcms_PixelFormat_RGB_101010x_XR   >> 1: add_op(Op::store_101010x_XR);  break;
+        case skcms_PixelFormat_RGBA_10101010_XR >> 1: add_op(Op::store_10101010_XR); break;
+        case skcms_PixelFormat_RGB_hhh          >> 1: add_op(Op::store_hhh);         break;
+        case skcms_PixelFormat_RGBA_hhhh        >> 1: add_op(Op::store_hhhh);        break;
+        case skcms_PixelFormat_RGB_fff          >> 1: add_op(Op::store_fff);         break;
+        case skcms_PixelFormat_RGBA_ffff        >> 1: add_op(Op::store_ffff);        break;
 
         case skcms_PixelFormat_RGBA_8888_sRGB >> 1:
             add_op_ctx(Op::tf_rgb, skcms_sRGB_Inverse_TransferFunction());

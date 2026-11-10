@@ -8,27 +8,28 @@
 
 #include <algorithm>
 #include <atomic>
+#include <optional>
 #include <utility>
 
-#include "base/allocator/partition_allocator/src/partition_alloc/partition_alloc_buildflags.h"
-#include "base/allocator/partition_allocator/src/partition_alloc/partition_alloc_config.h"
 #include "base/check_op.h"
 #include "base/compiler_specific.h"
 #include "base/debug/alias.h"
-#include "base/feature_list.h"
 #include "base/functional/callback_helpers.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/task/task_features.h"
 #include "base/task/thread_pool/environment_config.h"
 #include "base/task/thread_pool/worker_thread_observer.h"
 #include "base/threading/hang_watcher.h"
 #include "base/time/time.h"
 #include "base/time/time_override.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "partition_alloc/buildflags.h"
 
-#if (BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_NACL)) || BUILDFLAG(IS_FUCHSIA)
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC)
+#include "partition_alloc/partition_alloc_config.h"  // nogncheck
+#endif
+
+#if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
 #include "base/files/file_descriptor_watcher_posix.h"
 #endif
 
@@ -36,9 +37,9 @@
 #include "base/apple/scoped_nsautorelease_pool.h"
 #endif
 
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) && \
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) && \
     PA_CONFIG(THREAD_CACHE_SUPPORTED)
-#include "base/allocator/partition_allocator/src/partition_alloc/thread_cache.h"
+#include "partition_alloc/thread_cache.h"  // nogncheck
 #endif
 
 namespace base::internal {
@@ -49,8 +50,12 @@ WorkerThread::ThreadLabel WorkerThread::Delegate::GetThreadLabel() const {
   return WorkerThread::ThreadLabel::POOLED;
 }
 
+bool WorkerThread::Delegate::TimedWait(TimeDelta timeout) {
+  return wake_up_event_.TimedWait(timeout);
+}
+
 void WorkerThread::Delegate::WaitForWork() {
-  const TimeDelta sleep_time = GetSleepTimeout();
+  const TimeDelta sleep_duration_before_worker_reclaim = GetSleepTimeout();
 
   // When a thread goes to sleep, the memory retained by its thread cache is
   // trapped there for as long as the thread sleeps. To prevent that, we can
@@ -66,89 +71,92 @@ void WorkerThread::Delegate::WaitForWork() {
   // that point, and go to sleep for the remaining of the time. This ensures
   // that we do no work for short sleeps, and that threads do not get awaken
   // many times.
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) && \
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) && \
     PA_CONFIG(THREAD_CACHE_SUPPORTED)
-  TimeDelta min_sleep_time = std::min(sleep_time, kPurgeThreadCacheIdleDelay);
+  const TimeDelta sleep_duration_before_purge =
+      GetSleepDurationBeforePurge(base::TimeTicks::Now());
 
-  if (IsDelayFirstWorkerSleepEnabled()) {
-    min_sleep_time = GetSleepTimeBeforePurge(min_sleep_time);
-  }
-
-  const bool was_signaled = TimedWait(min_sleep_time);
+  const bool was_signaled = TimedWait(std::min(
+      sleep_duration_before_purge, sleep_duration_before_worker_reclaim));
   // Timed out.
   if (!was_signaled) {
     partition_alloc::ThreadCache::PurgeCurrentThread();
 
     // The thread woke up to purge before its standard reclaim time. Sleep for
     // what's remaining until then.
-    if (sleep_time > min_sleep_time) {
-      TimedWait(sleep_time.is_max() ? TimeDelta::Max()
-                                    : sleep_time - min_sleep_time);
+    if (sleep_duration_before_worker_reclaim > sleep_duration_before_purge) {
+      TimedWait(sleep_duration_before_worker_reclaim.is_max()
+                    ? TimeDelta::Max()
+                    : sleep_duration_before_worker_reclaim -
+                          sleep_duration_before_purge);
     }
   }
 #else
-  TimedWait(sleep_time);
-#endif  // BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) &&
+  TimedWait(sleep_duration_before_worker_reclaim);
+#endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) &&
         // PA_CONFIG(THREAD_CACHE_SUPPORTED)
 }
 
-bool WorkerThread::Delegate::IsDelayFirstWorkerSleepEnabled() {
-  static bool state = FeatureList::IsEnabled(kDelayFirstWorkerWake);
-  return state;
-}
-
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) && \
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) && \
     PA_CONFIG(THREAD_CACHE_SUPPORTED)
-// Returns the desired sleep time before the worker has to wake up to purge
-// the cache thread or reclaim itself. |min_sleep_time| contains the minimal
-// acceptable amount of time to sleep.
-TimeDelta WorkerThread::Delegate::GetSleepTimeBeforePurge(
-    TimeDelta min_sleep_time) {
-  const TimeTicks now = TimeTicks::Now();
-
-  // Do not wake up to purge within the first minute of process lifetime. In
-  // short lived processes this will avoid waking up to try and save memory
-  // for a heap that will be going away soon. For longer lived processes this
-  // should allow for better performance at process startup since even if a
-  // worker goes to sleep for kPurgeThreadCacheIdleDelay it's very likely it
-  // will be needed soon after because of heavy startup workloads.
-  constexpr TimeDelta kFirstSleepLength = Minutes(1);
+TimeDelta WorkerThread::Delegate::GetSleepDurationBeforePurge(TimeTicks now) {
+  base::TimeDelta sleep_duration_before_purge = kPurgeThreadCacheIdleDelay;
 
   // Use the first time a worker goes to sleep in this process as an
   // approximation of the process creation time.
   static const TimeTicks first_sleep_time = now;
+  const TimeTicks first_sleep_time_to_use =
+      !first_sleep_time_for_testing_.is_null() ? first_sleep_time_for_testing_
+                                               : first_sleep_time;
+  const base::TimeTicks first_wake_time =
+      first_sleep_time_to_use + kFirstSleepDurationBeforePurge;
 
-  // A sleep that occurs within `kFirstSleepLength` of the
-  // first sleep lasts at least `kFirstSleepLength`.
-  if (now <= first_sleep_time + kFirstSleepLength) {
-    min_sleep_time = std::max(kFirstSleepLength, min_sleep_time);
+  // A sleep that occurs within `kFirstSleepDurationBeforePurge` of the
+  // first sleep lasts at least `kFirstSleepDurationBeforePurge`.
+  if (now <= first_wake_time) {
+    // Avoid sleeping for less than `sleep_duration_before_purge` since that is
+    // the shortest expected duration to wait for a purge.
+    sleep_duration_before_purge =
+        std::max(kFirstSleepDurationBeforePurge, sleep_duration_before_purge);
   }
 
   // Align wakeups for purges to reduce the chances of taking the CPU out of
-  // sleep multiple times for these operations.
-  const TimeTicks snapped_wake =
-      (now + min_sleep_time)
+  // sleep multiple times for these operations. This can happen if many workers
+  // in the same process scheduled wakeups. This can create a situation where
+  // any one worker wakes every `kPurgeThreadCacheIdleDelay` / N where N is the
+  // number of workers.
+  const TimeTicks snapped_purge_time =
+      (now + sleep_duration_before_purge)
           .SnappedToNextTick(TimeTicks(), kPurgeThreadCacheIdleDelay);
 
-  return snapped_wake - now;
+  return snapped_purge_time - now;
 }
-#endif  // BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) &&
+
+#endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC) &&
         // PA_CONFIG(THREAD_CACHE_SUPPORTED)
 
 WorkerThread::WorkerThread(ThreadType thread_type_hint,
+                           std::unique_ptr<Delegate> delegate,
                            TrackedRef<TaskTracker> task_tracker,
                            size_t sequence_num,
-                           const CheckedLock* predecessor_lock)
+                           const CheckedLock* predecessor_lock,
+                           void* flow_terminator)
     : thread_lock_(predecessor_lock),
       task_tracker_(std::move(task_tracker)),
       thread_type_hint_(thread_type_hint),
       current_thread_type_(GetDesiredThreadType()),
-      sequence_num_(sequence_num) {
+      sequence_num_(sequence_num),
+      flow_terminator_(flow_terminator == nullptr
+                           ? reinterpret_cast<intptr_t>(this)
+                           : reinterpret_cast<intptr_t>(flow_terminator)),
+      delegate_(std::move(delegate)) {
   DCHECK(task_tracker_);
   DCHECK(CanUseBackgroundThreadTypeForWorkerThread() ||
          thread_type_hint_ != ThreadType::kBackground);
   DCHECK(CanUseUtilityThreadTypeForWorkerThread() ||
          thread_type_hint != ThreadType::kUtility);
+  DCHECK(delegate_);
+  delegate_->wake_up_event_.declare_only_used_while_idle();
 }
 
 bool WorkerThread::Start(
@@ -156,29 +164,15 @@ bool WorkerThread::Start(
     WorkerThreadObserver* worker_thread_observer) {
   CheckedLock::AssertNoLockHeldOnCurrentThread();
 
-  // Prime kDelayFirstWorkerWake's feature state right away on thread creation
-  // instead of looking it up for the first time later on thread as this avoids
-  // a data race in tests that may ~FeatureList while the first worker thread
-  // is still initializing (the first WorkerThread will be started on the main
-  // thread as part of ThreadPoolImpl::Start() so doing it then avoids this
-  // race), crbug.com/1344573.
-  // Note 1: the feature state is always available at this point as
-  // ThreadPoolInstance::Start() contractually happens-after FeatureList
-  // initialization.
-  // Note 2: This is done on Start instead of in the constructor as construction
-  // happens under a ThreadGroup lock which precludes calling into
-  // FeatureList (as that can also use a lock).
-  delegate()->IsDelayFirstWorkerSleepEnabled();
-
   CheckedAutoLock auto_lock(thread_lock_);
   DCHECK(thread_handle_.is_null());
 
-#if (BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_NACL)) || BUILDFLAG(IS_FUCHSIA)
+#if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
   DCHECK(io_thread_task_runner);
   io_thread_task_runner_ = std::move(io_thread_task_runner);
 #endif
 
-  if (should_exit_.IsSet() || join_called_for_testing()) {
+  if (should_exit_.IsSet() || join_called_for_testing_.IsSet()) {
     return true;
   }
 
@@ -204,7 +198,6 @@ void WorkerThread::Destroy() {
 
   // If |thread_handle_| wasn't joined, detach it.
   if (!thread_handle_.is_null()) {
-    DCHECK(!join_called_for_testing());
     PlatformThread::Detach(thread_handle_);
   }
 }
@@ -214,7 +207,56 @@ bool WorkerThread::ThreadAliveForTesting() const {
   return !thread_handle_.is_null();
 }
 
-WorkerThread::~WorkerThread() = default;
+void WorkerThread::JoinForTesting() {
+  DCHECK(!join_called_for_testing_.IsSet());
+  join_called_for_testing_.Set();
+  delegate_->wake_up_event_.Signal();
+
+  PlatformThreadHandle thread_handle;
+
+  {
+    CheckedAutoLock auto_lock(thread_lock_);
+
+    if (thread_handle_.is_null()) {
+      return;
+    }
+
+    thread_handle = thread_handle_;
+    // Reset |thread_handle_| so it isn't joined by the destructor.
+    thread_handle_ = PlatformThreadHandle();
+  }
+
+  PlatformThread::Join(thread_handle);
+}
+
+void WorkerThread::Cleanup() {
+  DCHECK(!should_exit_.IsSet());
+  should_exit_.Set();
+  delegate_->wake_up_event_.Signal();
+}
+
+void WorkerThread::WakeUp() {
+  // Signalling an event can deschedule the current thread. Since being
+  // descheduled while holding a lock is undesirable (https://crbug.com/890978),
+  // assert that no lock is held by the current thread.
+  CheckedLock::AssertNoLockHeldOnCurrentThread();
+  // Calling WakeUp() after Cleanup() or Join() is wrong because the
+  // WorkerThread cannot run more tasks.
+  DCHECK(!join_called_for_testing_.IsSet());
+  DCHECK(!should_exit_.IsSet());
+  TRACE_EVENT_INSTANT("wakeup.flow", "WorkerThread::WakeUp",
+                      perfetto::Flow::FromPointer(this));
+
+  delegate_->wake_up_event_.Signal();
+}
+
+WorkerThread::Delegate* WorkerThread::delegate() {
+  return delegate_.get();
+}
+
+WorkerThread::~WorkerThread() {
+  Destroy();
+}
 
 void WorkerThread::MaybeUpdateThreadType() {
   UpdateThreadType(GetDesiredThreadType());
@@ -242,28 +284,30 @@ bool WorkerThread::ShouldExit() const {
   // released and outlive |task_tracker_| in unit tests. However, when the
   // WorkerThread is released, |should_exit_| will be set, so check that
   // first.
-  return should_exit_.IsSet() || join_called_for_testing() ||
+  return should_exit_.IsSet() || join_called_for_testing_.IsSet() ||
          task_tracker_->IsShutdownComplete();
 }
 
 ThreadType WorkerThread::GetDesiredThreadType() const {
   // To avoid shutdown hangs, disallow a type below kNormal during shutdown
-  if (task_tracker_->HasShutdownStarted())
+  if (task_tracker_->HasShutdownStarted()) {
     return ThreadType::kDefault;
+  }
 
   return thread_type_hint_;
 }
 
 void WorkerThread::UpdateThreadType(ThreadType desired_thread_type) {
-  if (desired_thread_type == current_thread_type_)
+  if (desired_thread_type == current_thread_type_) {
     return;
+  }
 
   PlatformThread::SetCurrentThreadType(desired_thread_type);
   current_thread_type_ = desired_thread_type;
 }
 
 void WorkerThread::ThreadMain() {
-#if (BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_NACL)) || BUILDFLAG(IS_FUCHSIA)
+#if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
   DCHECK(io_thread_task_runner_);
   FileDescriptorWatcher file_descriptor_watcher(io_thread_task_runner_);
 #endif
@@ -391,15 +435,14 @@ void WorkerThread::RunWorker() {
 #if BUILDFLAG(IS_APPLE)
     apple::ScopedNSAutoreleasePool autorelease_pool;
 #endif
-    absl::optional<WatchHangsInScope> hang_watch_scope;
+    std::optional<WatchHangsInScope> hang_watch_scope;
 
     TRACE_EVENT_END0("base", "WorkerThread active");
-    // TODO(crbug.com/1021571): Remove this once fixed.
-    PERFETTO_INTERNAL_ADD_EMPTY_EVENT();
     hang_watch_scope.reset();
     delegate()->WaitForWork();
     TRACE_EVENT_BEGIN("base", "WorkerThread active",
-                      perfetto::TerminatingFlow::FromPointer(this));
+                      perfetto::TerminatingFlow::FromPointer(
+                          reinterpret_cast<void*>(flow_terminator_)));
 
     // Don't GetWork() in the case where we woke up for Cleanup().
     if (ShouldExit()) {
@@ -447,7 +490,7 @@ void WorkerThread::RunWorker() {
       // Check that task_source is always cleared, to help investigation of
       // memory corruption where task_source is non-null after being moved.
       // crbug.com/1218384
-      CHECK(!task_source);
+      CHECK(!task_source);  // NOLINT(bugprone-use-after-move)
       task_source = std::move(new_task_source);
     }
   }
@@ -467,8 +510,6 @@ void WorkerThread::RunWorker() {
 
   TRACE_EVENT_END0("base", "WorkerThread active");
   TRACE_EVENT_INSTANT0("base", "WorkerThread dead", TRACE_EVENT_SCOPE_THREAD);
-  // TODO(crbug.com/1021571): Remove this once fixed.
-  PERFETTO_INTERNAL_ADD_EMPTY_EVENT();
 }
 
 }  // namespace base::internal

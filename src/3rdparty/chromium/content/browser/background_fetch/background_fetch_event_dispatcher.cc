@@ -39,7 +39,6 @@ std::string EventTypeToString(ServiceWorkerMetrics::EventType event) {
       return "BackgroundFetchSuccessEvent";
     default:
       NOTREACHED();
-      return std::string();
   }
 }
 

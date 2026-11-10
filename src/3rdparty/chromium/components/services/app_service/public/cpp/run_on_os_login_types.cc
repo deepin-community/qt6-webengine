@@ -22,14 +22,6 @@ RunOnOsLogin::RunOnOsLogin(RunOnOsLoginMode login_mode, bool is_managed)
 
 RunOnOsLogin::~RunOnOsLogin() = default;
 
-bool RunOnOsLogin::operator==(const RunOnOsLogin& other) const {
-  return login_mode == other.login_mode && is_managed == other.is_managed;
-}
-
-bool RunOnOsLogin::operator!=(const RunOnOsLogin& other) const {
-  return !(*this == other);
-}
-
 base::Value::Dict ConvertRunOnOsLoginToDict(
     const RunOnOsLogin& run_on_os_login) {
   base::Value::Dict dict;
@@ -38,22 +30,22 @@ base::Value::Dict ConvertRunOnOsLoginToDict(
   return dict;
 }
 
-absl::optional<RunOnOsLogin> ConvertDictToRunOnOsLogin(
+std::optional<RunOnOsLogin> ConvertDictToRunOnOsLogin(
     const base::Value::Dict* dict) {
   if (!dict) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
-  absl::optional<int> login_mode = dict->FindInt(kLoginModeKey);
+  std::optional<int> login_mode = dict->FindInt(kLoginModeKey);
   if (!login_mode.has_value() ||
       login_mode.value() < static_cast<int>(RunOnOsLoginMode::kUnknown) ||
       login_mode.value() > static_cast<int>(RunOnOsLoginMode::kMaxValue)) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
-  absl::optional<bool> is_managed = dict->FindBool(kIsManagedKey);
+  std::optional<bool> is_managed = dict->FindBool(kIsManagedKey);
   if (!is_managed.has_value()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   return RunOnOsLogin(static_cast<RunOnOsLoginMode>(login_mode.value()),

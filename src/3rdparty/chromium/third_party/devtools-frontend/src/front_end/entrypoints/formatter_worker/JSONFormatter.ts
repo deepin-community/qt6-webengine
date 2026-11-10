@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import {type FormattedContentBuilder} from './FormattedContentBuilder.js';
+import type {FormattedContentBuilder} from './FormattedContentBuilder.js';
 import {createTokenizer} from './FormatterWorker.js';
 
 export class JSONFormatter {
@@ -27,7 +27,7 @@ export class JSONFormatter {
     tokenize(text.substring(this.fromOffset, this.toOffset), this.tokenCallback.bind(this));
   }
 
-  tokenCallback(token: string, type: string|null, startPosition: number): void {
+  tokenCallback(token: string, _type: string|null, startPosition: number): void {
     switch (token.charAt(0)) {
       case '{':
       case '[':

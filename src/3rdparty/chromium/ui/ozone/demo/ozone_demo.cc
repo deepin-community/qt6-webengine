@@ -8,12 +8,14 @@
 #include "base/at_exit.h"
 #include "base/command_line.h"
 #include "base/debug/stack_trace.h"
+#include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_executor.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/trace_event/trace_event.h"
+#include "base/trace_event/trace_log.h"
 #include "build/build_config.h"
 #include "components/tracing/common/trace_to_console.h"
 #include "components/tracing/common/tracing_switches.h"
@@ -23,10 +25,6 @@
 #include "ui/ozone/demo/simple_renderer_factory.h"
 #include "ui/ozone/demo/window_manager.h"
 #include "ui/ozone/public/ozone_platform.h"
-
-#if BUILDFLAG(IS_CHROMEOS)
-#include "ui/gfx/linux/gbm_util.h"  // nogncheck
-#endif
 
 const char kHelp[] = "help";
 
@@ -64,8 +62,7 @@ int main(int argc, char** argv) {
           switches::kTraceToConsole)) {
     base::trace_event::TraceConfig trace_config =
         tracing::GetConfigForTraceToConsole();
-    base::trace_event::TraceLog::GetInstance()->SetEnabled(
-        trace_config, base::trace_event::TraceLog::RECORDING_MODE);
+    base::trace_event::TraceLog::GetInstance()->SetEnabled(trace_config);
   }
 
   mojo::core::Init();
@@ -77,11 +74,7 @@ int main(int argc, char** argv) {
   params.single_process = true;
   ui::OzonePlatform::InitializeForUI(params);
   ui::KeyboardLayoutEngineManager::GetKeyboardLayoutEngine()
-      ->SetCurrentLayoutByName("us");
-
-#if BUILDFLAG(IS_CHROMEOS)
-  ui::EnsureIntelMediaCompressionEnvVarIsSet();
-#endif
+      ->SetCurrentLayoutByName("us", base::DoNothing());
 
   ui::OzonePlatform::InitializeForGPU(params);
 

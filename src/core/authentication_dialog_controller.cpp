@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "authentication_dialog_controller.h"
 #include "authentication_dialog_controller_p.h"
@@ -14,7 +15,7 @@ AuthenticationDialogControllerPrivate::AuthenticationDialogControllerPrivate(bas
 {
 }
 
-void AuthenticationDialogControllerPrivate::dialogFinished(bool accepted, const QString &user, const QString &password)
+void AuthenticationDialogControllerPrivate::dialogFinished(bool accepted)
 {
     content::GetUIThreadTaskRunner({})->PostTask(FROM_HERE,
                    base::BindOnce(&LoginDelegateQt::sendAuthToRequester,
@@ -51,9 +52,15 @@ bool AuthenticationDialogController::isProxy() const
     return d->isProxy;
 }
 
-void AuthenticationDialogController::accept(const QString &user, const QString &password)
+void AuthenticationDialogController::credentials(const QString &user, const QString &password)
 {
-    d->dialogFinished(true, user, password);
+    d->user = user;
+    d->password = password;
+}
+
+void AuthenticationDialogController::accept()
+{
+    d->dialogFinished(true);
 }
 
 void AuthenticationDialogController::reject()

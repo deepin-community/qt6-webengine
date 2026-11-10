@@ -37,14 +37,18 @@ bool HasMultipleItems(const Items items) {
 
 inline bool MayHaveMultipleFragmentItems(const FragmentItem& item,
                                          const LayoutObject& layout_object) {
-  return !item.IsFirstForNode() || !item.IsLastForNode() ||
-         // TODO(crbug.com/1061423): InlineCursor is currently unable to deal
-         // with objects split into multiple fragmentainers (e.g. columns). Just
-         // return true if it's possible that this object participates in a
-         // fragmentation context. This will give false positives, but that
-         // should be harmless, given the way the return value is used by the
-         // caller.
-         UNLIKELY(layout_object.IsInsideFlowThread());
+  if (!item.IsFirstForNode() || !item.IsLastForNode()) {
+    return true;
+  }
+  // TODO(crbug.com/40122434): InlineCursor is currently unable to deal with
+  // objects split into multiple fragmentainers (e.g. columns). Just return true
+  // if it's possible that this object participates in a fragmentation context.
+  // This will give false positives, but that should be harmless, given the way
+  // the return value is used by the caller.
+  if (layout_object.IsInsideMulticol()) [[unlikely]] {
+    return true;
+  }
+  return false;
 }
 
 }  // namespace
@@ -58,7 +62,7 @@ void InlineBoxFragmentPainter::Paint(const PaintInfo& paint_info,
   ScopedDisplayItemFragment display_item_fragment(
       paint_info.context, inline_box_item_.FragmentId());
   const LayoutObject& layout_object = *inline_box_fragment_.GetLayoutObject();
-  absl::optional<ScopedSVGPaintState> svg_paint_state;
+  std::optional<ScopedSVGPaintState> svg_paint_state;
   const PhysicalOffset adjusted_paint_offset =
       paint_offset + inline_box_item_.OffsetInContainerFragment();
 
@@ -120,7 +124,10 @@ void InlineBoxFragmentPainter::PaintMask(const PaintInfo& paint_info,
   SlicePaintingType border_painting_type =
       GetSlicePaintType(style_.MaskBoxImage(), adjusted_frame_rect,
                         adjusted_clip_rect, object_may_have_multiple_boxes);
-  if (border_painting_type == kDontPaint) {
+  WTF::String failing_url;
+  if (border_painting_type == kDontPaint ||
+      (paint_info.IsPrivacyPreserving() && style_.MaskBoxImage().GetImage() &&
+       !style_.MaskBoxImage().GetImage()->IsAccessAllowed(failing_url))) {
     return;
   }
   GraphicsContextStateSaver state_saver(paint_info.context, false);
@@ -143,8 +150,9 @@ void InlineBoxFragmentPainterBase::PaintBackgroundBorderShadow(
     const PhysicalOffset& paint_offset) {
   DCHECK(paint_info.phase == PaintPhase::kForeground);
   if (inline_box_fragment_.Style().Visibility() != EVisibility::kVisible ||
-      inline_box_fragment_.IsOpaque())
+      inline_box_fragment_.IsOpaque()) {
     return;
+  }
 
   // You can use p::first-line to specify a background. If so, the direct child
   // inline boxes of line boxes may actually have to paint a background.
@@ -207,8 +215,9 @@ void LineBoxFragmentPainter::PaintBackgroundBorderShadow(
   DCHECK_NE(paint_info.context.GetPaintController().CurrentFragment(), 0u);
 
   if (line_style_ == style_ ||
-      line_style_.Visibility() != EVisibility::kVisible)
+      line_style_.Visibility() != EVisibility::kVisible) {
     return;
+  }
 
   const DisplayItemClient& display_item_client = GetDisplayItemClient();
   if (DrawingRecorder::UseCachedDrawingIfPossible(
@@ -492,8 +501,9 @@ void InlineBoxFragmentPainter::PaintAllFragments(
   // TODO(kojii): If the block flow is dirty, children of these fragments
   // maybe already deleted. crbug.com/963103
   const LayoutBlockFlow* block_flow = layout_inline.FragmentItemsContainer();
-  if (UNLIKELY(block_flow->NeedsLayout()))
+  if (block_flow->NeedsLayout()) [[unlikely]] {
     return;
+  }
 
   ScopedPaintState paint_state(layout_inline, paint_info, &fragment_data);
   PhysicalOffset paint_offset = paint_state.PaintOffset();
@@ -526,10 +536,29 @@ void InlineBoxFragmentPainter::PaintAllFragments(
   InlineCursor first_container_cursor(*block_flow);
   first_container_cursor.MoveTo(layout_inline);
 
-  wtf_size_t container_fragment_idx =
-      first_container_cursor.ContainerFragmentIndex() + fragment_data_idx;
-  const PhysicalBoxFragment* container_fragment =
-      block_flow->GetPhysicalFragment(container_fragment_idx);
+  const PhysicalBoxFragment* container_fragment = nullptr;
+  // If the container is marked as potentially non-contiguous, beware of
+  // container fragments with no items. This LayoutInline isn't represented in
+  // such container fragments. We can trust InlineCursor to have taken us to the
+  // correct container fragment where the inline starts, though, so it's only
+  // necessary to do this if the index is larger than 0.
+  if (block_flow->MayBeNonContiguousIfc() && fragment_data_idx > 0) {
+    for (wtf_size_t idx = 0;;
+         first_container_cursor.MoveToNextFragmentainer()) {
+      CHECK(first_container_cursor.Current());
+      const PhysicalBoxFragment& candidate =
+          first_container_cursor.ContainerFragment();
+      if (candidate.HasItems() && idx++ == fragment_data_idx) {
+        container_fragment = &candidate;
+        break;
+      }
+    }
+  } else {
+    wtf_size_t container_fragment_idx =
+        first_container_cursor.ContainerFragmentIndex() + fragment_data_idx;
+    container_fragment =
+        block_flow->GetPhysicalFragment(container_fragment_idx);
+  }
 
   InlineCursor cursor(*container_fragment);
   cursor.MoveTo(layout_inline);

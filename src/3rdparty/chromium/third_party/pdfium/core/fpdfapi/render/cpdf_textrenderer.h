@@ -11,8 +11,8 @@
 
 #include "core/fxcrt/bytestring.h"
 #include "core/fxcrt/fx_coordinates.h"
+#include "core/fxcrt/span.h"
 #include "core/fxge/dib/fx_dib.h"
-#include "third_party/base/containers/span.h"
 
 class CFX_RenderDevice;
 class CFX_GraphStateData;
@@ -26,7 +26,7 @@ class CPDF_TextRenderer {
   static void DrawTextString(CFX_RenderDevice* pDevice,
                              float origin_x,
                              float origin_y,
-                             CPDF_Font* pFont,
+                             CPDF_Font* font,
                              float font_size,
                              const CFX_Matrix& matrix,
                              const ByteString& str,
@@ -36,7 +36,7 @@ class CPDF_TextRenderer {
   static bool DrawTextPath(CFX_RenderDevice* pDevice,
                            pdfium::span<const uint32_t> char_codes,
                            pdfium::span<const float> char_pos,
-                           CPDF_Font* pFont,
+                           CPDF_Font* font,
                            float font_size,
                            const CFX_Matrix& mtText2User,
                            const CFX_Matrix* pUser2Device,
@@ -49,7 +49,7 @@ class CPDF_TextRenderer {
   static bool DrawNormalText(CFX_RenderDevice* pDevice,
                              pdfium::span<const uint32_t> char_codes,
                              pdfium::span<const float> char_pos,
-                             CPDF_Font* pFont,
+                             CPDF_Font* font,
                              float font_size,
                              const CFX_Matrix& mtText2Device,
                              FX_ARGB fill_argb,

@@ -8,18 +8,28 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/text.h"
 #include "third_party/blink/renderer/core/editing/frame_selection.h"
 #include "third_party/blink/renderer/core/editing/position.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/html/forms/html_input_element.h"
 #include "third_party/blink/renderer/core/html/forms/html_text_area_element.h"
+#include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/testing/dummy_page_holder.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 
 namespace blink {
+
+String PlaceholderString(Element& e) {
+  auto* text_control = ToTextControlOrNull(e);
+  if (text_control && text_control->IsPlaceholderVisible()) {
+    if (HTMLElement* placeholder_element = text_control->PlaceholderElement()) {
+      return placeholder_element->textContent();
+    }
+  }
+  return String();
+}
 
 class TextControlElementTest : public testing::Test {
  protected:
@@ -32,6 +42,12 @@ class TextControlElementTest : public testing::Test {
 
   void UpdateAllLifecyclePhases() {
     GetDocument().View()->UpdateAllLifecyclePhasesForTest();
+  }
+
+  void AssertPlaceholderTextIs(const String& element_id, const String& text) {
+    auto* e = GetDocument().getElementById(AtomicString(element_id));
+    ASSERT_TRUE(e);
+    EXPECT_EQ(PlaceholderString(*e), text);
   }
 
  private:
@@ -48,7 +64,7 @@ void TextControlElementTest::SetUp() {
       std::make_unique<DummyPageHolder>(gfx::Size(800, 600), nullptr);
 
   document_ = &dummy_page_holder_->GetDocument();
-  document_->documentElement()->setInnerHTML(
+  document_->documentElement()->SetInnerHTMLWithoutTrustedTypes(
       "<body><textarea id=textarea></textarea><input id=input /></body>");
   UpdateAllLifecyclePhases();
   text_control_ =
@@ -62,7 +78,9 @@ TEST_F(TextControlElementTest, SetSelectionRange) {
   EXPECT_EQ(0u, TextControl().selectionStart());
   EXPECT_EQ(0u, TextControl().selectionEnd());
 
-  TextControl().SetInnerEditorValue("Hello, text form.");
+  TextControl().SetValue("Hello, text form.",
+                         TextFieldEventBehavior::kDispatchNoEvent,
+                         TextControlSetValueSelection::kSetSelectionToStart);
   EXPECT_EQ(0u, TextControl().selectionStart());
   EXPECT_EQ(0u, TextControl().selectionEnd());
 
@@ -136,6 +154,26 @@ TEST_F(TextControlElementTest, PlaceholderElement) {
 
   EXPECT_EQ(Input().PlaceholderElement(), nullptr);
   EXPECT_EQ(TextControl().PlaceholderElement(), nullptr);
+}
+
+TEST_F(TextControlElementTest, PlaceholderElementNewlineBehavior) {
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
+      "<input id='p0' placeholder='first line &#13;&#10;second line'>"
+      "<input id='p1' placeholder='&#13;'>");
+  UpdateAllLifecyclePhases();
+  AssertPlaceholderTextIs("p0", "first line second line");
+  AssertPlaceholderTextIs("p1", "");
+}
+
+TEST_F(TextControlElementTest, TextAreaPlaceholderElementNewlineBehavior) {
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(
+      "<textarea id='p0' placeholder='first line &#13;&#10;second line'>"
+      "</textarea><textarea id='p1' placeholder='&#10;'></textarea>"
+      "<textarea id='p2' placeholder='&#13;'></textarea>");
+  UpdateAllLifecyclePhases();
+  AssertPlaceholderTextIs("p0", "first line \nsecond line");
+  AssertPlaceholderTextIs("p1", "\n");
+  AssertPlaceholderTextIs("p1", "\n");
 }
 
 }  // namespace blink

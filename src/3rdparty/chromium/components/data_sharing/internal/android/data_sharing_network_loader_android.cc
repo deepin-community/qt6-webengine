@@ -12,14 +12,18 @@
 #include "base/android/scoped_java_ref.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
-#include "components/data_sharing/internal/jni_headers/DataSharingNetworkLoaderImpl_jni.h"
+#include "components/data_sharing/public/android/conversion_utils.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "url/android/gurl_android.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/data_sharing/internal/jni_headers/DataSharingNetworkLoaderImpl_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::JavaRef;
 using base::android::ScopedJavaGlobalRef;
 using base::android::ScopedJavaLocalRef;
+using base::android::ToJavaByteArray;
 
 namespace data_sharing {
 
@@ -28,8 +32,7 @@ DataSharingNetworkLoaderAndroid::DataSharingNetworkLoaderAndroid(
     : data_sharing_network_loader_(data_sharing_network_loader) {
   JNIEnv* env = base::android::AttachCurrentThread();
   java_obj_.Reset(env, Java_DataSharingNetworkLoaderImpl_create(
-                           env, reinterpret_cast<int64_t>(this))
-                           .obj());
+                           env, reinterpret_cast<int64_t>(this)));
 }
 
 DataSharingNetworkLoaderAndroid::~DataSharingNetworkLoaderAndroid() {
@@ -42,13 +45,13 @@ void DataSharingNetworkLoaderAndroid::LoadUrl(
     const JavaRef<jobject>& j_url,
     const JavaRef<jobjectArray>& j_scopes,
     const JavaRef<jbyteArray>& j_post_data,
-    jint j_network_annotation_hash_code,
+    jint j_data_sharing_request_type,
     const JavaRef<jobject>& j_callback) {
   if (!data_sharing_network_loader_) {
     OnResponseAvailable(ScopedJavaGlobalRef<jobject>(j_callback), nullptr);
     return;
   }
-  std::unique_ptr<GURL> url = url::GURLAndroid::ToNativeGURL(env, j_url);
+  GURL url = url::GURLAndroid::ToNativeGURL(env, j_url);
   std::vector<std::string> scopes;
   if (j_scopes) {
     base::android::AppendJavaStringArrayToStringVector(env, j_scopes, &scopes);
@@ -57,9 +60,9 @@ void DataSharingNetworkLoaderAndroid::LoadUrl(
   base::android::JavaByteArrayToString(env, j_post_data, &post_body);
 
   data_sharing_network_loader_->LoadUrl(
-      *url, scopes, post_body,
-      net::NetworkTrafficAnnotationTag::FromJavaAnnotation(
-          j_network_annotation_hash_code),
+      url, scopes, post_body,
+      static_cast<DataSharingNetworkLoader::DataSharingRequestType>(
+          j_data_sharing_request_type),
       base::BindOnce(&DataSharingNetworkLoaderAndroid::OnResponseAvailable,
                      weak_ptr_factory_.GetWeakPtr(),
                      ScopedJavaGlobalRef<jobject>(j_callback)));
@@ -71,9 +74,12 @@ ScopedJavaLocalRef<jobject> DataSharingNetworkLoaderAndroid::GetJavaObject() {
 
 void DataSharingNetworkLoaderAndroid::OnResponseAvailable(
     ScopedJavaGlobalRef<jobject> j_callback,
-    std::unique_ptr<std::string> response) {
-  base::android::RunStringCallbackAndroid(j_callback,
-                                          response ? *response : std::string());
+    std::unique_ptr<DataSharingNetworkLoader::LoadResult> response) {
+  JNIEnv* env = AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> result =
+      conversion::CreateDataSharingNetworkResult(env, response.get());
+
+  base::android::RunObjectCallbackAndroid(j_callback, result);
 }
 
 }  // namespace data_sharing

@@ -5,10 +5,13 @@
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/task/single_thread_task_runner.h"
-#include "components/dom_distiller/content/browser/android/jni_headers/DistillablePageUtils_jni.h"
 #include "components/dom_distiller/content/browser/distillable_page_utils.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_user_data.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/dom_distiller/content/browser/android/jni_headers/DistillablePageUtils_jni.h"
+#include "url/android/gurl_android.h"
 
 using base::android::JavaParamRef;
 using base::android::JavaRef;
@@ -33,9 +36,12 @@ class JniDistillabilityObserverWrapper
   }
 
   void OnResult(const DistillabilityResult& result) override {
+    JNIEnv* env = base::android::AttachCurrentThread();
     Java_DistillablePageUtils_callOnIsPageDistillableUpdate(
-        base::android::AttachCurrentThread(), callback_, result.is_distillable,
-        result.is_last, result.is_long_article, result.is_mobile_friendly);
+        base::android::AttachCurrentThread(), callback_,
+        url::GURLAndroid::FromNativeGURL(env, result.url),
+        result.is_distillable, result.is_last, result.is_long_article,
+        result.is_mobile_friendly);
   }
 
  private:

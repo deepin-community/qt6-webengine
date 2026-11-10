@@ -33,11 +33,7 @@ std::unique_ptr<FlossAdminClient> FlossAdminClient::Create() {
 }
 
 constexpr char FlossAdminClient::kExportedCallbacksPath[] =
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-    "/org/chromium/bluetooth/admin/callback/lacros";
-#else
     "/org/chromium/bluetooth/admin/callback";
-#endif
 
 FlossAdminClient::FlossAdminClient() = default;
 FlossAdminClient::~FlossAdminClient() {
@@ -161,9 +157,6 @@ void FlossAdminClient::SetAllowedServices(
     const std::vector<device::BluetoothUUID>& UUIDs) {
   // Delay this function until we're initialized.
   if (!IsClientRegistered()) {
-    // This shouldn't happen unless we have multiple policies to set.
-    DCHECK(initialized_callbacks_.empty());
-
     initialized_callbacks_.push(BindOnce(&FlossAdminClient::SetAllowedServices,
                                          weak_ptr_factory_.GetWeakPtr(),
                                          std::move(callback), UUIDs));
@@ -194,6 +187,21 @@ void FlossAdminClient::GetDevicePolicyEffect(
                                 admin::kGetDevicePolicyEffect, device);
 }
 
+void FlossAdminClient::SetSimpleSecurePairingEnabled(
+    ResponseCallback<Void> callback,
+    const bool enable) {
+  // Delay this function until we're initialized.
+  if (!IsClientRegistered()) {
+    initialized_callbacks_.push(
+        BindOnce(&FlossAdminClient::SetSimpleSecurePairingEnabled,
+                 weak_ptr_factory_.GetWeakPtr(), std::move(callback), enable));
+    return;
+  }
+
+  CallAdminMethod<Void>(std::move(callback),
+                        admin::kSetSimpleSecurePairingEnabled, enable);
+}
+
 void FlossAdminClient::OnServiceAllowlistChanged(
     const std::vector<std::vector<uint8_t>>& allowlist) {
   std::vector<device::BluetoothUUID> uuids;
@@ -209,7 +217,7 @@ void FlossAdminClient::OnServiceAllowlistChanged(
 
 void FlossAdminClient::OnDevicePolicyEffectChanged(
     const FlossDeviceId& device_id,
-    const absl::optional<PolicyEffect>& effect) {
+    const std::optional<PolicyEffect>& effect) {
   for (auto& observer : observers_) {
     observer.DevicePolicyEffectChanged(device_id, effect);
   }

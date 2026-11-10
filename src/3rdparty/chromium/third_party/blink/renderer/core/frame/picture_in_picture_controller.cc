@@ -7,6 +7,7 @@
 #include "third_party/blink/renderer/core/core_initializer.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
 
 namespace blink {
 
@@ -42,15 +43,40 @@ bool PictureInPictureController::IsElementInPictureInPicture(
 }
 
 // static
-bool PictureInPictureController::HasDocumentPictureInPictureWindow(
+bool PictureInPictureController::IsInDocumentPictureInPicture(
+    const Element* element) {
+  DCHECK(element);
+  Document& document = element->GetDocument();
+
+  if (!document.domWindow()) {
+    return false;
+  }
+
+  return document.domWindow()->IsPictureInPictureWindow();
+}
+
+// static
+LocalDOMWindow* PictureInPictureController::GetDocumentPictureInPictureWindow(
     const Document& document) {
-#if !BUILDFLAG(IS_ANDROID)
+#if !BUILDFLAG(TARGET_OS_IS_ANDROID)
   PictureInPictureController* controller =
       Supplement<Document>::From<PictureInPictureController>(document);
-  return controller && controller->HasDocumentPictureInPictureWindow();
+  return controller ? controller->GetDocumentPictureInPictureWindow() : nullptr;
 #else
-  return false;
-#endif  // !BUILDFLAG(IS_ANDROID)
+  return nullptr;
+#endif  // !BUILDFLAG(TARGET_OS_IS_ANDROID)
+}
+
+// static
+LocalDOMWindow* PictureInPictureController::GetDocumentPictureInPictureOwner(
+    const Document& document) {
+#if !BUILDFLAG(TARGET_OS_IS_ANDROID)
+  PictureInPictureController* controller =
+      Supplement<Document>::From<PictureInPictureController>(document);
+  return controller ? controller->GetDocumentPictureInPictureOwner() : nullptr;
+#else
+  return nullptr;
+#endif  // !BUILDFLAG(TARGET_OS_IS_ANDROID)
 }
 
 void PictureInPictureController::Trace(Visitor* visitor) const {

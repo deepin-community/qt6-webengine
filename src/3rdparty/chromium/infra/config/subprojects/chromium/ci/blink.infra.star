@@ -3,18 +3,19 @@
 # found in the LICENSE file.
 """Definitions of builders in the blink.infra builder group."""
 
-load("//lib/builders.star", "os")
-load("//lib/ci.star", "ci")
-load("//lib/consoles.star", "consoles")
-load("//lib/builder_health_indicators.star", "health_spec")
+load("@chromium-luci//builder_health_indicators.star", "health_spec")
+load("@chromium-luci//builders.star", "os")
+load("@chromium-luci//ci.star", "ci")
+load("@chromium-luci//consoles.star", "consoles")
+load("//lib/ci_constants.star", "ci_constants")
 
 ci.defaults.set(
-    pool = ci.DEFAULT_POOL,
+    pool = ci_constants.DEFAULT_POOL,
     builderless = True,
     os = os.LINUX_DEFAULT,
     console_view = "blink.infra",
     execution_timeout = 10 * time.hour,
-    health_spec = health_spec.DEFAULT,
+    health_spec = health_spec.default(),
 )
 
 consoles.console_view(
@@ -22,60 +23,8 @@ consoles.console_view(
 )
 
 ci.builder(
-    name = "Blink Unexpected Pass Finder",
-    executable = "recipe:chromium_expectation_files/expectation_file_scripts",
-    # Run once daily at 12 AM Pacific/7 AM UTC.
-    schedule = "0 7 * * *",
-    triggered_by = [],
-    cores = 16,
-    console_view_entry = consoles.console_view_entry(
-        short_name = "upf",
-    ),
-    properties = {
-        "scripts": [
-            {
-                "step_name": "remove_stale_blink_expectations",
-                "script": "third_party/blink/tools/remove_stale_expectations.py",
-                "script_type": "UNEXPECTED_PASS",
-                "submit_type": "AUTO",
-                "reviewer_list": {
-                    # List pulled from volunteers from blink-dev@ that are
-                    # familiar with web tests/web test expectations. A random
-                    # one will be CCed on each generated CL.
-                    "reviewer": [
-                        "awillia@chromium.org",
-                        "jiesheng@google.com",
-                        "jonathanjlee@google.com",
-                        "nsatragno@chromium.org",
-                        "tkent@chromium.org",
-                        "wangxianzhu@chromium.org",
-                    ],
-                },
-                "cl_title": "Remove stale Blink expectations",
-                "args": [
-                    "--project",
-                    "chrome-unexpected-pass-data",
-                    "--no-include-internal-builders",
-                    "--remove-stale-expectations",
-                    "--narrow-semi-stale-expectation-scope",
-                    "--large-query-mode",
-                    "--num-samples",
-                    "200",
-                    # We need to limit the max number of parallel jobs in order
-                    # to avoid having large memory usage spikes that can kill
-                    # the bot due to swap space not being enabled.
-                    "--jobs",
-                    "2",
-                ],
-            },
-        ],
-    },
-    service_account = "chromium-automated-expectation@chops-service-accounts.iam.gserviceaccount.com",
-)
-
-ci.builder(
     name = "blink-flake-suppressor",
-    description_html = "Runs Flake Suppressor on all sheriff builders to generate test suppression cl.",
+    description_html = "Runs Flake Suppressor on all gardened builders to generate test suppression cl.",
     executable = "recipe:chromium_expectation_files/expectation_file_scripts",
     # Run once at 4 PM Pacific on weekdays.
     schedule = "0 0 * * 1-5",
@@ -99,7 +48,7 @@ ci.builder(
                 },
                 "cl_title": "Blink web tests suppression",
                 "args": [
-                    # TODO(crbug.com/1358735): Create a new project to avoid
+                    # TODO(crbug.com/40237087): Create a new project to avoid
                     # capacity issue.
                     "--project",
                     "chrome-unexpected-pass-data",
@@ -145,7 +94,7 @@ ci.builder(
                     "--project",
                     "chrome-unexpected-pass-data",
                     "--sample-period",
-                    "3",
+                    "7",
                     "--check-bugs-only",
                     "--attach-analysis-result",
                 ],
@@ -157,10 +106,33 @@ ci.builder(
                     "--project",
                     "chrome-unexpected-pass-data",
                     "--sample-period",
-                    "3",
+                    "7",
                     "--check-bugs-only",
                     "--attach-analysis-result",
                 ],
+            },
+        ],
+    },
+    service_account = "chromium-automated-expectation@chops-service-accounts.iam.gserviceaccount.com",
+)
+
+ci.builder(
+    name = "blink-virtual-test-suites-notifier",
+    description_html = "Sends notifications for expired Virtual Test Suites",
+    executable = "recipe:chromium/generic_script_runner",
+    # Run once daily at 12 PM Pacific/7 PM UTC.
+    schedule = "0 19 * * *",
+    triggered_by = [],
+    cores = 8,
+    console_view_entry = consoles.console_view_entry(
+        short_name = "vts-notify",
+    ),
+    contact_team_email = "chrome-experience-engprod@google.com",
+    properties = {
+        "scripts": [
+            {
+                "step_name": "notify_vts",
+                "script": "third_party/blink/tools/notify_vts.py",
             },
         ],
     },

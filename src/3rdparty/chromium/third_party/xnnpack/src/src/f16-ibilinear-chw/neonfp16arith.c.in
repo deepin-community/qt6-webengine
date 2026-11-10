@@ -6,20 +6,23 @@
 $assert PIXEL_TILE >= 1
 $assert PIXEL_TILE % 4 == 0
 $ABC = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/ibilinear.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/ibilinear.h"
+#include "src/xnnpack/math.h"
 
 
 void xnn_f16_ibilinear_chw_ukernel__neonfp16arith_p${PIXEL_TILE}(
     size_t output_pixels,
     size_t channels,
-    const void** restrict input,
+    const xnn_float16** restrict input,
     size_t input_offset,
-    const void* restrict weights,
-    void* restrict output,
+    const xnn_float16* restrict weights,
+    xnn_float16* restrict output,
     size_t input_increment) XNN_OOB_READS
 {
   assert(output_pixels != 0);
@@ -29,7 +32,7 @@ void xnn_f16_ibilinear_chw_ukernel__neonfp16arith_p${PIXEL_TILE}(
   uint16_t* o = (uint16_t*) output;
   do {
     const uint16_t** i = (const uint16_t**)input;
-    const uint16_t* w = weights;
+    const uint16_t* w = (const uint16_t*)weights;
     size_t p = output_pixels;
 
     $if PIXEL_TILE > 4:

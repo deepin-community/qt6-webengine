@@ -14,8 +14,7 @@ class PasswordSelectionScreen;
 
 // Interface for dependency injection between PasswordSelectionScreen and
 // its WebUI representation.
-class PasswordSelectionScreenView
-    : public base::SupportsWeakPtr<PasswordSelectionScreenView> {
+class PasswordSelectionScreenView {
  public:
   inline constexpr static StaticOobeScreenId kScreenId{
       "password-selection", "PasswordSelectionScreen"};
@@ -27,10 +26,14 @@ class PasswordSelectionScreenView
 
   virtual void ShowProgress() = 0;
   virtual void ShowPasswordChoice() = 0;
+  virtual void ShowBackButton() = 0;
+
+  // Gets a WeakPtr to the instance.
+  virtual base::WeakPtr<PasswordSelectionScreenView> AsWeakPtr() = 0;
 };
 
-class PasswordSelectionScreenHandler : public PasswordSelectionScreenView,
-                                       public BaseScreenHandler {
+class PasswordSelectionScreenHandler final : public PasswordSelectionScreenView,
+                                             public BaseScreenHandler {
  public:
   using TView = PasswordSelectionScreenView;
 
@@ -48,10 +51,14 @@ class PasswordSelectionScreenHandler : public PasswordSelectionScreenView,
   void Show() override;
   void ShowProgress() override;
   void ShowPasswordChoice() override;
+  void ShowBackButton() override;
+  base::WeakPtr<PasswordSelectionScreenView> AsWeakPtr() override;
 
   // BaseScreenHandler:
   void DeclareLocalizedValues(
       ::login::LocalizedValuesBuilder* builder) override;
+
+  base::WeakPtrFactory<PasswordSelectionScreenView> weak_ptr_factory_{this};
 };
 
 }  // namespace ash

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "components/exo/wayland/zaura_output_manager.h"
 
 #include <sys/socket.h>
@@ -283,7 +284,10 @@ TEST_F(AuraOutputManagerTest, SendOverscanInsets) {
                                      no_overscan.left(), no_overscan.bottom(),
                                      no_overscan.right()));
     EXPECT_CALL(*mock_aura_output_manager_, MockOnDone(client_output));
-    display_manager()->NotifyMetricsChanged(GetPrimaryDisplay(), 0xFFFFFFFF);
+    display_manager()->NotifyDidProcessDisplayChanges(
+        {/*added_displays=*/{},
+         /*removed_displays=*/{},
+         /*display_metrics_changes=*/{{GetPrimaryDisplay(), 0xFFFFFFFF}}});
     PostToClientAndWait([] {});
     ::testing::Mock::VerifyAndClearExpectations(
         mock_aura_output_manager_.get());

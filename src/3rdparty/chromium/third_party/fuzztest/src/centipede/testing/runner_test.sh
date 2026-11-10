@@ -21,13 +21,14 @@ set -eu
 
 source "$(dirname "$0")/../test_util.sh"
 
-target="$(centipede::get_centipede_test_srcdir)/testing/test_fuzz_target"
-non_pie_target="$(centipede::get_centipede_test_srcdir)/testing/test_fuzz_target_non_pie"
+target="$(fuzztest::internal::get_centipede_test_srcdir)/testing/test_fuzz_target"
+non_pie_target="$(fuzztest::internal::get_centipede_test_srcdir)/testing/test_fuzz_target_non_pie"
 
 # Create input files.
 oom="${TEST_TMPDIR}/oom"
 slo="${TEST_TMPDIR}/slo"
 stk="${TEST_TMPDIR}/stk"
+stk2="${TEST_TMPDIR}/stk2"
 sigstk="${TEST_TMPDIR}/sigstk"
 f1="${TEST_TMPDIR}/f1"
 func1="${TEST_TMPDIR}/func1"
@@ -36,6 +37,7 @@ minus1="${TEST_TMPDIR}/minus1"
 echo -n oom > "${oom}"  # Triggers OOM
 echo -n slo > "${slo}"  # Triggers sleep(10)
 echo -n stk > "${stk}"  # Triggers stack limit excess
+echo -n stk2 > "${stk2}"  # Triggers stack limit excess with an instrumented abort handler, which would trigger infinite loop if there was no report limiting.
 echo -n sigstk > "${sigstk}"  # Triggers a large stack usage in signal stack, while the stack limit should not apply.
 echo -n f1 > "${f1}"    # Arbitrary input.
 echo -n func1 > "${func1}"  # Triggers a call to SingleEdgeFunc.
@@ -83,14 +85,19 @@ echo ======== Run f1 func1
 "${target}" "${f1}" "${func1}"
 check_features_files_f1_and_f02
 
-# Check OOM. The test target allocates 4Gb, and we make sure
-# this can be detected with appropriate limit (address_space_limit_mb),
-# and can not be detected with a larger limit.
-echo ======== Check OOM behaviour with address_space_limit_mb
-CENTIPEDE_RUNNER_FLAGS=":address_space_limit_mb=4096:" $target "${oom}" \
-  && die "failed to die on 4G OOM (address_space_limit_mb)"
-# must pass.
-CENTIPEDE_RUNNER_FLAGS=":address_space_limit_mb=8192:" $target "${oom}"
+
+# Address space limit is ignored by MacOS.
+# Reference: https://bugs.chromium.org/p/chromium/issues/detail?id=853873#c2
+if [[ "${OSTYPE}" != 'darwin'* ]]; then
+  # Check OOM. The test target allocates 4Gb, and we make sure
+  # this can be detected with appropriate limit (address_space_limit_mb),
+  # and can not be detected with a larger limit.
+  echo ======== Check OOM behaviour with address_space_limit_mb
+  CENTIPEDE_RUNNER_FLAGS=":address_space_limit_mb=4096:" $target "${oom}" \
+    && die "failed to die on 4G OOM (address_space_limit_mb)"
+  # must pass.
+  CENTIPEDE_RUNNER_FLAGS=":address_space_limit_mb=8192:" $target "${oom}"
+fi
 
 echo ======== Check OOM behaviour with rss_limit_mb
 CENTIPEDE_RUNNER_FLAGS=":rss_limit_mb=4096:" $target "${oom}" \
@@ -100,16 +107,26 @@ CENTIPEDE_RUNNER_FLAGS=":rss_limit_mb=8192:" $target "${oom}"  # must pass
 
 echo ======== Check timeout
 CENTIPEDE_RUNNER_FLAGS=":timeout_per_input=567:" "${target}" \
-  2>&1 | grep "timeout_per_input:.567"
+  2>&1 | grep "timeout_per_input: 567"
 
 CENTIPEDE_RUNNER_FLAGS=":timeout_per_input=2:" "${target}" "${slo}" \
   2>&1 | grep "Per-input timeout exceeded"
+
+{
+    CENTIPEDE_RUNNER_FLAGS=":ignore_timeout_reports:timeout_per_input=2:" "${target}" "${slo}";
+    echo "$?" > "${TEST_TMPDIR}/ignore_timeout_reports_exit_code";
+} 2>&1 | grep "Per-input timeout exceeded" | grep "exiting without reporting as an error"
+((`cat "${TEST_TMPDIR}/ignore_timeout_reports_exit_code"` == 0))
 
 echo ======== Check stack limit check with stack_limit
 CENTIPEDE_RUNNER_FLAGS=":use_pc_features:stack_limit_kb=200:" "${target}" "${stk}"  # must pass
 
 CENTIPEDE_RUNNER_FLAGS=":use_pc_features:stack_limit_kb=20:" "${target}" "${stk}" \
                       2>&1 | grep "Stack limit exceeded"
+
+CENTIPEDE_RUNNER_FLAGS=":use_pc_features:stack_limit_kb=20:" "${target}" "${stk2}" \
+                      2>&1 | grep -e "Stack limit exceeded" > "${TEST_TMPDIR}"/stk2_logs
+((`cat "${TEST_TMPDIR}"/stk2_logs | wc -l` == 1))
 
 CENTIPEDE_RUNNER_FLAGS=":use_pc_features:stack_limit_kb=20:" "${target}" "${sigstk}"  # must pass
 

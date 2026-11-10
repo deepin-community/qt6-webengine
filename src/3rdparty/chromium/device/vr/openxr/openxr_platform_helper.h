@@ -6,6 +6,7 @@
 #define DEVICE_VR_OPENXR_OPENXR_PLATFORM_HELPER_H_
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "base/functional/callback.h"
@@ -13,14 +14,8 @@
 #include "device/vr/openxr/openxr_extension_helper.h"
 #include "device/vr/public/mojom/isolated_xr_service.mojom-forward.h"
 #include "device/vr/vr_export.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-
-#if BUILDFLAG(IS_WIN)
-#include "device/vr/windows/d3d11_texture_helper.h"
-#endif
 
 namespace device {
-
 class OpenXrGraphicsBinding;
 
 // Simple struct containing the values that the platform will actually need to
@@ -31,6 +26,7 @@ class OpenXrGraphicsBinding;
 struct OpenXrCreateInfo {
   int render_process_id;
   int render_frame_id;
+  bool needs_separate_activity = true;
 };
 
 // This class exists to help provide an interface for working with OpenXR
@@ -64,23 +60,10 @@ class DEVICE_VR_EXPORT OpenXrPlatformHelper {
   // Must be called before making any calls to e.g. xrCreateInstance.
   bool EnsureInitialized();
 
-#if BUILDFLAG(IS_WIN)
-  // Creates an OpenXrGraphicsBinding which is responsible for returning the
-  // information about the graphics pipeline that is required to create an
-  // XrInstance and/or XrSession.
-  // The caller is responsible for ensuring that the TextureHelper outlives the
-  // GraphicsBinding.
-  // TODO(https://crbug.com/1454938): D3D11TextureHelper should be entirely
-  // owned by the OpenXrGraphicsBinding and any relevant logic ported there with
-  // the necessary interfaces exposed on OpenXrGraphicsBinding.
-  virtual std::unique_ptr<OpenXrGraphicsBinding> GetGraphicsBinding(
-      D3D11TextureHelper* texture_helper) = 0;
-#else
   // Creates an OpenXrGraphicsBinding which is responsible for returning the
   // information about the graphics pipeline that is required to create an
   // XrInstance and/or XrSession.
   virtual std::unique_ptr<OpenXrGraphicsBinding> GetGraphicsBinding() = 0;
-#endif
 
   // Gets the ExtensionEnumeration which is the list of extensions supported by
   // the platform.
@@ -103,8 +86,17 @@ class DEVICE_VR_EXPORT OpenXrPlatformHelper {
   // that require additional information via this mechanism will fail creation.
   XrResult CreateInstance(XrInstance* instance);
 
+  // Run any platform-specific shutdown that has to happen before the OpenXr
+  // session can be ended. E.g. On Android, if there is a separate activity, it
+  // needs to be destroyed before the session is shutdown so that the system
+  // rendering takes over.
+  // If a `shutdown_callback` was previously passed in, it will not be run, in
+  // favor of this callback.
+  virtual void PrepareForSessionShutdown(
+      base::OnceClosure shutdown_ready_callback) = 0;
+
   void CreateInstanceWithCreateInfo(
-      absl::optional<OpenXrCreateInfo> create_info,
+      std::optional<OpenXrCreateInfo> create_info,
       CreateInstanceCallback instance_ready_callback,
       PlatormInitiatedShutdownCallback shutdown_callback);
 
@@ -131,10 +123,17 @@ class DEVICE_VR_EXPORT OpenXrPlatformHelper {
   void OnPlatformCreateInfoResult(CreateInstanceCallback callback,
                                   void* instance_create_info);
 
+  // Called when XrCreateInstance fails in order to provide a mechanism to clean
+  // up any state that was established prior to the call, since any external
+  // cleanup likely won't happen since we don't have an XrInstance.
+  virtual void OnInstanceCreateFailure() {}
+
   XrInstance xr_instance_ = XR_NULL_HANDLE;
   std::unique_ptr<OpenXrExtensionEnumeration> extension_enumeration_;
 
  private:
+  void UpdateExtensionFactorySupport();
+
   bool initialized_ = false;
 };
 

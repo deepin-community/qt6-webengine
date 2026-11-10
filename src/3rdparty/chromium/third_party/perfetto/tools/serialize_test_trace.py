@@ -33,6 +33,11 @@ def main():
       '--out', type=str, help='out directory to search for trace descriptor')
   parser.add_argument(
       '--descriptor', type=str, help='path to the trace descriptor')
+  parser.add_argument(
+      '--extension-descriptor',
+      action='append',
+      type=str,
+      help='paths to additional descriptors')
   parser.add_argument('trace_path', type=str, help='path of trace to serialize')
   args = parser.parse_args()
 
@@ -45,8 +50,12 @@ def main():
     trace_descriptor_path = os.path.join(trace_protos_path, 'trace.descriptor')
     test_extensions_descriptor_path = os.path.join(
         trace_protos_path, 'test_extensions.descriptor')
+    winscope_extensions_descriptor_path = os.path.join(trace_protos_path,
+                                                       'android',
+                                                       'winscope.descriptor')
     extension_descriptors = [
-        chrome_extension_descriptor_path, test_extensions_descriptor_path
+        chrome_extension_descriptor_path, test_extensions_descriptor_path,
+        winscope_extensions_descriptor_path
     ]
   elif args.descriptor and not args.out:
     trace_descriptor_path = args.descriptor
@@ -54,6 +63,9 @@ def main():
   else:
     raise RuntimeError(
         'Exactly one of --out and --descriptor should be provided')
+
+  if args.extension_descriptor:
+    extension_descriptors.extend(args.extension_descriptor)
 
   trace_path = args.trace_path
 

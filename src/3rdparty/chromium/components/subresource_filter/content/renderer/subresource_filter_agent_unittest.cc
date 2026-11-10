@@ -85,7 +85,7 @@ class SubresourceFilterAgentUnderTest : public SubresourceFilterAgent {
     return ad_evidence_ && ad_evidence_->IndicatesAdFrame();
   }
 
-  const absl::optional<blink::FrameAdEvidence>& AdEvidence() override {
+  const std::optional<blink::FrameAdEvidence>& AdEvidence() override {
     return ad_evidence_;
   }
   void SetAdEvidence(const blink::FrameAdEvidence& ad_evidence) override {
@@ -121,7 +121,7 @@ class SubresourceFilterAgentUnderTest : public SubresourceFilterAgent {
 
   // Production can set this on the RenderFrame, which we intercept and store
   // here.
-  absl::optional<blink::FrameAdEvidence> ad_evidence_;
+  std::optional<blink::FrameAdEvidence> ad_evidence_;
   std::unique_ptr<blink::WebDocumentSubresourceFilter> last_injected_filter_;
   mojom::ActivationState inherited_activation_state_for_new_document_;
 };
@@ -143,7 +143,7 @@ constexpr const char kMainFrameLoadRulesetIsAvailableAnyActivationLevel[] =
 
 class SubresourceFilterAgentTest : public ::testing::Test {
  public:
-  SubresourceFilterAgentTest() {}
+  SubresourceFilterAgentTest() = default;
 
   SubresourceFilterAgentTest(const SubresourceFilterAgentTest&) = delete;
   SubresourceFilterAgentTest& operator=(const SubresourceFilterAgentTest&) =
@@ -207,13 +207,13 @@ class SubresourceFilterAgentTest : public ::testing::Test {
   }
 
   void StartLoadWithoutSettingActivationState() {
-    agent_as_rfo()->DidStartNavigation(GURL(), absl::nullopt);
+    agent_as_rfo()->DidStartNavigation(GURL(), std::nullopt);
     agent_as_rfo()->ReadyToCommitNavigation(nullptr);
     agent_as_rfo()->DidCreateNewDocument();
   }
 
   void PerformSameDocumentNavigationWithoutSettingActivationLevel() {
-    agent_as_rfo()->DidStartNavigation(GURL(), absl::nullopt);
+    agent_as_rfo()->DidStartNavigation(GURL(), std::nullopt);
     agent_as_rfo()->ReadyToCommitNavigation(nullptr);
     // No DidCreateNewDocument, since same document navigations by definition
     // don't create a new document.
@@ -229,10 +229,10 @@ class SubresourceFilterAgentTest : public ::testing::Test {
 
   void StartLoadAndSetActivationState(mojom::ActivationState state,
                                       bool is_ad_frame = false) {
-    agent_as_rfo()->DidStartNavigation(GURL(), absl::nullopt);
+    agent_as_rfo()->DidStartNavigation(GURL(), std::nullopt);
     agent_as_rfo()->ReadyToCommitNavigation(nullptr);
 
-    absl::optional<blink::FrameAdEvidence> ad_evidence;
+    std::optional<blink::FrameAdEvidence> ad_evidence;
     if (agent()->IsSubresourceFilterChild()) {
       // Generate an evidence object matching the `ad_type`.
       ad_evidence = blink::FrameAdEvidence(false /* parent_is_ad */);
@@ -287,17 +287,19 @@ class SubresourceFilterAgentTest : public ::testing::Test {
       std::string_view url_spec,
       blink::WebDocumentSubresourceFilter::LoadPolicy expected_policy) {
     blink::WebURL url = GURL(url_spec);
-    blink::mojom::RequestContextType request_context =
-        blink::mojom::RequestContextType::IMAGE;
+    network::mojom::RequestDestination request_destination =
+        network::mojom::RequestDestination::kImage;
     blink::WebDocumentSubresourceFilter::LoadPolicy actual_policy =
-        agent()->filter()->GetLoadPolicy(url, request_context);
+        agent()->filter()->GetLoadPolicy(url, request_destination,
+                                         /*out_rule=*/nullptr);
     EXPECT_EQ(expected_policy, actual_policy);
 
     // If the load policy indicated the load was filtered, simulate a filtered
     // load callback. In production, this will be called in FrameFetchContext,
     // but we simulate the call here.
-    if (actual_policy == blink::WebDocumentSubresourceFilter::kDisallow)
+    if (actual_policy == blink::WebDocumentSubresourceFilter::kDisallow) {
       agent()->filter()->ReportDisallowedLoad();
+    }
   }
 
   SubresourceFilterAgentUnderTest* agent() { return agent_.get(); }
@@ -507,14 +509,14 @@ TEST_F(SubresourceFilterAgentTest,
   ASSERT_NO_FATAL_FAILURE(
       SetTestRulesetToDisallowURLsWithPathSuffix(kTestBothURLsPathSuffix));
   ExpectNoSubresourceFilterGetsInjected();
-  agent_as_rfo()->DidStartNavigation(GURL(), absl::nullopt);
+  agent_as_rfo()->DidStartNavigation(GURL(), std::nullopt);
   agent_as_rfo()->ReadyToCommitNavigation(nullptr);
   mojom::ActivationStatePtr state = mojom::ActivationState::New();
   state->activation_level = mojom::ActivationLevel::kEnabled;
   state->measure_performance = true;
-  agent()->ActivateForNextCommittedLoad(std::move(state), absl::nullopt);
+  agent()->ActivateForNextCommittedLoad(std::move(state), std::nullopt);
   agent_as_rfo()->DidFailProvisionalLoad();
-  agent_as_rfo()->DidStartNavigation(GURL(), absl::nullopt);
+  agent_as_rfo()->DidStartNavigation(GURL(), std::nullopt);
   agent_as_rfo()->ReadyToCommitNavigation(nullptr);
   agent_as_rfo()->DidCommitProvisionalLoad(ui::PAGE_TRANSITION_LINK);
   FinishLoad();

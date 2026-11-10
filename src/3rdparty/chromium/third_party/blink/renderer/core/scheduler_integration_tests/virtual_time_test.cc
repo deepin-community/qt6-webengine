@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "third_party/blink/public/platform/platform.h"
@@ -26,8 +27,7 @@ namespace virtual_time_test {
 class ScriptExecutionCallbackHelper final {
  public:
   const String Result() const { return result_; }
-  void Completed(absl::optional<base::Value> value,
-                 base::TimeTicks start_time) {
+  void Completed(std::optional<base::Value> value, base::TimeTicks start_time) {
     if (!value)
       return;
     if (std::string* str = value->GetIfString())
@@ -53,7 +53,7 @@ class VirtualTimeTest : public SimTest {
     ScriptExecutionCallbackHelper callback_helper;
     WebScriptSource source(script_source);
     WebView().MainFrame()->ToWebLocalFrame()->RequestExecuteScript(
-        DOMWrapperWorld::kMainWorldId, base::make_span(&source, 1u),
+        DOMWrapperWorld::kMainWorldId, base::span_from_ref(source),
         mojom::blink::UserActivationOption::kDoNotActivate,
         mojom::blink::EvaluationTiming::kSynchronous,
         mojom::blink::LoadEventBlockingOption::kDoNotBlock,

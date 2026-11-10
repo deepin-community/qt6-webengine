@@ -57,13 +57,13 @@ class WGPUCallbackBase<BaseCallbackTemplate<R(Args...)>> {
   }
 
   R Run(Args... args) &&
-    requires base::is_instantiation<base::OnceCallback, BaseCallback>
+    requires base::is_instantiation<BaseCallback, base::OnceCallback>
   {
     return std::move(callback_).Run(std::forward<Args>(args)...);
   }
 
   R Run(Args... args) const&
-    requires base::is_instantiation<base::RepeatingCallback, BaseCallback>
+    requires base::is_instantiation<BaseCallback, base::RepeatingCallback>
   {
     return callback_.Run(std::forward<Args>(args)...);
   }
@@ -117,7 +117,7 @@ class WGPURepeatingCallback<R(Args...)>
 };
 
 template <typename CallbackType>
-  requires base::is_instantiation<base::OnceCallback, CallbackType>
+  requires base::is_instantiation<CallbackType, base::OnceCallback>
 auto MakeWGPUOnceCallback(CallbackType&& cb) {
   return new gpu::webgpu::WGPUOnceCallback<typename CallbackType::RunType>(
       std::move(cb));
@@ -125,7 +125,8 @@ auto MakeWGPUOnceCallback(CallbackType&& cb) {
 
 template <typename FunctionType, typename... BoundParameters>
   requires(!base::internal::kIsWeakMethod<
-           base::internal::MakeFunctorTraits<FunctionType>::is_method,
+           base::internal::FunctorTraits<FunctionType,
+                                         BoundParameters...>::is_method,
            BoundParameters...>)
 auto BindWGPUOnceCallback(FunctionType&& function,
                           BoundParameters&&... bound_parameters) {
@@ -135,7 +136,7 @@ auto BindWGPUOnceCallback(FunctionType&& function,
 }
 
 template <typename CallbackType>
-  requires base::is_instantiation<base::RepeatingCallback, CallbackType>
+  requires base::is_instantiation<CallbackType, base::RepeatingCallback>
 auto MakeWGPURepeatingCallback(CallbackType&& cb) {
   return new gpu::webgpu::WGPURepeatingCallback<typename CallbackType::RunType>(
       std::move(cb));

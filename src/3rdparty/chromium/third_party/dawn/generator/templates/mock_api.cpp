@@ -27,6 +27,7 @@
 
 {% set api = metadata.api.lower() %}
 #include "dawn/common/Log.h"
+#include "dawn/common/Assert.h"
 #include "mock_{{api}}.h"
 
 using namespace testing;
@@ -34,14 +35,14 @@ using namespace testing;
 namespace {
     {% for type in by_category["object"] %}
         {% for method in c_methods(type) %}
-            {{as_cType(method.return_type.name)}} Forward{{as_MethodSuffix(type.name, method.name)}}(
+            {{as_annotated_cType(method.returns)}} Forward{{as_MethodSuffix(type.name, method.name)}}(
                 {{-as_cType(type.name)}} self
                 {%- for arg in method.arguments -%}
                     , {{as_annotated_cType(arg)}}
                 {%- endfor -%}
             ) {
                 auto object = reinterpret_cast<ProcTableAsClass::Object*>(self);
-                return object->procs->{{as_MethodSuffix(type.name, method.name)}}(self
+                return object->procs->{{as_CppMethodSuffix(type.name, method.name)}}(self
                     {%- for arg in method.arguments -%}
                         , {{as_varName(arg.name)}}
                     {%- endfor -%}
@@ -55,6 +56,10 @@ namespace {
 ProcTableAsClass::~ProcTableAsClass() {
 }
 
+WGPUFuture ProcTableAsClass::GetLastFuture() {
+    return {mNextFutureID - 1};
+}
+
 {% set Prefix = metadata.proc_table_prefix %}
 void ProcTableAsClass::GetProcTable({{Prefix}}ProcTable* table) {
     {% for type in by_category["object"] %}
@@ -65,51 +70,111 @@ void ProcTableAsClass::GetProcTable({{Prefix}}ProcTable* table) {
 
     {% for type in by_category["structure"] if type.has_free_members_function %}
         table->{{as_varName(type.name, Name("free members"))}} = []({{as_cType(type.name)}} {{as_varName(type.name)}}) {
-            dawn::WarningLog() << "No mock available for {{as_varName(type.name, Name('free members'))}}";
+            static bool calledOnce = false;
+            if (!calledOnce) {
+                calledOnce = true;
+                dawn::WarningLog() << "No mock available for {{as_varName(type.name, Name('free members'))}}";
+            }
         };
     {% endfor %}
 }
 
 {% for type in by_category["object"] %}
-    {% for method in type.methods if has_callback_arguments(method) %}
-        {% set Suffix = as_MethodSuffix(type.name, method.name) %}
-
-        {{as_cType(method.return_type.name)}} ProcTableAsClass::{{Suffix}}(
-            {{-as_cType(type.name)}} {{as_varName(type.name)}}
-            {%- for arg in method.arguments -%}
-                , {{as_annotated_cType(arg)}}
-            {%- endfor -%}
-        ) {
-            ProcTableAsClass::Object* object = reinterpret_cast<ProcTableAsClass::Object*>({{as_varName(type.name)}});
-            {% for callback_arg in method.arguments if callback_arg.type.category == 'function pointer' %}
-                object->m{{as_MethodSuffix(type.name, method.name)}}Callback = {{as_varName(callback_arg.name)}};
-            {% endfor %}
-            object->userdata = userdata;
-            return On{{as_MethodSuffix(type.name, method.name)}}(
-                {{-as_varName(type.name)}}
-                {%- for arg in method.arguments -%}
-                    , {{as_varName(arg.name)}}
-                {%- endfor -%}
-            );
-        }
-
-        {% for callback_arg in method.arguments if callback_arg.type.category == 'function pointer' %}
-            void ProcTableAsClass::Call{{Suffix}}Callback(
+    {% for method in type.methods %}
+        {% set Suffix = as_CppMethodSuffix(type.name, method.name) %}
+        {% if has_callbackInfoStruct(method) %}
+            {{as_annotated_cType(method.returns)}} ProcTableAsClass::{{Suffix}}(
                 {{-as_cType(type.name)}} {{as_varName(type.name)}}
-                {%- for arg in callback_arg.type.arguments -%}
-                    {%- if not loop.last -%}, {{as_annotated_cType(arg)}}{%- endif -%}
+                {%- for arg in method.arguments -%}
+                    , {{as_annotated_cType(arg)}}
                 {%- endfor -%}
             ) {
                 ProcTableAsClass::Object* object = reinterpret_cast<ProcTableAsClass::Object*>({{as_varName(type.name)}});
-                object->m{{Suffix}}Callback(
-                    {%- for arg in callback_arg.type.arguments -%}
-                        {%- if not loop.last -%}{{as_varName(arg.name)}}, {% endif -%}
-                    {%- endfor -%}
-                    object->userdata);
+                {% if method.returns and method.returns.type.name.get() == "future" %}
+                    dawn::FutureID futureID = mNextFutureID++;
+                    object->m{{Suffix}}Requests[futureID] = {callbackInfo.callback, callbackInfo.userdata1, callbackInfo.userdata2};
+
+                    On{{Suffix}}(
+                        {{-as_varName(type.name)}}
+                        {%- for arg in method.arguments -%}
+                            , {{as_varName(arg.name)}}
+                        {%- endfor -%}
+                    );
+                    return {futureID};
+                {% else %}
+                    object->m{{Suffix}}Callback = callbackInfo.callback;
+                    object->m{{Suffix}}Userdata1 = callbackInfo.userdata1;
+                    object->m{{Suffix}}Userdata2 = callbackInfo.userdata2;
+
+                    On{{Suffix}}(
+                        {{-as_varName(type.name)}}
+                        {%- for arg in method.arguments -%}
+                            , {{as_varName(arg.name)}}
+                        {%- endfor -%}
+                    );
+                {% endif %}
             }
-        {% endfor %}
+            {% set CallbackInfoType = (method.arguments|last).type %}
+            {% set CallbackType = find_by_name(CallbackInfoType.members, "callback").type %}
+            void ProcTableAsClass::Call{{Suffix}}Callback(
+                {{-as_cType(type.name)}} {{as_varName(type.name)}}
+                {%- for arg in CallbackType.arguments -%}
+                    , {{as_annotated_cType(arg)}}
+                {%- endfor -%}
+                {%- if method.returns and method.returns.type.name.get() == "future" -%}
+                    , WGPUFuture future
+                {%- endif -%}
+            ) {
+                ProcTableAsClass::Object* object = reinterpret_cast<ProcTableAsClass::Object*>({{as_varName(type.name)}});
+                {% if method.returns and method.returns.type.name.get() == "future" %}
+                    if (future.id == dawn::kNullFutureID) {
+                        // TODO(crbug.com/514400091): We provide this default version for emulating
+                        // callbacks to avoid breaking existing tests that only ever have one
+                        // outstanding pending callback at a time. Consider updating all tests,
+                        // and/or adding better utility functions to make this process easier.
+                        DAWN_ASSERT(object->m{{Suffix}}Requests.size() == 1);
+                        auto it = object->m{{Suffix}}Requests.begin();
+                        auto data = it->second;
+                        object->m{{Suffix}}Requests.erase(it);
+                        data.callback(
+                            {%- for arg in CallbackType.arguments -%}
+                                {{as_varName(arg.name)}}{{", "}}
+                            {%- endfor -%}
+                            data.userdata1, data.userdata2);
+                    } else {
+                        auto it = object->m{{Suffix}}Requests.find(future.id);
+                        DAWN_ASSERT(it != object->m{{Suffix}}Requests.end());
+                        auto data = it->second;
+                        object->m{{Suffix}}Requests.erase(it);
+                        data.callback(
+                            {%- for arg in CallbackType.arguments -%}
+                                {{as_varName(arg.name)}}{{", "}}
+                            {%- endfor -%}
+                            data.userdata1, data.userdata2);
+                    }
+                {% else %}
+                    object->m{{Suffix}}Callback(
+                        {%- for arg in CallbackType.arguments -%}
+                            {{as_varName(arg.name)}}{{", "}}
+                        {%- endfor -%}
+                        object->m{{Suffix}}Userdata1, object->m{{Suffix}}Userdata2);
+                {% endif %}
+            }
+        {% endif %}
     {% endfor %}
 {% endfor %}
+
+// Manually implement some callback helpers for testing.
+void ProcTableAsClass::CallDeviceLostCallback(WGPUDevice device, WGPUDeviceLostReason reason, WGPUStringView message) {
+    ProcTableAsClass::Object* object = reinterpret_cast<ProcTableAsClass::Object*>(device);
+    object->mDeviceLostCallback(&device, reason, message, object->mDeviceLostUserdata1,
+                                object->mDeviceLostUserdata2);
+}
+void ProcTableAsClass::CallDeviceUncapturedErrorCallback(WGPUDevice device, WGPUErrorType type, WGPUStringView message) {
+    ProcTableAsClass::Object* object = reinterpret_cast<ProcTableAsClass::Object*>(device);
+    object->mUncapturedErrorCallback(&device, type, message, object->mUncapturedErrorUserdata1,
+                                     object->mUncapturedErrorUserdata2);
+}
 
 {% for type in by_category["object"] %}
     {{as_cType(type.name)}} ProcTableAsClass::GetNew{{type.name.CamelCase()}}() {
@@ -122,9 +187,3 @@ void ProcTableAsClass::GetProcTable({{Prefix}}ProcTable* table) {
 MockProcTable::MockProcTable() = default;
 
 MockProcTable::~MockProcTable() = default;
-
-void MockProcTable::IgnoreAllReleaseCalls() {
-    {% for type in by_category["object"] %}
-        EXPECT_CALL(*this, {{as_MethodSuffix(type.name, Name("release"))}}(_)).Times(AnyNumber());
-    {% endfor %}
-}

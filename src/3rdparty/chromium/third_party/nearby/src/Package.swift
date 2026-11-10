@@ -1,5 +1,20 @@
-// swift-tools-version:5.5
+// swift-tools-version:5.7
 // The swift-tools-version declares the minimum version of Swift required to build this package.
+
+// Copyright 2022 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 import PackageDescription
 
 let package = Package(
@@ -13,23 +28,22 @@ let package = Package(
   products: [
     // Products define the executables and libraries a package produces, and make them visible to other packages.
     .library(
-      name: "NearbyCoreAdapter",
-      targets: ["NearbyCoreAdapter"]
+      name: "NearbyConnections",
+      targets: ["NearbyConnections"]
     ),
     .library(
-      name: "NearbyConnections",
+      name: "NearbyConnectionsDynamic",
+      type: .dynamic,
       targets: ["NearbyConnections"]
     ),
   ],
   dependencies: [
     // Dependencies declare other packages that this package depends on.
     .package(
-      name: "abseil",
       url: "https://github.com/bourdakos1/abseil-cpp-SwiftPM.git",
-      branch: "cxx17"
+      branch: "cxx17-test"
     ),
     .package(
-      name: "BoringSSL-GRPC",
       url: "https://github.com/firebase/boringssl-SwiftPM.git",
       "0.7.1"..<"0.8.0"
     ),
@@ -172,8 +186,10 @@ let package = Package(
       name: "ukey2",
       dependencies: [
         "protobuf",
-        .product(name: "abseil", package: "abseil"),
-        .product(name: "openssl_grpc", package: "BoringSSL-GRPC"),
+        .product(name: "AbseilCXX17", package: "abseil-cpp-SwiftPM"),
+        .product(
+          name: "openssl_grpc", package: "boringssl-SwiftPM",
+          moduleAliases: ["NearbySSL": "openssl_grpc"]),
       ],
       path: "third_party/ukey2",
       exclude: [
@@ -362,7 +378,7 @@ let package = Package(
         "smhasher",
         "ukey2",
         "protobuf",
-        .product(name: "abseil", package: "abseil"),
+        .product(name: "AbseilCXX17", package: "abseil-cpp-SwiftPM"),
       ],
       path: ".",
       exclude: [
@@ -371,12 +387,14 @@ let package = Package(
         "embedded",
         "connections/c",
         "connections/dart",
+        "connections/java",
         "connections/clients/ios",
         "connections/README.md",
         "connections/swift/NearbyConnections",
         "connections/swift/NearbyCoreAdapter/BUILD",
         "connections/swift/NearbyCoreAdapter/Tests",
         "internal/platform/implementation/g3",
+        "internal/platform/implementation/android",
         "internal/platform/implementation/apple/Tests",
         "internal/platform/implementation/apple/Mediums/Ble/Sockets/Tests",
         "internal/platform/implementation/windows",
@@ -388,7 +406,9 @@ let package = Package(
         // build files
         "connections/implementation/analytics/BUILD",
         "connections/implementation/flags/BUILD",
+        "connections/implementation/mediums/advertisements/BUILD",
         "connections/implementation/mediums/ble_v2/BUILD",
+        "connections/implementation/mediums/multiplex/BUILD",
         "connections/implementation/mediums/BUILD",
         "connections/implementation/BUILD",
         "connections/implementation/fuzzers",
@@ -397,11 +417,14 @@ let package = Package(
         "internal/crypto/BUILD",
         "internal/crypto/BUILD.gn",
         "internal/crypto_cros/BUILD",
+        "internal/encoding/BUILD",
         "internal/interop/BUILD",
         "internal/weave/BUILD",
         "internal/weave/sockets/BUILD",
         "internal/platform/flags/BUILD",
         "internal/platform/implementation/shared/BUILD",
+        "internal/platform/implementation/apple/Flags/BUILD",
+        "internal/platform/implementation/apple/Log/BUILD",
         "internal/platform/implementation/apple/Mediums/BUILD",
         "internal/platform/implementation/apple/Mediums/Ble/Sockets/BUILD",
         "internal/platform/implementation/apple/Tests/BUILD",
@@ -431,11 +454,16 @@ let package = Package(
         "connections/implementation/service_controller_router_test.cc",
         "connections/implementation/bluetooth_bwu_test.cc",
         "connections/implementation/wifi_direct_bwu_test.cc",
-        "connections/implementation/wifi_hotspot_test.cc",
+        "connections/implementation/wifi_hotspot_bwu_test.cc",
         "connections/implementation/analytics/analytics_recorder_test.cc",
         "connections/implementation/analytics/throughput_recorder_test.cc",
+        "connections/implementation/mediums/advertisements/data_element_test.cc",
+        "connections/implementation/mediums/advertisements/dct_advertisement_test.cc",
+        "connections/implementation/mediums/advertisements/advertisement_util_test.cc",
+        "connections/implementation/mediums/awdl_test.cc",
         "connections/implementation/mediums/ble_v2_test.cc",
         "connections/implementation/mediums/ble_v2/bloom_filter_test.cc",
+        "connections/implementation/mediums/ble_v2/ble_l2cap_packet_test.cc",
         "connections/implementation/mediums/ble_v2/ble_packet_test.cc",
         "connections/implementation/mediums/ble_v2/ble_advertisement_test.cc",
         "connections/implementation/mediums/ble_v2/advertisement_read_result_test.cc",
@@ -443,6 +471,10 @@ let package = Package(
         "connections/implementation/mediums/ble_v2/ble_utils_test.cc",
         "connections/implementation/mediums/ble_v2/discovered_peripheral_tracker_test.cc",
         "connections/implementation/mediums/ble_v2/instant_on_lost_advertisement_test.cc",
+        "connections/implementation/mediums/ble_v2/instant_on_lost_manager_test.cc",
+        "connections/implementation/mediums/multiplex/multiplex_frames_test.cc",
+        "connections/implementation/mediums/multiplex/multiplex_socket_test.cc",
+        "connections/implementation/mediums/multiplex/multiplex_output_stream_test.cc",
         "connections/implementation/mediums/webrtc_peer_id_test.cc",
         "connections/implementation/mediums/wifi_lan_test.cc",
         "connections/implementation/mediums/bluetooth_classic_test.cc",
@@ -470,31 +502,37 @@ let package = Package(
         "connections/status_test.cc",
         "connections/payload_test.cc",
         "internal/base/bluetooth_address_test.cc",
+        "internal/base/file_path_test.cc",
+        "internal/base/files_test.cc",
         "internal/crypto/ed25519_unittest.cc",
         "internal/crypto_cros/aead_unittest.cc",
         "internal/crypto_cros/ec_private_key_unittest.cc",
         "internal/crypto_cros/ec_signature_creator_unittest.cc",
         "internal/crypto_cros/encryptor_unittest.cc",
         "internal/crypto_cros/hmac_unittest.cc",
-        "internal/crypto_cros/random_unittest.cc",
         "internal/crypto_cros/rsa_private_key_unittest.cc",
         "internal/crypto_cros/secure_hash_unittest.cc",
         "internal/crypto_cros/sha2_unittest.cc",
         "internal/crypto_cros/signature_verifier_unittest.cc",
         "internal/crypto_cros/symmetric_key_unittest.cc",
+        "internal/encoding/base85_test.cc",
         "internal/data/leveldb_data_set_test.cc",
         "internal/data/memory_data_set_test.cc",
         "internal/flags/nearby_flags_test.cc",
         "internal/proto/analytics/connections_log_test.cc",
         "internal/platform/feature_flags_test.cc",
+        "internal/platform/file_test.cc",
         "internal/platform/cancelable_alarm_test.cc",
         "internal/platform/crypto_test.cc",
         "internal/platform/byte_array_test.cc",
         "internal/platform/bluetooth_utils_test.cc",
         "internal/platform/credential_storage_impl_test.cc",
         "internal/platform/input_stream_test.cc",
+        "internal/platform/mac_address_test.cc",
         "internal/platform/single_thread_executor_test.cc",
         "internal/platform/scheduled_executor_test.cc",
+        "internal/platform/stream_reader_test.cc",
+        "internal/platform/stream_writer_test.cc",
         "internal/platform/count_down_latch_test.cc",
         "internal/platform/pipe_test.cc",
         "internal/platform/timer_impl_test.cc",
@@ -505,7 +543,6 @@ let package = Package(
         "internal/platform/wifi_hotspot_test.cc",
         "internal/platform/wifi_lan_test.cc",
         "internal/platform/wifi_test.cc",
-        "internal/platform/wifi_utils_test.cc",
         "internal/platform/connection_info_test.cc",
         "internal/platform/condition_variable_test.cc",
         "internal/platform/thread_check_nocompile_test.py",
@@ -513,7 +550,6 @@ let package = Package(
         "internal/platform/bluetooth_connection_info_test.cc",
         "internal/platform/mutex_test.cc",
         "internal/platform/atomic_reference_test.cc",
-        "internal/platform/logging_test.cc",
         "internal/platform/multi_thread_executor_test.cc",
         "internal/platform/ble_connection_info_test.cc",
         "internal/platform/ble_test.cc",
@@ -525,8 +561,10 @@ let package = Package(
         "internal/platform/implementation/apple/atomic_boolean_test.cc",
         "internal/platform/implementation/apple/atomic_uint32_test.cc",
         "internal/platform/implementation/shared/file_test.cc",
+        "internal/platform/implementation/wifi_utils_test.cc",
         "internal/platform/atomic_boolean_test.cc",
         "internal/platform/exception_test.cc",
+        "internal/platform/expected_test.cc",
         "internal/platform/error_code_recorder_test.cc",
         "internal/platform/future_test.cc",
         "internal/platform/cancellation_flag_test.cc",
@@ -535,6 +573,7 @@ let package = Package(
         "internal/platform/direct_executor_test.cc",
         "internal/platform/borrowable_test.cc",
         "internal/platform/implementation/windows/http_loader_test.cc",
+        "internal/platform/blocking_queue_stream_test.cc",
         "internal/network/utils_test.cc",
         "internal/network/url_test.cc",
         "internal/network/http_response_test.cc",
@@ -598,6 +637,7 @@ let package = Package(
         "compiled_proto",
         "connections/c",
         "connections/dart",
+        "connections/java",
         "connections/clients/ios",
         "connections/swift/NearbyCoreAdapter",
         "connections/swift/NearbyConnections/BUILD",
@@ -643,5 +683,5 @@ let package = Package(
     ),
   ],
   cLanguageStandard: .c99,
-  cxxLanguageStandard: .cxx17
+  cxxLanguageStandard: .cxx20
 )

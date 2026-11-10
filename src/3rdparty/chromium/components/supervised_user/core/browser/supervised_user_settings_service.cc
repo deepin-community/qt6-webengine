@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include <set>
+#include <string_view>
 #include <utility>
 
 #include "base/feature_list.h"
@@ -16,16 +17,15 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/user_metrics.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/values.h"
 #include "components/prefs/json_pref_store.h"
 #include "components/prefs/pref_filter.h"
-#include "components/supervised_user/core/common/features.h"
 #include "components/supervised_user/core/common/supervised_user_constants.h"
 #include "components/sync/model/sync_change.h"
 #include "components/sync/model/sync_change_processor.h"
+#include "components/sync/protocol/entity_data.h"
 #include "components/sync/protocol/entity_specifics.pb.h"
 #include "components/sync/protocol/managed_user_setting_specifics.pb.h"
 
@@ -34,8 +34,8 @@ namespace supervised_user {
 using base::JSONReader;
 using base::UserMetricsAction;
 using base::Value;
+using syncer::DataType;
 using syncer::ModelError;
-using syncer::ModelType;
 using syncer::SUPERVISED_USER_SETTINGS;
 using syncer::SyncChange;
 using syncer::SyncChangeList;
@@ -82,7 +82,6 @@ bool SyncChangeIsNewWebsiteApproval(const std::string& name,
     }
     default: {
       NOTREACHED();
-      return false;
     }
   }
 }
@@ -92,7 +91,7 @@ bool SyncChangeIsNewWebsiteApproval(const std::string& name,
 SupervisedUserSettingsService::SupervisedUserSettingsService()
     : active_(false), initialization_failed_(false) {}
 
-SupervisedUserSettingsService::~SupervisedUserSettingsService() {}
+SupervisedUserSettingsService::~SupervisedUserSettingsService() = default;
 
 void SupervisedUserSettingsService::Init(
     base::FilePath profile_path,
@@ -162,12 +161,8 @@ void SupervisedUserSettingsService::SetActive(bool active) {
   if (active_) {
     // Child account supervised users must be signed in.
     SetLocalSetting(supervised_user::kSigninAllowed, base::Value(true));
-
-    if (base::FeatureList::IsEnabled(
-            supervised_user::kSupervisedPrefsControlledBySupervisedStore)) {
-      SetLocalSetting(supervised_user::kSigninAllowedOnNextStartup,
-                      base::Value(true));
-    }
+    SetLocalSetting(supervised_user::kSigninAllowedOnNextStartup,
+                    base::Value(true));
 
     // Always allow cookies, to avoid website compatibility issues.
     SetLocalSetting(supervised_user::kCookiesAlwaysAllowed, base::Value(true));
@@ -177,11 +172,15 @@ void SupervisedUserSettingsService::SetActive(bool active) {
   } else {
     RemoveLocalSetting(supervised_user::kSigninAllowed);
     RemoveLocalSetting(supervised_user::kCookiesAlwaysAllowed);
-    RemoveLocalSetting(supervised_user::kForceSafeSearch);
     RemoveLocalSetting(supervised_user::kGeolocationDisabled);
   }
 
   InformSubscribers();
+}
+
+void SupervisedUserSettingsService::SetSuspended(bool suspended) {
+  CHECK(!active_) << "Only inactive services can be suspended.";
+  suspended_ = suspended;
 }
 
 bool SupervisedUserSettingsService::IsReady() const {
@@ -220,7 +219,7 @@ void SupervisedUserSettingsService::SaveItem(
                                                  ? SyncChange::ACTION_UPDATE
                                                  : SyncChange::ACTION_ADD;
     change_list.push_back(SyncChange(FROM_HERE, change_type, data));
-    absl::optional<ModelError> error =
+    std::optional<ModelError> error =
         sync_processor_->ProcessSyncChanges(FROM_HERE, change_list);
     DCHECK(!error.has_value()) << error.value().ToString();
   } else {
@@ -241,19 +240,19 @@ void SupervisedUserSettingsService::SaveItem(
   InformSubscribers();
 }
 
-void SupervisedUserSettingsService::SetLocalSetting(base::StringPiece key,
+void SupervisedUserSettingsService::SetLocalSetting(std::string_view key,
                                                     base::Value value) {
   local_settings_.Set(key, std::move(value));
   InformSubscribers();
 }
 
-void SupervisedUserSettingsService::SetLocalSetting(base::StringPiece key,
+void SupervisedUserSettingsService::SetLocalSetting(std::string_view key,
                                                     base::Value::Dict dict) {
   local_settings_.Set(key, std::move(dict));
   InformSubscribers();
 }
 
-void SupervisedUserSettingsService::RemoveLocalSetting(base::StringPiece key) {
+void SupervisedUserSettingsService::RemoveLocalSetting(std::string_view key) {
   local_settings_.Remove(key);
   InformSubscribers();
 }
@@ -290,9 +289,9 @@ void SupervisedUserSettingsService::WaitUntilReadyToSync(
   }
 }
 
-absl::optional<syncer::ModelError>
+std::optional<syncer::ModelError>
 SupervisedUserSettingsService::MergeDataAndStartSyncing(
-    ModelType type,
+    DataType type,
     const SyncDataList& initial_sync_data,
     std::unique_ptr<SyncChangeProcessor> sync_processor) {
   DCHECK_EQ(SUPERVISED_USER_SETTINGS, type);
@@ -321,7 +320,7 @@ SupervisedUserSettingsService::MergeDataAndStartSyncing(
     DCHECK_EQ(SUPERVISED_USER_SETTINGS, sync_data.GetDataType());
     const ::sync_pb::ManagedUserSettingSpecifics& supervised_user_setting =
         sync_data.GetSpecifics().managed_user_setting();
-    absl::optional<base::Value> value =
+    std::optional<base::Value> value =
         JSONReader::Read(supervised_user_setting.value());
     // Wrongly formatted input will cause null values.
     // SetKey below requires non-null values.
@@ -369,16 +368,16 @@ SupervisedUserSettingsService::MergeDataAndStartSyncing(
     return sync_processor_->ProcessSyncChanges(FROM_HERE, change_list);
   }
 
-  return absl::nullopt;
+  return std::nullopt;
 }
 
-void SupervisedUserSettingsService::StopSyncing(ModelType type) {
+void SupervisedUserSettingsService::StopSyncing(DataType type) {
   DCHECK_EQ(syncer::SUPERVISED_USER_SETTINGS, type);
   sync_processor_.reset();
 }
 
 SyncDataList SupervisedUserSettingsService::GetAllSyncDataForTesting(
-    ModelType type) const {
+    DataType type) const {
   DCHECK_EQ(syncer::SUPERVISED_USER_SETTINGS, type);
   SyncDataList data;
   for (const auto it : *GetAtomicSettings()) {
@@ -396,7 +395,7 @@ SyncDataList SupervisedUserSettingsService::GetAllSyncDataForTesting(
   return data;
 }
 
-absl::optional<syncer::ModelError>
+std::optional<syncer::ModelError>
 SupervisedUserSettingsService::ProcessSyncChanges(
     const base::Location& from_here,
     const SyncChangeList& change_list) {
@@ -415,7 +414,7 @@ SupervisedUserSettingsService::ProcessSyncChanges(
     switch (change_type) {
       case SyncChange::ACTION_ADD:
       case SyncChange::ACTION_UPDATE: {
-        absl::optional<base::Value> value =
+        std::optional<base::Value> value =
             JSONReader::Read(supervised_user_setting.value());
         if (old_value) {
           DLOG_IF(WARNING, change_type == SyncChange::ACTION_ADD)
@@ -457,7 +456,7 @@ SupervisedUserSettingsService::ProcessSyncChanges(
                              WriteablePrefStore::DEFAULT_PREF_WRITE_FLAGS);
   InformSubscribers();
 
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 base::WeakPtr<syncer::SyncableService>
@@ -465,7 +464,10 @@ SupervisedUserSettingsService::AsWeakPtr() {
   return weak_ptr_factory_.GetWeakPtr();
 }
 
-void SupervisedUserSettingsService::OnPrefValueChanged(const std::string& key) {
+std::string SupervisedUserSettingsService::GetClientTag(
+    const syncer::EntityData& entity_data) const {
+  DCHECK(entity_data.specifics.has_managed_user_setting());
+  return entity_data.specifics.managed_user_setting().name();
 }
 
 void SupervisedUserSettingsService::OnInitializationCompleted(bool success) {
@@ -559,7 +561,7 @@ base::Value::Dict SupervisedUserSettingsService::GetSettingsWithDefault() {
 }
 
 void SupervisedUserSettingsService::InformSubscribers() {
-  if (!IsReady()) {
+  if (!IsReady() || suspended_) {
     return;
   }
 

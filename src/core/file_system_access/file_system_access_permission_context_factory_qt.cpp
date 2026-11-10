@@ -1,10 +1,12 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "file_system_access_permission_context_factory_qt.h"
 
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 
+#include <memory>
 #include <QtGlobal>
 
 namespace QtWebEngineCore {
@@ -46,16 +48,9 @@ content::BrowserContext *FileSystemAccessPermissionContextFactoryQt::GetBrowserC
     return context;
 }
 
-KeyedService *FileSystemAccessPermissionContextFactoryQt::BuildServiceInstanceFor(
-        content::BrowserContext *context) const
+std::unique_ptr<KeyedService> FileSystemAccessPermissionContextFactoryQt::BuildServiceInstanceForBrowserContext(content::BrowserContext *context) const
 {
-    return new FileSystemAccessPermissionContextQt(context);
-}
-
-void FileSystemAccessPermissionContextFactoryQt::BrowserContextShutdown(
-        content::BrowserContext *context)
-{
-    Q_UNUSED(context);
+    return std::make_unique<FileSystemAccessPermissionContextQt>(context);
 }
 
 } // namespace QtWebEngineCore

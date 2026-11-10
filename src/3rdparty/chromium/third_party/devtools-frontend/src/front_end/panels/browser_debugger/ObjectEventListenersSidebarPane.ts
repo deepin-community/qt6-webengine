@@ -1,8 +1,10 @@
 // Copyright 2015 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import * as SDK from '../../core/sdk/sdk.js';
+import * as Buttons from '../../ui/components/buttons/buttons.js';
 import * as UI from '../../ui/legacy/legacy.js';
 import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 import * as EventListeners from '../event_listeners/event_listeners.js';
@@ -16,7 +18,7 @@ export class ObjectEventListenersSidebarPane extends UI.ThrottledWidget.Throttle
 
   constructor() {
     super();
-    this.contentElement.setAttribute('jslog', `${VisualLogging.pane().context('debugger-global-listeners')}`);
+    this.contentElement.setAttribute('jslog', `${VisualLogging.section('sources.global-listeners')}`);
 
     this.eventListenersView = new EventListeners.EventListenersView.EventListenersView(
         this.update.bind(this), /* enableDefaultTreeFocus */ true);
@@ -26,7 +28,9 @@ export class ObjectEventListenersSidebarPane extends UI.ThrottledWidget.Throttle
   }
 
   toolbarItems(): UI.Toolbar.ToolbarItem[] {
-    return [UI.Toolbar.Toolbar.createActionButtonForId('browser-debugger.refresh-global-event-listeners')];
+    const refreshButton = UI.Toolbar.Toolbar.createActionButton('browser-debugger.refresh-global-event-listeners');
+    refreshButton.setSize(Buttons.Button.Size.SMALL);
+    return [refreshButton];
   }
 
   protected override async doUpdate(): Promise<void> {
@@ -35,7 +39,7 @@ export class ObjectEventListenersSidebarPane extends UI.ThrottledWidget.Throttle
       this.#lastRequestedContext = undefined;
     }
 
-    const windowObjects: Array<SDK.RemoteObject.RemoteObject> = [];
+    const windowObjects: SDK.RemoteObject.RemoteObject[] = [];
     const executionContext = UI.Context.Context.instance().flavor(SDK.RuntimeModel.ExecutionContext);
     if (executionContext) {
       this.#lastRequestedContext = executionContext;

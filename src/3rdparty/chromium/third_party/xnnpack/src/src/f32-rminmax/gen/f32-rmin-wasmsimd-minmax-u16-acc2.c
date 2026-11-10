@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-rminmax/wasmsimd.c.in
 //   Generator: tools/xngen
@@ -11,22 +12,22 @@
 
 #include <wasm_simd128.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/reduce.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/reduce.h"
 
 
 void xnn_f32_rmin_ukernel__wasmsimd_minmax_u16_acc2(
     size_t batch,
     const float* input,
     float* output,
-    const union xnn_f32_default_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const struct xnn_f32_default_params* restrict params)
 {
   assert(batch != 0);
   assert(batch % sizeof(float) == 0);
   assert(input != NULL);
   assert(output != NULL);
 
-  v128_t vmin0 = wasm_v128_load32_splat(input);
+  v128_t vmin0 = wasm_v128_load32_splat(output);
   v128_t vmin1 = vmin0;
   for (; batch >= 16 * sizeof(float); batch -= 16 * sizeof(float)) {
     const v128_t vt0 = wasm_v128_load(input);

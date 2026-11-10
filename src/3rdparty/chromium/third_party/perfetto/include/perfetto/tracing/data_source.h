@@ -67,8 +67,8 @@ namespace perfetto {
 namespace internal {
 class TracingMuxerImpl;
 class TrackEventCategoryRegistry;
-template <typename, const internal::TrackEventCategoryRegistry*>
-class TrackEventDataSource;
+template <const internal::TrackEventCategoryRegistry*>
+class TrackEvent;
 }  // namespace internal
 
 namespace shlib {
@@ -92,6 +92,8 @@ class PERFETTO_EXPORT_COMPONENT DataSourceBase {
   // OnSetup() is invoked when tracing is configured. In most cases this happens
   // just before starting the trace. In the case of deferred start (see
   // deferred_start in trace_config.proto) start might happen later.
+  //
+  // Can be called from any thread.
   class SetupArgs {
    public:
     // This is valid only within the scope of the OnSetup() call and must not
@@ -111,6 +113,9 @@ class PERFETTO_EXPORT_COMPONENT DataSourceBase {
     // The index of this data source instance (0..kMaxDataSourceInstances - 1).
     uint32_t internal_instance_index = 0;
   };
+  // Invoked after tracing is actually started.
+  //
+  // Can be called from any thread.
   virtual void OnStart(const StartArgs&);
 
   class PERFETTO_EXPORT_COMPONENT StopArgs {
@@ -140,6 +145,11 @@ class PERFETTO_EXPORT_COMPONENT DataSourceBase {
     // The index of this data source instance (0..kMaxDataSourceInstances - 1).
     uint32_t internal_instance_index = 0;
   };
+  // Invoked before tracing is stopped.
+  //
+  // Can be called from any thread. Blocking this for too long it's not a good
+  // idea and can cause deadlocks. Use HandleAsynchronously() to postpone
+  // disabling the data source instance.
   virtual void OnStop(const StopArgs&);
 
   class ClearIncrementalStateArgs {
@@ -147,6 +157,10 @@ class PERFETTO_EXPORT_COMPONENT DataSourceBase {
     // The index of this data source instance (0..kMaxDataSourceInstances - 1).
     uint32_t internal_instance_index = 0;
   };
+  // Invoked before marking the thread local per-instance incremental state
+  // outdated.
+  //
+  // Can be called from any thread.
   virtual void WillClearIncrementalState(const ClearIncrementalStateArgs&);
 
   class FlushArgs {
@@ -168,6 +182,10 @@ class PERFETTO_EXPORT_COMPONENT DataSourceBase {
   // Called when the tracing service requests a Flush. Users can override this
   // to tell other threads to flush their TraceContext for this data source
   // (the library cannot execute code on all the threads on its own).
+  //
+  // Can be called from any thread. Blocking this for too long it's not a good
+  // idea and can cause deadlocks. Use HandleAsynchronously() to postpone
+  // sending the flush acknowledgement to the service.
   virtual void OnFlush(const FlushArgs&);
 
   // Determines whether a startup session can be adopted by a service-initiated
@@ -240,6 +258,9 @@ class DataSource : public DataSourceBase {
   // drop data on shared memory overruns.
   constexpr static BufferExhaustedPolicy kBufferExhaustedPolicy =
       BufferExhaustedPolicy::kDrop;
+
+  // Whether the kBufferExhaustedPolicy policy above is overridable via config.
+  constexpr static bool kBufferExhaustedPolicyConfigurable = false;
 
   // When this flag is false, we cannot have multiple instances of this data
   // source. When a data source is already active and if we attempt
@@ -341,10 +362,12 @@ class DataSource : public DataSourceBase {
           Helper::type().GetIncrementalState(tls_inst_, instance_index_));
     }
 
+    uint32_t instance_index() const { return instance_index_; }
+
    private:
     friend class DataSource;
-    template <typename, const internal::TrackEventCategoryRegistry*>
-    friend class internal::TrackEventDataSource;
+    template <const internal::TrackEventCategoryRegistry*>
+    friend class internal::TrackEvent;
     TraceContext(internal::DataSourceInstanceThreadLocalState* tls_inst,
                  uint32_t instance_index)
         : tls_inst_(tls_inst), instance_index_(instance_index) {}
@@ -456,12 +479,17 @@ class DataSource : public DataSourceBase {
     constexpr bool no_flush =
         std::is_same_v<decltype(&DerivedDataSource::OnFlush),
                        decltype(&DataSourceBase::OnFlush)>;
-    internal::DataSourceParams params{
-        DerivedDataSource::kSupportsMultipleInstances,
-        DerivedDataSource::kRequiresCallbacksUnderLock};
+    internal::DataSourceParams params;
+    params.requires_callbacks_under_lock =
+        DerivedDataSource::kRequiresCallbacksUnderLock;
+    params.supports_multiple_instances =
+        DerivedDataSource::kSupportsMultipleInstances;
+    params.default_buffer_exhausted_policy =
+        DerivedDataSource::kBufferExhaustedPolicy;
+    params.buffer_exhausted_policy_configurable =
+        DerivedDataSource::kBufferExhaustedPolicyConfigurable;
     return Helper::type().Register(
-        descriptor, factory, params, DerivedDataSource::kBufferExhaustedPolicy,
-        no_flush,
+        descriptor, factory, params, no_flush,
         GetCreateTlsFn(
             static_cast<typename DataSourceTraits::TlsStateType*>(nullptr)),
         GetCreateIncrementalStateFn(
@@ -564,7 +592,7 @@ thread_local internal::DataSourceThreadLocalState* DataSource<T, D>::tls_state_;
 // the macro invocation (e.g., "MACRO(...);") to avoid warnings about extra
 // semicolons.
 #define PERFETTO_INTERNAL_SWALLOW_SEMICOLON() \
-  extern int perfetto_internal_unused
+  [[maybe_unused]] extern int perfetto_internal_unused
 
 // This macro must be used once for each data source next to the data source's
 // declaration.

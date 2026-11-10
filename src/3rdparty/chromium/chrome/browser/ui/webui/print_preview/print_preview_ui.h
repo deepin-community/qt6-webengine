@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "base/containers/span.h"
 #include "base/functional/callback_forward.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
@@ -19,7 +20,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
-#include "build/chromeos_buildflags.h"
+#include "base/unguessable_token.h"
 #include "chrome/browser/ui/webui/constrained_web_dialog_ui.h"
 #include "chrome/services/printing/public/mojom/pdf_nup_converter.mojom.h"
 #include "components/printing/common/print.mojom.h"
@@ -51,18 +52,17 @@ class BrowserContext;
 namespace printing {
 
 class PrintPreviewHandler;
+class PrintPreviewUI;
 
-class PrintPreviewUIConfig : public content::WebUIConfig {
+class PrintPreviewUIConfig
+    : public content::DefaultWebUIConfig<PrintPreviewUI> {
  public:
   PrintPreviewUIConfig();
   ~PrintPreviewUIConfig() override;
 
-  // content::WebUIConfig:
+  // content::DefaultWebUIConfig:
   bool IsWebUIEnabled(content::BrowserContext* browser_context) override;
   bool ShouldHandleURL(const GURL& url) override;
-  std::unique_ptr<content::WebUIController> CreateWebUIController(
-      content::WebUI* web_ui,
-      const GURL& url) override;
 };
 
 // PrintPreviewUI lives on the UI thread.
@@ -136,11 +136,11 @@ class PrintPreviewUI : public ConstrainedWebDialogUI,
 
   // Determines whether to cancel a print preview request based on the request
   // id.
-  static bool ShouldCancelRequest(const std::optional<int32_t>& preview_ui_id,
+  static bool ShouldCancelRequest(const base::UnguessableToken& preview_ui_id,
                                   int request_id);
 
   // Returns an id to uniquely identify this PrintPreviewUI.
-  std::optional<int32_t> GetIDForPrintPreviewUI() const;
+  base::UnguessableToken GetIDForPrintPreviewUI() const;
 
   // Notifies the Web UI of a print preview request with |request_id|.
   virtual void OnPrintPreviewRequest(int request_id);
@@ -184,7 +184,8 @@ class PrintPreviewUI : public ConstrainedWebDialogUI,
 
     // Notifies that the document to print from preview is ready.  This occurs
     // after any possible N-up processing.
-    virtual void PreviewDocumentReady(content::WebContents* preview_dialog) {}
+    virtual void PreviewDocumentReady(content::WebContents* preview_dialog,
+                                      base::span<const uint8_t> data) {}
 
    protected:
     virtual ~TestDelegate() = default;
@@ -287,7 +288,7 @@ class PrintPreviewUI : public ConstrainedWebDialogUI,
 
   // The unique ID for this class instance. Stored here to avoid calling
   // GetIDForPrintPreviewUI() everywhere.
-  std::optional<int32_t> id_;
+  base::UnguessableToken id_;
 
 #if BUILDFLAG(ENABLE_OOP_PRINTING)
   // This UI's client ID with the print backend service manager.

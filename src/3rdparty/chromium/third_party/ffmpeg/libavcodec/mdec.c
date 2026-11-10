@@ -27,6 +27,7 @@
  * This is very similar to intra-only MPEG-1.
  */
 
+#include "libavutil/mem.h"
 #include "libavutil/mem_internal.h"
 
 #include "avcodec.h"
@@ -55,7 +56,6 @@ typedef struct MDECContext {
     DECLARE_ALIGNED(16, uint16_t, quant_matrix)[64];
     uint8_t *bitstream_buffer;
     unsigned int bitstream_buffer_size;
-    int block_last_index[6];
 } MDECContext;
 
 //very similar to MPEG-1
@@ -68,7 +68,7 @@ static inline int mdec_decode_block_intra(MDECContext *a, int16_t *block, int n)
     const int qscale = a->qscale;
 
     /* DC coefficient */
-    if (a->version == 2) {
+    if (a->version <= 2) {
         block[0] = 2 * get_sbits(&a->gb, 10) + 1024;
     } else {
         component = (n <= 3 ? 0 : n - 4 + 1);
@@ -100,9 +100,10 @@ static inline int mdec_decode_block_intra(MDECContext *a, int16_t *block, int n)
                 LAST_SKIP_BITS(re, &a->gb, 1);
             } else {
                 /* escape */
-                run = SHOW_UBITS(re, &a->gb, 6)+1; LAST_SKIP_BITS(re, &a->gb, 6);
-                UPDATE_CACHE(re, &a->gb);
-                level = SHOW_SBITS(re, &a->gb, 10); SKIP_BITS(re, &a->gb, 10);
+                run = SHOW_UBITS(re, &a->gb, 6) + 1;
+                SKIP_BITS(re, &a->gb, 6);
+                level = SHOW_SBITS(re, &a->gb, 10);
+                LAST_SKIP_BITS(re, &a->gb, 10);
                 i += run;
                 if (i > 63) {
                     av_log(a->avctx, AV_LOG_ERROR,
@@ -125,7 +126,6 @@ static inline int mdec_decode_block_intra(MDECContext *a, int16_t *block, int n)
         }
         CLOSE_READER(re, &a->gb);
     }
-    a->block_last_index[n] = i;
     return 0;
 }
 
@@ -176,8 +176,6 @@ static int decode_frame(AVCodecContext *avctx, AVFrame *frame,
 
     if ((ret = ff_thread_get_buffer(avctx, frame, 0)) < 0)
         return ret;
-    frame->pict_type = AV_PICTURE_TYPE_I;
-    frame->flags |= AV_FRAME_FLAG_KEY;
 
     av_fast_padded_malloc(&a->bitstream_buffer, &a->bitstream_buffer_size, buf_size);
     if (!a->bitstream_buffer)

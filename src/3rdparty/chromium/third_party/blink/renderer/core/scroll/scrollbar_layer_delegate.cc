@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/core/scroll/scrollbar_layer_delegate.h"
 
 #include "cc/paint/paint_canvas.h"
+#include "third_party/blink/renderer/core/paint/paint_info.h"
 #include "third_party/blink/renderer/core/scroll/scroll_types.h"
 #include "third_party/blink/renderer/core/scroll/scrollable_area.h"
 #include "third_party/blink/renderer/core/scroll/scrollbar.h"
@@ -12,6 +13,7 @@
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_canvas.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_record_builder.h"
+#include "third_party/blink/renderer/platform/web_test_support.h"
 #include "ui/gfx/geometry/skia_conversions.h"
 
 namespace blink {
@@ -23,13 +25,13 @@ class ScopedScrollbarPainter {
 
  public:
   explicit ScopedScrollbarPainter(cc::PaintCanvas& canvas) : canvas_(canvas) {}
-  ~ScopedScrollbarPainter() { canvas_.drawPicture(builder_->EndRecording()); }
+  ~ScopedScrollbarPainter() { canvas_.drawPicture(builder_.EndRecording()); }
 
-  GraphicsContext& Context() { return builder_->Context(); }
+  GraphicsContext& Context() { return builder_.Context(); }
 
  private:
   cc::PaintCanvas& canvas_;
-  PaintRecordBuilder* builder_ = MakeGarbageCollected<PaintRecordBuilder>();
+  PaintRecordBuilder builder_;
 };
 
 }  // namespace
@@ -66,13 +68,12 @@ bool ScrollbarLayerDelegate::IsSolidColor() const {
   return scrollbar_->GetTheme().IsSolidColor();
 }
 
-SkColor4f ScrollbarLayerDelegate::GetSolidColor() const {
-  return scrollbar_->GetTheme().GetSolidColor(
-      scrollbar_->ScrollbarThumbColor());
-}
-
 bool ScrollbarLayerDelegate::IsOverlay() const {
   return scrollbar_->IsOverlayScrollbar();
+}
+
+bool ScrollbarLayerDelegate::IsRunningWebTest() const {
+  return WebTestSupport::IsRunningWebTest();
 }
 
 bool ScrollbarLayerDelegate::IsFluentOverlayScrollbarMinimalMode() const {
@@ -129,11 +130,16 @@ float ScrollbarLayerDelegate::Opacity() const {
   return scrollbar_->GetTheme().Opacity(*scrollbar_);
 }
 
-bool ScrollbarLayerDelegate::NeedsRepaintPart(cc::ScrollbarPart part) const {
-  if (part == cc::ScrollbarPart::kThumb) {
-    return scrollbar_->ThumbNeedsRepaint();
-  }
-  return scrollbar_->TrackNeedsRepaint();
+bool ScrollbarLayerDelegate::ThumbNeedsRepaint() const {
+  return scrollbar_->ThumbNeedsRepaint();
+}
+
+void ScrollbarLayerDelegate::ClearThumbNeedsRepaint() {
+  scrollbar_->ClearThumbNeedsRepaint();
+}
+
+bool ScrollbarLayerDelegate::TrackAndButtonsNeedRepaint() const {
+  return scrollbar_->TrackAndButtonsNeedRepaint();
 }
 
 bool ScrollbarLayerDelegate::NeedsUpdateDisplay() const {
@@ -149,7 +155,7 @@ bool ScrollbarLayerDelegate::UsesNinePatchThumbResource() const {
 }
 
 gfx::Size ScrollbarLayerDelegate::NinePatchThumbCanvasSize() const {
-  DCHECK(scrollbar_->GetTheme().UsesNinePatchThumbResource());
+  DCHECK(UsesNinePatchThumbResource());
   return scrollbar_->GetTheme().NinePatchThumbCanvasSize(*scrollbar_);
 }
 
@@ -158,49 +164,69 @@ gfx::Rect ScrollbarLayerDelegate::NinePatchThumbAperture() const {
   return scrollbar_->GetTheme().NinePatchThumbAperture(*scrollbar_);
 }
 
+bool ScrollbarLayerDelegate::UsesSolidColorThumb() const {
+  return scrollbar_->GetTheme().UsesSolidColorThumb();
+}
+
+gfx::Insets ScrollbarLayerDelegate::SolidColorThumbInsets() const {
+  return scrollbar_->GetTheme().SolidColorThumbInsets(*scrollbar_);
+}
+
+bool ScrollbarLayerDelegate::UsesNinePatchTrackAndButtonsResource() const {
+  return scrollbar_->GetTheme().UsesNinePatchTrackAndButtonsResource();
+}
+
+gfx::Size ScrollbarLayerDelegate::NinePatchTrackAndButtonsCanvasSize(
+    float scale) const {
+  CHECK(UsesNinePatchTrackAndButtonsResource());
+  return scrollbar_->GetTheme().NinePatchTrackAndButtonsCanvasSize(*scrollbar_,
+                                                                   scale);
+}
+
+gfx::Rect ScrollbarLayerDelegate::NinePatchTrackAndButtonsAperture(
+    float scale) const {
+  CHECK(UsesNinePatchTrackAndButtonsResource());
+  return scrollbar_->GetTheme().NinePatchTrackAndButtonsAperture(*scrollbar_,
+                                                                 scale);
+}
+
 bool ScrollbarLayerDelegate::ShouldPaint() const {
-  // TODO(crbug.com/860499): Remove this condition, it should not occur.
-  // Layers may exist and be painted for a |scrollbar_| that has had its
-  // ScrollableArea detached. This seems weird because if the area is detached
-  // the layer should be destroyed but here we are. https://crbug.com/860499.
-  if (!scrollbar_->GetScrollableArea())
-    return false;
-  // When the frame is throttled, the scrollbar will not be painted because
-  // the frame has not had its lifecycle updated. Thus the actual value of
-  // HasTickmarks can't be known and may change once the frame is unthrottled.
-  if (scrollbar_->GetScrollableArea()->IsThrottled())
-    return false;
-  return true;
+  return scrollbar_->ShouldPaint();
 }
 
 bool ScrollbarLayerDelegate::HasTickmarks() const {
   return ShouldPaint() && scrollbar_->HasTickmarks();
 }
 
-void ScrollbarLayerDelegate::PaintPart(cc::PaintCanvas* canvas,
-                                       cc::ScrollbarPart part,
-                                       const gfx::Rect& rect) {
-  if (!ShouldPaint())
+void ScrollbarLayerDelegate::PaintThumb(cc::PaintCanvas& canvas,
+                                        const gfx::Rect& rect) {
+  if (!ShouldPaint()) {
     return;
-
-  auto& theme = scrollbar_->GetTheme();
-  ScopedScrollbarPainter painter(*canvas);
-  // The canvas coordinate space is relative to the part's origin.
-  switch (part) {
-    case cc::ScrollbarPart::kThumb:
-      theme.PaintThumb(painter.Context(), *scrollbar_, gfx::Rect(rect));
-      scrollbar_->ClearThumbNeedsRepaint();
-      break;
-    case cc::ScrollbarPart::kTrackButtonsTickmarks: {
-      DCHECK_EQ(rect.size(), scrollbar_->FrameRect().size());
-      gfx::Vector2d offset = rect.origin() - scrollbar_->FrameRect().origin();
-      theme.PaintTrackButtonsTickmarks(painter.Context(), *scrollbar_, offset);
-      scrollbar_->ClearTrackNeedsRepaint();
-      break;
-    }
-    default:
-      NOTREACHED();
   }
+  auto& theme = scrollbar_->GetTheme();
+  ScopedScrollbarPainter painter(canvas);
+  PaintInfo paint_info(painter.Context(), CullRect(rect),
+                       PaintPhase::kForeground, false);
+  theme.PaintThumb(paint_info, *scrollbar_, rect);
+  scrollbar_->ClearThumbNeedsRepaint();
+}
+
+void ScrollbarLayerDelegate::PaintTrackAndButtons(cc::PaintCanvas& canvas,
+                                                  const gfx::Rect& rect) {
+  if (!ShouldPaint()) {
+    return;
+  }
+  auto& theme = scrollbar_->GetTheme();
+  ScopedScrollbarPainter painter(canvas);
+  PaintInfo paint_info(painter.Context(), CullRect(rect),
+                       PaintPhase::kForeground, false);
+  theme.PaintTrackAndButtons(paint_info, *scrollbar_, rect);
+  scrollbar_->ClearTrackAndButtonsNeedRepaint();
+}
+
+SkColor4f ScrollbarLayerDelegate::ThumbColor() const {
+  CHECK(IsSolidColor() || UsesSolidColorThumb());
+  return scrollbar_->GetTheme().ThumbColor(*scrollbar_);
 }
 
 }  // namespace blink

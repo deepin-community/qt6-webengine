@@ -11,7 +11,9 @@
 #include "modules/audio_processing/include/audio_frame_proxies.h"
 
 #include "api/audio/audio_frame.h"
-#include "modules/audio_processing/include/audio_processing.h"
+#include "api/audio/audio_processing.h"
+#include "api/audio/audio_processing_statistics.h"
+#include "rtc_base/checks.h"
 
 namespace webrtc {
 

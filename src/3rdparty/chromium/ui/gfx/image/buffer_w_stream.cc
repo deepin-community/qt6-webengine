@@ -6,6 +6,8 @@
 
 #include <utility>
 
+#include "base/compiler_specific.h"
+
 namespace gfx {
 
 BufferWStream::BufferWStream() = default;
@@ -18,7 +20,7 @@ std::vector<uint8_t> BufferWStream::TakeBuffer() {
 
 bool BufferWStream::write(const void* buffer, size_t size) {
   const uint8_t* bytes = reinterpret_cast<const uint8_t*>(buffer);
-  result_.insert(result_.end(), bytes, bytes + size);
+  result_.insert(result_.end(), bytes, UNSAFE_TODO(bytes + size));
   return true;
 }
 

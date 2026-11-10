@@ -135,7 +135,7 @@ void AbstractPropertySetCSSStyleDeclaration::setProperty(
     ExceptionState& exception_state) {
   CSSPropertyID property_id =
       UnresolvedCSSPropertyID(execution_context, property_name);
-  if (!IsValidCSSPropertyID(property_id)) {
+  if (!IsValidCSSPropertyID(property_id) || !IsPropertyValid(property_id)) {
     return;
   }
 
@@ -178,6 +178,19 @@ String AbstractPropertySetCSSStyleDeclaration::removeProperty(
     mutation_scope.EnqueueMutationRecord();
   }
   return result;
+}
+
+void AbstractPropertySetCSSStyleDeclaration::QuietlyRemoveProperty(
+    const String& property_name) {
+  CSSPropertyID property_id =
+      CssPropertyID(GetExecutionContext(), property_name);
+  CHECK(IsValidCSSPropertyID(property_id));
+  if (property_id == CSSPropertyID::kVariable) {
+    PropertySet().RemoveProperty(AtomicString(property_name),
+                                 /*return_text=*/nullptr);
+  } else {
+    PropertySet().RemoveProperty(property_id, /*return_text=*/nullptr);
+  }
 }
 
 const CSSValue*

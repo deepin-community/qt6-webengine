@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-gemm/4x16-aarch64-neon-mlal-lane-cortex-a53.S.in
 //   Generator: tools/xngen
@@ -8,7 +9,7 @@
 // LICENSE file in the root directory of this source tree.
 
 
-#include <xnnpack/assembly.h>
+#include "src/xnnpack/assembly.h"
 
 # void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_4x16__asm_aarch64_neon_mlal_lane_cortex_a53_prfm(
 #     size_t mr,                 x0
@@ -520,7 +521,6 @@ BEGIN_FUNCTION xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_4x16__asm_aarch64_neon_mlal
         FCVTNS      v29.4s, v29.4s
         FCVTNS      v30.4s, v30.4s
         FCVTNS      v31.4s, v31.4s
-
         SQXTN       v16.4h, v16.4s
         SQXTN       v17.4h, v17.4s
         SQXTN       v18.4h, v18.4s
@@ -530,7 +530,6 @@ BEGIN_FUNCTION xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_4x16__asm_aarch64_neon_mlal
         SQXTN       v26.4h, v26.4s
         SQXTN       v27.4h, v27.4s
         LD1R        {v6.8h}, [x11], 2       // add bias
-
         SQXTN2      v16.8h, v20.4s
         SQXTN2      v17.8h, v21.4s
         SQXTN2      v18.8h, v22.4s
@@ -539,7 +538,6 @@ BEGIN_FUNCTION xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_4x16__asm_aarch64_neon_mlal
         SQXTN2      v25.8h, v29.4s
         SQXTN2      v26.8h, v30.4s
         SQXTN2      v27.8h, v31.4s
-
         SQADD       v16.8h, v16.8h, v6.8h
         SQADD       v17.8h, v17.8h, v6.8h
         SQADD       v18.8h, v18.8h, v6.8h

@@ -21,15 +21,7 @@
 
 namespace base {
 namespace {
-#if BUILDFLAG(IS_IOS)
-// For M99, 45% of devices have 2GB of RAM, and 55% have more.
-constexpr uint64_t kLowMemoryDeviceThresholdMB = 1024;
-#else
-// Updated Desktop default threshold to match the Android 2021 definition.
-constexpr uint64_t kLowMemoryDeviceThresholdMB = 2048;
-#endif
-
-absl::optional<uint64_t> g_amount_of_physical_memory_mb_for_testing;
+std::optional<uint64_t> g_amount_of_physical_memory_mb_for_testing;
 }  // namespace
 
 // static
@@ -67,7 +59,7 @@ uint64_t SysInfo::AmountOfAvailablePhysicalMemory() {
     // from the fake |kLowMemoryDeviceThresholdMB| limit.
     uint64_t memory_used =
         AmountOfPhysicalMemoryImpl() - AmountOfAvailablePhysicalMemoryImpl();
-    uint64_t memory_limit = kLowMemoryDeviceThresholdMB * 1024 * 1024;
+    uint64_t memory_limit = features::kLowMemoryDeviceThresholdMB.Get() * 1024 * 1024;
     // std::min ensures no underflow, as |memory_used| can be > |memory_limit|.
     return memory_limit - std::min(memory_used, memory_limit);
   }
@@ -136,7 +128,7 @@ BucketizedSize GetCachedSystemRamBucketizedSize() {
 }
 
 bool IsPartialLowEndModeOnMidRangeDevicesEnabled() {
-  // TODO(crbug.com/1434873): make the feature not enable on 32-bit devices
+  // TODO(crbug.com/40264947): make the feature not enable on 32-bit devices
   // before launching or going to high Stable %.
   return SysInfo::Is4GbOr6GbDevice() &&
          base::FeatureList::IsEnabled(
@@ -169,7 +161,7 @@ bool SysInfo::Is6GbDevice() {
 
 #endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS)
 
-// TODO(crbug.com/1434873): This method is for chromium native code.
+// TODO(crbug.com/40264947): This method is for chromium native code.
 // We need to update the java-side code, i.e.
 // base/android/java/src/org/chromium/base/SysUtils.java,
 // and to make the selected components in java to see this feature.
@@ -195,19 +187,21 @@ bool SysInfo::IsLowEndDeviceOrPartialLowEndModeEnabled(
 #endif
 }
 
-#if !BUILDFLAG(IS_ANDROID)
-// The Android equivalent of this lives in `detectLowEndDevice()` at:
-// base/android/java/src/org/chromium/base/SysUtils.java
 bool DetectLowEndDevice() {
+  // Keep in sync with the Android implementation of this function.
+  // LINT.IfChange
   CommandLine* command_line = CommandLine::ForCurrentProcess();
-  if (command_line->HasSwitch(switches::kEnableLowEndDeviceMode))
+  if (command_line->HasSwitch(switches::kEnableLowEndDeviceMode)) {
     return true;
-  if (command_line->HasSwitch(switches::kDisableLowEndDeviceMode))
+  }
+  if (command_line->HasSwitch(switches::kDisableLowEndDeviceMode)) {
     return false;
+  }
 
   int ram_size_mb = SysInfo::AmountOfPhysicalMemoryMB();
   return ram_size_mb > 0 &&
-         static_cast<uint64_t>(ram_size_mb) <= kLowMemoryDeviceThresholdMB;
+         static_cast<unsigned>(ram_size_mb) <= features::kLowMemoryDeviceThresholdMB.Get();
+  // LINT.ThenChange(//base/android/java/src/org/chromium/base/SysUtils.java)
 }
 
 // static
@@ -215,11 +209,16 @@ bool SysInfo::IsLowEndDeviceImpl() {
   static internal::LazySysInfoValue<bool, DetectLowEndDevice> instance;
   return instance.value();
 }
-#endif
 
 #if !BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_WIN) && \
     !BUILDFLAG(IS_CHROMEOS)
 std::string SysInfo::HardwareModelName() {
+  return std::string();
+}
+#endif
+
+#if !BUILDFLAG(IS_ANDROID)
+std::string SysInfo::SocManufacturer() {
   return std::string();
 }
 #endif
@@ -263,9 +262,9 @@ std::string SysInfo::ProcessCPUArchitecture() {
 }
 
 // static
-absl::optional<uint64_t> SysInfo::SetAmountOfPhysicalMemoryMbForTesting(
+std::optional<uint64_t> SysInfo::SetAmountOfPhysicalMemoryMbForTesting(
     const uint64_t amount_of_memory_mb) {
-  absl::optional<uint64_t> current = g_amount_of_physical_memory_mb_for_testing;
+  std::optional<uint64_t> current = g_amount_of_physical_memory_mb_for_testing;
   g_amount_of_physical_memory_mb_for_testing.emplace(amount_of_memory_mb);
   return current;
 }

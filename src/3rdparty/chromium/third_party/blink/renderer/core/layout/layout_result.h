@@ -5,9 +5,10 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_LAYOUT_RESULT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_LAYOUT_RESULT_H_
 
+#include <optional>
+
 #include "base/check_op.h"
 #include "base/dcheck_is_on.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/serialized_script_value.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/layout/block_node.h"
@@ -19,7 +20,6 @@
 #include "third_party/blink/renderer/core/layout/floats_utils.h"
 #include "third_party/blink/renderer/core/layout/geometry/bfc_offset.h"
 #include "third_party/blink/renderer/core/layout/geometry/margin_strut.h"
-#include "third_party/blink/renderer/core/layout/grid/layout_grid.h"
 #include "third_party/blink/renderer/core/layout/logical_fragment.h"
 #include "third_party/blink/renderer/core/layout/non_overflowing_scroll_range.h"
 #include "third_party/blink/renderer/core/layout/physical_fragment.h"
@@ -50,10 +50,11 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
     kBfcBlockOffsetResolved = 1,
     kNeedsEarlierBreak = 2,
     kOutOfFragmentainerSpace = 3,
-    kNeedsRelayoutWithNoForcedTruncateAtLineClamp = 4,
+    kNeedsLineClampRelayout = 4,
     kDisableFragmentation = 5,
     kNeedsRelayoutWithNoChildScrollbarChanges = 6,
-    kAlgorithmSpecific1 = 7,  // Save bits by using the same value for mutually
+    kTextBoxTrimEndDidNotApply = 7,
+    kAlgorithmSpecific1 = 8,  // Save bits by using the same value for mutually
                               // exclusive results.
     kNeedsRelayoutWithRowCrossSizeChanges = kAlgorithmSpecific1,
     kNeedsRelayoutAsLastTableBox = kAlgorithmSpecific1,
@@ -78,7 +79,7 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
                const ConstraintSpace& new_space,
                const MarginStrut& new_end_margin_strut,
                LayoutUnit bfc_line_offset,
-               absl::optional<LayoutUnit> bfc_block_offset,
+               std::optional<LayoutUnit> bfc_block_offset,
                LayoutUnit block_offset_delta);
 
   // Creates a copy of LayoutResult with a new (but "identical") fragment.
@@ -109,6 +110,25 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
 
   int LinesUntilClamp() const {
     return rare_data_ ? rare_data_->lines_until_clamp : 0;
+  }
+
+  const LayoutObject* LineClampAfterLayoutObject() const {
+    return rare_data_ ? rare_data_->line_clamp_after_layout_object : nullptr;
+  }
+
+  // Returns true if the block-end of this line box is trimmable by the
+  // `text-box-trim` property. If it's true, it means that this is the line box
+  // that was the candidate for block-end trimming, but this doesn't necessarily
+  // mean that trimming actually took place. Trimming may be prevented by
+  // non-zero trailing border / padding, for instance.
+  bool IsBlockEndTrimmableLine() const {
+    return rare_data_ && rare_data_->is_block_end_trimmable_line();
+  }
+
+  // Returns true if this line box is not the last line in its IFC, but only
+  // because it has a line-clamp ellipsis that pushed content to the next line.
+  bool WouldBeLastLineIfNotForEllipsis() const {
+    return rare_data_ && rare_data_->would_be_last_line_if_not_for_ellipsis();
   }
 
   // Return true if this is an orthogonal writing-mode root that depends on the
@@ -171,19 +191,9 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
   // positioned nodes are set.
   void CopyMutableOutOfFlowData(const LayoutResult& previous_result) const;
 
-  // Returns if we can use the first-tier OOF-positioned cache.
-  bool CanUseOutOfFlowPositionedFirstTierCache() const {
-    DCHECK(physical_fragment_->IsOutOfFlowPositioned());
-    return bitfields_.can_use_out_of_flow_positioned_first_tier_cache;
-  }
-
-  absl::optional<wtf_size_t> PositionFallbackIndex() const {
-    return rare_data_ ? rare_data_->PositionFallbackIndex() : absl::nullopt;
-  }
-  const Vector<NonOverflowingScrollRange>*
-  PositionFallbackNonOverflowingRanges() const {
-    return rare_data_ ? rare_data_->PositionFallbackNonOverflowingRanges()
-                      : nullptr;
+  const HeapVector<NonOverflowingScrollRange>* NonOverflowingScrollRanges()
+      const {
+    return rare_data_ ? rare_data_->NonOverflowingScrollRanges() : nullptr;
   }
 
   bool NeedsAnchorPositionScrollAdjustmentInX() const {
@@ -197,11 +207,7 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
 
   // Get the path to the column spanner (if any) that interrupted column layout.
   const ColumnSpannerPath* GetColumnSpannerPath() const {
-    if (rare_data_) {
-      if (const RareData::BlockData* data = rare_data_->GetBlockData())
-        return data->column_spanner_path.Get();
-    }
-    return nullptr;
+    return rare_data_ ? rare_data_->column_spanner_path.Get() : nullptr;
   }
 
   // True if this result is the parent of a column spanner and is empty (i.e.
@@ -243,14 +249,14 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
     return bfc_offset_.line_offset;
   }
 
-  const absl::optional<LayoutUnit> BfcBlockOffset() const {
+  const std::optional<LayoutUnit> BfcBlockOffset() const {
     if (bitfields_.has_oof_insets_for_get_computed_style) {
       DCHECK(physical_fragment_->IsOutOfFlowPositioned());
       return LayoutUnit();
     }
 
     if (bitfields_.is_bfc_block_offset_nullopt)
-      return absl::nullopt;
+      return std::nullopt;
 
     return bfc_offset_.block_offset;
   }
@@ -268,15 +274,16 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
   //
   // In the above example the |BfcBlockOffset()| will be at 0px, where-as the
   // |LineBoxBfcBlockOffset()| will be at 20px.
-  absl::optional<LayoutUnit> LineBoxBfcBlockOffset() const {
+  std::optional<LayoutUnit> LineBoxBfcBlockOffset() const {
     if (Status() != kSuccess || !GetPhysicalFragment().IsLineBox()) {
-      return absl::nullopt;
+      return std::nullopt;
     }
 
     if (rare_data_) {
-      if (absl::optional<LayoutUnit> offset =
-              rare_data_->LineBoxBfcBlockOffset())
+      if (std::optional<LayoutUnit> offset =
+              rare_data_->LineBoxBfcBlockOffset()) {
         return offset;
+      }
     }
 
     return BfcBlockOffset();
@@ -307,18 +314,25 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
 
   // Return the amount of clearance that we have to add after the fragment. This
   // is used for BR clear elements.
-  LayoutUnit ClearanceAfterLine() const {
-    if (!rare_data_) {
-      return LayoutUnit();
+  std::optional<LayoutUnit> ClearanceAfterLine() const {
+    if (rare_data_) [[unlikely]] {
+      return rare_data_->ClearanceAfterLine();
     }
-    const RareData::LineData* data = rare_data_->GetLineData();
-    return data ? data->clearance_after_line : LayoutUnit();
+    return std::nullopt;
   }
 
-  absl::optional<LayoutUnit> MinimalSpaceShortage() const {
+  // Return the amount to trim the block size by the `text-box-trim` property.
+  std::optional<LayoutUnit> TrimBlockEndBy() const {
+    if (rare_data_) [[unlikely]] {
+      return rare_data_->TrimBlockEndBy();
+    }
+    return std::nullopt;
+  }
+
+  std::optional<LayoutUnit> MinimalSpaceShortage() const {
     if (!rare_data_ || space_.IsInitialColumnBalancingPass() ||
         rare_data_->minimal_space_shortage == kIndefiniteSize) {
-      return absl::nullopt;
+      return std::nullopt;
     }
     return rare_data_->minimal_space_shortage;
   }
@@ -481,6 +495,23 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
   // Returns the space which generated this object for caching purposes.
   const ConstraintSpace& GetConstraintSpaceForCaching() const { return space_; }
 
+  // Returns the most recent anchor evaluated (if there is only one anchor).
+  // This value is cleared before a position fallback is applied.
+  Element* AccessibilityAnchor() const {
+    if (!rare_data_) {
+      return nullptr;
+    }
+    return rare_data_->accessibility_anchor;
+  }
+
+  const GCedHeapHashSet<Member<Element>>* DisplayLocksAffectedByAnchors()
+      const {
+    if (!rare_data_) {
+      return nullptr;
+    }
+    return rare_data_->display_locks_affected_by_anchors;
+  }
+
   // This exposes a mutable part of the layout result just for the
   // |OutOfFlowLayoutPart|.
   class MutableForOutOfFlow final {
@@ -489,18 +520,13 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
    protected:
     friend class OutOfFlowLayoutPart;
 
-    void SetOutOfFlowInsetsForGetComputedStyle(
-        const BoxStrut& insets,
-        bool can_use_out_of_flow_positioned_first_tier_cache) {
+    void SetOutOfFlowInsetsForGetComputedStyle(const BoxStrut& insets) {
       // OOF-positioned nodes *must* always have an initial BFC-offset.
       DCHECK(layout_result_->physical_fragment_->IsOutOfFlowPositioned());
       DCHECK_EQ(layout_result_->BfcLineOffset(), LayoutUnit());
       DCHECK_EQ(layout_result_->BfcBlockOffset().value_or(LayoutUnit()),
                 LayoutUnit());
 
-      layout_result_->bitfields_
-          .can_use_out_of_flow_positioned_first_tier_cache =
-          can_use_out_of_flow_positioned_first_tier_cache;
       layout_result_->bitfields_.has_oof_insets_for_get_computed_style = true;
       layout_result_->oof_insets_for_get_computed_style_ = insets;
     }
@@ -533,12 +559,18 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
               needs_scroll_adjustment_in_y);
     }
 
-    void SetPositionFallbackResult(
-        absl::optional<wtf_size_t> fallback_index,
-        const Vector<NonOverflowingScrollRange>& non_overflowing_ranges) {
-      layout_result_->EnsureRareData()->SetPositionFallbackResult(
-          fallback_index, non_overflowing_ranges);
+    void SetNonOverflowingScrollRanges(
+        const HeapVector<NonOverflowingScrollRange>& non_overflowing_ranges) {
+      if (layout_result_->rare_data_ || !non_overflowing_ranges.empty()) {
+        layout_result_->EnsureRareData()->SetNonOverflowingScrollRanges(
+            non_overflowing_ranges);
+      }
     }
+
+    void SetAccessibilityAnchor(Element* anchor);
+
+    void SetDisplayLocksAffectedByAnchors(
+        GCedHeapHashSet<Member<Element>>* display_locks);
 
    private:
     friend class LayoutResult;
@@ -617,31 +649,28 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
     // enum values.
     enum DataUnionType {
       kNone,
-      kBlockData,
       kFlexData,
       kGridData,
+      kLineSmallData,
       kLineData,
       kMathData,
       kTableData,
     };
 
-    using BitField = WTF::ConcurrentlyReadBitField<uint8_t>;
+    using BitField = ConcurrentlyReadBitField<uint16_t>;
     using LineBoxBfcBlockOffsetIsSetFlag = BitField::DefineFirstValue<bool, 1>;
-    using PositionFallbackResultIsSetFlag =
-        LineBoxBfcBlockOffsetIsSetFlag::DefineNextValue<bool, 1>;
     using OutOfFlowPositionedOffsetIsSetFlag =
-        PositionFallbackResultIsSetFlag::DefineNextValue<bool, 1>;
+        LineBoxBfcBlockOffsetIsSetFlag::DefineNextValue<bool, 1>;
     using NeedsAnchorPositionScrollAdjustmentInXFlag =
         OutOfFlowPositionedOffsetIsSetFlag::DefineNextValue<bool, 1>;
     using NeedsAnchorPositionScrollAdjustmentInYFlag =
         NeedsAnchorPositionScrollAdjustmentInXFlag::DefineNextValue<bool, 1>;
     using DataUnionTypeValue =
         NeedsAnchorPositionScrollAdjustmentInYFlag::DefineNextValue<uint8_t, 3>;
-
-    struct BlockData {
-      GC_PLUGIN_IGNORE("crbug.com/1146383")
-      Member<const ColumnSpannerPath> column_spanner_path;
-    };
+    using IsBlockEndTrimmableLineFlag =
+        DataUnionTypeValue::DefineNextValue<bool, 1>;
+    using WouldBeLastLineIfNotForEllipsis =
+        IsBlockEndTrimmableLineFlag::DefineNextValue<bool, 1>;
 
     struct FlexData {
       FlexData() = default;
@@ -663,9 +692,31 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
       std::unique_ptr<const GridLayoutData> grid_layout_data;
     };
 
-    struct LineData {
-      LayoutUnit clearance_after_line;
+    // `LineSmallData` can save allocations When only fields in it are needed.
+    struct LineSmallData {
+      std::optional<LayoutUnit> ClearanceAfterLine() const {
+        return clearance_after_line.NullOptIfMin();
+      }
+      std::optional<LayoutUnit> TrimBlockEndBy() const {
+        return trim_block_end_by.NullOptIfMin();
+      }
+
+      LayoutUnit clearance_after_line = LayoutUnit::Min();
+      LayoutUnit trim_block_end_by = LayoutUnit::Min();
+    };
+
+    // `LineData` is allocated separately as it's larger than data unions.
+    struct LineData : public LineSmallData {
       LayoutUnit annotation_block_offset_adjustment;
+    };
+
+    struct LineDataPtr {
+      LineDataPtr() = default;
+      LineDataPtr(const LineDataPtr& other) {
+        line_data = std::make_unique<LineData>(*other.line_data);
+      }
+
+      std::unique_ptr<LineData> line_data = std::make_unique<LineData>();
     };
 
     struct MathData {
@@ -683,14 +734,6 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
 
     void set_line_box_bfc_block_offset_is_set(bool flag) {
       return bit_field.set<LineBoxBfcBlockOffsetIsSetFlag>(flag);
-    }
-
-    bool position_fallback_result_is_set() const {
-      return bit_field.get<PositionFallbackResultIsSetFlag>();
-    }
-
-    void set_position_fallback_result_is_set(bool flag) {
-      return bit_field.set<PositionFallbackResultIsSetFlag>(flag);
     }
 
     bool oof_positioned_offset_is_set() const {
@@ -726,6 +769,20 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
       return bit_field.set<DataUnionTypeValue>(static_cast<uint8_t>(data_type));
     }
 
+    bool is_block_end_trimmable_line() const {
+      return bit_field.get<IsBlockEndTrimmableLineFlag>();
+    }
+    void set_is_block_end_trimmable_line() {
+      bit_field.set<IsBlockEndTrimmableLineFlag>(true);
+    }
+
+    bool would_be_last_line_if_not_for_ellipsis() const {
+      return bit_field.get<WouldBeLastLineIfNotForEllipsis>();
+    }
+    void set_would_be_last_line_if_not_for_ellipsis() {
+      bit_field.set<WouldBeLastLineIfNotForEllipsis>(true);
+    }
+
     template <typename DataType>
     DataType* EnsureData(DataType* address, DataUnionType data_type) {
       DataUnionType old_data_type = data_union_type();
@@ -736,18 +793,15 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
       }
       return address;
     }
+    bool HasData(DataUnionType data_type) const {
+      return data_union_type() == data_type;
+    }
     template <typename DataType>
     const DataType* GetData(const DataType* address,
                             DataUnionType data_type) const {
       return data_union_type() == data_type ? address : nullptr;
     }
 
-    BlockData* EnsureBlockData() {
-      return EnsureData<BlockData>(&block_data, kBlockData);
-    }
-    const BlockData* GetBlockData() const {
-      return GetData<BlockData>(&block_data, kBlockData);
-    }
     FlexData* EnsureFlexData() {
       return EnsureData<FlexData>(&flex_data, kFlexData);
     }
@@ -760,11 +814,27 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
     const GridData* GetGridData() const {
       return GetData<GridData>(&grid_data, kGridData);
     }
+    // When both `EnsureLineData()` and `EnsureLineSmallData()` are needed,
+    // `EnsureLineData()` must be done first. Upgrading `kLineSmallData` to
+    // `kLineData` isn't supported due to the lack of the needs.
     LineData* EnsureLineData() {
-      return EnsureData<LineData>(&line_data, kLineData);
+      return EnsureData(&line_data, kLineData)->line_data.get();
     }
     const LineData* GetLineData() const {
-      return GetData<LineData>(&line_data, kLineData);
+      const LineDataPtr* data = GetData(&line_data, kLineData);
+      return data ? data->line_data.get() : nullptr;
+    }
+    LineSmallData* EnsureLineSmallData() {
+      if (HasData(kLineData)) [[unlikely]] {
+        return EnsureLineData();
+      }
+      return EnsureData(&line_small_data, kLineSmallData);
+    }
+    const LineSmallData* GetLineSmallData() const {
+      if (HasData(kLineData)) [[unlikely]] {
+        return GetLineData();
+      }
+      return GetData(&line_small_data, kLineSmallData);
     }
     MathData* EnsureMathData() {
       return EnsureData<MathData>(&math_data, kMathData);
@@ -783,6 +853,7 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
 
     RareData(const RareData& rare_data)
         : early_break(rare_data.early_break),
+          column_spanner_path(rare_data.column_spanner_path),
           end_margin_strut(rare_data.end_margin_strut),
           // This will initialize "both" members of the union.
           tallest_unbreakable_block_size(
@@ -793,17 +864,15 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
           annotation_overflow(rare_data.annotation_overflow),
           block_end_annotation_space(rare_data.block_end_annotation_space),
           lines_until_clamp(rare_data.lines_until_clamp),
+          line_clamp_after_layout_object(
+              rare_data.line_clamp_after_layout_object),
           line_box_bfc_block_offset(rare_data.line_box_bfc_block_offset),
-          position_fallback_index(rare_data.position_fallback_index),
-          position_fallback_non_overflowing_ranges(
-              rare_data.position_fallback_non_overflowing_ranges),
+          non_overflowing_scroll_ranges(
+              rare_data.non_overflowing_scroll_ranges),
           oof_positioned_offset(rare_data.oof_positioned_offset),
           bit_field(rare_data.bit_field) {
       switch (data_union_type()) {
         case kNone:
-          break;
-        case kBlockData:
-          new (&block_data) BlockData(rare_data.block_data);
           break;
         case kFlexData:
           new (&flex_data) FlexData(rare_data.flex_data);
@@ -811,8 +880,11 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
         case kGridData:
           new (&grid_data) GridData(rare_data.grid_data);
           break;
+        case kLineSmallData:
+          new (&line_small_data) LineSmallData(rare_data.line_small_data);
+          break;
         case kLineData:
-          new (&line_data) LineData(rare_data.line_data);
+          new (&line_data) LineDataPtr(rare_data.line_data);
           break;
         case kMathData:
           new (&math_data) MathData(rare_data.math_data);
@@ -829,17 +901,17 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
       switch (data_union_type()) {
         case kNone:
           break;
-        case kBlockData:
-          block_data.~BlockData();
-          break;
         case kFlexData:
           flex_data.~FlexData();
           break;
         case kGridData:
           grid_data.~GridData();
           break;
+        case kLineSmallData:
+          line_small_data.~LineSmallData();
+          break;
         case kLineData:
-          line_data.~LineData();
+          line_data.~LineDataPtr();
           break;
         case kMathData:
           math_data.~MathData();
@@ -856,28 +928,32 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
       line_box_bfc_block_offset = offset;
       set_line_box_bfc_block_offset_is_set(true);
     }
-    absl::optional<LayoutUnit> LineBoxBfcBlockOffset() const {
+    std::optional<LayoutUnit> LineBoxBfcBlockOffset() const {
       if (!line_box_bfc_block_offset_is_set())
-        return absl::nullopt;
+        return std::nullopt;
       return line_box_bfc_block_offset;
     }
 
-    void SetPositionFallbackResult(
-        absl::optional<wtf_size_t> fallback_index,
-        const Vector<NonOverflowingScrollRange>& non_overflowing_ranges) {
-      position_fallback_index = fallback_index;
-      position_fallback_non_overflowing_ranges = non_overflowing_ranges;
-      set_position_fallback_result_is_set(true);
+    std::optional<LayoutUnit> ClearanceAfterLine() const {
+      const RareData::LineSmallData* data = GetLineSmallData();
+      return data ? data->ClearanceAfterLine() : std::nullopt;
     }
-    absl::optional<wtf_size_t> PositionFallbackIndex() const {
-      return position_fallback_index;
+
+    std::optional<LayoutUnit> TrimBlockEndBy() const {
+      const RareData::LineSmallData* data = GetLineSmallData();
+      return data ? data->TrimBlockEndBy() : std::nullopt;
     }
-    const Vector<NonOverflowingScrollRange>*
-    PositionFallbackNonOverflowingRanges() const {
-      if (!position_fallback_result_is_set()) {
+
+    void SetNonOverflowingScrollRanges(
+        const HeapVector<NonOverflowingScrollRange>& non_overflowing_ranges) {
+      non_overflowing_scroll_ranges = non_overflowing_ranges;
+    }
+    const HeapVector<NonOverflowingScrollRange>* NonOverflowingScrollRanges()
+        const {
+      if (non_overflowing_scroll_ranges.empty()) {
         return nullptr;
       }
-      return &position_fallback_non_overflowing_ranges;
+      return &non_overflowing_scroll_ranges;
     }
 
     void SetOutOfFlowPositionedOffset(const LogicalOffset& offset) {
@@ -892,6 +968,7 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
     void Trace(Visitor* visitor) const;
 
     Member<const EarlyBreak> early_break;
+    Member<const ColumnSpannerPath> column_spanner_path;
     MarginStrut end_margin_strut;
     union {
       // Only set in the initial column balancing layout pass, when we have no
@@ -912,16 +989,16 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
 
     LayoutUnit annotation_overflow;
     LayoutUnit block_end_annotation_space;
-    int lines_until_clamp = 0;
+    int lines_until_clamp;
+    WeakMember<const LayoutObject> line_clamp_after_layout_object;
+    Member<Element> accessibility_anchor;
+    Member<GCedHeapHashSet<Member<Element>>> display_locks_affected_by_anchors;
 
    private:
     // Only valid if line_box_bfc_block_offset_is_set
     LayoutUnit line_box_bfc_block_offset;
 
-    absl::optional<wtf_size_t> position_fallback_index;
-
-    // Only valid if position_fallback_result_is_set
-    Vector<NonOverflowingScrollRange> position_fallback_non_overflowing_ranges;
+    HeapVector<NonOverflowingScrollRange> non_overflowing_scroll_ranges;
 
     // Only valid if oof_positioned_offset_is_set
     LogicalOffset oof_positioned_offset;
@@ -929,10 +1006,10 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
     BitField bit_field;
 
     union {
-      BlockData block_data;
       FlexData flex_data;
       GridData grid_data;
-      LineData line_data;
+      LineSmallData line_small_data;
+      LineDataPtr line_data;
       MathData math_data;
       TableData table_data;
     };
@@ -962,7 +1039,6 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
               bool subtree_modified_margin_strut)
         : has_rare_data_exclusion_space(false),
           has_oof_insets_for_get_computed_style(false),
-          can_use_out_of_flow_positioned_first_tier_cache(false),
           is_bfc_block_offset_nullopt(false),
           has_forced_break(false),
           break_appeal(kBreakAppealPerfect),
@@ -984,7 +1060,6 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
 
     unsigned has_rare_data_exclusion_space : 1;
     unsigned has_oof_insets_for_get_computed_style : 1;
-    unsigned can_use_out_of_flow_positioned_first_tier_cache : 1;
     unsigned is_bfc_block_offset_nullopt : 1;
 
     unsigned has_forced_break : 1;
@@ -1005,7 +1080,7 @@ class CORE_EXPORT LayoutResult final : public GarbageCollected<LayoutResult> {
     unsigned initial_break_before : 4;  // EBreakBetween
     unsigned final_break_after : 4;     // EBreakBetween
 
-    unsigned status : 3;  // EStatus
+    unsigned status : 4;  // EStatus
     unsigned is_truncated_by_fragmentation_line : 1;
     unsigned has_orthogonal_fallback_size_descendant : 1;
   };

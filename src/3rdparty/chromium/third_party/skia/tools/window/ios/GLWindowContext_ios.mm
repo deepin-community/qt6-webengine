@@ -6,9 +6,10 @@
  * found in the LICENSE file.
  */
 
-#include "include/gpu/gl/GrGLInterface.h"
+#include "include/gpu/ganesh/gl/GrGLInterface.h"
 #include "tools/window/GLWindowContext.h"
 #include "tools/window/ios/WindowContextFactory_ios.h"
+#include "include/gpu/ganesh/gl/ios/GrGLMakeIOSInterface.h"
 
 #import <OpenGLES/ES3/gl.h>
 #import <UIKit/UIKit.h>
@@ -30,7 +31,7 @@ namespace {
 
 class GLWindowContext_ios : public GLWindowContext {
 public:
-    GLWindowContext_ios(const IOSWindowInfo&, const DisplayParams&);
+    GLWindowContext_ios(const IOSWindowInfo&, std::unique_ptr<const DisplayParams>);
 
     ~GLWindowContext_ios() override;
 
@@ -50,13 +51,13 @@ private:
     GLuint               fRenderbuffer;
 };
 
-GLWindowContext_ios::GLWindowContext_ios(const IOSWindowInfo& info, const DisplayParams& params)
-        : GLWindowContext(params)
+GLWindowContext_ios::GLWindowContext_ios(const IOSWindowInfo& info,
+                                         std::unique_ptr<const DisplayParams> params)
+        : GLWindowContext(std::move(params))
         , fWindow(info.fWindow)
         , fViewController(info.fViewController)
         , fGLContext(nil) {
-
-    // any config code here (particularly for msaa)?
+    // iOS test apps currently ignore MSAA settings.
 
     this->initializeContext();
 }
@@ -127,7 +128,7 @@ sk_sp<const GrGLInterface> GLWindowContext_ios::onInitializeContext() {
 
     glViewport(0, 0, fWidth, fHeight);
 
-    return GrGLMakeNativeInterface();
+    return GrGLInterfaces::MakeIOS();
 }
 
 void GLWindowContext_ios::onDestroyContext() {
@@ -144,8 +145,6 @@ void GLWindowContext_ios::onSwapBuffers() {
 }
 
 void GLWindowContext_ios::resize(int w, int h) {
-    // TODO: handle rotation
-    // [fGLContext update];
     GLWindowContext::resize(w, h);
 }
 
@@ -154,8 +153,8 @@ void GLWindowContext_ios::resize(int w, int h) {
 namespace skwindow {
 
 std::unique_ptr<WindowContext> MakeGLForIOS(const IOSWindowInfo& info,
-                                            const DisplayParams& params) {
-    std::unique_ptr<WindowContext> ctx(new GLWindowContext_ios(info, params));
+                                            std::unique_ptr<const DisplayParams> params) {
+    std::unique_ptr<WindowContext> ctx(new GLWindowContext_ios(info, std::move(params)));
     if (!ctx->isValid()) {
         return nullptr;
     }

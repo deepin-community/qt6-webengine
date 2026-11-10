@@ -344,7 +344,7 @@ std::shared_ptr<ShaderTranslateTask> ShaderD3D::compile(const gl::Context *conte
     {
         options->allowTranslateUniformBlockToStructuredBuffer = true;
     }
-    if (extensions.multiviewOVR || extensions.multiview2OVR)
+    if (extensions.multiviewOVR)
     {
         options->initializeBuiltinsForInstancedMultiview = true;
     }
@@ -366,6 +366,13 @@ std::shared_ptr<ShaderTranslateTask> ShaderD3D::compile(const gl::Context *conte
 
     return std::shared_ptr<ShaderTranslateTask>(
         new ShaderTranslateTaskD3D(mCompiledState, std::move(sourcePath)));
+}
+
+std::shared_ptr<ShaderTranslateTask> ShaderD3D::load(const gl::Context *context,
+                                                     gl::BinaryInputStream *stream)
+{
+    UNREACHABLE();
+    return std::shared_ptr<ShaderTranslateTask>(new ShaderTranslateTask);
 }
 
 bool CompiledShaderStateD3D::hasUniform(const std::string &name) const

@@ -16,9 +16,12 @@
 #include "mojo/public/cpp/bindings/remote.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/mediastream/media_stream_request.h"
+#include "third_party/blink/public/common/page/page_zoom.h"
 #include "third_party/blink/public/mojom/mediastream/media_stream.mojom-blink.h"
+#include "third_party/blink/renderer/modules/mediastream/capture_controller.h"
 #include "third_party/blink/renderer/modules/mediastream/mock_mojo_media_stream_dispatcher_host.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
 
 namespace blink {
 
@@ -45,27 +48,33 @@ class MediaStreamDeviceObserverTest : public ::testing::Test {
       WebMediaStreamDeviceObserver::OnDeviceStoppedCb device_stopped_callback,
       WebMediaStreamDeviceObserver::OnDeviceRequestStateChangeCb
           request_state_change_callback) {
-    WTF::wtf_size_t previous_stream_size = observer_->label_stream_map_.size();
+    wtf_size_t previous_stream_size = observer_->label_stream_map_.size();
     blink::mojom::blink::StreamDevicesSet stream_devices_set;
     stream_devices_set.stream_devices.push_back(
         blink::mojom::blink::StreamDevices::New(
-            absl::nullopt,
+            std::nullopt,
             MediaStreamDevice(
                 blink::mojom::blink::MediaStreamType::DISPLAY_VIDEO_CAPTURE_SET,
                 "device_0_id", "device_0_name")));
     stream_devices_set.stream_devices.push_back(
         blink::mojom::blink::StreamDevices::New(
-            absl::nullopt,
+            std::nullopt,
             MediaStreamDevice(
                 blink::mojom::blink::MediaStreamType::DISPLAY_VIDEO_CAPTURE_SET,
                 "device_1_id", "device_1_name")));
 
     observer_->AddStreams(
-        streams_label, stream_devices_set, device_stopped_callback,
-        /*on_device_changed_cb=*/base::DoNothing(),
-        request_state_change_callback,
-        /*on_device_capture_configuration_change_cb=*/base::DoNothing(),
-        /*on_device_capture_handle_change_cb=*/base::DoNothing());
+        streams_label, stream_devices_set,
+        {
+            .on_device_stopped_cb = device_stopped_callback,
+            .on_device_changed_cb = base::DoNothing(),
+            .on_device_request_state_change_cb = request_state_change_callback,
+            .on_device_capture_configuration_change_cb = base::DoNothing(),
+            .on_device_capture_handle_change_cb = base::DoNothing(),
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+            .on_zoom_level_change_cb = base::DoNothing(),
+#endif
+        });
     EXPECT_EQ(observer_->label_stream_map_.size(), previous_stream_size + 1);
   }
 
@@ -75,13 +84,12 @@ class MediaStreamDeviceObserverTest : public ::testing::Test {
     EXPECT_EQ(streams.size(), expected_labels.size());
     for (size_t stream_index = 0; stream_index < streams.size();
          ++stream_index) {
-      EXPECT_EQ(streams[static_cast<WTF::wtf_size_t>(stream_index)]
-                    .video_devices.size(),
-                1u);
-      EXPECT_EQ(streams[static_cast<WTF::wtf_size_t>(stream_index)]
-                    .video_devices[0]
-                    .id,
-                expected_labels[stream_index]);
+      EXPECT_EQ(
+          streams[static_cast<wtf_size_t>(stream_index)].video_devices.size(),
+          1u);
+      EXPECT_EQ(
+          streams[static_cast<wtf_size_t>(stream_index)].video_devices[0].id,
+          expected_labels[stream_index]);
     }
   }
 
@@ -94,7 +102,7 @@ class MediaStreamDeviceObserverTest : public ::testing::Test {
 
   const MediaStreamDeviceObserver::Stream& GetStream(
       const WTF::String& label,
-      WTF::wtf_size_t stream_index) const {
+      wtf_size_t stream_index) const {
     return GetStreams(label)[stream_index];
   }
 
@@ -129,8 +137,8 @@ TEST_F(MediaStreamDeviceObserverTest, GetNonScreenCaptureDevices) {
   mock_dispatcher_host_.OpenDevice(
       kRequestId1, "device_path",
       blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE,
-      base::BindOnce(&MediaStreamDeviceObserverTest::OnDeviceOpened,
-                     base::Unretained(this), run_loop1.QuitClosure()));
+      WTF::BindOnce(&MediaStreamDeviceObserverTest::OnDeviceOpened,
+                    WTF::Unretained(this), run_loop1.QuitClosure()));
   run_loop1.Run();
   String stream_label1 = stream_label_;
 
@@ -139,8 +147,8 @@ TEST_F(MediaStreamDeviceObserverTest, GetNonScreenCaptureDevices) {
   mock_dispatcher_host_.OpenDevice(
       kRequestId2, "screen_capture",
       blink::mojom::MediaStreamType::GUM_DESKTOP_VIDEO_CAPTURE,
-      base::BindOnce(&MediaStreamDeviceObserverTest::OnDeviceOpened,
-                     base::Unretained(this), run_loop2.QuitClosure()));
+      WTF::BindOnce(&MediaStreamDeviceObserverTest::OnDeviceOpened,
+                    WTF::Unretained(this), run_loop2.QuitClosure()));
   run_loop2.Run();
   String stream_label2 = stream_label_;
 
@@ -176,8 +184,8 @@ TEST_F(MediaStreamDeviceObserverTest, OnDeviceStopped) {
   mock_dispatcher_host_.OpenDevice(
       kRequestId, "device_path",
       blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE,
-      base::BindOnce(&MediaStreamDeviceObserverTest::OnDeviceOpened,
-                     base::Unretained(this), run_loop1.QuitClosure()));
+      WTF::BindOnce(&MediaStreamDeviceObserverTest::OnDeviceOpened,
+                    WTF::Unretained(this), run_loop1.QuitClosure()));
   run_loop1.Run();
 
   EXPECT_EQ(observer_->label_stream_map_.size(), 1u);
@@ -201,8 +209,8 @@ TEST_F(MediaStreamDeviceObserverTest, OnDeviceChanged) {
   mock_dispatcher_host_.OpenDevice(
       kRequestId1, example_video_id1,
       blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE,
-      base::BindOnce(&MediaStreamDeviceObserverTest::OnDeviceOpened,
-                     base::Unretained(this), run_loop1.QuitClosure()));
+      WTF::BindOnce(&MediaStreamDeviceObserverTest::OnDeviceOpened,
+                    WTF::Unretained(this), run_loop1.QuitClosure()));
   run_loop1.Run();
 
   EXPECT_EQ(observer_->label_stream_map_.size(), 1u);
@@ -288,8 +296,8 @@ TEST_F(MediaStreamDeviceObserverTest, OnDeviceRequestStateChange) {
   mock_dispatcher_host_.OpenDevice(
       kRequestId, "device_path",
       blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE,
-      base::BindOnce(&MediaStreamDeviceObserverTest::OnDeviceOpened,
-                     base::Unretained(this), run_loop1.QuitClosure()));
+      WTF::BindOnce(&MediaStreamDeviceObserverTest::OnDeviceOpened,
+                    WTF::Unretained(this), run_loop1.QuitClosure()));
   run_loop1.Run();
 
   EXPECT_EQ(observer_->label_stream_map_.size(), 1u);
@@ -392,5 +400,41 @@ TEST_F(MediaStreamDeviceObserverTest, MultiCaptureRemoveStreamDevice) {
   observer_->RemoveStreamDevice(device_1);
   EXPECT_EQ(observer_->label_stream_map_.size(), 0u);
 }
+
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+TEST_F(MediaStreamDeviceObserverTest, OnZoomLevelChange) {
+  const String kStreamLabel = "stream_label";
+  blink::MediaStreamDevice device(
+      blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE, "device_id",
+      "device_name");
+
+  blink::mojom::blink::StreamDevicesSet stream_devices_set;
+  stream_devices_set.stream_devices.push_back(
+      blink::mojom::blink::StreamDevices::New(std::nullopt, device));
+  observer_->AddStreams(
+      kStreamLabel, stream_devices_set,
+      {
+          .on_device_stopped_cb = base::DoNothing(),
+          .on_device_changed_cb = base::DoNothing(),
+          .on_device_request_state_change_cb = base::DoNothing(),
+          .on_device_capture_configuration_change_cb = base::DoNothing(),
+          .on_device_capture_handle_change_cb = base::DoNothing(),
+          .on_zoom_level_change_cb = base::BindRepeating(
+              [](const MediaStreamDevice& device, int zoom_level) {
+                EXPECT_EQ(device.type,
+                          blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE);
+                EXPECT_EQ(device.id, "device_id");
+                EXPECT_EQ(device.name, "device_name");
+                EXPECT_EQ(
+                    zoom_level,
+                    CaptureController::getSupportedZoomLevelsForTabs()[0]);
+              }),
+      });
+  static_cast<mojom::blink::MediaStreamDeviceObserver*>(observer_.get())
+      ->OnZoomLevelChange(
+          kStreamLabel, device,
+          CaptureController::getSupportedZoomLevelsForTabs()[0]);
+}
+#endif
 
 }  // namespace blink

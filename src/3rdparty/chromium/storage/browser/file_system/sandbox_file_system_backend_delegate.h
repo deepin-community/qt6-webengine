@@ -9,12 +9,12 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <optional>
 #include "base/component_export.h"
 #include "base/files/file_error_or.h"
 #include "base/files/file_path.h"
@@ -163,11 +163,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) SandboxFileSystemBackendDelegate
   void PerformStorageCleanupOnFileTaskRunner(FileSystemContext* context,
                                              QuotaManagerProxy* proxy,
                                              FileSystemType type) override;
-  std::vector<blink::StorageKey> GetStorageKeysForTypeOnFileTaskRunner(
-      FileSystemType type) override;
-  int64_t GetStorageKeyUsageOnFileTaskRunner(
-      FileSystemContext* context,
-      const blink::StorageKey& storage_key,
+  std::vector<blink::StorageKey> GetDefaultStorageKeysOnFileTaskRunner(
       FileSystemType type) override;
   int64_t GetBucketUsageOnFileTaskRunner(FileSystemContext* context,
                                          const BucketLocator& bucket_locator,
@@ -179,13 +175,13 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) SandboxFileSystemBackendDelegate
   // Adds an observer for the secified |type| of a file system, bound to
   // |task_runner|.
   virtual void AddFileUpdateObserver(FileSystemType type,
-                                     FileUpdateObserver* observer,
+                                     scoped_refptr<FileUpdateObserver> observer,
                                      base::SequencedTaskRunner* task_runner);
   virtual void AddFileChangeObserver(FileSystemType type,
-                                     FileChangeObserver* observer,
+                                     scoped_refptr<FileChangeObserver> observer,
                                      base::SequencedTaskRunner* task_runner);
   virtual void AddFileAccessObserver(FileSystemType type,
-                                     FileAccessObserver* observer,
+                                     scoped_refptr<FileAccessObserver> observer,
                                      base::SequencedTaskRunner* task_runner);
 
   // Returns observer lists for the specified |type| of a file system.
@@ -267,21 +263,9 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) SandboxFileSystemBackendDelegate
       const BucketLocator& bucket_locator,
       FileSystemType type);
 
-  // Helper function to obtain usage for a StorageKey value and optionally a
-  // BucketLocator value. `storage_key` and `bucket_locator->storage_key` should
-  // be equivalent.
-  int64_t GetUsageOnFileTaskRunner(
-      FileSystemContext* context,
-      const blink::StorageKey& storage_key,
-      const std::optional<BucketLocator>& bucket_locator,
-      FileSystemType type);
-
-  // If no bucket value is provided, usage will be recalculated for the default
-  // bucket for the provided StorageKey value.
-  int64_t RecalculateUsage(FileSystemContext* context,
-                           const blink::StorageKey& storage_key,
-                           const std::optional<BucketLocator>& bucket_locator,
-                           FileSystemType type);
+  int64_t RecalculateBucketUsage(FileSystemContext* context,
+                                 const BucketLocator& bucket_locator,
+                                 FileSystemType type);
 
   ObfuscatedFileUtil* obfuscated_file_util();
 
@@ -290,7 +274,7 @@ class COMPONENT_EXPORT(STORAGE_BROWSER) SandboxFileSystemBackendDelegate
 
   std::unique_ptr<AsyncFileUtil> sandbox_file_util_;
   std::unique_ptr<FileSystemUsageCache> file_system_usage_cache_;
-  std::unique_ptr<SandboxQuotaObserver> quota_observer_;
+  const scoped_refptr<SandboxQuotaObserver> quota_observer_;
   std::unique_ptr<QuotaReservationManager> quota_reservation_manager_;
 
   const scoped_refptr<SpecialStoragePolicy> special_storage_policy_;

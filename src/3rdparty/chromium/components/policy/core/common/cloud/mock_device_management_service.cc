@@ -8,6 +8,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/notreached.h"
 #include "base/strings/string_util.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/test/bind.h"
 #include "components/policy/core/common/cloud/dm_auth.h"
 #include "net/base/net_errors.h"
@@ -65,12 +66,6 @@ MockDeviceManagementServiceConfiguration::GetRealtimeReportingServerUrl()
 std::string
 MockDeviceManagementServiceConfiguration::GetEncryptedReportingServerUrl()
     const {
-  return server_url_;
-}
-
-std::string
-MockDeviceManagementServiceConfiguration::GetReportingConnectorServerUrl(
-    content::BrowserContext* context) const {
   return server_url_;
 }
 
@@ -159,6 +154,15 @@ FakeDeviceManagementService::CaptureTimeout(base::TimeDelta* timeout) {
 }
 
 FakeDeviceManagementService::JobAction
+FakeDeviceManagementService::CaptureSendsCookies(bool* sends_cookies) {
+  return [sends_cookies](DeviceManagementService::JobForTesting job) mutable {
+    if (job.IsActive()) {
+      *sends_cookies = job.GetConfigurationForTesting()->AreCookiesUsed();
+    }
+  };
+}
+
+FakeDeviceManagementService::JobAction
 FakeDeviceManagementService::SendJobResponseAsync(int net_error,
                                                   int response_code,
                                                   const std::string& response,
@@ -168,7 +172,7 @@ FakeDeviceManagementService::SendJobResponseAsync(int net_error,
   // pending jobs, e.g. CloudPolicyClientTest, CancelUploadAppInstallReport.
   // And base::WeakPtr cannot bind to non-void functions.
   // Thus, we need the redirect to SendWeakJobResponseNow.
-  return [=](DeviceManagementService::JobForTesting job) {
+  return [=, this](DeviceManagementService::JobForTesting job) {
     this->GetTaskRunnerForTesting()->PostTask(
         FROM_HERE, base::BindLambdaForTesting([=]() mutable {
           if (job.IsActive()) {

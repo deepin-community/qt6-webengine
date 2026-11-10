@@ -90,7 +90,6 @@ DCompSurfaceSkiaGaneshImageRepresentation::BeginWriteAccess(
     std::vector<GrBackendSemaphore>* end_semaphores,
     std::unique_ptr<skgpu::MutableTextureState>* end_state) {
   NOTREACHED();
-  return {};
 }
 
 std::vector<sk_sp<GrPromiseImageTexture>>
@@ -99,14 +98,12 @@ DCompSurfaceSkiaGaneshImageRepresentation::BeginReadAccess(
     std::vector<GrBackendSemaphore>* end_semaphores,
     std::unique_ptr<skgpu::MutableTextureState>* end_state) {
   NOTREACHED();
-  return {};
 }
 
 void DCompSurfaceSkiaGaneshImageRepresentation::EndReadAccess() {
   NOTREACHED();
 }
 
-#if BUILDFLAG(USE_DAWN)
 DCompSurfaceDawnImageRepresentation::DCompSurfaceDawnImageRepresentation(
     SharedImageManager* manager,
     SharedImageBacking* backing,
@@ -121,16 +118,19 @@ DCompSurfaceDawnImageRepresentation::~DCompSurfaceDawnImageRepresentation() {
 
 wgpu::Texture DCompSurfaceDawnImageRepresentation::BeginAccess(
     wgpu::TextureUsage usage,
+    wgpu::TextureUsage internal_usage,
     const gfx::Rect& update_rect) {
   DCompSurfaceImageBacking* dcomp_backing =
       static_cast<DCompSurfaceImageBacking*>(backing());
-  texture_ = dcomp_backing->BeginDrawDawn(device_, usage, update_rect);
+  texture_ =
+      dcomp_backing->BeginDrawDawn(device_, usage, internal_usage, update_rect);
   return texture_;
 }
 
 wgpu::Texture DCompSurfaceDawnImageRepresentation::BeginAccess(
-    wgpu::TextureUsage usage) {
-  NOTREACHED_NORETURN();
+    wgpu::TextureUsage usage,
+    wgpu::TextureUsage internal_usage) {
+  NOTREACHED();
 }
 
 void DCompSurfaceDawnImageRepresentation::EndAccess() {
@@ -144,6 +144,5 @@ void DCompSurfaceDawnImageRepresentation::EndAccess() {
       static_cast<DCompSurfaceImageBacking*>(backing());
   dcomp_backing->EndDrawDawn(device_, std::move(texture_));
 }
-#endif  // BUILDFLAG(USE_DAWN)
 
 }  // namespace gpu

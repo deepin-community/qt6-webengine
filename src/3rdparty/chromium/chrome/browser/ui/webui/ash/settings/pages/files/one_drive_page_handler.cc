@@ -7,6 +7,7 @@
 #include <optional>
 
 #include "ash/webui/system_apps/public/system_web_app_type.h"
+#include "chrome/browser/ash/browser_delegate/browser_delegate.h"
 #include "chrome/browser/ash/file_manager/open_util.h"
 #include "chrome/browser/ash/file_system_provider/mount_path_util.h"
 #include "chrome/browser/ash/file_system_provider/provided_file_system_info.h"
@@ -19,6 +20,8 @@
 #include "chrome/browser/ui/webui/ash/cloud_upload/cloud_upload_util.h"
 #include "chrome/browser/ui/webui/ash/settings/pages/files/mojom/one_drive_handler.mojom.h"
 #include "chrome/common/extensions/extension_constants.h"
+#include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
 
 namespace ash::settings {
 
@@ -53,6 +56,7 @@ OneDrivePageHandler::OneDrivePageHandler(
     mojo::PendingRemote<one_drive::mojom::Page> page,
     Profile* profile)
     : profile_(profile),
+      pref_change_registrar_(std::make_unique<PrefChangeRegistrar>()),
       page_(std::move(page)),
       receiver_(this, std::move(receiver)) {
   file_system_provider::Service* service =
@@ -60,6 +64,13 @@ OneDrivePageHandler::OneDrivePageHandler(
   if (service) {
     service->AddObserver(this);
   }
+
+  pref_change_registrar_->Init(profile_->GetPrefs());
+  pref_change_registrar_->Add(
+      prefs::kAllowUserToRemoveODFS,
+      base::BindRepeating(&OneDrivePageHandler::OnAllowUserToRemoveODFSChanged,
+                          base::Unretained(this)));
+  OnAllowUserToRemoveODFSChanged();
 }
 
 OneDrivePageHandler::~OneDrivePageHandler() {
@@ -94,10 +105,10 @@ void OneDrivePageHandler::ConnectToOneDrive(
   // Show connect OneDrive dialog. This method's callback is called before the
   // user tries to sign in. The connection status is detected separately by
   // listening to provided file system mount events.
-  Browser* browser =
-      FindSystemWebAppBrowser(profile_, ash::SystemWebAppType::FILE_MANAGER);
+  BrowserDelegate* browser = FindSystemWebAppBrowser(
+      profile_, ash::SystemWebAppType::FILE_MANAGER, ash::BrowserType::kApp);
   gfx::NativeWindow modal_parent =
-      browser ? browser->window()->GetNativeWindow() : nullptr;
+      browser ? browser->GetNativeWindow() : nullptr;
   std::move(callback).Run(
       ash::cloud_upload::ShowConnectOneDriveDialog(modal_parent));
 }
@@ -157,6 +168,17 @@ void OneDrivePageHandler::OnProvidedFileSystemUnmount(
     return;
   }
   page_->OnODFSMountOrUnmount();
+}
+
+void OneDrivePageHandler::OnAllowUserToRemoveODFSChanged() {
+  std::optional<file_system_provider::ProvidedFileSystemInfo> file_system =
+      cloud_upload::GetODFSInfo(profile_);
+  if (!file_system) {
+    return;
+  }
+  const PrefService* pref_service = profile_->GetPrefs();
+  page_->OnAllowUserToRemoveODFSChanged(
+      pref_service->GetBoolean(prefs::kAllowUserToRemoveODFS));
 }
 
 }  // namespace ash::settings

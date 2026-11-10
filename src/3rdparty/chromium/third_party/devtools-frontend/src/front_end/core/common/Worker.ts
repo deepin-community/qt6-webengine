@@ -35,7 +35,7 @@ export class WorkerWrapper {
   private constructor(workerLocation: URL) {
     this.#workerPromise = new Promise(fulfill => {
       const worker = new Worker(workerLocation, {type: 'module'});
-      worker.onmessage = (event: MessageEvent<unknown>): void => {
+      worker.onmessage = (event: MessageEvent<unknown>) => {
         console.assert(event.data === 'workerReady');
         worker.onmessage = null;
         fulfill(worker);
@@ -47,10 +47,10 @@ export class WorkerWrapper {
     return new WorkerWrapper(url);
   }
 
-  postMessage(message: unknown): void {
+  postMessage(message: unknown, transfer?: Transferable[]): void {
     void this.#workerPromise.then(worker => {
       if (!this.#disposed) {
-        worker.postMessage(message);
+        worker.postMessage(message, transfer ?? []);
       }
     });
   }

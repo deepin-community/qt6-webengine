@@ -124,7 +124,6 @@ const std::vector<mojom::HidReportDescriptionPtr>& GetReportsForType(
       return collection.feature_reports;
     case HidBlocklist::kReportTypeAny:
       NOTREACHED();
-      return collection.input_reports;
   }
 }
 

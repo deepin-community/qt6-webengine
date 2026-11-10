@@ -8,7 +8,7 @@ import * as Common from '../common/common.js';
 import * as i18n from '../i18n/i18n.js';
 
 import {InspectorFrontendHostInstance} from './InspectorFrontendHost.js';
-import {type LoadNetworkResourceResult} from './InspectorFrontendHostAPI.js';
+import type {LoadNetworkResourceResult} from './InspectorFrontendHostAPI.js';
 
 const UIStrings = {
   /**
@@ -65,23 +65,21 @@ const UIStrings = {
    *@description Name of an error category used in error messages
    */
   decodingDataUrlFailed: 'Decoding Data URL failed',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('core/host/ResourceLoader.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 export const ResourceLoader = {};
 
 let _lastStreamId = 0;
 
-const _boundStreams: {
-  [x: number]: Common.StringOutputStream.OutputStream,
-} = {};
+const _boundStreams: Record<number, Common.StringOutputStream.OutputStream> = {};
 
-const _bindOutputStream = function(stream: Common.StringOutputStream.OutputStream): number {
+export const bindOutputStream = function(stream: Common.StringOutputStream.OutputStream): number {
   _boundStreams[++_lastStreamId] = stream;
   return _lastStreamId;
 };
 
-const _discardOutputStream = function(id: number): void {
+export const discardOutputStream = function(id: number): void {
   void _boundStreams[id].close();
   delete _boundStreams[id];
 };
@@ -97,40 +95,26 @@ export interface LoadErrorDescription {
   message?: string;
 }
 
-export let load = function(
-    url: string, headers: {
-      [x: string]: string,
-    }|null,
+export const load = function(
+    url: string, headers: Record<string, string>|null,
     callback: (
-        arg0: boolean, arg1: {
-          [x: string]: string,
-        },
-        arg2: string, arg3: LoadErrorDescription) => void,
+        arg0: boolean,
+        arg1: Record<string, string>,
+        arg2: string,
+        arg3: LoadErrorDescription,
+        ) => void,
     allowRemoteFilePaths: boolean): void {
   const stream = new Common.StringOutputStream.StringOutputStream();
   loadAsStream(url, headers, stream, mycallback, allowRemoteFilePaths);
 
   function mycallback(
-      success: boolean, headers: {
-        [x: string]: string,
-      },
-      errorDescription: LoadErrorDescription): void {
+      success: boolean,
+      headers: Record<string, string>,
+      errorDescription: LoadErrorDescription,
+      ): void {
     callback(success, headers, stream.data(), errorDescription);
   }
 };
-
-export function setLoadForTest(
-    newLoad: (
-        arg0: string, arg1: {
-          [x: string]: string,
-        }|null,
-        arg2: (
-            arg0: boolean, arg1: {
-              [x: string]: string,
-            },
-            arg2: string, arg3: LoadErrorDescription) => void) => void): void {
-  load = newLoad;
-}
 
 function getNetErrorCategory(netError: number): string {
   if (netError > -100) {
@@ -238,23 +222,19 @@ function canBeRemoteFilePath(url: string): boolean {
   try {
     const urlObject = new URL(url);
     return urlObject.protocol === 'file:' && urlObject.host !== '';
-  } catch (exception) {
+  } catch {
     return false;
   }
 }
 
 export const loadAsStream = function(
-    url: string, headers: {
-      [x: string]: string,
-    }|null,
+    url: string,
+    headers: Record<string, string>|null,
     stream: Common.StringOutputStream.OutputStream,
-    callback?:
-        ((arg0: boolean, arg1: {
-           [x: string]: string,
-         },
-          arg2: LoadErrorDescription) => void),
-    allowRemoteFilePaths?: boolean): void {
-  const streamId = _bindOutputStream(stream);
+    callback?: ((arg0: boolean, arg1: Record<string, string>, arg2: LoadErrorDescription) => void),
+    allowRemoteFilePaths?: boolean,
+    ): void {
+  const streamId = bindOutputStream(stream);
   const parsedURL = new Common.ParsedURL.ParsedURL(url);
   if (parsedURL.isDataURL()) {
     loadXHR(url).then(dataURLDecodeSuccessful).catch(dataURLDecodeFailed);
@@ -287,7 +267,7 @@ export const loadAsStream = function(
       const {success, description} = createErrorMessageFromResponse(response);
       callback(success, response.headers || {}, description);
     }
-    _discardOutputStream(streamId);
+    discardOutputStream(streamId);
   }
 
   function dataURLDecodeSuccessful(text: string): void {

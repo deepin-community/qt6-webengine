@@ -29,20 +29,21 @@
 
 #include <algorithm>
 #include <limits>
-#include <locale>
+#include <string_view>
 #include <utility>
 
 #include "source/opt/build_module.h"
+#include "spirv-tools/optimizer.hpp"
 #include "src/tint/lang/core/fluent_types.h"
 #include "src/tint/lang/core/type/depth_texture.h"
 #include "src/tint/lang/core/type/multisampled_texture.h"
 #include "src/tint/lang/core/type/sampled_texture.h"
 #include "src/tint/lang/core/type/texture_dimension.h"
 #include "src/tint/lang/spirv/reader/ast_parser/function.h"
-#include "src/tint/lang/wgsl/ast/bitcast_expression.h"
 #include "src/tint/lang/wgsl/ast/disable_validation_attribute.h"
 #include "src/tint/lang/wgsl/ast/id_attribute.h"
 #include "src/tint/lang/wgsl/ast/interpolate_attribute.h"
+#include "src/tint/lang/wgsl/ast/row_major_attribute.h"
 #include "src/tint/lang/wgsl/ast/unary_op_expression.h"
 #include "src/tint/lang/wgsl/resolver/resolve.h"
 #include "src/tint/utils/containers/unique_vector.h"
@@ -92,7 +93,7 @@ class FunctionTraverser {
 
   private:
     void Visit(const spvtools::opt::Function& f) {
-        if (visited_.count(&f)) {
+        if (visited_.count(&f) != 0u) {
             return;
         }
         visited_.insert(&f);
@@ -270,6 +271,7 @@ bool IsPipelineDecoration(const Decoration& deco) {
     }
     switch (static_cast<spv::Decoration>(deco[0])) {
         case spv::Decoration::Location:
+        case spv::Decoration::Index:
         case spv::Decoration::Flat:
         case spv::Decoration::NoPerspective:
         case spv::Decoration::Centroid:
@@ -336,6 +338,22 @@ bool ASTParser::Parse() {
         success_ = false;
         return false;
     }
+
+    // Split combined-image-samplers into separate image and sampler parts.
+    // Sampler bindings numbers get incremented. The increments are propagated
+    // among resource variaables until settling occurs.
+    {
+        spvtools::Optimizer optimizer(kInputEnv);
+        optimizer.SetMessageConsumer(message_consumer_);
+        optimizer.RegisterPass(spvtools::CreateSplitCombinedImageSamplerPass());
+        optimizer.RegisterPass(spvtools::CreateResolveBindingConflictsPass());
+        std::vector<uint32_t> new_binary;
+        if (!optimizer.Run(spv_binary_.data(), spv_binary_.size(), &new_binary)) {
+            return false;
+        }
+        spv_binary_ = std::move(new_binary);
+    }
+
     if (!BuildInternalModule()) {
         return false;
     }
@@ -506,19 +524,7 @@ Attributes ASTParser::ConvertMemberDecoration(uint32_t struct_type_id,
         case spv::Decoration::ColMajor:          // WGSL only supports column major matrices.
         case spv::Decoration::RelaxedPrecision:  // WGSL doesn't support relaxed precision.
             break;
-        case spv::Decoration::RowMajor:
-            Fail() << "WGSL does not support row-major matrices: can't "
-                      "translate member "
-                   << member_index << " of " << ShowType(struct_type_id);
-            break;
-        case spv::Decoration::MatrixStride: {
-            if (decoration.size() != 2) {
-                Fail() << "malformed MatrixStride decoration: expected 1 literal operand, has "
-                       << decoration.size() - 1 << ": member " << member_index << " of "
-                       << ShowType(struct_type_id);
-                break;
-            }
-            uint32_t stride = decoration[1];
+        case spv::Decoration::RowMajor: {
             auto* ty = member_ty->UnwrapAlias();
             while (auto* arr = ty->As<Array>()) {
                 ty = arr->type->UnwrapAlias();
@@ -528,14 +534,31 @@ Attributes ASTParser::ConvertMemberDecoration(uint32_t struct_type_id,
                 Fail() << "MatrixStride cannot be applied to type " << ty->String();
                 break;
             }
-            uint32_t natural_stride = (mat->rows == 2) ? 8 : 16;
-            if (stride == natural_stride) {
-                break;  // Decoration matches the natural stride for the matrix
-            }
-            if (!member_ty->Is<Matrix>()) {
-                Fail() << "custom matrix strides not currently supported on array of matrices";
+            out.Add(create<ast::RowMajorAttribute>(Source{}));
+            break;
+        }
+        case spv::Decoration::MatrixStride: {
+            if (decoration.size() != 2) {
+                Fail() << "malformed MatrixStride decoration: expected 1 literal operand, has "
+                       << decoration.size() - 1 << ": member " << member_index << " of "
+                       << ShowType(struct_type_id);
                 break;
             }
+            auto* ty = member_ty->UnwrapAlias();
+            while (auto* arr = ty->As<Array>()) {
+                ty = arr->type->UnwrapAlias();
+            }
+            auto* mat = ty->As<Matrix>();
+            if (!mat) {
+                Fail() << "MatrixStride cannot be applied to type " << ty->String();
+                break;
+            }
+
+            // Note: We do not know at this point whether the matrix is laid out as row-major or
+            // column-major, and therefore do not know the "natural" stride. So we add the stride
+            // attribute unconditionally, and let the DecomposeStridedMatrix transform determine if
+            // anything needs to be done.
+
             out.Add(create<ast::StrideAttribute>(Source{}, decoration[1]));
             out.Add(builder_.ASTNodes().Create<ast::DisableValidationAttribute>(
                 builder_.ID(), builder_.AllocateNodeID(),
@@ -584,6 +607,7 @@ void ASTParser::ResetInternalModule() {
     deco_mgr_ = nullptr;
 
     glsl_std_450_imports_.clear();
+    enabled_extensions_.Clear();
 }
 
 bool ASTParser::ParseInternalModule() {
@@ -776,11 +800,10 @@ bool ASTParser::RegisterUserAndStructMemberNames() {
     return true;
 }
 
-bool ASTParser::IsValidIdentifier(const std::string& str) {
+bool ASTParser::IsValidIdentifier(std::string_view str) {
     if (str.empty()) {
         return false;
     }
-    std::locale c_locale("C");
     if (str[0] == '_') {
         if (str.length() == 1u || str[1] == '_') {
             // https://www.w3.org/TR/WGSL/#identifiers
@@ -788,14 +811,28 @@ bool ASTParser::IsValidIdentifier(const std::string& str) {
             // must not start with two underscores
             return false;
         }
-    } else if (!std::isalpha(str[0], c_locale)) {
-        return false;
     }
-    for (const char& ch : str) {
-        if ((ch != '_') && !std::isalnum(ch, c_locale)) {
+
+    // Must begin with an XID_Source unicode character, or underscore
+    {
+        auto* utf8 = reinterpret_cast<const uint8_t*>(str.data());
+        auto [code_point, n] = tint::utf8::Decode(utf8, str.size());
+        if (code_point != tint::CodePoint('_') && !code_point.IsXIDStart()) {
             return false;
         }
+        str = str.substr(n);
     }
+
+    // Must continue with an XID_Continue unicode character
+    while (!str.empty()) {
+        auto* utf8 = reinterpret_cast<const uint8_t*>(str.data());
+        auto [code_point, n] = tint::utf8::Decode(utf8, str.size());
+        if (!code_point.IsXIDContinue()) {
+            return false;
+        }
+        str = str.substr(n);
+    }
+
     return true;
 }
 
@@ -967,6 +1004,10 @@ const Type* ASTParser::ConvertType(const spvtools::opt::analysis::Float* float_t
     if (float_ty->width() == 32) {
         return ty_.F32();
     }
+    if (float_ty->width() == 16) {
+        Enable(wgsl::Extension::kF16);
+        return ty_.F16();
+    }
     Fail() << "unhandled float width: " << float_ty->width();
     return nullptr;
 }
@@ -1136,7 +1177,7 @@ const Type* ASTParser::ConvertStructType(uint32_t type_id) {
                         builtin_position_.pointsize_member_index = member_index;
                         create_ast_member = false;  // Not part of the WGSL structure.
                         break;
-                    case spv::BuiltIn::ClipDistance:  // not supported in WGSL
+                    case spv::BuiltIn::ClipDistance:
                     case spv::BuiltIn::CullDistance:  // not supported in WGSL
                         create_ast_member = false;    // Not part of the WGSL structure.
                         break;
@@ -1522,19 +1563,20 @@ bool ASTParser::EmitModuleScopeVariables() {
             // here.)
             ast_initializer = MakeConstantExpression(var.GetSingleWordInOperand(1)).expr;
         }
-        auto ast_access = VarAccess(ast_store_type, ast_address_space);
-        auto* ast_var = MakeVar(var.result_id(), ast_address_space, ast_access, ast_store_type,
-                                ast_initializer, Attributes{});
+        auto* ast_var = MakeVar(var.result_id(), ast_address_space, ast_store_type, ast_initializer,
+                                Attributes{});
         // TODO(dneto): initializers (a.k.a. initializer expression)
         if (ast_var) {
             builder_.AST().AddGlobalVariable(ast_var);
-            module_variable_.GetOrCreate(var.result_id(), [&] {
-                return ModuleVariable{ast_var, ast_address_space, ast_access};
+            module_variable_.GetOrAdd(var.result_id(), [&] {
+                auto access = VarAccess(var.result_id(), ast_store_type, ast_address_space);
+                return ModuleVariable{ast_var, ast_address_space, access};
             });
         }
     }
 
     // Emit gl_Position instead of gl_PerVertex
+    // TODO(chromium:358408571): handle gl_ClipDistance[] in gl_PerVertex
     if (builtin_position_.per_vertex_var_id) {
         // Make sure the variable has a name.
         namer_.SuggestSanitizedName(builtin_position_.per_vertex_var_id, "gl_Position");
@@ -1559,12 +1601,11 @@ bool ASTParser::EmitModuleScopeVariables() {
         }
         auto storage_type = ConvertType(builtin_position_.position_member_type_id);
         auto ast_address_space = enum_converter_.ToAddressSpace(builtin_position_.storage_class);
-        auto ast_access = VarAccess(storage_type, ast_address_space);
-        auto* ast_var = MakeVar(builtin_position_.per_vertex_var_id, ast_address_space, ast_access,
+        auto* ast_var = MakeVar(builtin_position_.per_vertex_var_id, ast_address_space,
                                 storage_type, ast_initializer, {});
 
         builder_.AST().AddGlobalVariable(ast_var);
-        module_variable_.GetOrCreate(builtin_position_.per_vertex_var_id, [&] {
+        module_variable_.GetOrAdd(builtin_position_.per_vertex_var_id, [&] {
             return ModuleVariable{ast_var, ast_address_space};
         });
     }
@@ -1594,14 +1635,16 @@ const spvtools::opt::analysis::IntConstant* ASTParser::GetArraySize(uint32_t var
     return size->AsIntConstant();
 }
 
-core::Access ASTParser::VarAccess(const Type* storage_type, core::AddressSpace address_space) {
+core::Access ASTParser::VarAccess(uint32_t var_id,
+                                  const Type* storage_type,
+                                  core::AddressSpace address_space) {
     if (address_space != core::AddressSpace::kStorage) {
         return core::Access::kUndefined;
     }
 
-    bool read_only = false;
+    bool read_only = read_only_vars_.count(var_id) > 0;
     if (auto* tn = storage_type->As<Named>()) {
-        read_only = read_only_struct_types_.count(tn->name) > 0;
+        read_only = read_only || read_only_struct_types_.count(tn->name) > 0;
     }
 
     // Apply the access(read) or access(read_write) modifier.
@@ -1610,7 +1653,6 @@ core::Access ASTParser::VarAccess(const Type* storage_type, core::AddressSpace a
 
 const ast::Var* ASTParser::MakeVar(uint32_t id,
                                    core::AddressSpace address_space,
-                                   core::Access access,
                                    const Type* storage_type,
                                    const ast::Expression* initializer,
                                    Attributes attrs) {
@@ -1629,6 +1671,8 @@ const ast::Var* ASTParser::MakeVar(uint32_t id,
                                        address_space != core::AddressSpace::kPrivate)) {
         return nullptr;
     }
+
+    const auto access = VarAccess(id, storage_type, address_space);
 
     // Use type inference if there is an initializer.
     auto sym = builder_.Symbols().Register(namer_.Name(id));
@@ -1715,6 +1759,9 @@ bool ASTParser::ConvertDecorationsForVariable(uint32_t id,
                     }
                     break;
                 }
+                case spv::BuiltIn::ClipDistance:
+                    Enable(wgsl::Extension::kClipDistances);
+                    break;
                 default:
                     break;
             }
@@ -1742,6 +1789,9 @@ bool ASTParser::ConvertDecorationsForVariable(uint32_t id,
                 return Fail() << "malformed Binding decoration on ID " << id << ": has no operand";
             }
             attrs.Add(builder_.Binding(Source{}, AInt(deco[1])));
+        }
+        if (deco[0] == uint32_t(spv::Decoration::NonWritable)) {
+            read_only_vars_.insert(id);
         }
     }
 
@@ -1782,7 +1832,23 @@ void ASTParser::SetLocation(Attributes& attributes, const ast::Attribute* replac
     }
     // The list didn't have a location. Add it.
     attributes.Add(replacement);
-    return;
+}
+
+void ASTParser::SetBlendSrc(Attributes& attributes, const ast::Attribute* replacement) {
+    if (!replacement) {
+        return;
+    }
+    for (auto*& attribute : attributes.list) {
+        if (attribute->Is<ast::BlendSrcAttribute>()) {
+            // Replace this BlendSrc attribute with the replacement.
+            // The old one doesn't leak because it's kept in the builder's AST node
+            // list.
+            attribute = replacement;
+            return;  // Assume there is only one such decoration.
+        }
+    }
+    // The list didn't have a BlendSrc. Add it.
+    attributes.Add(replacement);
 }
 
 bool ASTParser::ConvertPipelineDecorations(const Type* store_type,
@@ -1829,6 +1895,14 @@ bool ASTParser::ConvertPipelineDecorations(const Type* store_type,
                     return Fail() << "Sample interpolation sampling is invalid on integral IO";
                 }
                 sampling = core::InterpolationSampling::kSample;
+                break;
+            case spv::Decoration::Index:
+                if (deco.size() != 2) {
+                    return Fail()
+                           << "malformed Index decoration on ID requires one literal operand";
+                }
+                Enable(wgsl::Extension::kDualSourceBlending);
+                SetBlendSrc(attributes, builder_.BlendSrc(AInt(deco[1])));
                 break;
             default:
                 break;
@@ -2050,6 +2124,22 @@ TypedExpression ASTParser::MakeConstantExpressionForScalarSpirvConstant(
                 return TypedExpression{};
             }
         },
+        [&](const F16*) {
+            auto bits = spirv_const->AsScalarConstant()->GetU32BitValue();
+
+            // Section 2.2.1 of the SPIR-V spec guarantees that all integer types
+            // smaller than 32-bits are automatically zero or sign extended to 32-bits.
+            auto val = f16::FromBits(static_cast<uint16_t>(bits));
+
+            if (auto f = core::CheckedConvert<f16>(AFloat(val)); f == Success) {
+                return TypedExpression{ty_.F16(), create<ast::FloatLiteralExpression>(
+                                                      source, static_cast<double>(val.value),
+                                                      ast::FloatLiteralExpression::Suffix::kH)};
+            } else {
+                Fail() << "value cannot be represented as 'f16': " << spirv_const->GetFloat();
+                return TypedExpression{};
+            }
+        },
         [&](const Bool*) {
             const bool value =
                 spirv_const->AsNullConstant() ? false : spirv_const->AsBoolConstant()->value();
@@ -2206,7 +2296,7 @@ const Type* ASTParser::GetSignedIntMatchingShape(const Type* other) {
     if (other == nullptr) {
         Fail() << "no type provided";
     }
-    if (other->Is<F32>() || other->Is<U32>() || other->Is<I32>()) {
+    if (other->IsAnyOf<F32, U32, I32>()) {
         return ty_.I32();
     }
     if (auto* vec_ty = other->As<Vector>()) {
@@ -2221,7 +2311,7 @@ const Type* ASTParser::GetUnsignedIntMatchingShape(const Type* other) {
         Fail() << "no type provided";
         return nullptr;
     }
-    if (other->Is<F32>() || other->Is<U32>() || other->Is<I32>()) {
+    if (other->IsAnyOf<F32, U32, I32>()) {
         return ty_.U32();
     }
     if (auto* vec_ty = other->As<Vector>()) {

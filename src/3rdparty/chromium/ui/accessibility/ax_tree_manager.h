@@ -41,10 +41,17 @@ class AX_EXPORT AXTreeManager : public AXTreeObserver {
   // in any AXTreeManager.
   static void SetFocusChangeCallbackForTesting(base::RepeatingClosure callback);
 
+  // Ensure that any accessibility fatal error crashes the renderer. Once this
+  // is turned on, it stays on all renderers, because at this point it is
+  // assumed that the user is a developer.
+  static void AlwaysFailFast() { is_fail_fast_mode_ = true; }
+  static bool IsFailFastMode() { return is_fail_fast_mode_; }
+
   // This default constructor does not create an empty accessibility tree. Call
   // `SetTree` if you need to manage a specific tree.
   AXTreeManager();
-  explicit AXTreeManager(std::unique_ptr<AXTree> tree);
+  explicit AXTreeManager(std::unique_ptr<AXTree> tree,
+                         bool is_platform_tree_manager = false);
 
   AXTreeManager(const AXTreeManager&) = delete;
   AXTreeManager& operator=(const AXTreeManager&) = delete;
@@ -62,32 +69,25 @@ class AX_EXPORT AXTreeManager : public AXTreeObserver {
   // Return |node| by default, but some platforms want to update the target node
   // based on the event type.
   virtual AXNode* RetargetForEvents(AXNode* node, RetargetEventType type) const;
-  virtual void FireGeneratedEvent(ui::AXEventGenerator::Event event_type,
-                                  const ui::AXNode* node) {}
+  virtual void FireGeneratedEvent(AXEventGenerator::Event event_type,
+                                  const AXNode* node) {}
   virtual bool CanFireEvents() const;
 
   // Returns whether or not this tree manager is for a view.
   virtual bool IsView() const;
 
-  // Returns the AXNode with the given |node_id| from the tree that has the
-  // given |tree_id|. This allows for callers to access nodes outside of their
-  // own tree. Returns nullptr if |tree_id| or |node_id| is not found.
-  // TODO(kschmi): Remove |tree_id| parameter, as it's unnecessary.
-  virtual AXNode* GetNodeFromTree(const AXTreeID& tree_id,
-                                  const AXNodeID node_id) const;
-
   // Returns the AXNode in the current tree that has the given |node_id|.
   // Returns nullptr if |node_id| is not found.
-  virtual AXNode* GetNode(const AXNodeID node_id) const;
+  virtual AXNode* GetNode(AXNodeID node_id) const;
 
   // Returns true if the manager has a tree with a valid (not unknown) ID.
   bool HasValidTreeID() const {
-    return ax_tree_ && ax_tree_->GetAXTreeID() != ui::AXTreeIDUnknown();
+    return ax_tree_ && ax_tree_->GetAXTreeID() != AXTreeIDUnknown();
   }
 
   // Returns the tree id of the tree managed by this AXTreeManager.
-  AXTreeID GetTreeID() const {
-    return ax_tree_ ? ax_tree_->GetAXTreeID() : ui::AXTreeIDUnknown();
+  const AXTreeID& GetTreeID() const {
+    return ax_tree_ ? ax_tree_->GetAXTreeID() : AXTreeIDUnknown();
   }
 
   // Returns the AXTreeData for the tree managed by this AXTreeManager.
@@ -97,12 +97,11 @@ class AX_EXPORT AXTreeManager : public AXTreeObserver {
   // Returns AXTreeIDUnknown if this tree doesn't have a parent tree.
   virtual AXTreeID GetParentTreeID() const;
 
-  // Whether this manager can access platform nodes. Defaults to false
-  // and is overridden in `AXPlatformTreeManager` to return true.
-  virtual bool IsPlatformTreeManager() const;
-
   // Returns the AXNode that is at the root of the current tree.
   virtual AXNode* GetRoot() const;
+
+  // Returns true if this manager can access platform nodes.
+  bool is_platform_tree_manager() const { return is_platform_tree_manager_; }
 
   bool IsRoot() const;
 
@@ -155,7 +154,7 @@ class AX_EXPORT AXTreeManager : public AXTreeObserver {
  protected:
   // This is only made protected to accommodate the `AtomicViewAXTreeManager`.
   // It should be made private once that class is removed.
-  // TODO(crbug.com/1468416): Make private.
+  // TODO(crbug.com/40924888): Make private.
   static AXTreeManagerMap& GetMap();
 
   virtual AXTreeManager* GetParentManager() const;
@@ -178,10 +177,11 @@ class AX_EXPORT AXTreeManager : public AXTreeObserver {
   // attributes accordingly when the parent connection changes.
   virtual void UpdateAttributesOnParent(AXNode* parent) {}
 
-  // Perform some additional clean up on the derived classes to be called in the
-  // destructor.
-  virtual void CleanUp() {}
+ private:
+  // True if this platform can access platform nodes.
+  const bool is_platform_tree_manager_ = false;
 
+ protected:
   // True if the root's parent is in another accessibility tree and that
   // parent's child is the root. Ensures that the parent node is notified
   // once when this subtree is first connected.
@@ -197,11 +197,14 @@ class AX_EXPORT AXTreeManager : public AXTreeObserver {
   //
   // NOTE: Don't use or modify these properties directly, use the
   // SetLastFocusedNode and GetLastFocusedNode methods instead.
-  static absl::optional<AXNodeID> last_focused_node_id_;
-  static absl::optional<AXTreeID> last_focused_node_tree_id_;
+  static std::optional<AXNodeID> last_focused_node_id_;
+  static std::optional<AXTreeID> last_focused_node_tree_id_;
 
  private:
   friend class TestSingleAXTreeManager;
+
+  // A flag to ensure that accessibility fatal errors crash immediately.
+  static bool is_fail_fast_mode_;
 
   // Automatically stops observing notifications from the AXTree when this class
   // is destructed.

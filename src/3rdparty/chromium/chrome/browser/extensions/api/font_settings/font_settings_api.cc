@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 // Font Settings Extension API implementation.
 
 #include "chrome/browser/extensions/api/font_settings/font_settings_api.h"
@@ -19,8 +24,8 @@
 #include "base/trace_event/trace_event.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "chrome/browser/extensions/api/preference/preference_helpers.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/preference/preference_helpers.h"
 #include "chrome/browser/font_pref_change_notifier.h"
 #include "chrome/browser/font_pref_change_notifier_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -37,6 +42,7 @@
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/api/types.h"
 #include "extensions/common/error_utils.h"
+#include "extensions/common/mojom/api_permission_id.mojom.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "ui/gfx/win/direct_write.h"
@@ -174,7 +180,7 @@ FontSettingsEventRouter::FontSettingsEventRouter(Profile* profile)
                    fonts::OnMinimumFontSizeChanged::kEventName, kPixelSizeKey);
 }
 
-FontSettingsEventRouter::~FontSettingsEventRouter() {}
+FontSettingsEventRouter::~FontSettingsEventRouter() = default;
 
 void FontSettingsEventRouter::AddPrefToObserve(
     const char* pref_name,
@@ -210,7 +216,6 @@ void FontSettingsEventRouter::OnFontNamePrefChanged(
 
   if (!pref->GetValue()->is_string()) {
     NOTREACHED();
-    return;
   }
   std::string font_name = pref->GetValue()->GetString();
   base::Value::List args;
@@ -249,8 +254,7 @@ FontSettingsAPI::FontSettingsAPI(content::BrowserContext* context)
     : font_settings_event_router_(
           new FontSettingsEventRouter(Profile::FromBrowserContext(context))) {}
 
-FontSettingsAPI::~FontSettingsAPI() {
-}
+FontSettingsAPI::~FontSettingsAPI() = default;
 
 static base::LazyInstance<BrowserContextKeyedAPIFactory<FontSettingsAPI>>::
     DestructorAtExit g_font_settings_api_factory = LAZY_INSTANCE_INITIALIZER;
@@ -337,9 +341,15 @@ ExtensionFunction::ResponseAction FontSettingsSetFontFunction::Run() {
 }
 
 ExtensionFunction::ResponseAction FontSettingsGetFontListFunction::Run() {
+#if BUILDFLAG(IS_ANDROID)
+  // Android does not support a mechanism to get "all installed fonts" like
+  // Windows/Mac/Linux.
+  return RespondNow(WithArguments(base::Value::List()));
+#else
   content::GetFontListAsync(
       BindOnce(&FontSettingsGetFontListFunction::FontListHasLoaded, this));
   return RespondLater();
+#endif
 }
 
 void FontSettingsGetFontListFunction::FontListHasLoaded(
@@ -355,14 +365,12 @@ FontSettingsGetFontListFunction::CopyFontsToResult(
   for (const auto& entry : fonts) {
     if (!entry.is_list()) {
       NOTREACHED();
-      return Error("");
     }
     const base::Value::List& font_list_value = entry.GetList();
 
     if (font_list_value.size() < 2 || !font_list_value[0].is_string() ||
         !font_list_value[1].is_string()) {
       NOTREACHED();
-      return Error("");
     }
     const std::string& name = font_list_value[0].GetString();
     const std::string& localized_name = font_list_value[1].GetString();

@@ -152,16 +152,16 @@
             \l createWindow() or \l newWindowRequested().
 
     \value [since 5.10] ToggleBold
-           Toggles boldness for the selection or at the cursor position.
+           Toggles boldness for the selection, or at the cursor position.
            Requires \c contenteditable="true".
     \value [since 5.10] ToggleItalic
-           Toggles italics for the selection or at the cursor position.
+           Toggles italics for the selection, or at the cursor position.
            Requires \c contenteditable="true".
     \value [since 5.10] ToggleUnderline
-           Toggles underlining of the selection or at the cursor position.
+           Toggles underlining of the selection, or at the cursor position.
            Requires \c contenteditable="true".
     \value [since 5.10] ToggleStrikethrough
-           Toggles striking through the selection or at the cursor position.
+           Toggles striking through the selection, or at the cursor position.
            Requires \c contenteditable="true".
 
     \value [since 5.10] AlignLeft
@@ -205,13 +205,13 @@
     This enum describes the types of window that can be created by the createWindow() function:
 
     \value  WebBrowserWindow
-            A complete web browser window.
+            A new view in its own application window.
     \value  WebBrowserTab
-            A web browser tab.
+            A new view in the same window, e.g. a new tab.
     \value  WebDialog
             A window without decoration.
     \value [since 5.7] WebBrowserBackgroundTab
-            A web browser tab without hiding the current visible WebEngineView.
+            Same as \c{WebBrowserTab}, but without hiding the current visible WebEngineView.
 */
 
 /*!
@@ -326,8 +326,8 @@
 
 /*!
     \fn void QWebEnginePage::javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level, const QString& message, int lineNumber, const QString& sourceID)
-    This function is called when a JavaScript program tries to print the \a message to the web
-    browser's console.
+    This function is called when a JavaScript program tries to print the \a message to the
+    console.
 
     For example, in case of evaluation errors the source URL may be provided in \a sourceID as well
     as the \a lineNumber.
@@ -335,7 +335,7 @@
     \a level indicates the severity of the event that triggered the message. That is, whether it
     was triggered by an error or a less severe event.
 
-    Since Qt 5.6, the default implementation logs the messages in a \c js
+    The default implementation logs the messages in a \c js
     \l{QLoggingCategory}{logging category}.
 
     \sa{Console Logging}
@@ -590,7 +590,7 @@
     \fn void QWebEnginePage::geometryChangeRequested(const QRect& geom)
 
     This signal is emitted whenever the document wants to change the position and size of the
-    page to \a geom. This can happen for example through JavaScript.
+    page to \a geom. This can happen, for example, through JavaScript.
 
     \note \l{QWindow::}{setGeometry()} expects a size excluding the window
     decoration, while \a geom includes it. You have to remove the size of the frame margins
@@ -604,7 +604,7 @@
 /*!
     \fn void QWebEnginePage::windowCloseRequested()
 
-    This signal is emitted whenever the page requests the web browser window to be closed,
+    This signal is emitted whenever the page requests the current application window to be closed,
     for example through the JavaScript \c{window.close()} call.
 
     \sa RequestClose
@@ -644,7 +644,7 @@
     \brief The title of the page as defined by the HTML \c <title> element.
 
     If the page has no \c <title> element, then the URL is used instead. For \c
-    file:// URLs only the filename is used and not the full path.
+    file:// URLs only the filename is used, and not the full path.
 
     By default, before any content has been loaded, this property contains an
     empty string.
@@ -703,10 +703,10 @@
 
     \note This method will not affect session or global history for the page.
 
-    \warning This function works only for HTML, for other mime types (such as XHTML and SVG)
+    \warning This function works only for HTML. For other MIME types (such as XHTML and SVG)
     setContent() should be used instead.
 
-    \warning The content will be percent encoded before being sent to the renderer via IPC.
+    \warning The content will be percent encoded before being sent to the renderer.
     This may increase its size. The maximum size of the percent encoded content is
     2 megabytes minus 30 bytes.
 
@@ -725,7 +725,7 @@
 
     \note This method will not affect session or global history for the page.
 
-    \warning The content will be percent encoded before being sent to the renderer via IPC.
+    \warning The content will be percent encoded before being sent to the renderer.
     This may increase its size. The maximum size of the percent encoded content is
     2 megabytes minus 6 bytes plus the length of the mime type string.
 
@@ -742,9 +742,9 @@
 */
 
 /*!
-    \fn void QWebEnginePage::runJavaScript(const QString &scriptSource, quint32 worldId = 0, const std::function<void(const QVariant &)> &resultCallback = {})
-    \fn void QWebEnginePage::runJavaScript(const QString &scriptSource, const std::function<void(const QVariant &)> &resultCallback)
-    \since 5.7
+    \fn void QWebEnginePage::runJavaScript(const QString &scriptSource, quint32 worldId = 0)
+    \fn template<typename Functor, QtWebEnginePrivate::if_callback_with_arg_t<Functor, const QVariant &> = true> void QWebEnginePage::runJavaScript(const QString &script, Functor &&resultCallback)
+    \fn template<typename Functor, QtWebEnginePrivate::if_callback_with_arg_t<Functor, const QVariant &> = true> void QWebEnginePage::runJavaScript(const QString &script, quint32 worldId, Functor &&resultCallback)
 
     Runs the JavaScript code contained in \a scriptSource without checking
     whether the DOM of the page has been constructed. If you need more
@@ -757,7 +757,7 @@
     \c MainWorld.
 
     When the script has been executed, \a resultCallback is called with the result of the last
-    executed statement. \c resultCallback can be any of a function pointer, a functor or a lambda,
+    executed statement. \c resultCallback can be any of a function pointer, a functor, or a lambda,
     and it is expected to take a QVariant parameter. For example:
 
     \code
@@ -769,6 +769,8 @@
     example, \c{Date} and \c{ArrayBuffer}. Unsupported data types include, for
     example, \c{Function} and \c{Promise}.
 
+    \note In Qt versions prior to 6.12, the callback had to be copyable.
+
     \warning Do not execute lengthy routines in the callback function, because it might block the
     rendering of the web engine page.
 
@@ -777,6 +779,13 @@
     value and it is not safe to use the corresponding QWebEnginePage or QWebEngineView instance inside it.
 
     \sa scripts(), QWebEngineScript::ScriptWorldId, QWebEngineFrame::runJavaScript, {Script Injection}
+*/
+
+/*! \fn void QWebEnginePage::runJavaScript(const QString &script, std::nullptr_t)
+    \fn void QWebEnginePage::runJavaScript(const QString &script, quint32 worldId, std::nullptr_t)
+
+    \overload
+    \deprecated [6.12] Use QWebEnginePage::runJavaScript without callback argument instead.
 */
 
 /*!
@@ -807,9 +816,6 @@
 /*!
     \fn void QWebEnginePage::featurePermissionRequestCanceled(const QUrl &securityOrigin, Feature feature)
     \deprecated [6.8] This signal is no longer emitted.
-
-    This signal is emitted when the web site identified by \a securityOrigin cancels a previously issued
-    request to make use of \a feature.
 
     \sa featurePermissionRequested(), setFeaturePermission()
 

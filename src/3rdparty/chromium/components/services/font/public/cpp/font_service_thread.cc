@@ -9,6 +9,7 @@
 #include "base/files/file.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
+#include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/thread_pool.h"
@@ -163,7 +164,7 @@ scoped_refptr<MappedFontFile> FontServiceThread::OpenStream(
 
   // Converts the file to out internal type.
   scoped_refptr<MappedFontFile> mapped_font_file =
-      new MappedFontFile(identity.fID);
+      base::MakeRefCounted<MappedFontFile>(identity.fID);
   if (!mapped_font_file->Initialize(std::move(stream_file)))
     return nullptr;
 
@@ -420,7 +421,7 @@ void FontServiceThread::OnMatchFontWithFallbackComplete(
 #endif  // BUILDFLAG(ENABLE_PDF)
 
 void FontServiceThread::OnFontServiceDisconnected() {
-  std::set<base::WaitableEvent*> events;
+  std::set<raw_ptr<base::WaitableEvent, SetExperimental>> events;
   events.swap(pending_waitable_events_);
   for (base::WaitableEvent* event : events)
     event->Signal();

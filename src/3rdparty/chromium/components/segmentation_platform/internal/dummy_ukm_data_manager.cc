@@ -26,12 +26,10 @@ void DummyUkmDataManager::PauseOrResumeObservation(bool pause) {}
 
 UrlSignalHandler* DummyUkmDataManager::GetOrCreateUrlHandler() {
   NOTREACHED();
-  return nullptr;
 }
 
 UkmDatabase* DummyUkmDataManager::GetUkmDatabase() {
   NOTREACHED();
-  return nullptr;
 }
 
 bool DummyUkmDataManager::HasUkmDatabase() {

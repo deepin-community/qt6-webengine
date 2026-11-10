@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
@@ -30,7 +31,7 @@
 #include "net/http/http_transaction_factory.h"
 #include "net/http/http_util.h"
 #include "net/ssl/ssl_info.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/http2_header_block.h"
+#include "net/third_party/quiche/src/quiche/common/http/http_header_block.h"
 #include "net/url_request/url_request_context.h"
 #include "url/gurl.h"
 
@@ -38,7 +39,7 @@ namespace {
 
 class HeadersArray : public bidirectional_stream_header_array {
  public:
-  explicit HeadersArray(const spdy::Http2HeaderBlock& header_block);
+  explicit HeadersArray(const quiche::HttpHeaderBlock& header_block);
 
   HeadersArray(const HeadersArray&) = delete;
   HeadersArray& operator=(const HeadersArray&) = delete;
@@ -49,7 +50,7 @@ class HeadersArray : public bidirectional_stream_header_array {
   base::StringPairs headers_strings_;
 };
 
-HeadersArray::HeadersArray(const spdy::Http2HeaderBlock& header_block)
+HeadersArray::HeadersArray(const quiche::HttpHeaderBlock& header_block)
     : headers_strings_(header_block.size()) {
   // Split coalesced headers by '\0' and copy them into |header_strings_|.
   for (const auto& it : header_block) {
@@ -75,8 +76,8 @@ HeadersArray::HeadersArray(const spdy::Http2HeaderBlock& header_block)
   headers = new bidirectional_stream_header[count];
   size_t i = 0;
   for (const auto& it : headers_strings_) {
-    headers[i].key = it.first.c_str();
-    headers[i].value = it.second.c_str();
+    UNSAFE_TODO(headers[i]).key = it.first.c_str();
+    UNSAFE_TODO(headers[i]).value = it.second.c_str();
     ++i;
   }
 }
@@ -85,18 +86,16 @@ HeadersArray::~HeadersArray() {
   delete[] headers;
 }
 
-class BidirectionalStreamAdapter
+class BidirectionalStreamAdapter final
     : public grpc_support::BidirectionalStream::Delegate {
  public:
   BidirectionalStreamAdapter(stream_engine* engine,
                              void* annotation,
-                             bidirectional_stream_callback* callback);
-
-  virtual ~BidirectionalStreamAdapter();
+                             const bidirectional_stream_callback* callback);
 
   void OnStreamReady() override;
 
-  void OnHeadersReceived(const spdy::Http2HeaderBlock& headers_block,
+  void OnHeadersReceived(const quiche::HttpHeaderBlock& headers_block,
                          const char* negotiated_protocol) override;
 
   void OnDataRead(char* data, int size) override;
@@ -104,7 +103,7 @@ class BidirectionalStreamAdapter
   void OnDataSent(const char* data) override;
 
   void OnTrailersReceived(
-      const spdy::Http2HeaderBlock& trailers_block) override;
+      const quiche::HttpHeaderBlock& trailers_block) override;
 
   void OnSucceeded() override;
 
@@ -120,33 +119,34 @@ class BidirectionalStreamAdapter
   static void DestroyAdapterForStream(bidirectional_stream* stream);
 
  private:
+  ~BidirectionalStreamAdapter();
   void DestroyOnNetworkThread();
 
-  // None of these objects are owned by |this|.
+  std::unique_ptr<grpc_support::BidirectionalStream> bidirectional_stream_;
+
   raw_ptr<net::URLRequestContextGetter> request_context_getter_;
-  raw_ptr<grpc_support::BidirectionalStream, AcrossTasksDanglingUntriaged>
-      bidirectional_stream_;
+
   // C side
   std::unique_ptr<bidirectional_stream> c_stream_;
-  raw_ptr<bidirectional_stream_callback> c_callback_;
+  raw_ptr<const bidirectional_stream_callback> c_callback_;
 };
 
 BidirectionalStreamAdapter::BidirectionalStreamAdapter(
     stream_engine* engine,
     void* annotation,
-    bidirectional_stream_callback* callback)
+    const bidirectional_stream_callback* callback)
     : request_context_getter_(
           reinterpret_cast<net::URLRequestContextGetter*>(engine->obj)),
       c_stream_(std::make_unique<bidirectional_stream>()),
       c_callback_(callback) {
   DCHECK(request_context_getter_);
-  bidirectional_stream_ =
-      new grpc_support::BidirectionalStream(request_context_getter_, this);
+  bidirectional_stream_ = std::make_unique<grpc_support::BidirectionalStream>(
+      request_context_getter_, this);
   c_stream_->obj = this;
   c_stream_->annotation = annotation;
 }
 
-BidirectionalStreamAdapter::~BidirectionalStreamAdapter() {}
+BidirectionalStreamAdapter::~BidirectionalStreamAdapter() = default;
 
 void BidirectionalStreamAdapter::OnStreamReady() {
   DCHECK(c_callback_->on_response_headers_received);
@@ -154,7 +154,7 @@ void BidirectionalStreamAdapter::OnStreamReady() {
 }
 
 void BidirectionalStreamAdapter::OnHeadersReceived(
-    const spdy::Http2HeaderBlock& headers_block,
+    const quiche::HttpHeaderBlock& headers_block,
     const char* negotiated_protocol) {
   DCHECK(c_callback_->on_response_headers_received);
   HeadersArray response_headers(headers_block);
@@ -173,7 +173,7 @@ void BidirectionalStreamAdapter::OnDataSent(const char* data) {
 }
 
 void BidirectionalStreamAdapter::OnTrailersReceived(
-    const spdy::Http2HeaderBlock& trailers_block) {
+    const quiche::HttpHeaderBlock& trailers_block) {
   DCHECK(c_callback_->on_response_trailers_received);
   HeadersArray response_trailers(trailers_block);
   c_callback_->on_response_trailers_received(c_stream(), &response_trailers);
@@ -201,7 +201,7 @@ grpc_support::BidirectionalStream* BidirectionalStreamAdapter::GetStream(
       static_cast<BidirectionalStreamAdapter*>(stream->obj);
   DCHECK(adapter->c_stream() == stream);
   DCHECK(adapter->bidirectional_stream_);
-  return adapter->bidirectional_stream_;
+  return adapter->bidirectional_stream_.get();
 }
 
 void BidirectionalStreamAdapter::DestroyAdapterForStream(
@@ -210,10 +210,6 @@ void BidirectionalStreamAdapter::DestroyAdapterForStream(
   BidirectionalStreamAdapter* adapter =
       static_cast<BidirectionalStreamAdapter*>(stream->obj);
   DCHECK(adapter->c_stream() == stream);
-  // Destroy could be called from any thread, including network thread (if
-  // posting task to executor throws an exception), but is posted, so |this|
-  // is valid until calling task is complete.
-  adapter->bidirectional_stream_->Destroy();
   adapter->request_context_getter_->GetNetworkTaskRunner()->PostTask(
       FROM_HERE,
       base::BindOnce(&BidirectionalStreamAdapter::DestroyOnNetworkThread,
@@ -231,7 +227,7 @@ void BidirectionalStreamAdapter::DestroyOnNetworkThread() {
 bidirectional_stream* bidirectional_stream_create(
     stream_engine* engine,
     void* annotation,
-    bidirectional_stream_callback* callback) {
+    const bidirectional_stream_callback* callback) {
   // Allocate new C++ adapter that will invoke |callback|.
   BidirectionalStreamAdapter* stream_adapter =
       new BidirectionalStreamAdapter(engine, annotation, callback);
@@ -267,8 +263,8 @@ int bidirectional_stream_start(bidirectional_stream* stream,
   net::HttpRequestHeaders request_headers;
   if (headers) {
     for (size_t i = 0; i < headers->count; ++i) {
-      std::string name(headers->headers[i].key);
-      std::string value(headers->headers[i].value);
+      std::string name(UNSAFE_TODO(headers->headers[i]).key);
+      std::string value(UNSAFE_TODO(headers->headers[i]).value);
       if (!net::HttpUtil::IsValidHeaderName(name) ||
           !net::HttpUtil::IsValidHeaderValue(value)) {
         DLOG(ERROR) << "Invalid Header " << name << "=" << value;

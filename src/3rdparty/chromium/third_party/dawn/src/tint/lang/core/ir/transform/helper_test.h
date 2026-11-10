@@ -28,10 +28,8 @@
 #ifndef SRC_TINT_LANG_CORE_IR_TRANSFORM_HELPER_TEST_H_
 #define SRC_TINT_LANG_CORE_IR_TRANSFORM_HELPER_TEST_H_
 
-#include <memory>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "gtest/gtest.h"
 #include "src/tint/lang/core/ir/builder.h"
@@ -50,18 +48,26 @@ class TransformTestBase : public BASE {
     template <typename TRANSFORM, typename... ARGS>
     void Run(TRANSFORM&& transform_func, ARGS&&... args) {
         // Run the transform.
-        auto result = transform_func(mod, args...);
+        auto result = transform_func(mod, std::forward<ARGS>(args)...);
         EXPECT_EQ(result, Success);
         if (result != Success) {
             return;
         }
 
         // Validate the output IR.
-        EXPECT_EQ(ir::Validate(mod), Success);
+        EXPECT_EQ(ir::Validate(mod, capabilities), Success);
+    }
+
+    /// Calls the `transform` but return the result instead of validating.
+    /// @param transform_func the transform to run
+    /// @param args the arguments to the transform function
+    template <typename TRANSFORM, typename... ARGS>
+    Result<SuccessType> RunWithFailure(TRANSFORM&& transform_func, ARGS&&... args) {
+        return transform_func(mod, std::forward<ARGS>(args)...);
     }
 
     /// @returns the transformed module as a disassembled string
-    std::string str() { return "\n" + ir::Disassemble(mod); }
+    std::string str() { return "\n" + ir::Disassembler(mod).Plain(); }
 
   protected:
     /// The test IR module.
@@ -70,6 +76,8 @@ class TransformTestBase : public BASE {
     ir::Builder b{mod};
     /// The type manager.
     core::type::Manager& ty{mod.Types()};
+    /// IR validation capabilities
+    Capabilities capabilities;
 };
 
 using TransformTest = TransformTestBase<testing::Test>;

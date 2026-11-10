@@ -6,12 +6,15 @@
 #define NET_HTTP_HTTP_PROXY_CONNECT_JOB_H_
 
 #include <memory>
+#include <optional>
+#include <set>
 #include <string>
 
 #include "base/functional/callback_forward.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "net/base/host_port_pair.h"
+#include "net/base/net_errors.h"
 #include "net/base/net_export.h"
 #include "net/base/network_anonymization_key.h"
 #include "net/base/proxy_chain.h"
@@ -21,6 +24,8 @@
 #include "net/http/http_auth.h"
 #include "net/quic/quic_chromium_client_session.h"
 #include "net/socket/connect_job.h"
+#include "net/socket/connect_job_params.h"
+#include "net/socket/next_proto.h"
 #include "net/socket/ssl_client_socket.h"
 #include "net/spdy/spdy_session_key.h"
 #include "net/ssl/ssl_cert_request_info.h"
@@ -40,14 +45,29 @@ class QuicSessionRequest;
 
 // HttpProxySocketParams only needs the socket params for one of the proxy
 // types.  The other param must be NULL.  When using an HTTP proxy,
-// |transport_params| must be set.  When using an HTTPS proxy or QUIC proxy,
-// |ssl_params| must be set.
+// `transport_params` must be set.  When using an HTTPS proxy, `ssl_params` must
+// be set. When using a QUIC proxy, both must be `nullptr` but `quic_ssl_config`
+// must be set.
+
 class NET_EXPORT_PRIVATE HttpProxySocketParams
     : public base::RefCounted<HttpProxySocketParams> {
  public:
+  // Construct an `HttpProxyConnectJob` over a transport or SSL connection
+  // defined by the `ConnectJobParams`.
   HttpProxySocketParams(
-      scoped_refptr<TransportSocketParams> transport_params,
-      scoped_refptr<SSLSocketParams> ssl_params,
+      ConnectJobParams nested_params,
+      const HostPortPair& endpoint,
+      const ProxyChain& proxy_chain,
+      size_t proxy_chain_index,
+      bool tunnel,
+      const NetworkTrafficAnnotationTag traffic_annotation,
+      const NetworkAnonymizationKey& network_anonymization_key,
+      SecureDnsPolicy secure_dns_policy);
+
+  // Construct an `HttpProxyConnectJob` over a QUIC connection using the given
+  // SSL config.
+  HttpProxySocketParams(
+      SSLConfig quic_ssl_config,
       const HostPortPair& endpoint,
       const ProxyChain& proxy_chain,
       size_t proxy_chain_index,
@@ -59,12 +79,29 @@ class NET_EXPORT_PRIVATE HttpProxySocketParams
   HttpProxySocketParams(const HttpProxySocketParams&) = delete;
   HttpProxySocketParams& operator=(const HttpProxySocketParams&) = delete;
 
+  bool is_over_transport() const {
+    return nested_params_ && nested_params_->is_transport();
+  }
+  bool is_over_ssl() const {
+    return nested_params_ && nested_params_->is_ssl();
+  }
+  bool is_over_quic() const { return quic_ssl_config_.has_value(); }
+
+  // Get the nested transport params, or fail if not `is_over_transport()`.
   const scoped_refptr<TransportSocketParams>& transport_params() const {
-    return transport_params_;
+    return nested_params_->transport();
   }
+
+  // Get the nested SSL params, or fail if not `is_over_ssl()`.
   const scoped_refptr<SSLSocketParams>& ssl_params() const {
-    return ssl_params_;
+    return nested_params_->ssl();
   }
+
+  // Get the QUIC ssl config, or fail if not `is_over_quic()`.
+  const std::optional<SSLConfig>& quic_ssl_config() const {
+    return quic_ssl_config_;
+  }
+
   const HostPortPair& endpoint() const { return endpoint_; }
   const ProxyChain& proxy_chain() const { return proxy_chain_; }
   const ProxyServer& proxy_server() const {
@@ -82,10 +119,20 @@ class NET_EXPORT_PRIVATE HttpProxySocketParams
 
  private:
   friend class base::RefCounted<HttpProxySocketParams>;
+  HttpProxySocketParams(
+      std::optional<ConnectJobParams> nested_params,
+      std::optional<SSLConfig> quic_ssl_config,
+      const HostPortPair& endpoint,
+      const ProxyChain& proxy_chain,
+      size_t proxy_chain_index,
+      bool tunnel,
+      const NetworkTrafficAnnotationTag traffic_annotation,
+      const NetworkAnonymizationKey& network_anonymization_key,
+      SecureDnsPolicy secure_dns_policy);
   ~HttpProxySocketParams();
 
-  const scoped_refptr<TransportSocketParams> transport_params_;
-  const scoped_refptr<SSLSocketParams> ssl_params_;
+  const std::optional<ConnectJobParams> nested_params_;
+  const std::optional<SSLConfig> quic_ssl_config_;
   const HostPortPair endpoint_;
   const ProxyChain proxy_chain_;
   const size_t proxy_chain_index_;
@@ -146,6 +193,8 @@ class NET_EXPORT_PRIVATE HttpProxyConnectJob : public ConnectJob,
                         HttpAuthController* auth_controller,
                         base::OnceClosure restart_with_auth_callback,
                         ConnectJob* job) override;
+  Error OnDestinationDnsAliasesResolved(const std::set<std::string>& aliases,
+                                        ConnectJob* job) override;
 
   // In some cases, a timeout that's stricter than the TCP (+SSL, if applicable)
   // is used for HTTP proxies during connection establishment and SSL
@@ -163,6 +212,20 @@ class NET_EXPORT_PRIVATE HttpProxyConnectJob : public ConnectJob,
 
   // Updates the field trial parameters used in calculating timeouts.
   static void UpdateFieldTrialParametersForTesting();
+
+  enum class HttpConnectResult {
+    kSuccess,
+    kError,
+    kTimedOut,
+  };
+
+  // Emit a Net.HttpProxy.ConnectLatency.* metric. This is used both by this
+  // class and by QuicSessionPool, which handles QUIC tunnels which will carry
+  // QUIC.
+  static void EmitConnectLatency(NextProto http_version,
+                                 ProxyServer::Scheme scheme,
+                                 HttpConnectResult result,
+                                 base::TimeDelta latency);
 
  private:
   enum State {

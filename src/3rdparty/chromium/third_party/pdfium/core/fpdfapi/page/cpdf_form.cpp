@@ -15,8 +15,8 @@
 #include "core/fpdfapi/page/cpdf_pageobjectholder.h"
 #include "core/fpdfapi/parser/cpdf_dictionary.h"
 #include "core/fpdfapi/parser/cpdf_stream.h"
+#include "core/fxcrt/check_op.h"
 #include "core/fxge/dib/cfx_dibitmap.h"
-#include "third_party/base/check_op.h"
 
 CPDF_Form::RecursionState::RecursionState() = default;
 
@@ -27,24 +27,25 @@ CPDF_Dictionary* CPDF_Form::ChooseResourcesDict(
     CPDF_Dictionary* pResources,
     CPDF_Dictionary* pParentResources,
     CPDF_Dictionary* pPageResources) {
-  if (pResources)
+  if (pResources) {
     return pResources;
+  }
   return pParentResources ? pParentResources : pPageResources;
 }
 
-CPDF_Form::CPDF_Form(CPDF_Document* pDoc,
+CPDF_Form::CPDF_Form(CPDF_Document* doc,
                      RetainPtr<CPDF_Dictionary> pPageResources,
                      RetainPtr<CPDF_Stream> pFormStream)
-    : CPDF_Form(pDoc,
+    : CPDF_Form(doc,
                 std::move(pPageResources),
                 std::move(pFormStream),
                 nullptr) {}
 
-CPDF_Form::CPDF_Form(CPDF_Document* pDoc,
+CPDF_Form::CPDF_Form(CPDF_Document* doc,
                      RetainPtr<CPDF_Dictionary> pPageResources,
                      RetainPtr<CPDF_Stream> pFormStream,
                      CPDF_Dictionary* pParentResources)
-    : CPDF_PageObjectHolder(pDoc,
+    : CPDF_PageObjectHolder(doc,
                             pFormStream->GetMutableDict(),
                             pPageResources,
                             pdfium::WrapRetain(ChooseResourcesDict(
@@ -53,7 +54,7 @@ CPDF_Form::CPDF_Form(CPDF_Document* pDoc,
                                     .Get(),
                                 pParentResources,
                                 pPageResources.Get()))),
-      m_pFormStream(std::move(pFormStream)) {
+      form_stream_(std::move(pFormStream)) {
   LoadTransparencyInfo();
 }
 
@@ -77,31 +78,36 @@ void CPDF_Form::ParseContentInternal(const CPDF_AllStates* pGraphicStates,
                                      const CFX_Matrix* pParentMatrix,
                                      CPDF_Type3Char* pType3Char,
                                      RecursionState* recursion_state) {
-  if (GetParseState() == ParseState::kParsed)
+  if (GetParseState() == ParseState::kParsed) {
     return;
+  }
 
   if (GetParseState() == ParseState::kNotParsed) {
     StartParse(std::make_unique<CPDF_ContentParser>(
         GetStream(), this, pGraphicStates, pParentMatrix, pType3Char,
-        recursion_state ? recursion_state : &m_RecursionState));
+        recursion_state ? recursion_state : &recursion_state_));
   }
   DCHECK_EQ(GetParseState(), ParseState::kParsing);
   ContinueParse(nullptr);
 }
 
 bool CPDF_Form::HasPageObjects() const {
-  return GetPageObjectCount() != 0;
+  return GetActivePageObjectCount() != 0;
 }
 
 CFX_FloatRect CPDF_Form::CalcBoundingBox() const {
-  if (GetPageObjectCount() == 0)
+  if (GetActivePageObjectCount() == 0) {
     return CFX_FloatRect();
+  }
 
   float left = 1000000.0f;
   float right = -1000000.0f;
   float bottom = 1000000.0f;
   float top = -1000000.0f;
   for (const auto& pObj : *this) {
+    if (!pObj->IsActive()) {
+      continue;
+    }
     const auto& rect = pObj->GetRect();
     left = std::min(left, rect.left);
     right = std::max(right, rect.right);
@@ -112,17 +118,21 @@ CFX_FloatRect CPDF_Form::CalcBoundingBox() const {
 }
 
 RetainPtr<const CPDF_Stream> CPDF_Form::GetStream() const {
-  return m_pFormStream;
+  return form_stream_;
 }
 
-absl::optional<std::pair<RetainPtr<CFX_DIBitmap>, CFX_Matrix>>
+std::optional<std::pair<RetainPtr<CFX_DIBitmap>, CFX_Matrix>>
 CPDF_Form::GetBitmapAndMatrixFromSoleImageOfForm() const {
-  if (GetPageObjectCount() != 1)
-    return absl::nullopt;
+  // TODO(crbug.com/377660088): Determine if there is a case where only a single
+  // active object but other inactive objects is problematic for this method.
+  if (GetActivePageObjectCount() != 1) {
+    return std::nullopt;
+  }
 
   CPDF_ImageObject* pImageObject = (*begin())->AsImage();
-  if (!pImageObject)
-    return absl::nullopt;
+  if (!pImageObject) {
+    return std::nullopt;
+  }
 
   return {{pImageObject->GetIndependentBitmap(), pImageObject->matrix()}};
 }

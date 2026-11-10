@@ -4,11 +4,12 @@ Validation tests for render pass resolve.
 
 import { makeTestGroup } from '../../../../common/framework/test_group.js';
 import { GPUConst } from '../../../constants.js';
-import { ValidationTest } from '../validation_test.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../../gpu_test.js';
+import * as vtu from '../validation_test_utils.js';
 
 const kNumColorAttachments = 4;
 
-export const g = makeTestGroup(ValidationTest);
+export const g = makeTestGroup(AllFeaturesMaxLimitsGPUTest);
 
 g.test('resolve_attachment')
   .desc(
@@ -31,8 +32,9 @@ Test various validation behaviors when a resolveTarget is provided.
 `
   )
   .paramsSimple([
-    // control case should be valid
+    // control cases should be valid
     { _valid: true },
+    { bindTextureResource: true, _valid: true },
     // a single sampled resolve source should cause a validation error.
     { colorAttachmentSamples: 1, _valid: false },
     // a multisampled resolve target should cause a validation error.
@@ -77,6 +79,7 @@ Test various validation behaviors when a resolveTarget is provided.
   ] as const)
   .fn(t => {
     const {
+      bindTextureResource = false,
       colorAttachmentFormat = 'rgba8unorm',
       resolveTargetFormat = 'rgba8unorm',
       otherAttachmentFormat = 'rgba8unorm',
@@ -108,7 +111,7 @@ Test various validation behaviors when a resolveTarget is provided.
         // color attachment with resolve target.
         if (resolveSlot === colorAttachmentSlot) {
           // Create the color attachment with resolve target with the configurable parameters.
-          const resolveSourceColorAttachment = t.device.createTexture({
+          const resolveSourceColorAttachment = t.createTextureTracked({
             format: colorAttachmentFormat,
             size: {
               width: colorAttachmentWidth,
@@ -119,7 +122,7 @@ Test various validation behaviors when a resolveTarget is provided.
             usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT,
           });
 
-          const resolveTarget = t.device.createTexture({
+          const resolveTarget = t.createTextureTracked({
             format: resolveTargetFormat,
             size: {
               width: resolveTargetWidth,
@@ -137,7 +140,9 @@ Test various validation behaviors when a resolveTarget is provided.
             loadOp: 'load',
             storeOp: 'discard',
             resolveTarget: resolveTargetInvalid
-              ? t.getErrorTextureView()
+              ? vtu.getErrorTextureView(t)
+              : bindTextureResource
+              ? resolveTarget
               : resolveTarget.createView({
                   dimension: resolveTargetViewArrayLayerCount === 1 ? '2d' : '2d-array',
                   mipLevelCount: resolveTargetViewMipCount,
@@ -149,7 +154,7 @@ Test various validation behaviors when a resolveTarget is provided.
         } else {
           // Create a basic texture to fill other color attachment slots. This texture's dimensions
           // and sample count must match the resolve source color attachment to be valid.
-          const colorAttachment = t.device.createTexture({
+          const colorAttachment = t.createTextureTracked({
             format: otherAttachmentFormat,
             size: {
               width: colorAttachmentWidth,
@@ -160,7 +165,7 @@ Test various validation behaviors when a resolveTarget is provided.
             usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT,
           });
 
-          const resolveTarget = t.device.createTexture({
+          const resolveTarget = t.createTextureTracked({
             format: otherAttachmentFormat,
             size: {
               width: colorAttachmentWidth,

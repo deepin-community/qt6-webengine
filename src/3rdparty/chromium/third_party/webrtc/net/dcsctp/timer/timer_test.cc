@@ -9,15 +9,17 @@
  */
 #include "net/dcsctp/timer/timer.h"
 
+#include <cmath>
 #include <memory>
+#include <optional>
 
-#include "absl/types/optional.h"
 #include "api/task_queue/task_queue_base.h"
 #include "api/units/time_delta.h"
-#include "net/dcsctp/public/timeout.h"
+#include "api/units/timestamp.h"
+#include "net/dcsctp/public/types.h"
 #include "net/dcsctp/timer/fake_timeout.h"
-#include "rtc_base/gunit.h"
 #include "test/gmock.h"
+#include "test/gtest.h"
 
 namespace dcsctp {
 namespace {
@@ -39,7 +41,7 @@ class TimerTest : public testing::Test {
     now_ = now_ + duration;
 
     for (;;) {
-      absl::optional<TimeoutID> timeout_id =
+      std::optional<TimeoutID> timeout_id =
           timeout_manager_.GetNextExpiredTimeout();
       if (!timeout_id.has_value()) {
         break;
@@ -396,7 +398,7 @@ TEST_F(TimerTest, DurationStaysWithinMaxTimerBackOffDuration) {
   std::unique_ptr<Timer> t1 = manager_.CreateTimer(
       "t1", on_expired_.AsStdFunction(),
       TimerOptions(TimeDelta::Seconds(1), TimerBackoffAlgorithm::kExponential,
-                   /*max_restarts=*/absl::nullopt, TimeDelta::Seconds(5)));
+                   /*max_restarts=*/std::nullopt, TimeDelta::Seconds(5)));
 
   t1->Start();
 
@@ -431,7 +433,7 @@ TEST_F(TimerTest, DurationStaysWithinMaxTimerBackOffDuration) {
 
 TEST(TimerManagerTest, TimerManagerPassesPrecisionToCreateTimeoutMethod) {
   FakeTimeoutManager timeout_manager([&]() { return Timestamp::Zero(); });
-  absl::optional<webrtc::TaskQueueBase::DelayPrecision> create_timer_precison;
+  std::optional<webrtc::TaskQueueBase::DelayPrecision> create_timer_precison;
   TimerManager manager([&](webrtc::TaskQueueBase::DelayPrecision precision) {
     create_timer_precison = precision;
     return timeout_manager.CreateTimeout(precision);
@@ -445,7 +447,7 @@ TEST(TimerManagerTest, TimerManagerPassesPrecisionToCreateTimeoutMethod) {
   manager.CreateTimer(
       "test_timer", []() { return TimeDelta::Zero(); },
       TimerOptions(TimeDelta::Millis(123), TimerBackoffAlgorithm::kExponential,
-                   absl::nullopt, TimeDelta::PlusInfinity(),
+                   std::nullopt, TimeDelta::PlusInfinity(),
                    webrtc::TaskQueueBase::DelayPrecision::kHigh));
   EXPECT_EQ(create_timer_precison,
             webrtc::TaskQueueBase::DelayPrecision::kHigh);
@@ -453,7 +455,7 @@ TEST(TimerManagerTest, TimerManagerPassesPrecisionToCreateTimeoutMethod) {
   manager.CreateTimer(
       "test_timer", []() { return TimeDelta::Zero(); },
       TimerOptions(TimeDelta::Millis(123), TimerBackoffAlgorithm::kExponential,
-                   absl::nullopt, TimeDelta::PlusInfinity(),
+                   std::nullopt, TimeDelta::PlusInfinity(),
                    webrtc::TaskQueueBase::DelayPrecision::kLow));
   EXPECT_EQ(create_timer_precison, webrtc::TaskQueueBase::DelayPrecision::kLow);
 }

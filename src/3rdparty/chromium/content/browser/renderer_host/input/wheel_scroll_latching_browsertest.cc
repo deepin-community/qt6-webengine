@@ -5,9 +5,8 @@
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
+#include "components/input/render_widget_host_input_event_router.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
-#include "content/browser/renderer_host/render_widget_host_input_event_router.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -15,7 +14,6 @@
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/hit_test_region_observer.h"
 #include "content/shell/browser/shell.h"
-#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/input/synthetic_web_input_event_builders.h"
 #include "ui/events/gesture_detection/gesture_configuration.h"
 
@@ -91,7 +89,7 @@ class WheelScrollLatchingBrowserTest : public ContentBrowserTest {
     return static_cast<WebContentsImpl*>(shell()->web_contents());
   }
 
-  RenderWidgetHostInputEventRouter* GetRouter() {
+  input::RenderWidgetHostInputEventRouter* GetRouter() {
     return web_contents()->GetInputEventRouter();
   }
 
@@ -255,7 +253,7 @@ IN_PROC_BROWSER_TEST_F(
              EvalJs(shell(), "scrollableDiv.getBoundingClientRect().bottom")
                  .ExtractDouble()) /
             2;
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   bool precise = true;
 #else
   bool precise = false;
@@ -376,11 +374,8 @@ IN_PROC_BROWSER_TEST_F(WheelScrollLatchingBrowserTest,
                                     ui::LatencyInfo());
 
   // Run until we get the callback, then check the target.
-  EXPECT_EQ(
-      base::FeatureList::IsEnabled(blink::features::kFixGestureScrollQueuingBug)
-          ? blink::mojom::InputEventResultState::kNotConsumedBlocking
-          : blink::mojom::InputEventResultState::kNotConsumed,
-      wheel_msg_watcher->WaitForAck());
+  EXPECT_EQ(blink::mojom::InputEventResultState::kNotConsumed,
+            wheel_msg_watcher->WaitForAck());
   EXPECT_EQ("redDiv", EvalJs(shell(), "domTarget"));
 }
 

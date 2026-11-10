@@ -15,15 +15,24 @@
  */
 
 #include "src/trace_processor/sqlite/sqlite_utils.h"
-#include <bitset>
+
+#include <cstddef>
+#include <cstdint>
+#include <limits>
+#include <optional>
 #include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "perfetto/base/logging.h"
 #include "perfetto/base/status.h"
+#include "perfetto/ext/base/status_or.h"
 #include "perfetto/ext/base/string_utils.h"
 #include "perfetto/trace_processor/basic_types.h"
+#include "src/trace_processor/sqlite/scoped_db.h"
 
-namespace perfetto {
-namespace trace_processor {
-namespace sqlite_utils {
+namespace perfetto::trace_processor::sqlite::utils {
 namespace internal {
 namespace {
 std::string ToExpectedTypesString(ExpectedTypesSet expected_types) {
@@ -44,6 +53,23 @@ std::string ToExpectedTypesString(ExpectedTypesSet expected_types) {
 
   return ss.str();
 }
+
+inline SqlValue::Type SqliteTypeToSqlValueType(int sqlite_type) {
+  switch (sqlite_type) {
+    case SQLITE_NULL:
+      return SqlValue::Type::kNull;
+    case SQLITE_BLOB:
+      return SqlValue::Type::kBytes;
+    case SQLITE_INTEGER:
+      return SqlValue::Type::kLong;
+    case SQLITE_FLOAT:
+      return SqlValue::Type::kDouble;
+    case SQLITE_TEXT:
+      return SqlValue::Type::kString;
+  }
+  PERFETTO_FATAL("Unknown SQLite type %d", sqlite_type);
+}
+
 }  // namespace
 
 base::Status InvalidArgumentTypeError(const char* argument_name,
@@ -66,29 +92,19 @@ base::StatusOr<SqlValue> ExtractArgument(size_t argc,
     return MissingArgumentError(argument_name);
   }
 
-  SqlValue value = sqlite_utils::SqliteValueToSqlValue(argv[arg_index]);
-
+  SqlValue value = sqlite::utils::SqliteValueToSqlValue(argv[arg_index]);
   if (!expected_types.test(value.type)) {
     return InvalidArgumentTypeError(argument_name, arg_index, value.type,
                                     expected_types);
   }
-
-  return std::move(value);
+  return value;
 }
 }  // namespace internal
 
-std::wstring SqliteValueToWString(sqlite3_value* value) {
-  PERFETTO_CHECK(sqlite3_value_type(value) == SQLITE_TEXT);
-  int len = sqlite3_value_bytes16(value);
-  PERFETTO_CHECK(len >= 0);
-  size_t count = static_cast<size_t>(len) / sizeof(wchar_t);
-  return std::wstring(
-      reinterpret_cast<const wchar_t*>(sqlite3_value_text16(value)), count);
-}
-
-base::Status GetColumnsForTable(sqlite3* db,
-                                const std::string& raw_table_name,
-                                std::vector<SqliteTable::Column>& columns) {
+base::Status GetColumnsForTable(
+    sqlite3* db,
+    const std::string& raw_table_name,
+    std::vector<std::pair<SqlValue::Type, std::string>>& columns) {
   PERFETTO_DCHECK(columns.empty());
   char sql[1024];
   const char kRawSql[] = "SELECT name, type from pragma_table_info(\"%s\")";
@@ -148,7 +164,7 @@ base::Status GetColumnsForTable(sqlite3* db,
       return base::ErrStatus("Unknown column type '%s' on table %s", raw_type,
                              raw_table_name.c_str());
     }
-    columns.emplace_back(columns.size(), name, type);
+    columns.emplace_back(type, name);
   }
 
   // Catch mis-spelt table names.
@@ -189,49 +205,19 @@ base::Status CheckArgCount(const char* function_name,
                          expected_argc, argc);
 }
 
-base::StatusOr<int64_t> ExtractIntArg(const char* function_name,
-                                      const char* arg_name,
-                                      sqlite3_value* sql_value) {
-  SqlValue value = SqliteValueToSqlValue(sql_value);
-  std::optional<int64_t> result;
-
-  base::Status status = ExtractFromSqlValue(value, result);
-  if (!status.ok()) {
-    return base::ErrStatus("%s(%s): %s", function_name, arg_name,
-                           status.message().c_str());
-  }
-  PERFETTO_CHECK(result);
-  return *result;
-}
-
-base::StatusOr<double> ExtractDoubleArg(const char* function_name,
-                                        const char* arg_name,
-                                        sqlite3_value* sql_value) {
-  SqlValue value = SqliteValueToSqlValue(sql_value);
-  std::optional<double> result;
-
-  base::Status status = ExtractFromSqlValue(value, result);
-  if (!status.ok()) {
-    return base::ErrStatus("%s(%s): %s", function_name, arg_name,
-                           status.message().c_str());
-  }
-  PERFETTO_CHECK(result);
-  return *result;
-}
-
 base::StatusOr<std::string> ExtractStringArg(const char* function_name,
                                              const char* arg_name,
                                              sqlite3_value* sql_value) {
   SqlValue value = SqliteValueToSqlValue(sql_value);
-  std::optional<const char*> result;
-
-  base::Status status = ExtractFromSqlValue(value, result);
-  if (!status.ok()) {
-    return base::ErrStatus("%s(%s): %s", function_name, arg_name,
-                           status.message().c_str());
+  if (value.type != SqlValue::kString) {
+    return base::ErrStatus(
+        "%s(%s): value has type %s which does not match the expected type %s",
+        function_name, arg_name, SqliteTypeToFriendlyString(value.type),
+        SqliteTypeToFriendlyString(SqlValue::kString));
   }
+  const char* result = value.AsString();
   PERFETTO_CHECK(result);
-  return std::string(*result);
+  return std::string(result);
 }
 
 base::Status TypeCheckSqliteValue(sqlite3_value* value,
@@ -244,81 +230,12 @@ base::Status TypeCheckSqliteValue(sqlite3_value* value,
                                   SqlValue::Type expected_type,
                                   const char* expected_type_str) {
   SqlValue::Type actual_type =
-      sqlite_utils::SqliteTypeToSqlValueType(sqlite3_value_type(value));
+      internal::SqliteTypeToSqlValueType(sqlite3_value_type(value));
   if (actual_type != SqlValue::Type::kNull && actual_type != expected_type) {
     return base::ErrStatus(
         "does not have expected type: expected %s, actual %s",
         expected_type_str, SqliteTypeToFriendlyString(actual_type));
   }
-  return base::OkStatus();
-}
-
-template <typename T>
-base::Status ExtractFromSqlValueInt(const SqlValue& value,
-                                    std::optional<T>& out) {
-  if (value.is_null()) {
-    out = std::nullopt;
-    return base::OkStatus();
-  }
-  if (value.type != SqlValue::kLong) {
-    return base::ErrStatus(
-        "value has type %s which does not match the expected type %s",
-        SqliteTypeToFriendlyString(value.type),
-        SqliteTypeToFriendlyString(SqlValue::kLong));
-  }
-
-  int64_t res = value.AsLong();
-  if (res > std::numeric_limits<T>::max() ||
-      res < std::numeric_limits<T>::min()) {
-    return base::ErrStatus("value %ld does not fit inside the range [%ld, %ld]",
-                           static_cast<long>(res),
-                           static_cast<long>(std::numeric_limits<T>::min()),
-                           static_cast<long>(std::numeric_limits<T>::max()));
-  }
-  out = static_cast<T>(res);
-  return base::OkStatus();
-}
-
-base::Status ExtractFromSqlValue(const SqlValue& value,
-                                 std::optional<int64_t>& out) {
-  return ExtractFromSqlValueInt(value, out);
-}
-base::Status ExtractFromSqlValue(const SqlValue& value,
-                                 std::optional<int32_t>& out) {
-  return ExtractFromSqlValueInt(value, out);
-}
-base::Status ExtractFromSqlValue(const SqlValue& value,
-                                 std::optional<uint32_t>& out) {
-  return ExtractFromSqlValueInt(value, out);
-}
-base::Status ExtractFromSqlValue(const SqlValue& value,
-                                 std::optional<double>& out) {
-  if (value.is_null()) {
-    out = std::nullopt;
-    return base::OkStatus();
-  }
-  if (value.type != SqlValue::kDouble) {
-    return base::ErrStatus(
-        "value has type %s which does not match the expected type %s",
-        SqliteTypeToFriendlyString(value.type),
-        SqliteTypeToFriendlyString(SqlValue::kDouble));
-  }
-  out = value.AsDouble();
-  return base::OkStatus();
-}
-base::Status ExtractFromSqlValue(const SqlValue& value,
-                                 std::optional<const char*>& out) {
-  if (value.is_null()) {
-    out = std::nullopt;
-    return base::OkStatus();
-  }
-  if (value.type != SqlValue::kString) {
-    return base::ErrStatus(
-        "value has type %s which does not match the expected type %s",
-        SqliteTypeToFriendlyString(value.type),
-        SqliteTypeToFriendlyString(SqlValue::kString));
-  }
-  out = value.AsString();
   return base::OkStatus();
 }
 
@@ -328,11 +245,9 @@ base::Status MissingArgumentError(const char* argument_name) {
 
 base::Status ToInvalidArgumentError(const char* argument_name,
                                     size_t arg_index,
-                                    const base::Status error) {
+                                    const base::Status& error) {
   return base::ErrStatus("argument %s at pos %zu: %s", argument_name,
                          arg_index + 1, error.message().c_str());
 }
 
-}  // namespace sqlite_utils
-}  // namespace trace_processor
-}  // namespace perfetto
+}  // namespace perfetto::trace_processor::sqlite::utils

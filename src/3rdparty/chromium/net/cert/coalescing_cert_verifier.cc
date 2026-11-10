@@ -4,13 +4,14 @@
 
 #include "net/cert/coalescing_cert_verifier.h"
 
+#include <algorithm>
+
 #include "base/containers/linked_list.h"
 #include "base/containers/unique_ptr_adapters.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
 #include "net/base/net_errors.h"
@@ -173,9 +174,9 @@ class CoalescingCertVerifier::Request
   void OnJobAbort();
 
  private:
-  raw_ptr<CoalescingCertVerifier::Job, DanglingUntriaged> job_;
+  raw_ptr<CoalescingCertVerifier::Job> job_;
 
-  raw_ptr<CertVerifyResult, DanglingUntriaged> verify_result_;
+  raw_ptr<CertVerifyResult> verify_result_;
   CompletionOnceCallback callback_;
   const NetLogWithSource net_log_;
 };
@@ -342,10 +343,14 @@ CoalescingCertVerifier::Request::~Request() {
     net_log_.AddEvent(NetLogEventType::CANCELLED);
     net_log_.EndEvent(NetLogEventType::CERT_VERIFIER_REQUEST);
 
+    // Need to null out `job_` before aborting the request to avoid a dangling
+    // pointer warning, as aborting the request may delete `job_`.
+    auto* job = job_.get();
+    job_ = nullptr;
+
     // If the Request is deleted before the Job, then detach from the Job.
     // Note: This may cause |job_| to be deleted.
-    job_->AbortRequest(this);
-    job_ = nullptr;
+    job->AbortRequest(this);
   }
 }
 
@@ -358,6 +363,11 @@ void CoalescingCertVerifier::Request::Complete(int result) {
   // similarly, break the association here so that when the Request is
   // deleted, it does not try to abort the (now-completed) Job.
   job_ = nullptr;
+
+  // Also need to break the association with `verify_result_`, so that
+  // dangling pointer checks the result and the Request be destroyed
+  // in any order.
+  verify_result_ = nullptr;
 
   net_log_.EndEvent(NetLogEventType::CERT_VERIFIER_REQUEST);
 
@@ -427,6 +437,19 @@ int CoalescingCertVerifier::Verify(
   return ERR_IO_PENDING;
 }
 
+void CoalescingCertVerifier::Verify2QwacBinding(
+    const std::string& binding,
+    const std::string& hostname,
+    const scoped_refptr<X509Certificate>& tls_cert,
+    base::OnceCallback<void(const scoped_refptr<X509Certificate>&)> callback,
+    const NetLogWithSource& net_log) {
+  // 2-QWAC binding verification isn't coalesced.  This isn't performance
+  // critical and if we wanted to coalesce, it would make more sense to do at
+  // the 2-QWAC link header processing layer.
+  verifier_->Verify2QwacBinding(binding, hostname, tls_cert,
+                                std::move(callback), net_log);
+}
+
 void CoalescingCertVerifier::SetConfig(const CertVerifier::Config& config) {
   verifier_->SetConfig(config);
 
@@ -461,8 +484,8 @@ void CoalescingCertVerifier::RemoveJob(Job* job) {
 
   // Otherwise, it MUST have been a job from a previous generation.
   auto inflight_it =
-      base::ranges::find_if(inflight_jobs_, base::MatchesUniquePtr(job));
-  DCHECK(inflight_it != inflight_jobs_.end());
+      std::ranges::find_if(inflight_jobs_, base::MatchesUniquePtr(job));
+  CHECK(inflight_it != inflight_jobs_.end());
   inflight_jobs_.erase(inflight_it);
   return;
 }

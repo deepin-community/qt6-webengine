@@ -15,24 +15,31 @@
 #include "connections/implementation/service_controller_router.h"
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include "absl/memory/memory.h"
+#include "absl/functional/any_invocable.h"
+#include "absl/strings/string_view.h"
+#include "connections/advertising_options.h"
 #include "connections/discovery_options.h"
+#include "connections/implementation/bwu_manager.h"
 #include "connections/implementation/client_proxy.h"
+#include "connections/implementation/flags/nearby_connections_feature_flags.h"
 #include "connections/implementation/offline_service_controller.h"
 #include "connections/listeners.h"
+#include "connections/medium_selector.h"
 #include "connections/params.h"
 #include "connections/payload.h"
 #include "connections/v3/bandwidth_info.h"
 #include "connections/v3/connection_result.h"
 #include "connections/v3/connections_device.h"
 #include "connections/v3/listening_result.h"
+#include "internal/flags/nearby_flags.h"
+#include "internal/platform/feature_flags.h"
 #include "internal/platform/logging.h"
 
-// TODO(b/285657711): Add tests for uncovered logic, even if trivial.
 namespace nearby {
 namespace connections {
 namespace {
@@ -76,6 +83,7 @@ v3::Quality ServiceControllerRouter::GetMediumQuality(Medium medium) {
     case location::nearby::proto::connections::WIFI_AWARE:
     case location::nearby::proto::connections::WIFI_DIRECT:
     case location::nearby::proto::connections::WEB_RTC:
+    case location::nearby::proto::connections::WEB_RTC_NON_CELLULAR:
       return v3::Quality::kHigh;
     default:
       return v3::Quality::kUnknown;
@@ -84,6 +92,31 @@ v3::Quality ServiceControllerRouter::GetMediumQuality(Medium medium) {
 
 ServiceControllerRouter::ServiceControllerRouter() {
   NEARBY_LOGS(INFO) << "ServiceControllerRouter going up.";
+}
+
+ServiceControllerRouter::ServiceControllerRouter(
+    absl::AnyInvocable<bool()> if_hp_realtek_device)
+    : if_hp_realtek_device_(std::move(if_hp_realtek_device)) {
+  LOG(INFO)
+      << "ServiceControllerRouter going up checking if_hp_realtek_device.";
+}
+
+// Constructor called by the CrOS platform implementation to override the
+// kEnableBleV2 flag.
+ServiceControllerRouter::ServiceControllerRouter(bool enable_ble_v2)
+    : ServiceControllerRouter() {
+  if (NearbyFlags::GetInstance().GetBoolFlag(
+          config_package_nearby::nearby_connections_feature::kEnableBleV2) !=
+      enable_ble_v2) {
+    NearbyFlags::GetInstance().OverrideBoolFlagValue(
+        config_package_nearby::nearby_connections_feature::kEnableBleV2,
+        enable_ble_v2);
+    // CrOS uses the async signature for Scanning and has no support for the
+    // sync version.
+    // TODO(b/333408829): Enable async advertising flag once supported.
+    const_cast<FeatureFlags&>(FeatureFlags::GetInstance())
+        .SetFlags({.enable_ble_v2_async_scanning = true});
+  }
 }
 
 ServiceControllerRouter::~ServiceControllerRouter() {
@@ -432,6 +465,8 @@ void ServiceControllerRouter::RequestConnectionV3(
                           response_info.raw_authentication_token.string_data(),
                       .is_incoming_connection =
                           response_info.is_incoming_connection,
+                      .authentication_status =
+                          response_info.authentication_status,
                   };
                   v3_info.listener.initiated_cb(remote_device, new_info);
                 },
@@ -690,7 +725,30 @@ void ServiceControllerRouter::SetServiceControllerForTesting(
 
 ServiceController* ServiceControllerRouter::GetServiceController() {
   if (!service_controller_) {
-    service_controller_ = std::make_unique<OfflineServiceController>();
+    bool is_hp_realtek_device = if_hp_realtek_device_();
+    LOG(INFO) << __func__
+              << " if_hp_realtek_device_ =  " << is_hp_realtek_device;
+    // Temporarily fix to get around wifi hotspot issues for HP Aero with
+    // Realtek.
+    // See b/380191431 for more details.
+    if (is_hp_realtek_device) {
+      LOG(INFO) << __func__
+                << ": it is HP Realtek device, set BwuManager::Config.";
+      BwuManager::Config bwu_config;
+      bwu_config.allow_upgrade_to = {/*bluetooth=*/false,
+                                     /*ble=*/false,
+                                     /*web_rtc_no_cellular=*/false,
+                                     /*web_rtc=*/true,
+                                     /*wifi_lan=*/true,
+                                     /*wifi_hotspot=*/false,
+                                     /*wifi_direct=*/true,
+                                     /*awdl=*/false};
+      service_controller_ =
+          std::make_unique<OfflineServiceController>(bwu_config);
+    } else {
+      service_controller_ =
+          std::make_unique<OfflineServiceController>(BwuManager::Config());
+    }
   }
   return service_controller_.get();
 }

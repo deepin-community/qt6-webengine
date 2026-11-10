@@ -11,6 +11,8 @@
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "base/uuid.h"
+#include "content/public/browser/service_worker_external_request_result.h"
+#include "extensions/browser/extension_event_histogram_value.h"
 
 namespace content {
 class ServiceWorkerContext;
@@ -39,10 +41,11 @@ class EventAckData {
                               int event_id,
                               base::TimeTicks dispatch_start_time,
                               EventDispatchSource dispatch_source,
-                              bool lazy_background_active_on_dispatch);
-  // Clears the record of our knowledge of an in-flight event with |event_id|.
+                              bool lazy_background_active_on_dispatch,
+                              events::HistogramValue histogram_value);
+  // Clears the record of our knowledge of an in-flight event with `event_id`.
   //
-  // On failure, |failure_callback| is called synchronously.
+  // On failure, `failure_callback` is called synchronously.
   void DecrementInflightEvent(content::ServiceWorkerContext* context,
                               int render_process_id,
                               int64_t version_id,
@@ -50,24 +53,27 @@ class EventAckData {
                               bool worker_stopped,
                               base::OnceClosure failure_callback);
 
+  // Removes any `unacked_events_` for `render_process_id`.
+  void ClearUnackedEventsForRenderProcess(int render_process_id);
+
+  bool HasUnackedEventForTesting(int event_id);
+
  private:
   // Information about an unacked event.
   struct EventInfo {
-    EventInfo(const base::Uuid& request_uuid,
-              int render_process_id,
-              bool start_ok,
-              base::TimeTicks dispatch_start_time,
-              EventDispatchSource dispatch_source,
-              bool lazy_background_active_on_dispatch)
-        : request_uuid(request_uuid),
-          render_process_id(render_process_id),
-          start_ok(start_ok),
-          dispatch_start_time(dispatch_start_time),
-          dispatch_source(dispatch_source),
-          lazy_background_active_on_dispatch(
-              lazy_background_active_on_dispatch) {}
+    EventInfo(
+        const base::Uuid& request_uuid,
+        int render_process_id,
+        bool start_ok,
+        content::ServiceWorkerExternalRequestResult external_request_result,
+        base::TimeTicks dispatch_start_time,
+        EventDispatchSource dispatch_source,
+        bool lazy_background_active_on_dispatch,
+        const events::HistogramValue histogram_value);
+
+    EventInfo(EventInfo&&);
+
     EventInfo(const EventInfo&) = delete;
-    EventInfo(EventInfo&&) = default;
     EventInfo& operator=(const EventInfo&) = delete;
 
     // Uuid of the Service Worker's external request for the event.
@@ -76,24 +82,29 @@ class EventAckData {
     int render_process_id;
     // Whether or not StartExternalRequest succeeded.
     bool start_ok;
+    // The status returned for StartExternalRequest.
+    content::ServiceWorkerExternalRequestResult external_request_result;
     // The time the event was dispatched to the event router for the extension.
     base::TimeTicks dispatch_start_time;
     // The event dispatching processing flow that was followed for this event.
     EventDispatchSource dispatch_source;
     // `true` if the event was dispatched to a active/running lazy background.
     bool lazy_background_active_on_dispatch;
+    // See `EventRouter::Event.histogram_value`.
+    events::HistogramValue histogram_value;
   };
 
   // Emits a stale event ack metric if an event with `event_id` is not present
   // in `unacked_events_`. Meaning that the event was not yet acked by the
   // renderer to the browser.
   void EmitLateAckedEventTask(int event_id);
+  void EmitLateAckedEventTaskMetrics(const EventInfo& event_info);
 
   // Emit all the time related event dispatch metrics when an event is acked
   // from the renderer.
   static void EmitDispatchTimeMetrics(EventInfo& event_info);
 
-  // TODO(crbug.com/1441221): Mark events that are not acked within 5 minutes
+  // TODO(crbug.com/40909770): Mark events that are not acked within 5 minutes
   // (if the worker is still around) as stale, and emit
   // Extensions.Events.DispatchToAckTime.ExtensionServiceWorker2 at that point.
   // Acks after that point should check staleness and not emit a second time.

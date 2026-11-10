@@ -32,8 +32,8 @@ namespace bluez {
 
 namespace {
 
-// Stream operator for logging vector<uint8_t>.
-std::ostream& operator<<(std::ostream& out, const std::vector<uint8_t> bytes) {
+// Stream operator for logging span<uint8_t>.
+std::ostream& operator<<(std::ostream& out, base::span<const uint8_t> bytes) {
   out << "[";
   for (auto iter = bytes.begin(); iter != bytes.end(); ++iter) {
     out << base::StringPrintf("%02X", *iter);
@@ -174,7 +174,7 @@ void BluetoothRemoteGattCharacteristicBlueZ::ReadRemoteCharacteristic(
 }
 
 void BluetoothRemoteGattCharacteristicBlueZ::WriteRemoteCharacteristic(
-    const std::vector<uint8_t>& value,
+    base::span<const uint8_t> value,
     WriteType write_type,
     base::OnceClosure callback,
     ErrorCallback error_callback) {
@@ -204,7 +204,7 @@ void BluetoothRemoteGattCharacteristicBlueZ::WriteRemoteCharacteristic(
 }
 
 void BluetoothRemoteGattCharacteristicBlueZ::
-    DeprecatedWriteRemoteCharacteristic(const std::vector<uint8_t>& value,
+    DeprecatedWriteRemoteCharacteristic(base::span<const uint8_t> value,
                                         base::OnceClosure callback,
                                         ErrorCallback error_callback) {
   DVLOG(1) << "Sending GATT characteristic write request to characteristic: "
@@ -222,7 +222,7 @@ void BluetoothRemoteGattCharacteristicBlueZ::
 
 #if BUILDFLAG(IS_CHROMEOS)
 void BluetoothRemoteGattCharacteristicBlueZ::PrepareWriteRemoteCharacteristic(
-    const std::vector<uint8_t>& value,
+    base::span<const uint8_t> value,
     base::OnceClosure callback,
     ErrorCallback error_callback) {
   DVLOG(1) << "Sending GATT characteristic prepare write request to "
@@ -411,7 +411,7 @@ void BluetoothRemoteGattCharacteristicBlueZ::OnReadError(
   --num_of_characteristic_value_read_in_progress_;
   DCHECK_GE(num_of_characteristic_value_read_in_progress_, 0);
   std::move(callback).Run(
-      absl::make_optional(
+      std::make_optional(
           BluetoothGattServiceBlueZ::DBusErrorToServiceError(error_name)),
       /*value=*/std::vector<uint8_t>());
 }

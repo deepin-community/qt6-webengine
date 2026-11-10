@@ -27,6 +27,7 @@
 #include "libavcodec/bsf.h"
 #include "avformat.h"
 #include "avio_internal.h"
+#include "demux.h"
 #include "internal.h"
 
 typedef struct AV1DemuxContext {
@@ -35,6 +36,7 @@ typedef struct AV1DemuxContext {
     AVRational framerate;
     uint32_t temporal_unit_size;
     uint32_t frame_unit_size;
+    int64_t pos;
 } AV1DemuxContext;
 
 //return < 0 if we need more data
@@ -223,6 +225,7 @@ static int annexb_read_packet(AVFormatContext *s, AVPacket *pkt)
 {
     AV1DemuxContext *const c = s->priv_data;
     uint32_t obu_unit_size;
+    int64_t pos = c->pos;
     int ret, len;
 
 retry:
@@ -233,6 +236,7 @@ retry:
     }
 
     if (!c->temporal_unit_size) {
+        c->pos = avio_tell(s->pb);
         len = leb(s->pb, &c->temporal_unit_size, 1);
         if (len == AVERROR_EOF) goto end;
         else if (len < 0) return len;
@@ -271,28 +275,32 @@ end:
     }
 
     ret = av_bsf_receive_packet(c->bsf, pkt);
-    if (ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF)
-        av_log(s, AV_LOG_ERROR, "av1_frame_merge filter failed to "
-                                "send output packet\n");
+    if (ret < 0) {
+        if (ret == AVERROR(EAGAIN))
+            goto retry;
+        if (ret != AVERROR_EOF)
+            av_log(s, AV_LOG_ERROR, "av1_frame_merge filter failed to "
+                                    "send output packet\n");
+        return ret;
+    }
 
-    if (ret == AVERROR(EAGAIN))
-        goto retry;
+    pkt->pos = pos;
 
-    return ret;
+    return 0;
 }
 
-const AVInputFormat ff_av1_demuxer = {
-    .name           = "av1",
-    .long_name      = NULL_IF_CONFIG_SMALL("AV1 Annex B"),
+const FFInputFormat ff_av1_demuxer = {
+    .p.name         = "av1",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("AV1 Annex B"),
+    .p.extensions   = "obu",
+    .p.flags        = AVFMT_GENERIC_INDEX | AVFMT_NOTIMESTAMPS,
+    .p.priv_class   = &av1_demuxer_class,
     .priv_data_size = sizeof(AV1DemuxContext),
-    .flags_internal = FF_FMT_INIT_CLEANUP,
+    .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
     .read_probe     = annexb_probe,
     .read_header    = av1_read_header,
     .read_packet    = annexb_read_packet,
     .read_close     = av1_read_close,
-    .extensions     = "obu",
-    .flags          = AVFMT_GENERIC_INDEX | AVFMT_NOTIMESTAMPS,
-    .priv_class     = &av1_demuxer_class,
 };
 #endif
 
@@ -325,7 +333,7 @@ static int read_obu_with_size(const uint8_t *buf, int buf_size, int64_t *obu_siz
         skip_bits(&gb, 3);  // extension_header_reserved_3bits
     }
 
-    *obu_size  = leb128(&gb);
+    *obu_size  = get_leb128(&gb);
     if (*obu_size > INT_MAX)
         return AVERROR_INVALIDDATA;
 
@@ -378,6 +386,7 @@ static int obu_get_packet(AVFormatContext *s, AVPacket *pkt)
     if (size < 0)
         return size;
 
+    memset(header + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
     len = read_obu_with_size(header, size, &obu_size, &type);
     if (len < 0) {
         av_log(c, AV_LOG_ERROR, "Failed to read obu\n");
@@ -426,17 +435,17 @@ static int obu_read_packet(AVFormatContext *s, AVPacket *pkt)
     return ret;
 }
 
-const AVInputFormat ff_obu_demuxer = {
-    .name           = "obu",
-    .long_name      = NULL_IF_CONFIG_SMALL("AV1 low overhead OBU"),
+const FFInputFormat ff_obu_demuxer = {
+    .p.name         = "obu",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("AV1 low overhead OBU"),
+    .p.extensions   = "obu",
+    .p.flags        = AVFMT_GENERIC_INDEX | AVFMT_NO_BYTE_SEEK | AVFMT_NOTIMESTAMPS,
+    .p.priv_class   = &av1_demuxer_class,
     .priv_data_size = sizeof(AV1DemuxContext),
-    .flags_internal = FF_FMT_INIT_CLEANUP,
+    .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
     .read_probe     = obu_probe,
     .read_header    = av1_read_header,
     .read_packet    = obu_read_packet,
     .read_close     = av1_read_close,
-    .extensions     = "obu",
-    .flags          = AVFMT_GENERIC_INDEX | AVFMT_NO_BYTE_SEEK | AVFMT_NOTIMESTAMPS,
-    .priv_class     = &av1_demuxer_class,
 };
 #endif

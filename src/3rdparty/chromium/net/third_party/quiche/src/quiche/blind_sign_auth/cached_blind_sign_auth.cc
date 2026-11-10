@@ -4,6 +4,8 @@
 
 #include "quiche/blind_sign_auth/cached_blind_sign_auth.h"
 
+#include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -11,19 +13,20 @@
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "quiche/blind_sign_auth/blind_sign_auth_interface.h"
 #include "quiche/common/platform/api/quiche_logging.h"
-#include "quiche/common/platform/api/quiche_mutex.h"
 
 namespace quiche {
 
 constexpr absl::Duration kFreshnessConstant = absl::Minutes(5);
 
-void CachedBlindSignAuth::GetTokens(std::string oauth_token, int num_tokens,
-                                    ProxyLayer proxy_layer,
+void CachedBlindSignAuth::GetTokens(std::optional<std::string> oauth_token,
+                                    int num_tokens, ProxyLayer proxy_layer,
+                                    BlindSignAuthServiceType service_type,
                                     SignedTokenCallback callback) {
   if (num_tokens > max_tokens_per_request_) {
     std::move(callback)(absl::InvalidArgumentError(
@@ -39,7 +42,7 @@ void CachedBlindSignAuth::GetTokens(std::string oauth_token, int num_tokens,
 
   std::vector<BlindSignToken> output_tokens;
   {
-    QuicheWriterMutexLock lock(&mutex_);
+    absl::WriterMutexLock lock(&mutex_);
 
     RemoveExpiredTokens();
     // Try to fill the request from cache.
@@ -58,7 +61,8 @@ void CachedBlindSignAuth::GetTokens(std::string oauth_token, int num_tokens,
       absl::bind_front(&CachedBlindSignAuth::HandleGetTokensResponse, this,
                        std::move(callback), num_tokens);
   blind_sign_auth_->GetTokens(oauth_token, kBlindSignAuthRequestMaxTokens,
-                              proxy_layer, std::move(caching_callback));
+                              proxy_layer, service_type,
+                              std::move(caching_callback));
 }
 
 void CachedBlindSignAuth::HandleGetTokensResponse(
@@ -79,7 +83,7 @@ void CachedBlindSignAuth::HandleGetTokensResponse(
   std::vector<BlindSignToken> output_tokens;
   size_t cache_size;
   {
-    QuicheWriterMutexLock lock(&mutex_);
+    absl::WriterMutexLock lock(&mutex_);
 
     // Add returned tokens to cache.
     for (const BlindSignToken& token : *tokens) {
@@ -126,6 +130,15 @@ void CachedBlindSignAuth::RemoveExpiredTokens() {
       cached_tokens_.push_back(std::move(token));
     }
   }
+}
+
+void CachedBlindSignAuth::GetAttestationTokens(
+    int /*num_tokens*/, ProxyLayer /*layer*/,
+    AttestationDataCallback /*attestation_data_callback*/,
+    SignedTokenCallback token_callback) {
+  // TODO(b/421236538): Implement GetAttestationTokens.
+  std::move(token_callback)(
+      absl::UnimplementedError("GetAttestationTokens is not implemented"));
 }
 
 }  // namespace quiche

@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-raddstoreexpminusmax/scalar-rr2-lut64-p2.c.in
 //   Generator: tools/xngen
@@ -8,14 +9,15 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/math.h>
-#include <xnnpack/raddstoreexpminusmax.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/raddstoreexpminusmax.h"
 
 
-// Note redefine as uint32[] to avoid redundant bitcasts.
-extern XNN_INTERNAL const uint32_t xnn_table_exp2_k_over_64[64];
+extern XNN_INTERNAL const float xnn_table_exp2_k_over_64[64];
 
 void xnn_f32_raddstoreexpminusmax_ukernel__scalar_rr2_lut64_p2_u2_acc2(
     size_t batch,
@@ -23,7 +25,7 @@ void xnn_f32_raddstoreexpminusmax_ukernel__scalar_rr2_lut64_p2_u2_acc2(
     const float* max,
     float* output,
     float* sum,
-    const union xnn_f32_expminus_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const void* params)
 {
   assert(batch != 0);
   assert(batch % sizeof(float) == 0);
@@ -32,14 +34,15 @@ void xnn_f32_raddstoreexpminusmax_ukernel__scalar_rr2_lut64_p2_u2_acc2(
   assert(output != NULL);
   assert(sum != NULL);
 
-  const float vi_max = *max;
-  const float vlog2e = params->scalar_rr2_lut64_p2.log2e;
-  const float vmagic_bias = params->scalar_rr2_lut64_p2.magic_bias;
+  const float vlog2e  = 0x1.715476p0f;
+  const float vmagic_bias = 0x1.800000p17f;
   const uint32_t vindex_mask = UINT32_C(0x3F);
-  const float vminus_ln2_hi = params->scalar_rr2_lut64_p2.minus_ln2_hi;
-  const float vminus_ln2_lo = params->scalar_rr2_lut64_p2.minus_ln2_lo;
-  const float vc2 = params->scalar_rr2_lut64_p2.c2;
-  const float vdenorm_cutoff = params->scalar_rr2_lut64_p2.denorm_cutoff;
+  const float vminus_ln2_hi = -0x1.630000p-1f;
+  const float vminus_ln2_lo = 0x1.BD0106p-13f;
+  const float vc2 = 0x1.FFFF0Ap-2f;
+  const float vdenorm_cutoff = -0x1.5D589Ep6f;
+
+  const float vi_max = *max;
 
   float vacc0 = 0.0f;
   float vacc1 = 0.0f;
@@ -80,8 +83,8 @@ void xnn_f32_raddstoreexpminusmax_ukernel__scalar_rr2_lut64_p2_u2_acc2(
     const uint32_t vidx0 = float_as_uint32(vn0) & vindex_mask;
     const uint32_t vidx1 = float_as_uint32(vn1) & vindex_mask;
     // Adjust exponent of the value l fetched from the table to get the final s value.
-    const float vs0 = uint32_as_float(xnn_table_exp2_k_over_64[vidx0] + ve0);
-    const float vs1 = uint32_as_float(xnn_table_exp2_k_over_64[vidx1] + ve1);
+    const float vs0 = uint32_as_float(float_as_uint32(xnn_table_exp2_k_over_64[vidx0]) + ve0);
+    const float vs1 = uint32_as_float(float_as_uint32(xnn_table_exp2_k_over_64[vidx1]) + ve1);
 
     // Subtract the large number back to get final n := round(x * 64 / log(2)) as a floating-point number.
     vn0 -= vmagic_bias;
@@ -163,7 +166,7 @@ void xnn_f32_raddstoreexpminusmax_ukernel__scalar_rr2_lut64_p2_u2_acc2(
     // Use bits 0:6 bits of n, as integer, as an index for table lookup of l := 2**(n % 64).
     const uint32_t vidx = float_as_uint32(vn) & vindex_mask;
     // Adjust exponent of the value l fetched from the table to get the final s value.
-    const float vs = uint32_as_float(xnn_table_exp2_k_over_64[vidx] + ve);
+    const float vs = uint32_as_float(float_as_uint32(xnn_table_exp2_k_over_64[vidx]) + ve);
 
     // Subtract the large number back to get final n := round(x * 64 / log(2)) as a floating-point number.
     vn -= vmagic_bias;

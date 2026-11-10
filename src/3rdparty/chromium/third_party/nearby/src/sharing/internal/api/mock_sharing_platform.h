@@ -17,13 +17,16 @@
 
 #include <functional>
 #include <memory>
+#include <vector>
 
 #include "gmock/gmock.h"
-#include "absl/status/status.h"
 #include "absl/strings/string_view.h"
+#include "internal/base/file_path.h"
+#include "internal/platform/clock.h"
 #include "internal/platform/device_info.h"
 #include "internal/platform/implementation/account_manager.h"
 #include "internal/platform/task_runner.h"
+#include "sharing/analytics/analytics_recorder.h"
 #include "sharing/internal/api/app_info.h"
 #include "sharing/internal/api/bluetooth_adapter.h"
 #include "sharing/internal/api/fast_init_ble_beacon.h"
@@ -32,7 +35,7 @@
 #include "sharing/internal/api/preference_manager.h"
 #include "sharing/internal/api/public_certificate_database.h"
 #include "sharing/internal/api/sharing_platform.h"
-#include "sharing/internal/api/shell.h"
+#include "sharing/internal/api/sharing_rpc_client.h"
 #include "sharing/internal/api/system_info.h"
 #include "sharing/internal/api/wifi_adapter.h"
 
@@ -45,15 +48,15 @@ class MockSharingPlatform : public SharingPlatform {
   MockSharingPlatform& operator=(const MockSharingPlatform&) = delete;
   ~MockSharingPlatform() override = default;
 
-  MOCK_METHOD(void, InitLogging, (), (override));
+  MOCK_METHOD(void, InitProductIdGetter,
+              (absl::string_view (*product_id_getter)()), (override));
 
-  MOCK_METHOD(void, UpdateLoggingLevel, (), (override));
-
-  MOCK_METHOD(
-      std::unique_ptr<nearby::api::NetworkMonitor>, CreateNetworkMonitor,
-      (std::function<void(nearby::api::NetworkMonitor::ConnectionType, bool)>
-           callback),
-      (override));
+  MOCK_METHOD(std::unique_ptr<nearby::api::NetworkMonitor>,
+              CreateNetworkMonitor,
+              (std::function<void(nearby::api::NetworkMonitor::ConnectionType,
+                                  bool, bool)>
+                   callback),
+              (override));
 
   MOCK_METHOD(nearby::sharing::api::BluetoothAdapter&, GetBluetoothAdapter, (),
               (override));
@@ -61,22 +64,10 @@ class MockSharingPlatform : public SharingPlatform {
   MOCK_METHOD(nearby::sharing::api::WifiAdapter&, GetWifiAdapter, (),
               (override));
 
-  MOCK_METHOD(void, LaunchDefaultBrowserFromURL,
-              (absl::string_view url,
-               std::function<void(absl::Status)> callback),
-              (override));
-
-  MOCK_METHOD(nearby::api::Shell&, GetShell, (), (override));
-
   MOCK_METHOD(nearby::api::FastInitBleBeacon&, GetFastInitBleBeacon, (),
               (override));
 
   MOCK_METHOD(nearby::api::FastInitiationManager&, GetFastInitiationManager, (),
-              (override));
-
-  MOCK_METHOD(void, CopyText,
-              (absl::string_view text,
-               std::function<void(absl::Status)> callback),
               (override));
 
   MOCK_METHOD(std::unique_ptr<nearby::api::SystemInfo>, CreateSystemInfo, (),
@@ -91,8 +82,15 @@ class MockSharingPlatform : public SharingPlatform {
   MOCK_METHOD(TaskRunner&, GetDefaultTaskRunner, (), (override));
   MOCK_METHOD(nearby::DeviceInfo&, GetDeviceInfo, (), (override));
   MOCK_METHOD(std::unique_ptr<PublicCertificateDatabase>,
-              CreatePublicCertificateDatabase,
-              (absl::string_view database_path), (override));
+              CreatePublicCertificateDatabase, (const FilePath& database_path),
+              (override));
+  MOCK_METHOD(
+      std::unique_ptr<SharingRpcClientFactory>, CreateSharingRpcClientFactory,
+      (Clock * clock,
+       nearby::sharing::analytics::AnalyticsRecorder* analytics_recorder),
+      (override));
+  MOCK_METHOD(bool, UpdateFileOriginMetadata,
+              (std::vector<FilePath> & file_paths), (override));
 };
 
 }  // namespace nearby::sharing::api

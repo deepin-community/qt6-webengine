@@ -32,7 +32,7 @@
 #include <vector>
 
 #include "src/tint/lang/core/fluent_types.h"
-#include "src/tint/lang/wgsl/ast/transform/simplify_pointers.h"
+#include "src/tint/lang/spirv/reader/ast_lower/simplify_pointers.h"
 #include "src/tint/lang/wgsl/program/clone_context.h"
 #include "src/tint/lang/wgsl/program/program_builder.h"
 #include "src/tint/lang/wgsl/resolver/resolve.h"
@@ -107,7 +107,7 @@ ast::transform::Transform::ApplyResult DecomposeStridedArray::Apply(
             return nullptr;
         }
         if (!arr->IsStrideImplicit()) {
-            auto el_ty = tint::GetOrCreate(decomposed, arr, [&] {
+            auto el_ty = tint::GetOrAdd(decomposed, arr, [&] {
                 auto name = b.Symbols().New("strided_arr");
                 auto* member_ty = ctx.Clone(ident->arguments[0]->As<ast::IdentifierExpression>());
                 auto* member = b.Member(kMemberName, ast::Type{member_ty},
@@ -143,10 +143,9 @@ ast::transform::Transform::ApplyResult DecomposeStridedArray::Apply(
     // Example: `arr[i]` -> `arr[i].el`
     ctx.ReplaceAll([&](const ast::IndexAccessorExpression* idx) -> const ast::Expression* {
         if (auto* ty = src.TypeOf(idx->object)) {
-            if (TINT_UNLIKELY(ty->Is<core::type::Pointer>())) {
+            if (DAWN_UNLIKELY(ty->Is<core::type::Pointer>())) {
                 TINT_ICE() << "lhs of index accessor expression should not be a pointer. These "
                               "should have been removed by the SimplifyPointers transform";
-                return nullptr;
             }
             if (auto* arr = ty->UnwrapRef()->As<core::type::Array>()) {
                 if (!arr->IsStrideImplicit()) {

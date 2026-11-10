@@ -31,12 +31,14 @@
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "dawn/common/Mutex.h"
 #include "dawn/common/SerialQueue.h"
 #include "dawn/common/vulkan_platform.h"
 #include "dawn/native/Error.h"
 #include "dawn/native/IntegerTypes.h"
 #include "dawn/native/ObjectBase.h"
 #include "dawn/native/vulkan/DescriptorSetAllocation.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 namespace dawn::native::vulkan {
 
@@ -48,21 +50,19 @@ class DescriptorSetAllocator : public ObjectBase {
 
   public:
     static Ref<DescriptorSetAllocator> Create(
-        BindGroupLayout* layout,
+        DeviceBase* device,
         absl::flat_hash_map<VkDescriptorType, uint32_t> descriptorCountPerType);
 
-    ResultOrError<DescriptorSetAllocation> Allocate();
+    ResultOrError<DescriptorSetAllocation> Allocate(BindGroupLayout* layout);
     void Deallocate(DescriptorSetAllocation* allocationInfo);
     void FinishDeallocation(ExecutionSerial completedSerial);
 
   private:
-    DescriptorSetAllocator(BindGroupLayout* layout,
+    DescriptorSetAllocator(DeviceBase* device,
                            absl::flat_hash_map<VkDescriptorType, uint32_t> descriptorCountPerType);
     ~DescriptorSetAllocator() override;
 
-    MaybeError AllocateDescriptorPool();
-
-    const BindGroupLayout* mLayout;
+    MaybeError AllocateDescriptorPool(BindGroupLayout* layout);
 
     std::vector<VkDescriptorPoolSize> mPoolSizes;
     SetIndex mMaxSets;
@@ -82,6 +82,9 @@ class DescriptorSetAllocator : public ObjectBase {
     };
     SerialQueue<ExecutionSerial, Deallocation> mPendingDeallocations;
     ExecutionSerial mLastDeallocationSerial = ExecutionSerial(0);
+
+    // Used to guard all public member functions.
+    Mutex mMutex;
 };
 
 }  // namespace dawn::native::vulkan

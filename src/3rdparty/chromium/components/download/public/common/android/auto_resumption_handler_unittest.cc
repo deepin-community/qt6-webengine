@@ -21,7 +21,6 @@
 #include "services/network/test/test_network_connection_tracker.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 using network::mojom::ConnectionType;
 using testing::_;
@@ -323,6 +322,23 @@ TEST_F(AutoResumptionHandlerTest, DownloadWithoutTargetPathNotAutoResumed) {
   EXPECT_CALL(*item.get(), Resume(_)).Times(0);
   auto_resumption_handler_->OnStartScheduledTask(
       DownloadTaskType::DOWNLOAD_AUTO_RESUMPTION_TASK, base::DoNothing());
+  task_runner_->FastForwardUntilNoTasksRemain();
+}
+
+TEST_F(AutoResumptionHandlerTest, ScheduleTaskNotCalledForPdfDownload) {
+  // Set up a transient download.
+  auto item = std::make_unique<NiceMock<MockDownloadItem>>();
+  ON_CALL(*item, IsTransient()).WillByDefault(Return(true));
+
+  // No tasks should not be scheduled for PDF / transient downloads.
+  EXPECT_CALL(*task_manager_, ScheduleTask(_, _)).Times(0);
+  SetDownloadState(item.get(), DownloadItem::IN_PROGRESS, false, false);
+  auto_resumption_handler_->OnDownloadStarted(item.get());
+  task_runner_->FastForwardUntilNoTasksRemain();
+
+  // But they should be autoresumed on network change.
+  EXPECT_CALL(*item.get(), Resume(_)).Times(1);
+  SetNetworkConnectionType(ConnectionType::CONNECTION_WIFI);
   task_runner_->FastForwardUntilNoTasksRemain();
 }
 

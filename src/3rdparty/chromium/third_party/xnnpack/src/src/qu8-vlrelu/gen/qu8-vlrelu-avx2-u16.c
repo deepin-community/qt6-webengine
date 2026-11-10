@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-vlrelu/avx2.c.in
 //   Generator: tools/xngen
@@ -8,29 +9,37 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <immintrin.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/vlrelu.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/vunary.h"
 
 
 void xnn_qu8_vlrelu_ukernel__avx2_u16(
     size_t batch,
     const uint8_t* input,
     uint8_t* output,
-    const union xnn_qu8_lrelu_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_qu8_lrelu_params* restrict params) XNN_OOB_READS
 {
   assert(batch != 0);
   assert(batch % sizeof(uint8_t) == 0);
   assert(input != NULL);
   assert(output != NULL);
 
-  const __m256i vinput_zero_point = _mm256_load_si256((const __m256i*) params->avx2.input_zero_point);
-  const __m256i vpositive_multiplier = _mm256_load_si256((const __m256i*) params->avx2.positive_multiplier);
-  const __m256i vnegative_multiplier = _mm256_load_si256((const __m256i*) params->avx2.negative_multiplier);
-  const __m256i voutput_zero_point = _mm256_load_si256((const __m256i*) params->avx2.output_zero_point);
+  const __m256i vinput_zero_point = _mm256_set1_epi16(params->scalar.input_zero_point);
+  const __m256i vpositive_multiplier = _mm256_set1_epi16(-params->scalar.positive_multiplier);
+  const __m256i vnegative_multiplier = _mm256_set1_epi16(-params->scalar.negative_multiplier);
+  const __m256i voutput_zero_point = _mm256_set1_epi16(params->scalar.output_zero_point);
+  XNN_FORCE_REALIZATION(vinput_zero_point);
+  XNN_FORCE_REALIZATION(vpositive_multiplier);
+  XNN_FORCE_REALIZATION(vnegative_multiplier);
+  XNN_FORCE_REALIZATION(voutput_zero_point);
+
   for (; batch >= 16 * sizeof(uint8_t); batch -= 16 * sizeof(uint8_t)) {
     __m256i vacc = _mm256_cvtepu8_epi16(_mm_loadu_si128((const __m128i*) input));
     __m256i vmultiplier = _mm256_cmpgt_epi16(vacc, vinput_zero_point);

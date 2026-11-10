@@ -5,6 +5,8 @@
 #include "quiche/http2/test_tools/frame_parts.h"
 
 #include <optional>
+#include <ostream>
+#include <string>
 #include <type_traits>
 
 #include "absl/strings/escaping.h"
@@ -16,7 +18,6 @@
 using ::testing::AssertionFailure;
 using ::testing::AssertionResult;
 using ::testing::AssertionSuccess;
-using ::testing::ContainerEq;
 
 namespace http2 {
 namespace test {

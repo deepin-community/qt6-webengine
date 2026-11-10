@@ -11,6 +11,7 @@
 #include <memory>
 #include <string>
 
+#include "base/containers/span.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
@@ -29,7 +30,8 @@
 #include "net/spdy/spdy_read_queue.h"
 #include "net/spdy/spdy_session.h"
 #include "net/spdy/spdy_stream.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/spdy_protocol.h"
+#include "net/third_party/quiche/src/quiche/common/http/http_header_block.h"
+#include "net/third_party/quiche/src/quiche/http2/core/spdy_protocol.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace net {
@@ -98,12 +100,12 @@ class NET_EXPORT_PRIVATE SpdyProxyClientSocket : public ProxyClientSocket,
 
   // SpdyStream::Delegate implementation.
   void OnHeadersSent() override;
-  void OnEarlyHintsReceived(const spdy::Http2HeaderBlock& headers) override;
+  void OnEarlyHintsReceived(const quiche::HttpHeaderBlock& headers) override;
   void OnHeadersReceived(
-      const spdy::Http2HeaderBlock& response_headers) override;
+      const quiche::HttpHeaderBlock& response_headers) override;
   void OnDataReceived(std::unique_ptr<SpdyBuffer> buffer) override;
   void OnDataSent() override;
-  void OnTrailers(const spdy::Http2HeaderBlock& trailers) override;
+  void OnTrailers(const quiche::HttpHeaderBlock& trailers) override;
   void OnClose(int status) override;
   bool CanGreaseFrameType() const override;
   NetLogSource source_dependency() const override;
@@ -133,9 +135,9 @@ class NET_EXPORT_PRIVATE SpdyProxyClientSocket : public ProxyClientSocket,
   int DoSendRequestComplete(int result);
   int DoReadReplyComplete(int result);
 
-  // Populates |user_buffer_| with as much read data as possible
+  // Populates `data` with as much read data as possible
   // and returns the number of bytes read.
-  size_t PopulateUserReadBuffer(char* out, size_t len);
+  size_t PopulateUserReadBuffer(base::span<uint8_t> data);
 
   // Called when the peer sent END_STREAM.
   void MaybeSendEndStream();

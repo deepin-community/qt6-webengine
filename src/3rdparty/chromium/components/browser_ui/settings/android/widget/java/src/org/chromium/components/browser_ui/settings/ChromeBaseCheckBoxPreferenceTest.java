@@ -26,25 +26,19 @@ import com.google.common.collect.ImmutableList;
 
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Batch;
 import org.chromium.components.browser_ui.settings.test.R;
-import org.chromium.content_public.browser.test.util.TestThreadUtils;
-import org.chromium.ui.test.util.DisableAnimationsTestRule;
 
 /** Tests of {@link ChromeBaseCheckBoxPreference}. */
 @RunWith(BaseJUnit4ClassRunner.class)
 @Batch(Batch.PER_CLASS)
 public class ChromeBaseCheckBoxPreferenceTest {
-    @ClassRule
-    public static final DisableAnimationsTestRule disableAnimationsRule =
-            new DisableAnimationsTestRule();
-
     @Rule
     public final BlankUiTestActivitySettingsTestRule mSettingsRule =
             new BlankUiTestActivitySettingsTestRule();
@@ -149,7 +143,7 @@ public class ChromeBaseCheckBoxPreferenceTest {
         onView(withId(android.R.id.title)).check(matches(allOf(withText(TITLE), isDisplayed())));
         onView(withId(android.R.id.summary))
                 .check(matches(allOf(withText(R.string.managed_by_your_parent), isDisplayed())));
-        onView(withId(R.id.managed_disclaimer_text)).check(doesNotExist());
+        onView(withId(R.id.managed_disclaimer_text)).check(matches(not(isDisplayed())));
         onView(withId(android.R.id.icon)).check(matches(isDisplayed()));
         onView(withId(android.R.id.checkbox))
                 .check(matches(allOf(not(isEnabled()), isDisplayed())));
@@ -169,7 +163,7 @@ public class ChromeBaseCheckBoxPreferenceTest {
         onView(withId(android.R.id.title)).check(matches(allOf(withText(TITLE), isDisplayed())));
         onView(withId(android.R.id.summary))
                 .check(matches(allOf(withText(R.string.managed_by_your_parents), isDisplayed())));
-        onView(withId(R.id.managed_disclaimer_text)).check(doesNotExist());
+        onView(withId(R.id.managed_disclaimer_text)).check(matches(not(isDisplayed())));
         onView(withId(android.R.id.icon)).check(matches(isDisplayed()));
         onView(withId(android.R.id.checkbox))
                 .check(matches(allOf(not(isEnabled()), isDisplayed())));
@@ -181,7 +175,7 @@ public class ChromeBaseCheckBoxPreferenceTest {
         PreferenceFragmentCompat fragment = mSettingsRule.getPreferenceFragment();
         SettingsUtils.addPreferencesFromResource(
                 fragment, R.xml.test_chrome_base_checkbox_preference_screen);
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     ChromeBaseCheckBoxPreference preference =
                             fragment.findPreference(CUSTOM_LAYOUT_PREF_NAME);
@@ -210,7 +204,7 @@ public class ChromeBaseCheckBoxPreferenceTest {
         PreferenceFragmentCompat fragment = mSettingsRule.getPreferenceFragment();
         SettingsUtils.addPreferencesFromResource(
                 fragment, R.xml.test_chrome_base_checkbox_preference_screen);
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     ChromeBaseCheckBoxPreference preference =
                             fragment.findPreference(CUSTOM_LAYOUT_PREF_NAME);
@@ -250,7 +244,7 @@ public class ChromeBaseCheckBoxPreferenceTest {
         PreferenceFragmentCompat fragment = mSettingsRule.getPreferenceFragment();
         SettingsUtils.addPreferencesFromResource(
                 fragment, R.xml.test_chrome_base_checkbox_preference_screen);
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     ChromeBaseCheckBoxPreference preference =
                             fragment.findPreference(CUSTOM_LAYOUT_PREF_NAME);
@@ -283,7 +277,7 @@ public class ChromeBaseCheckBoxPreferenceTest {
         PreferenceFragmentCompat fragment = mSettingsRule.getPreferenceFragment();
         SettingsUtils.addPreferencesFromResource(
                 fragment, R.xml.test_chrome_base_checkbox_preference_screen);
-        TestThreadUtils.runOnUiThreadBlocking(
+        ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     ChromeBaseCheckBoxPreference preference =
                             fragment.findPreference(CUSTOM_LAYOUT_PREF_NAME);

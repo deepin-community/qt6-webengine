@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import '../strings.m.js';
+import '/strings.m.js';
 import './ml_calculator.js';
 import './ml_table.js';
 import './ml_chart.js';
@@ -10,14 +10,10 @@ import './ml_chart.js';
 import {CustomElement} from 'chrome://resources/js/custom_element.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 
-import {Signals} from '../omnibox.mojom-webui.js';
+import type {Signals} from '../omnibox_internals.mojom-webui.js';
 
 import {MlBrowserProxy} from './ml_browser_proxy.js';
-import {MlCalculatorElement} from './ml_calculator.js';
-import {MlChartElement} from './ml_chart.js';
-import {MlTableElement} from './ml_table.js';
-// @ts-ignore:next-line
-import sheet from './ml_ui.css' assert {type : 'css'};
+import sheet from './ml_ui.css' with {type : 'css'};
 import {getTemplate} from './ml_ui.html.js';
 
 declare global {
@@ -40,10 +36,9 @@ export class MlUiElement extends CustomElement {
   }
 
   connectedCallback() {
-    const mlCalculator =
-        this.getRequiredElement<MlCalculatorElement>('ml-calculator');
-    const mlTable = this.getRequiredElement<MlTableElement>('ml-table');
-    const mlChart = this.getRequiredElement<MlChartElement>('ml-chart');
+    const mlCalculator = this.getRequiredElement('ml-calculator');
+    const mlTable = this.getRequiredElement('ml-table');
+    const mlChart = this.getRequiredElement('ml-chart');
 
     this.getRequiredElement('#ml-ml-url-scoring-disabled-warning').hidden =
         loadTimeData.getBoolean('isMlUrlScoringEnabled');

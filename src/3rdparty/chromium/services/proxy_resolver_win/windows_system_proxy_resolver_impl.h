@@ -6,6 +6,7 @@
 #define SERVICES_PROXY_RESOLVER_WIN_WINDOWS_SYSTEM_PROXY_RESOLVER_IMPL_H_
 
 #include <windows.h>
+
 #include <winhttp.h>
 
 #include <memory>
@@ -60,6 +61,12 @@ class COMPONENT_EXPORT(PROXY_RESOLVER_WIN) WindowsSystemProxyResolverImpl
  private:
   friend class WindowsSystemProxyResolverImplTest;
   class Request;
+
+  // Initializes a WinHTTP session with appropriate configuration for proxy
+  // resolution. Sets up the session handle, configures timeouts, and
+  // registers the status callback. Returns the status of the initialization.
+  net::WinHttpStatus InitializeWinHttpSession(
+      WinHttpAPIWrapper* uninitialized_winhttp_api_wrapper);
 
   // Sets up the WinHttp session that will be used throughout the lifetime of
   // this object.

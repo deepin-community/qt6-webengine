@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "base/compiler_specific.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/numerics/safe_math.h"
 #include "ui/gfx/geometry/axis_transform2d.h"
@@ -60,8 +61,9 @@ SkRect RectFToSkRect(const RectF& rect) {
 }
 
 RectF SkRectToRectF(const SkRect& rect) {
-  return RectF(SkScalarToFloat(rect.x()), SkScalarToFloat(rect.y()),
-               SkScalarToFloat(rect.width()), SkScalarToFloat(rect.height()));
+  return BoundingRect(
+      PointF(SkScalarToFloat(rect.left()), SkScalarToFloat(rect.top())),
+      PointF(SkScalarToFloat(rect.right()), SkScalarToFloat(rect.bottom())));
 }
 
 SkSize SizeFToSkSize(const SizeF& size) {
@@ -83,9 +85,9 @@ Size SkISizeToSize(const SkISize& size) {
 
 void QuadFToSkPoints(const QuadF& quad, SkPoint points[4]) {
   points[0] = PointFToSkPoint(quad.p1());
-  points[1] = PointFToSkPoint(quad.p2());
-  points[2] = PointFToSkPoint(quad.p3());
-  points[3] = PointFToSkPoint(quad.p4());
+  UNSAFE_TODO(points[1]) = PointFToSkPoint(quad.p2());
+  UNSAFE_TODO(points[2]) = PointFToSkPoint(quad.p3());
+  UNSAFE_TODO(points[3]) = PointFToSkPoint(quad.p4());
 }
 
 SkMatrix AxisTransform2dToSkMatrix(const AxisTransform2d& transform) {
@@ -110,12 +112,6 @@ Transform SkM44ToTransform(const SkM44& matrix) {
       matrix.rc(1, 0), matrix.rc(1, 1), matrix.rc(1, 2), matrix.rc(1, 3),
       matrix.rc(2, 0), matrix.rc(2, 1), matrix.rc(2, 2), matrix.rc(2, 3),
       matrix.rc(3, 0), matrix.rc(3, 1), matrix.rc(3, 2), matrix.rc(3, 3));
-}
-
-// TODO(crbug.com/1359528): Remove this function in favor of the other form.
-void TransformToFlattenedSkMatrix(const gfx::Transform& transform,
-                                  SkMatrix* flattened) {
-  *flattened = TransformToFlattenedSkMatrix(transform);
 }
 
 SkMatrix TransformToFlattenedSkMatrix(const Transform& matrix) {

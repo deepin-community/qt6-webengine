@@ -7,9 +7,11 @@
 #include <lib/async/default.h>
 
 #include <memory>
+#include <string_view>
 
 #include "base/fuchsia/scoped_service_binding.h"
 #include "base/fuchsia/test_component_context_for_process.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -122,9 +124,9 @@ base::Value::List FuchsiaModifiersToWebModifiers(
   return web_modifiers;
 }
 
-base::Value ExpectedKeyValue(base::StringPiece code,
-                             base::StringPiece key,
-                             base::StringPiece type,
+base::Value ExpectedKeyValue(std::string_view code,
+                             std::string_view key,
+                             std::string_view type,
                              KeyEventOptions options = {}) {
   base::Value::Dict expected;
   expected.Set("code", code);

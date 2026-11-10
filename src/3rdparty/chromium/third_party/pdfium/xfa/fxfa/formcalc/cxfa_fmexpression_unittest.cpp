@@ -18,7 +18,7 @@ class FMExpressionTest : public FXGCUnitTest {};
 class FMCallExpressionTest : public FXGCUnitTest {};
 class FMStringExpressionTest : public FXGCUnitTest {};
 
-TEST_F(FMCallExpressionTest, more_than_32_arguments) {
+TEST_F(FMCallExpressionTest, MoreThan32Arguments) {
   // Use sign as it has 3 object parameters at positions 0, 5, and 6.
   auto* exp = cppgc::MakeGarbageCollected<CXFA_FMIdentifierExpression>(
       heap()->GetAllocationHandle(), L"sign");
@@ -33,20 +33,23 @@ TEST_F(FMCallExpressionTest, more_than_32_arguments) {
       heap()->GetAllocationHandle(), exp, std::move(args), true);
 
   WideTextBuffer js;
-  callExp->ToJavaScript(&js, CXFA_FMAssignExpression::ReturnType::kInferred);
+  EXPECT_TRUE(callExp->ToJavaScript(
+      &js, CXFA_FMAssignExpression::ReturnType::kInferred));
 
   // Generate the result javascript string.
   WideString result = L"sign(";
   for (size_t i = 0; i < 50; i++) {
-    if (i > 0)
+    if (i > 0) {
       result += L", ";
+    }
 
     result += L"pfm_rt.get_";
     // Object positions for sign() method.
-    if (i == 0 || i == 5 || i == 6)
+    if (i == 0 || i == 5 || i == 6) {
       result += L"jsobj(null)";
-    else
+    } else {
       result += L"val(null)";
+    }
   }
   result += L")";
 
@@ -58,8 +61,8 @@ TEST_F(FMStringExpressionTest, Empty) {
   WideTextBuffer accumulator;
   auto* exp = cppgc::MakeGarbageCollected<CXFA_FMStringExpression>(
       heap()->GetAllocationHandle(), L"");
-  exp->ToJavaScript(&accumulator,
-                    CXFA_FMAssignExpression::ReturnType::kInferred);
+  EXPECT_TRUE(exp->ToJavaScript(
+      &accumulator, CXFA_FMAssignExpression::ReturnType::kInferred));
   EXPECT_EQ(L"", accumulator.AsStringView());
 }
 
@@ -68,8 +71,8 @@ TEST_F(FMStringExpressionTest, Short) {
   WideTextBuffer accumulator;
   auto* exp = cppgc::MakeGarbageCollected<CXFA_FMStringExpression>(
       heap()->GetAllocationHandle(), L"a");
-  exp->ToJavaScript(&accumulator,
-                    CXFA_FMAssignExpression::ReturnType::kInferred);
+  EXPECT_TRUE(exp->ToJavaScript(
+      &accumulator, CXFA_FMAssignExpression::ReturnType::kInferred));
   EXPECT_EQ(L"a", accumulator.AsStringView());
 }
 
@@ -78,8 +81,8 @@ TEST_F(FMStringExpressionTest, Medium) {
   WideTextBuffer accumulator;
   auto* exp = cppgc::MakeGarbageCollected<CXFA_FMStringExpression>(
       heap()->GetAllocationHandle(), L".abcd.");
-  exp->ToJavaScript(&accumulator,
-                    CXFA_FMAssignExpression::ReturnType::kInferred);
+  EXPECT_TRUE(exp->ToJavaScript(
+      &accumulator, CXFA_FMAssignExpression::ReturnType::kInferred));
   EXPECT_EQ(L"\"abcd\"", accumulator.AsStringView());
 }
 
@@ -89,8 +92,8 @@ TEST_F(FMStringExpressionTest, Long) {
   std::vector<WideStringView::UnsignedType> vec(140000, L'A');
   auto* exp = cppgc::MakeGarbageCollected<CXFA_FMStringExpression>(
       heap()->GetAllocationHandle(), WideString(WideStringView(vec)));
-  exp->ToJavaScript(&accumulator,
-                    CXFA_FMAssignExpression::ReturnType::kInferred);
+  EXPECT_TRUE(exp->ToJavaScript(
+      &accumulator, CXFA_FMAssignExpression::ReturnType::kInferred));
   EXPECT_EQ(140000u, accumulator.GetLength());
 }
 
@@ -99,8 +102,8 @@ TEST_F(FMStringExpressionTest, Quoted) {
   WideTextBuffer accumulator;
   auto* exp = cppgc::MakeGarbageCollected<CXFA_FMStringExpression>(
       heap()->GetAllocationHandle(), L".Simon says \"\"run\"\".");
-  exp->ToJavaScript(&accumulator,
-                    CXFA_FMAssignExpression::ReturnType::kInferred);
+  EXPECT_TRUE(exp->ToJavaScript(
+      &accumulator, CXFA_FMAssignExpression::ReturnType::kInferred));
   EXPECT_EQ(L"\"Simon says \\\"run\\\"\"", accumulator.AsStringView());
 }
 
@@ -110,12 +113,12 @@ TEST_F(FMExpressionTest, VarExpressionInitNull) {
 
   auto* expr = cppgc::MakeGarbageCollected<CXFA_FMVarExpression>(
       heap()->GetAllocationHandle(), L"s", nullptr);
-  expr->ToJavaScript(&accumulator,
-                     CXFA_FMAssignExpression::ReturnType::kInferred);
-  EXPECT_STREQ(
+  EXPECT_TRUE(expr->ToJavaScript(
+      &accumulator, CXFA_FMAssignExpression::ReturnType::kInferred));
+  EXPECT_EQ(
       LR"***(var s = "";
 )***",
-      accumulator.MakeString().c_str());
+      accumulator.MakeString());
 }
 
 TEST_F(FMExpressionTest, VarExpressionInitBlank) {
@@ -126,13 +129,13 @@ TEST_F(FMExpressionTest, VarExpressionInitBlank) {
       heap()->GetAllocationHandle(), LR"("")");
   auto* expr = cppgc::MakeGarbageCollected<CXFA_FMVarExpression>(
       heap()->GetAllocationHandle(), L"s", init);
-  expr->ToJavaScript(&accumulator,
-                     CXFA_FMAssignExpression::ReturnType::kInferred);
-  EXPECT_STREQ(
+  EXPECT_TRUE(expr->ToJavaScript(
+      &accumulator, CXFA_FMAssignExpression::ReturnType::kInferred));
+  EXPECT_EQ(
       LR"***(var s = "";
 s = pfm_rt.var_filter(s);
 )***",
-      accumulator.MakeString().c_str());
+      accumulator.MakeString());
 }
 
 TEST_F(FMExpressionTest, VarExpressionInitString) {
@@ -143,13 +146,13 @@ TEST_F(FMExpressionTest, VarExpressionInitString) {
       heap()->GetAllocationHandle(), LR"("foo")");
   auto* expr = cppgc::MakeGarbageCollected<CXFA_FMVarExpression>(
       heap()->GetAllocationHandle(), L"s", init);
-  expr->ToJavaScript(&accumulator,
-                     CXFA_FMAssignExpression::ReturnType::kInferred);
-  EXPECT_STREQ(
+  EXPECT_TRUE(expr->ToJavaScript(
+      &accumulator, CXFA_FMAssignExpression::ReturnType::kInferred));
+  EXPECT_EQ(
       LR"***(var s = "foo";
 s = pfm_rt.var_filter(s);
 )***",
-      accumulator.MakeString().c_str());
+      accumulator.MakeString());
 }
 
 TEST_F(FMExpressionTest, VarExpressionInitNumeric) {
@@ -160,11 +163,11 @@ TEST_F(FMExpressionTest, VarExpressionInitNumeric) {
       heap()->GetAllocationHandle(), L"112");
   auto* expr = cppgc::MakeGarbageCollected<CXFA_FMVarExpression>(
       heap()->GetAllocationHandle(), L"s", init);
-  expr->ToJavaScript(&accumulator,
-                     CXFA_FMAssignExpression::ReturnType::kInferred);
-  EXPECT_STREQ(
+  EXPECT_TRUE(expr->ToJavaScript(
+      &accumulator, CXFA_FMAssignExpression::ReturnType::kInferred));
+  EXPECT_EQ(
       LR"***(var s = 112;
 s = pfm_rt.var_filter(s);
 )***",
-      accumulator.MakeString().c_str());
+      accumulator.MakeString());
 }

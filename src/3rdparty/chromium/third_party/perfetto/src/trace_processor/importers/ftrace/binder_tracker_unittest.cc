@@ -16,11 +16,14 @@
 
 #include "src/trace_processor/importers/ftrace/binder_tracker.h"
 
-#include "perfetto/base/logging.h"
+#include <cstdint>
+#include <optional>
+
 #include "src/trace_processor/importers/common/args_tracker.h"
 #include "src/trace_processor/importers/common/args_translation_table.h"
 #include "src/trace_processor/importers/common/event_tracker.h"
 #include "src/trace_processor/importers/common/flow_tracker.h"
+#include "src/trace_processor/importers/common/global_args_tracker.h"
 #include "src/trace_processor/importers/common/process_tracker.h"
 #include "src/trace_processor/importers/common/slice_tracker.h"
 #include "src/trace_processor/importers/common/slice_translation_table.h"
@@ -28,8 +31,7 @@
 #include "src/trace_processor/storage/trace_storage.h"
 #include "test/gtest_and_gmock.h"
 
-namespace perfetto {
-namespace trace_processor {
+namespace perfetto::trace_processor {
 namespace {
 constexpr int kOneWay = 0x01;
 
@@ -49,6 +51,14 @@ class BinderTrackerTest : public ::testing::Test {
     context.track_tracker.reset(new TrackTracker(&context));
     context.flow_tracker.reset(new FlowTracker(&context));
     binder_tracker = BinderTracker::GetOrCreate(&context);
+  }
+
+  uint32_t TidForSlice(uint32_t row) const {
+    const auto& thread = context.storage->thread_table();
+    const auto& track = context.storage->track_table();
+    const auto& slice = context.storage->slice_table();
+    auto rr = track.FindById(slice[row].track_id());
+    return static_cast<uint32_t>(thread[*rr->utid()].tid());
   }
 
  protected:
@@ -76,29 +86,21 @@ TEST_F(BinderTrackerTest, RequestReply) {
                               req_tid, true, 0, kNullStringId);
   binder_tracker->TransactionReceived(rep_recv_ts, req_tid, rep_transaction_id);
 
-  const auto& thread = context.storage->thread_table();
-  const auto& track = context.storage->thread_track_table();
   const auto& slice = context.storage->slice_table();
   const auto& flow = context.storage->flow_table();
   ASSERT_EQ(slice.row_count(), 2u);
 
-  auto tid_for_slice = [&](uint32_t row) {
-    TrackId track_id = slice.track_id()[row];
-    UniqueTid utid = track.utid()[*track.id().IndexOf(track_id)];
-    return thread.tid()[utid];
-  };
+  ASSERT_EQ(slice[0].ts(), req_ts);
+  ASSERT_EQ(slice[0].dur(), rep_recv_ts - req_ts);
+  ASSERT_EQ(TidForSlice(0), req_tid);
 
-  ASSERT_EQ(slice.ts()[0], req_ts);
-  ASSERT_EQ(slice.dur()[0], rep_recv_ts - req_ts);
-  ASSERT_EQ(tid_for_slice(0), req_tid);
-
-  ASSERT_EQ(slice.ts()[1], req_recv_ts);
-  ASSERT_EQ(slice.dur()[1], rep_ts - req_recv_ts);
-  ASSERT_EQ(tid_for_slice(1), rep_tid);
+  ASSERT_EQ(slice[1].ts(), req_recv_ts);
+  ASSERT_EQ(slice[1].dur(), rep_ts - req_recv_ts);
+  ASSERT_EQ(TidForSlice(1), rep_tid);
 
   ASSERT_EQ(flow.row_count(), 1u);
-  ASSERT_EQ(flow.slice_out()[0], slice.id()[0]);
-  ASSERT_EQ(flow.slice_in()[0], slice.id()[1]);
+  ASSERT_EQ(flow[0].slice_out(), slice[0].id());
+  ASSERT_EQ(flow[0].slice_in(), slice[1].id());
 
   EXPECT_TRUE(binder_tracker->utid_stacks_empty());
 }
@@ -116,29 +118,21 @@ TEST_F(BinderTrackerTest, Oneway) {
                               rec_tid, false, kOneWay, kNullStringId);
   binder_tracker->TransactionReceived(rec_ts, rec_tid, transaction_id);
 
-  const auto& thread = context.storage->thread_table();
-  const auto& track = context.storage->thread_track_table();
   const auto& slice = context.storage->slice_table();
   const auto& flow = context.storage->flow_table();
   ASSERT_EQ(slice.row_count(), 2u);
 
-  auto tid_for_slice = [&](uint32_t row) {
-    TrackId track_id = slice.track_id()[row];
-    UniqueTid utid = track.utid()[*track.id().IndexOf(track_id)];
-    return thread.tid()[utid];
-  };
+  ASSERT_EQ(slice[0].ts(), sen_ts);
+  ASSERT_EQ(slice[0].dur(), 0);
+  ASSERT_EQ(TidForSlice(0), sen_tid);
 
-  ASSERT_EQ(slice.ts()[0], sen_ts);
-  ASSERT_EQ(slice.dur()[0], 0);
-  ASSERT_EQ(tid_for_slice(0), sen_tid);
-
-  ASSERT_EQ(slice.ts()[1], rec_ts);
-  ASSERT_EQ(slice.dur()[1], 0);
-  ASSERT_EQ(tid_for_slice(1), rec_tid);
+  ASSERT_EQ(slice[1].ts(), rec_ts);
+  ASSERT_EQ(slice[1].dur(), 0);
+  ASSERT_EQ(TidForSlice(1), rec_tid);
 
   ASSERT_EQ(flow.row_count(), 1u);
-  ASSERT_EQ(flow.slice_out()[0], slice.id()[0]);
-  ASSERT_EQ(flow.slice_in()[0], slice.id()[1]);
+  ASSERT_EQ(flow[0].slice_out(), slice[0].id());
+  ASSERT_EQ(flow[0].slice_in(), slice[1].id());
 
   EXPECT_TRUE(binder_tracker->utid_stacks_empty());
 }
@@ -170,8 +164,8 @@ TEST_F(BinderTrackerTest, RequestReplyWithCommands) {
 
   const auto& slice = context.storage->slice_table();
   ASSERT_EQ(slice.row_count(), 2u);
-  EXPECT_NE(slice.dur()[0], -1);
-  EXPECT_NE(slice.dur()[1], -1);
+  EXPECT_NE(slice[0].dur(), -1);
+  EXPECT_NE(slice[1].dur(), -1);
 
   EXPECT_TRUE(binder_tracker->utid_stacks_empty());
 }
@@ -207,7 +201,7 @@ TEST_F(BinderTrackerTest, RequestReplyWithCommandsFailAfterSendTxn) {
 
   const auto& slice = context.storage->slice_table();
   ASSERT_EQ(slice.row_count(), 1u);
-  EXPECT_NE(slice.dur()[0], -1);
+  EXPECT_NE(slice[0].dur(), -1);
 
   EXPECT_TRUE(binder_tracker->utid_stacks_empty());
 }
@@ -236,8 +230,8 @@ TEST_F(BinderTrackerTest, RequestReplyWithCommandsFailBeforeReplyTxn) {
 
   const auto& slice = context.storage->slice_table();
   ASSERT_EQ(slice.row_count(), 2u);
-  EXPECT_NE(slice.dur()[0], -1);
-  EXPECT_NE(slice.dur()[1], -1);
+  EXPECT_NE(slice[0].dur(), -1);
+  EXPECT_NE(slice[1].dur(), -1);
 
   EXPECT_TRUE(binder_tracker->utid_stacks_empty());
 }
@@ -269,8 +263,8 @@ TEST_F(BinderTrackerTest, RequestReplyWithCommandsFailAfterReplyTxn) {
 
   const auto& slice = context.storage->slice_table();
   ASSERT_EQ(slice.row_count(), 2u);
-  EXPECT_NE(slice.dur()[0], -1);
-  EXPECT_NE(slice.dur()[1], -1);
+  EXPECT_NE(slice[0].dur(), -1);
+  EXPECT_NE(slice[1].dur(), -1);
 
   EXPECT_TRUE(binder_tracker->utid_stacks_empty());
 }
@@ -294,8 +288,8 @@ TEST_F(BinderTrackerTest, OneWayWithCommands) {
 
   const auto& slice = context.storage->slice_table();
   ASSERT_EQ(slice.row_count(), 2u);
-  EXPECT_EQ(slice.dur()[0], 0);
-  EXPECT_EQ(slice.dur()[1], 0);
+  EXPECT_EQ(slice[0].dur(), 0);
+  EXPECT_EQ(slice[1].dur(), 0);
 
   EXPECT_TRUE(binder_tracker->utid_stacks_empty());
 }
@@ -331,11 +325,10 @@ TEST_F(BinderTrackerTest, OneWayWithCommandsFailAfterTxn) {
 
   const auto& slice = context.storage->slice_table();
   ASSERT_EQ(slice.row_count(), 1u);
-  EXPECT_EQ(slice.dur()[0], 0);
+  EXPECT_EQ(slice[0].dur(), 0);
 
   EXPECT_TRUE(binder_tracker->utid_stacks_empty());
 }
 
 }  // namespace
-}  // namespace trace_processor
-}  // namespace perfetto
+}  // namespace perfetto::trace_processor

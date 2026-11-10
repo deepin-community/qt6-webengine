@@ -2,11 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "partition_alloc/partition_alloc_base/native_library.h"
 
 #include <dlfcn.h>
 
-#include "build/build_config.h"
+#include "partition_alloc/build_config.h"
 #include "partition_alloc/partition_alloc_base/check.h"
 #include "partition_alloc/partition_alloc_base/files/file_path.h"
 
@@ -19,10 +24,10 @@ std::string NativeLibraryLoadError::ToString() const {
 NativeLibrary LoadNativeLibraryWithOptions(const FilePath& library_path,
                                            const NativeLibraryOptions& options,
                                            NativeLibraryLoadError* error) {
-  // TODO(1151236): Temporarily disable this ScopedBlockingCall. After making
-  // partition_alloc ScopedBlockingCall() to see the same blocking_observer_
-  // in base's ScopedBlockingCall(), we will copy ScopedBlockingCall code and
-  // will enable this.
+  // TODO(crbug.com/40158212): Temporarily disable this ScopedBlockingCall.
+  // After making partition_alloc ScopedBlockingCall() to see the same
+  // blocking_observer_ in base's ScopedBlockingCall(), we will copy
+  // ScopedBlockingCall code and will enable this.
 
   // dlopen() opens the file off disk.
   // ScopedBlockingCall scoped_blocking_call(BlockingType::MAY_BLOCK);
@@ -32,7 +37,7 @@ NativeLibrary LoadNativeLibraryWithOptions(const FilePath& library_path,
   // http://crbug.com/17943, http://crbug.com/17557, http://crbug.com/36892,
   // and http://crbug.com/40794.
   int flags = RTLD_LAZY;
-#if BUILDFLAG(IS_ANDROID) || !defined(RTLD_DEEPBIND)
+#if PA_BUILDFLAG(IS_ANDROID) || !defined(RTLD_DEEPBIND)
   // Certain platforms don't define RTLD_DEEPBIND. Android dlopen() requires
   // further investigation, as it might vary across versions. Crash here to
   // warn developers that they're trying to rely on uncertain behavior.

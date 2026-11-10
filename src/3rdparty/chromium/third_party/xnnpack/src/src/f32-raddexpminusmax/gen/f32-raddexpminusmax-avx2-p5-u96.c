@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-raddexpminusmax/avx2-p5.c.in
 //   Generator: tools/xngen
@@ -8,13 +9,13 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <immintrin.h>
 
-#include <xnnpack/raddexpminusmax.h>
+#include "src/xnnpack/raddexpminusmax.h"
 
-
-static const int32_t mask_table[14] = {-1, -1, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0};
 
 void xnn_f32_raddexpminusmax_ukernel__avx2_p5_u96(
     size_t batch,
@@ -26,6 +27,8 @@ void xnn_f32_raddexpminusmax_ukernel__avx2_p5_u96(
   assert(batch % sizeof(float) == 0);
   assert(input != NULL);
   assert(sum != NULL);
+
+  static const int32_t mask_table[14] = {-1, -1, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0};
 
   const __m256 vmagic_bias = _mm256_set1_ps(0x1.8000FEp23f);
   // The smallest x for which expf(x) is normalized.
@@ -352,5 +355,4 @@ void xnn_f32_raddexpminusmax_ukernel__avx2_p5_u96(
   vacc_lo = _mm_add_ps(vacc_lo, _mm_movehl_ps(vacc_lo, vacc_lo));
   vacc_lo = _mm_add_ss(vacc_lo, _mm_movehdup_ps(vacc_lo));
   _mm_store_ss(sum, vacc_lo);
-  _mm256_zeroupper();
 }

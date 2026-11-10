@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-vlrelu/scalar.c.in
 //   Generator: tools/xngen
@@ -8,16 +9,19 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/vunary.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vunary.h"
 
 
 void xnn_f32_vlrelu_ukernel__scalar_u1(
     size_t batch,
     const float* input,
     float* output,
-    const union xnn_f32_lrelu_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const struct xnn_f32_lrelu_params* restrict params)
 {
   assert(batch != 0);
   assert(batch % sizeof(float) == 0);

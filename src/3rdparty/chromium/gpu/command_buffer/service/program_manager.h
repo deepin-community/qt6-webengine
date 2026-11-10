@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <array>
 #include <map>
 #include <memory>
 #include <string>
@@ -22,6 +23,10 @@
 #include "gpu/command_buffer/service/shader_manager.h"
 #include "gpu/gpu_gles2_export.h"
 
+namespace gl {
+class ProgressReporter;
+}
+
 namespace gpu {
 
 class DecoderClient;
@@ -32,7 +37,6 @@ namespace gles2 {
 class FeatureInfo;
 class ProgramCache;
 class ProgramManager;
-class ProgressReporter;
 class Shader;
 class ShaderManager;
 
@@ -99,7 +103,7 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
     bool IsSampler() const {
       switch (type) {
         case GL_SAMPLER_2D:
-        case GL_SAMPLER_2D_RECT_ARB:
+        case GL_SAMPLER_2D_RECT_ANGLE:
         case GL_SAMPLER_CUBE:
         case GL_SAMPLER_EXTERNAL_OES:
         case GL_SAMPLER_3D:
@@ -331,6 +335,16 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
     return use_count_ != 0;
   }
 
+  void IncrementActiveTransformFeedbackCount() {
+    ++active_transform_feedback_count_;
+  }
+
+  void DecrementActiveTransformFeedbackCount();
+
+  bool IsActiveForTransformFeedback() const {
+    return active_transform_feedback_count_ > 0;
+  }
+
   // Sets attribute-location binding from a glBindAttribLocation() call.
   void SetAttribLocationBinding(const std::string& attrib, GLint location) {
     bind_attrib_location_map_[attrib] = location;
@@ -542,6 +556,8 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
 
   int use_count_;
 
+  int active_transform_feedback_count_;
+
   GLsizei max_attrib_name_length_;
 
   // Attrib by index.
@@ -565,8 +581,9 @@ class GPU_GLES2_EXPORT Program : public base::RefCounted<Program> {
   GLuint service_id_;
 
   // Shaders by type of shader.
-  scoped_refptr<Shader> attached_shaders_[kMaxAttachedShaders];
-  scoped_refptr<Shader> shaders_from_last_successful_link_[kMaxAttachedShaders];
+  std::array<scoped_refptr<Shader>, kMaxAttachedShaders> attached_shaders_;
+  std::array<scoped_refptr<Shader>, kMaxAttachedShaders>
+      shaders_from_last_successful_link_;
 
   // True if this program is marked as deleted.
   bool deleted_;

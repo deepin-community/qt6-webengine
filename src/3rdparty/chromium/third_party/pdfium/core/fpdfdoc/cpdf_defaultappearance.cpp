@@ -9,13 +9,29 @@
 #include <algorithm>
 #include <vector>
 
+#include "core/fpdfapi/parser/cpdf_dictionary.h"
 #include "core/fpdfapi/parser/cpdf_simple_parser.h"
 #include "core/fpdfapi/parser/fpdf_parser_utility.h"
+#include "core/fpdfdoc/cpdf_formfield.h"
 #include "core/fxcrt/fx_string.h"
+#include "core/fxcrt/notreached.h"
 #include "core/fxge/cfx_color.h"
-#include "third_party/base/notreached.h"
 
 namespace {
+
+ByteString GetDefaultAppearanceString(const CPDF_Dictionary* annot_dict,
+                                      const CPDF_Dictionary* acroform_dict) {
+  ByteString default_appearance_string;
+  RetainPtr<const CPDF_Object> default_appearance_object =
+      CPDF_FormField::GetFieldAttrForDict(annot_dict, "DA");
+  if (default_appearance_object) {
+    default_appearance_string = default_appearance_object->GetString();
+  }
+  if (default_appearance_string.IsEmpty() && acroform_dict) {
+    default_appearance_string = acroform_dict->GetByteStringFor("DA");
+  }
+  return default_appearance_string;
+}
 
 // Find the token and its |nParams| parameters from the start of data,
 // and move the current position to the start of those parameters.
@@ -28,25 +44,29 @@ bool FindTagParamFromStart(CPDF_SimpleParser* parser,
   int buf_index = 0;
   int buf_count = 0;
 
-  parser->SetCurPos(0);
+  parser->SetCurrentPosition(0);
   while (true) {
-    pBuf[buf_index++] = parser->GetCurPos();
-    if (buf_index == nParams)
+    pBuf[buf_index++] = parser->GetCurrentPosition();
+    if (buf_index == nParams) {
       buf_index = 0;
+    }
 
     buf_count++;
-    if (buf_count > nParams)
+    if (buf_count > nParams) {
       buf_count = nParams;
+    }
 
     ByteStringView word = parser->GetWord();
-    if (word.IsEmpty())
+    if (word.IsEmpty()) {
       return false;
+    }
 
     if (word == token) {
-      if (buf_count < nParams)
+      if (buf_count < nParams) {
         continue;
+      }
 
-      parser->SetCurPos(pBuf[buf_index]);
+      parser->SetCurrentPosition(pBuf[buf_index]);
       return true;
     }
   }
@@ -54,37 +74,50 @@ bool FindTagParamFromStart(CPDF_SimpleParser* parser,
 
 }  // namespace
 
-CPDF_DefaultAppearance::CPDF_DefaultAppearance() = default;
-
 CPDF_DefaultAppearance::CPDF_DefaultAppearance(const ByteString& csDA)
-    : m_csDA(csDA) {}
+    : da_(csDA) {}
 
 CPDF_DefaultAppearance::CPDF_DefaultAppearance(
-    const CPDF_DefaultAppearance& cDA) = default;
+    const CPDF_Dictionary* annot_dict,
+    const CPDF_Dictionary* acroform_dict)
+    : CPDF_DefaultAppearance(
+          GetDefaultAppearanceString(annot_dict, acroform_dict)) {}
 
 CPDF_DefaultAppearance::~CPDF_DefaultAppearance() = default;
 
-absl::optional<ByteString> CPDF_DefaultAppearance::GetFont(
-    float* fFontSize) const {
-  *fFontSize = 0.0f;
-  if (m_csDA.IsEmpty())
-    return absl::nullopt;
-
-  ByteString csFontNameTag;
-  CPDF_SimpleParser syntax(m_csDA.AsStringView().raw_span());
-  if (FindTagParamFromStart(&syntax, "Tf", 2)) {
-    csFontNameTag = ByteString(syntax.GetWord());
-    csFontNameTag.Delete(0, 1);
-    *fFontSize = StringToFloat(syntax.GetWord());
+std::optional<CPDF_DefaultAppearance::FontNameAndSize>
+CPDF_DefaultAppearance::GetFont() const {
+  if (da_.IsEmpty()) {
+    return std::nullopt;
   }
-  return PDF_NameDecode(csFontNameTag.AsStringView());
+
+  CPDF_SimpleParser syntax(da_.AsStringView().unsigned_span());
+  if (!FindTagParamFromStart(&syntax, "Tf", 2)) {
+    return FontNameAndSize();
+  }
+
+  // Deliberately using separate statements here to ensure the correct
+  // evaluation order.
+  FontNameAndSize result;
+  result.name = PDF_NameDecode(syntax.GetWord().Substr(1));
+  result.size = StringToFloat(syntax.GetWord());
+  return result;
 }
 
-absl::optional<CFX_Color> CPDF_DefaultAppearance::GetColor() const {
-  if (m_csDA.IsEmpty())
-    return absl::nullopt;
+float CPDF_DefaultAppearance::GetFontSizeOrZero() const {
+  auto maybe_font_name_and_size = GetFont();
+  if (!maybe_font_name_and_size.has_value()) {
+    return 0;
+  }
+  return maybe_font_name_and_size.value().size;
+}
 
-  CPDF_SimpleParser syntax(m_csDA.AsStringView().raw_span());
+std::optional<CFX_Color> CPDF_DefaultAppearance::GetColor() const {
+  if (da_.IsEmpty()) {
+    return std::nullopt;
+  }
+
+  CPDF_SimpleParser syntax(da_.AsStringView().unsigned_span());
   if (FindTagParamFromStart(&syntax, "g", 1)) {
     float gray = StringToFloat(syntax.GetWord());
     return CFX_Color(CFX_Color::Type::kGray, gray);
@@ -102,14 +135,15 @@ absl::optional<CFX_Color> CPDF_DefaultAppearance::GetColor() const {
     float k = StringToFloat(syntax.GetWord());
     return CFX_Color(CFX_Color::Type::kCMYK, c, m, y, k);
   }
-  return absl::nullopt;
+  return std::nullopt;
 }
 
-absl::optional<CFX_Color::TypeAndARGB> CPDF_DefaultAppearance::GetColorARGB()
+std::optional<CFX_Color::TypeAndARGB> CPDF_DefaultAppearance::GetColorARGB()
     const {
-  absl::optional<CFX_Color> maybe_color = GetColor();
-  if (!maybe_color.has_value())
-    return absl::nullopt;
+  std::optional<CFX_Color> maybe_color = GetColor();
+  if (!maybe_color.has_value()) {
+    return std::nullopt;
+  }
 
   const CFX_Color& color = maybe_color.value();
   if (color.nColorType == CFX_Color::Type::kGray) {
@@ -134,7 +168,7 @@ absl::optional<CFX_Color::TypeAndARGB> CPDF_DefaultAppearance::GetColorARGB()
                    static_cast<int>(g * 255 + 0.5f),
                    static_cast<int>(b * 255 + 0.5f)));
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 // static

@@ -29,6 +29,7 @@
 #define SRC_DAWN_NATIVE_VULKAN_DEVICEVK_H_
 
 #include <memory>
+#include <mutex>
 #include <queue>
 #include <string>
 #include <utility>
@@ -39,7 +40,7 @@
 #include "dawn/native/Commands.h"
 #include "dawn/native/Device.h"
 #include "dawn/native/dawn_platform.h"
-#include "dawn/native/vulkan/CommandRecordingContext.h"
+#include "dawn/native/vulkan/CommandRecordingContextVk.h"
 #include "dawn/native/vulkan/DescriptorSetAllocator.h"
 #include "dawn/native/vulkan/Forward.h"
 #include "dawn/native/vulkan/VulkanFunctions.h"
@@ -52,6 +53,7 @@ namespace dawn::native::vulkan {
 
 class BufferUploader;
 class FencedDeleter;
+class FramebufferCache;
 class RenderPassCache;
 class ResourceMemoryAllocator;
 
@@ -59,7 +61,8 @@ class Device final : public DeviceBase {
   public:
     static ResultOrError<Ref<Device>> Create(AdapterBase* adapter,
                                              const UnpackedPtr<DeviceDescriptor>& descriptor,
-                                             const TogglesState& deviceToggles);
+                                             const TogglesState& deviceToggles,
+                                             Ref<DeviceBase::DeviceLostEvent>&& lostEvent);
     ~Device() override;
 
     MaybeError Initialize(const UnpackedPtr<DeviceDescriptor>& descriptor);
@@ -74,6 +77,7 @@ class Device final : public DeviceBase {
     uint32_t GetGraphicsQueueFamily() const;
 
     MutexProtected<FencedDeleter>& GetFencedDeleter() const;
+    FramebufferCache* GetFramebufferCache() const;
     RenderPassCache* GetRenderPassCache() const;
     MutexProtected<ResourceMemoryAllocator>& GetResourceMemoryAllocator() const;
     external_semaphore::Service* GetExternalSemaphoreService() const;
@@ -97,13 +101,13 @@ class Device final : public DeviceBase {
 
     MaybeError TickImpl() override;
 
-    MaybeError CopyFromStagingToBufferImpl(BufferBase* source,
-                                           uint64_t sourceOffset,
-                                           BufferBase* destination,
-                                           uint64_t destinationOffset,
-                                           uint64_t size) override;
+    MaybeError CopyFromStagingToBuffer(BufferBase* source,
+                                       uint64_t sourceOffset,
+                                       BufferBase* destination,
+                                       uint64_t destinationOffset,
+                                       uint64_t size) override;
     MaybeError CopyFromStagingToTextureImpl(const BufferBase* source,
-                                            const TextureDataLayout& src,
+                                            const TexelCopyBufferLayout& src,
                                             const TextureCopy& dst,
                                             const Extent3D& copySizePixels) override;
 
@@ -116,17 +120,28 @@ class Device final : public DeviceBase {
 
     float GetTimestampPeriodInNS() const override;
 
+    AllocatorMemoryInfo GetAllocatorMemoryInfo() const override;
+
     void SetLabelImpl() override;
+    bool ReduceMemoryUsageImpl() override;
+    void PerformIdleTasksImpl() override;
 
     void OnDebugMessage(std::string message);
 
     // Used to associate this device with validation layer messages.
     const char* GetDebugPrefix() { return mDebugPrefix.c_str(); }
 
+    bool CanAddStorageUsageToBufferWithoutSideEffects(wgpu::BufferUsage storageUsage,
+                                                      wgpu::BufferUsage originalUsage,
+                                                      size_t bufferSize) const override;
+
+    QuerySetBase* GetEmptyPassQuerySet();
+
   private:
     Device(AdapterBase* adapter,
            const UnpackedPtr<DeviceDescriptor>& descriptor,
-           const TogglesState& deviceToggles);
+           const TogglesState& deviceToggles,
+           Ref<DeviceBase::DeviceLostEvent>&& lostEvent);
 
     ResultOrError<Ref<BindGroupBase>> CreateBindGroupImpl(
         const BindGroupDescriptor* descriptor) override;
@@ -141,31 +156,24 @@ class Device final : public DeviceBase {
     ResultOrError<Ref<SamplerBase>> CreateSamplerImpl(const SamplerDescriptor* descriptor) override;
     ResultOrError<Ref<ShaderModuleBase>> CreateShaderModuleImpl(
         const UnpackedPtr<ShaderModuleDescriptor>& descriptor,
-        ShaderModuleParseResult* parseResult,
-        OwnedCompilationMessages* compilationMessages) override;
+        const std::vector<tint::wgsl::Extension>& internalExtensions,
+        ShaderModuleParseResult* parseResult) override;
     ResultOrError<Ref<SwapChainBase>> CreateSwapChainImpl(
         Surface* surface,
         SwapChainBase* previousSwapChain,
-        const SwapChainDescriptor* descriptor) override;
+        const SurfaceConfiguration* config) override;
     ResultOrError<Ref<TextureBase>> CreateTextureImpl(
         const UnpackedPtr<TextureDescriptor>& descriptor) override;
     ResultOrError<Ref<TextureViewBase>> CreateTextureViewImpl(
         TextureBase* texture,
-        const TextureViewDescriptor* descriptor) override;
+        const UnpackedPtr<TextureViewDescriptor>& descriptor) override;
     Ref<ComputePipelineBase> CreateUninitializedComputePipelineImpl(
         const UnpackedPtr<ComputePipelineDescriptor>& descriptor) override;
     Ref<RenderPipelineBase> CreateUninitializedRenderPipelineImpl(
         const UnpackedPtr<RenderPipelineDescriptor>& descriptor) override;
     Ref<PipelineCacheBase> GetOrCreatePipelineCacheImpl(const CacheKey& key) override;
-    void InitializeComputePipelineAsyncImpl(Ref<ComputePipelineBase> computePipeline,
-                                            WGPUCreateComputePipelineAsyncCallback callback,
-                                            void* userdata) override;
-    void InitializeRenderPipelineAsyncImpl(Ref<RenderPipelineBase> renderPipeline,
-                                           WGPUCreateRenderPipelineAsyncCallback callback,
-                                           void* userdata) override;
-
-    ResultOrError<wgpu::TextureUsage> GetSupportedSurfaceUsageImpl(
-        const Surface* surface) const override;
+    void InitializeComputePipelineAsyncImpl(Ref<CreateComputePipelineAsyncEvent> event) override;
+    void InitializeRenderPipelineAsyncImpl(Ref<CreateRenderPipelineAsyncEvent> event) override;
 
     ResultOrError<Ref<SharedTextureMemoryBase>> ImportSharedTextureMemoryImpl(
         const SharedTextureMemoryDescriptor* baseDescriptor) override;
@@ -179,6 +187,8 @@ class Device final : public DeviceBase {
     void CheckDebugMessagesAfterDestruction() const;
 
     void DestroyImpl() override;
+    MaybeError GetAHardwareBufferPropertiesImpl(void* handle, AHardwareBufferProperties* properties)
+        const override;
 
     // To make it easier to use fn it is a public const member. However
     // the Device is allowed to mutate them through these private methods.
@@ -188,10 +198,12 @@ class Device final : public DeviceBase {
     VkDevice mVkDevice = VK_NULL_HANDLE;
     uint32_t mMainQueueFamily = 0;
 
-    SerialQueue<ExecutionSerial, Ref<DescriptorSetAllocator>>
+    // Entries can be appended without holding the device mutex.
+    MutexProtected<SerialQueue<ExecutionSerial, Ref<DescriptorSetAllocator>>>
         mDescriptorAllocatorsPendingDeallocation;
     std::unique_ptr<MutexProtected<FencedDeleter>> mDeleter;
     std::unique_ptr<MutexProtected<ResourceMemoryAllocator>> mResourceMemoryAllocator;
+    std::unique_ptr<FramebufferCache> mFramebufferCache;
     std::unique_ptr<RenderPassCache> mRenderPassCache;
 
     std::unique_ptr<external_memory::Service> mExternalMemoryService;
@@ -200,6 +212,11 @@ class Device final : public DeviceBase {
     // For capturing messages generated by the Vulkan debug layer.
     const std::string mDebugPrefix;
     std::vector<std::string> mDebugMessages;
+
+    std::once_flag mMonolithicPipelineCacheFlag;
+    Ref<PipelineCache> mMonolithicPipelineCache;
+
+    Ref<QuerySetBase> mEmptyPassQuerySet;
 
     MaybeError ImportExternalImage(const ExternalImageDescriptorVk* descriptor,
                                    ExternalMemoryHandle memoryHandle,

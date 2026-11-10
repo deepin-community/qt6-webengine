@@ -29,8 +29,8 @@
 #define SRC_TINT_LANG_WGSL_WRITER_AST_PRINTER_AST_PRINTER_H_
 
 #include "src/tint/lang/core/binary_op.h"
-#include "src/tint/utils/generator/text_generator.h"
 #include "src/tint/utils/text/string_stream.h"
+#include "src/tint/utils/text_generator/text_generator.h"
 
 // Forward declarations
 namespace tint {
@@ -123,10 +123,6 @@ class ASTPrinter : public tint::TextGenerator {
     /// @param out the output stream
     /// @param op the binary operator
     void EmitBinaryOp(StringStream& out, const core::BinaryOp op);
-    /// Handles generating a bitcast expression
-    /// @param out the output stream
-    /// @param expr the bitcast expression
-    void EmitBitcast(StringStream& out, const ast::BitcastExpression* expr);
     /// Handles a block statement
     /// @param stmt the statement to emit
     void EmitBlock(const ast::BlockStatement* stmt);

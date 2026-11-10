@@ -1,12 +1,12 @@
 // Copyright 2015 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import type * as Common from '../../core/common/common.js';
 import * as Root from '../../core/root/root.js';
 import * as SDK from '../../core/sdk/sdk.js';
 import * as UI from '../../ui/legacy/legacy.js';
-import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
 import {AXNodeSubPane} from './AccessibilityNodeView.js';
 import {ARIAAttributesPane} from './ARIAAttributesView.js';
@@ -20,12 +20,12 @@ export class AccessibilitySidebarView extends UI.ThrottledWidget.ThrottledWidget
   private axNodeInternal: SDK.AccessibilityModel.AccessibilityNode|null;
   private skipNextPullNode: boolean;
   private readonly sidebarPaneStack: UI.View.ViewLocation;
-  private readonly breadcrumbsSubPane: AXBreadcrumbsPane|null = null;
+  private readonly breadcrumbsSubPane: AXBreadcrumbsPane;
   private readonly ariaSubPane: ARIAAttributesPane;
   private readonly axNodeSubPane: AXNodeSubPane;
   private readonly sourceOrderSubPane: SourceOrderPane;
   private constructor(throttlingTimeout?: number) {
-    super(false /* isWebComponent */, throttlingTimeout);
+    super(false /* useShadowDom */, throttlingTimeout);
     this.nodeInternal = null;
     this.axNodeInternal = null;
     this.skipNextPullNode = false;
@@ -39,7 +39,6 @@ export class AccessibilitySidebarView extends UI.ThrottledWidget.ThrottledWidget
     this.sourceOrderSubPane = new SourceOrderPane();
     void this.sidebarPaneStack.showView(this.sourceOrderSubPane);
     this.sidebarPaneStack.widget().show(this.element);
-    this.element.setAttribute('jslog', `${VisualLogging.pane().context('accessibility')}`);
     UI.Context.Context.instance().addFlavorChangeListener(SDK.DOMModel.DOMNode, this.pullNode, this);
     this.pullNode();
   }
@@ -81,21 +80,15 @@ export class AccessibilitySidebarView extends UI.ThrottledWidget.ThrottledWidget
       this.sidebarPaneStack.removeView(this.ariaSubPane);
     }
 
-    if (this.axNodeSubPane) {
-      this.axNodeSubPane.setAXNode(axNode);
-    }
-    if (this.breadcrumbsSubPane) {
-      this.breadcrumbsSubPane.setAXNode(axNode);
-    }
+    this.axNodeSubPane.setAXNode(axNode);
+    this.breadcrumbsSubPane.setAXNode(axNode);
   }
 
   override async doUpdate(): Promise<void> {
     const node = this.node();
     this.axNodeSubPane.setNode(node);
     this.ariaSubPane.setNode(node);
-    if (this.breadcrumbsSubPane) {
-      this.breadcrumbsSubPane.setNode(node);
-    }
+    this.breadcrumbsSubPane.setNode(node);
     void this.sourceOrderSubPane.setNodeAsync(node);
     if (!node) {
       return;
@@ -104,7 +97,7 @@ export class AccessibilitySidebarView extends UI.ThrottledWidget.ThrottledWidget
     if (!accessibilityModel) {
       return;
     }
-    if (!Root.Runtime.experiments.isEnabled('fullAccessibilityTree')) {
+    if (!Root.Runtime.experiments.isEnabled('full-accessibility-tree')) {
       accessibilityModel.clear();
     }
     await accessibilityModel.requestPartialAXTree(node);
@@ -146,13 +139,14 @@ export class AccessibilitySidebarView extends UI.ThrottledWidget.ThrottledWidget
     this.setNode(UI.Context.Context.instance().flavor(SDK.DOMModel.DOMNode));
   }
 
-  private onNodeChange(event: Common.EventTarget
-                           .EventTargetEvent<{node: SDK.DOMModel.DOMNode, name: string}|SDK.DOMModel.DOMNode>): void {
+  private onNodeChange(
+      event: Common.EventTarget.EventTargetEvent<{node: SDK.DOMModel.DOMNode, name: string}|SDK.DOMModel.DOMNode>):
+      void {
     if (!this.node()) {
       return;
     }
     const data = event.data;
-    const node = (data instanceof SDK.DOMModel.DOMNode ? data : data.node as SDK.DOMModel.DOMNode);
+    const node = (data instanceof SDK.DOMModel.DOMNode ? data : data.node);
     if (this.node() !== node) {
       return;
     }

@@ -4,11 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import '../tooltip/tooltip';
 import '@material/web/chips/filter-chip.js';
 import '@material/web/chips/input-chip.js';
 import '@material/web/chips/suggestion-chip.js';
 
-import {css, CSSResultGroup, html, LitElement} from 'lit';
+import {css, CSSResultGroup, html, LitElement, TemplateResult} from 'lit';
 
 /** Size of an icon rendered inside a chip. */
 export const ICON_SIZE = css`20px`;
@@ -16,6 +17,13 @@ export const ICON_SIZE = css`20px`;
 export const FOCUS_RING_WIDTH = css`2px`;
 /** Horizontal chip padding. */
 export const CHIP_PADDING = css`12px`;
+
+/**
+ * The debounce timeout for the ResizeObserver callbacks. After this amount of
+ * time, the ResizeObserver callbacks will be called and the chip will be
+ * updated. This is used to improve performance.
+ */
+const RESIZE_OBSERVER_DEBOUNCE_TIMEOUT_MS = 500;
 
 const closeIcon = html`
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960" id="close-icon" slot='remove-trailing-icon'>
@@ -32,27 +40,36 @@ const checkedIcon = html`
  */
 export class Chip extends LitElement {
   /** @export */
-  disabled: boolean;
+  declare disabled: boolean;
   /** @export */
-  label: string;
+  declare label: string;
   /** @export */
-  type: 'filter'|'input';
+  declare type: 'filter'|'input';
   /**
    * Input chips can have a trailing icon (to close chip) or not.
    * @export
    */
-  trailingIcon: boolean;
+  declare trailingIcon: boolean;
   /**
    * Input chips can have an avatar as leading icon which makes the icon
    * circular and changes border radius of component.
    * @export
    */
-  avatar: boolean;
+  declare avatar: boolean;
+  /**
+   * If true, the chip will show a tooltip when the label is truncated.
+   * @export
+   */
+  declare showTooltipWhenTruncated: boolean;
 
   /** @nocollapse */
   static override styles: CSSResultGroup = css`
     :host {
       display: inline-block;
+    }
+
+    :host([disabled]) {
+      pointer-events: none;
     }
 
     md-filter-chip {
@@ -165,32 +182,44 @@ export class Chip extends LitElement {
       --md-input-chip-pressed-state-layer-opacity: 1;
       --md-input-chip-pressed-trailing-icon-color: var(--cros-sys-on_surface);
       --md-input-chip-trailing-space: ${CHIP_PADDING};
-      }
+    }
 
-      :host([avatar]) md-input-chip {
-        --md-input-chip-container-shape: 9999px;
-      }
+    md-filter-chip,
+    md-suggestion-chip,
+    md-input-chip {
+      max-width: 100%;
+    }
 
-      md-filter-chip::part(focus-ring),
-      md-filter-chip::part(trailing-focus-ring),
-      md-suggestion-chip::part(focus-ring),
-      md-input-chip::part(focus-ring),
-      md-input-chip::part(trailing-focus-ring) {
-        --md-focus-ring-color: var(--cros-sys-focus_ring);
-        --md-focus-ring-width: ${FOCUS_RING_WIDTH};
-      }
-      #close-icon {
-        fill: var(--cros-sys-on_surface);
-        height: ${ICON_SIZE};
-        width: ${ICON_SIZE};
-      }
-      #checked-icon {
-        height: ${ICON_SIZE};
-        width: ${ICON_SIZE};
-      }
-      :host([type="filter"]) #checked-icon {
-        fill: var(--cros-sys-on_surface);
-      }
+    :host([avatar]) md-input-chip {
+      --md-input-chip-container-shape: 9999px;
+    }
+
+    md-filter-chip::part(focus-ring),
+    md-filter-chip::part(trailing-focus-ring),
+    md-suggestion-chip::part(focus-ring),
+    md-input-chip::part(focus-ring),
+    md-input-chip::part(trailing-focus-ring) {
+      --md-focus-ring-color: var(--cros-sys-focus_ring);
+      --md-focus-ring-width: ${FOCUS_RING_WIDTH};
+    }
+    #close-icon {
+      fill: var(--cros-sys-on_surface);
+      height: ${ICON_SIZE};
+      width: ${ICON_SIZE};
+    }
+    #checked-icon {
+      height: ${ICON_SIZE};
+      width: ${ICON_SIZE};
+    }
+    :host([type="filter"]) #checked-icon {
+      fill: var(--cros-sys-on_surface);
+    }
+
+    .label-wrapper {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
   `;
 
   /** @nocollapse */
@@ -205,6 +234,8 @@ export class Chip extends LitElement {
     type: {type: String},
     trailingIcon: {type: Boolean},
     avatar: {type: Boolean},
+    showTooltipWhenTruncated:
+        {type: Boolean, attribute: 'show-tooltip-when-truncated'},
   };
 
   /** @export */
@@ -228,6 +259,31 @@ export class Chip extends LitElement {
     return this.shadowRoot?.querySelector('md-filter-chip')?.selected ?? false;
   }
 
+  /**
+   * This ResizeObserver is used to detect when the chip is resized and update
+   * the tooltip. The ResizeObserver is only active when
+   * `showTooltipWhenTruncated` is true.
+   */
+  private resizeObserver: ResizeObserver|null = null;
+
+  /**
+   * Used to keep track of the timeout that debounces the ResizeObserver
+   * callbacks (to improve performance).
+   */
+  private resizeObserverDebounceTimeout: number = -1;
+
+  /**
+   * Stops event propagation when the chip is disabled to ensure subsequent
+   * handlers are not called.
+   */
+  private onClick = (e: MouseEvent) => {
+    if (this.disabled) {
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      return;
+    }
+  };
+
   constructor() {
     super();
     this.disabled = false;
@@ -236,38 +292,100 @@ export class Chip extends LitElement {
     this.trailingIcon = false;
     this.label = '';
     this.avatar = false;
+    this.showTooltipWhenTruncated = false;
+
+    // Ensure onClick is first click listener called.
+    this.addEventListener('click', this.onClick);
+  }
+
+  override firstUpdated() {
+    if (this.showTooltipWhenTruncated) {
+      this.resizeObserver = new ResizeObserver(this.onChipResized.bind(this));
+      this.resizeObserver.observe(this);
+    }
+  }
+
+  override disconnectedCallback() {
+    super.disconnectedCallback();
+    if (this.resizeObserver) {
+      this.resizeObserver.disconnect();
+    }
+    clearTimeout(this.resizeObserverDebounceTimeout);
   }
 
   override render() {
     if (this.type === 'filter') {
-      return html`
+      return this.renderWrapperWithMaybeTooltip(html`
         <md-filter-chip
-            label=${this.label}
             ?disabled=${this.disabled}
             ?selected=${this.selected}>
           <slot slot='icon' name='icon'></slot>
+          ${this.renderLabel()}
           ${checkedIcon}
         </md-filter-chip>
-        `;
+        `);
     }
     if (this.trailingIcon || this.avatar) {
-      return html`
+      return this.renderWrapperWithMaybeTooltip(html`
         <md-input-chip
-          label=${this.label}
           ?disabled=${this.disabled}
           ?avatar=${this.avatar}>
             <slot slot='icon' name='icon'></slot>
+            ${this.renderLabel()}
             ${closeIcon}
           </md-input-chip>
-        `;
+        `);
     }
-    return html`
-      <md-suggestion-chip
-        label=${this.label}
-        ?disabled=${this.disabled}>
-          <slot slot='icon' name='icon'></slot>
+    return this.renderWrapperWithMaybeTooltip(html`
+      <md-suggestion-chip ?disabled=${this.disabled}>
+        <slot slot='icon' name='icon'></slot>
+        ${this.renderLabel()}
       </md-suggestion-chip>
+      `);
+  }
+
+  private renderWrapperWithMaybeTooltip(content: TemplateResult) {
+    if (!this.showTooltipWhenTruncated) {
+      return content;
+    }
+
+    return html`
+      <div id="chip-wrapper">
+        ${content}
+        <cros-tooltip
+            anchor="chip-wrapper"
+            label=${this.label}
+            ?hidden=${!this.isLabelTruncated()}>
+        </cros-tooltip>
+      </div>
       `;
+  }
+
+  private renderLabel() {
+    return html`<div class="label-wrapper">${this.label}</div>`;
+  }
+
+  onChipResized() {
+    // If there is already a timeout, clear it to reset the debounce timer.
+    clearTimeout(this.resizeObserverDebounceTimeout);
+
+    this.resizeObserverDebounceTimeout = setTimeout(() => {
+      // Request an update so that the component will check if the label is
+      // truncated.
+      this.requestUpdate();
+    }, RESIZE_OBSERVER_DEBOUNCE_TIMEOUT_MS);
+  }
+
+  isLabelTruncated(): boolean {
+    if (!this.renderRoot) {
+      return false;
+    }
+    const labelWrapper =
+        this.renderRoot.querySelector<HTMLElement>('.label-wrapper');
+    if (!labelWrapper) {
+      return false;
+    }
+    return labelWrapper.scrollWidth > labelWrapper.clientWidth;
   }
 }
 

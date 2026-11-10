@@ -27,10 +27,9 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-/* eslint-disable indent */
 
 /**
- * @fileoverview This file contains small testing framework along with the
+ * @file This file contains small testing framework along with the
  * test suite for the frontend. These tests are a part of the continues build
  * and are executed by the devtools_browsertest.cc as a part of the
  * Interactive UI Test suite.
@@ -47,10 +46,6 @@
   let Root;
   /** @type {import('./core/sdk/sdk.js')} */
   let SDK;
-  /** @type {import('./panels/sources/sources.js')} */
-  let Sources;
-  /** @type {import('./panels/timeline/timeline.js')} */
-  let Timeline;
   /** @type {import('./ui/legacy/legacy.js')} */
   let UI;
   /** @type {import('./models/workspace/workspace.js')} */
@@ -58,7 +53,7 @@
   const TestSuite = class {
     /**
      * Test suite for interactive UI tests.
-     * @param {Object} domAutomationController DomAutomationController instance.
+     * @param domAutomationController - DomAutomationController instance.
      */
     constructor(domAutomationController) {
       this.domAutomationController_ = domAutomationController;
@@ -71,13 +66,13 @@
      * Key event with given key identifier.
      */
     static createKeyEvent(key) {
-      return new KeyboardEvent('keydown', {bubbles: true, cancelable: true, key: key});
+      return new KeyboardEvent('keydown', {bubbles: true, cancelable: true, key});
     }
   };
 
   /**
    * Reports test failure.
-   * @param {string} message Failure description.
+   * @param message - Failure description.
    */
   TestSuite.prototype.fail = function(message) {
     if (this.controlTaken_) {
@@ -89,9 +84,9 @@
 
   /**
    * Equals assertion tests that expected === actual.
-   * @param {!Object|boolean} expected Expected object.
-   * @param {!Object|boolean} actual Actual object.
-   * @param {string} opt_message User message to print if the test fails.
+   * @param expected - Expected object.
+   * @param actual - Actual object.
+   * @param opt_message - User message to print if the test fails.
    */
   TestSuite.prototype.assertEquals = function(expected, actual, opt_message) {
     if (expected !== actual) {
@@ -105,8 +100,8 @@
 
   /**
    * True assertion tests that value == true.
-   * @param {!Object} value Actual object.
-   * @param {string} opt_message User message to print if the test fails.
+   * @param value - Actual object.
+   * @param opt_message - User message to print if the test fails.
    */
   TestSuite.prototype.assertTrue = function(value, opt_message) {
     this.assertEquals(true, Boolean(value), opt_message);
@@ -114,7 +109,7 @@
 
   /**
    * Takes control over execution.
-   * @param {{slownessFactor:number}=} options
+   * @param options
    */
   TestSuite.prototype.takeControl = function(options) {
     const {slownessFactor} = {slownessFactor: 1, ...options};
@@ -158,44 +153,34 @@
   };
 
   TestSuite.prototype.setupLegacyFilesForTest = async function() {
-    try {
-      // 'Tests.js' is executed on 'about:blank' so we can't use `import` directly without
-      // specifying the full devtools://devtools/bundled URL.
-      ([
-        Common,
-        HostModule,
-        Root,
-        SDK,
-        Sources,
-        Timeline,
-        UI,
-        Workspace,
-      ] =
-           await Promise.all([
-             self.runtime.loadLegacyModule('core/common/common.js'),
-             self.runtime.loadLegacyModule('core/host/host.js'),
-             self.runtime.loadLegacyModule('core/root/root.js'),
-             self.runtime.loadLegacyModule('core/sdk/sdk.js'),
-             self.runtime.loadLegacyModule('panels/sources/sources.js'),
-             self.runtime.loadLegacyModule('panels/timeline/timeline.js'),
-             self.runtime.loadLegacyModule('ui/legacy/legacy.js'),
-             self.runtime.loadLegacyModule('models/workspace/workspace.js'),
-           ]));
+    // 'Tests.js' is executed on 'about:blank' so we can't use `import` directly without
+    // specifying the full devtools://devtools/bundled URL.
+    ([
+      Common,
+      HostModule,
+      Root,
+      SDK,
+      UI,
+      Workspace,
+    ] =
+         await Promise.all([
+           self.runtime.loadLegacyModule('core/common/common.js'),
+           self.runtime.loadLegacyModule('core/host/host.js'),
+           self.runtime.loadLegacyModule('core/root/root.js'),
+           self.runtime.loadLegacyModule('core/sdk/sdk.js'),
+           self.runtime.loadLegacyModule('ui/legacy/legacy.js'),
+           self.runtime.loadLegacyModule('models/workspace/workspace.js'),
+         ]));
 
-      // We have to map 'Host.InspectorFrontendHost' as the C++ uses it directly.
-      self.Host = {};
-      self.Host.InspectorFrontendHost = HostModule.InspectorFrontendHost.InspectorFrontendHostInstance;
-      self.Host.InspectorFrontendHostAPI = HostModule.InspectorFrontendHostAPI;
-
-      this.reportOk_();
-    } catch (e) {
-      this.reportFailure_(e);
-    }
+    // We have to map 'Host.InspectorFrontendHost' as the C++ uses it directly.
+    self.Host = {};
+    self.Host.InspectorFrontendHost = HostModule.InspectorFrontendHost.InspectorFrontendHostInstance;
+    self.Host.InspectorFrontendHostAPI = HostModule.InspectorFrontendHostAPI;
   };
 
   /**
    * Run specified test on a fresh instance of the test suite.
-   * @param {Array<string>} args method name followed by its parameters.
+   * @param args - method name followed by its parameters.
    */
   TestSuite.prototype.dispatchOnTestSuite = async function(args) {
     const methodName = args.shift();
@@ -212,7 +197,7 @@
   /**
    * Wrap an async method with TestSuite.{takeControl(), releaseControl()}
    * and invoke TestSuite.reportOk_ upon completion.
-   * @param {Array<string>} args method name followed by its parameters.
+   * @param args - method name followed by its parameters.
    */
   TestSuite.prototype.waitForAsync = function(var_args) {
     const args = Array.prototype.slice.call(arguments);
@@ -223,11 +208,11 @@
 
   /**
    * Overrides the method with specified name until it's called first time.
-   * @param {!Object} receiver An object whose method to override.
-   * @param {string} methodName Name of the method to override.
-   * @param {!Function} override A function that should be called right after the
+   * @param receiver - An object whose method to override.
+   * @param methodName - Name of the method to override.
+   * @param override - A function that should be called right after the
    *     overridden method returns.
-   * @param {?boolean} opt_sticky Whether restore original method after first run
+   * @param opt_sticky - Whether restore original method after first run
    *     or not.
    */
   TestSuite.prototype.addSniffer = function(receiver, methodName, override, opt_sticky) {
@@ -257,8 +242,8 @@
 
   /**
    * Waits for current throttler invocations, if any.
-   * @param {!Common.Throttler} throttler
-   * @param {function()} callback
+   * @param throttler
+   * @param callback
    */
   TestSuite.prototype.waitForThrottler = function(throttler, callback) {
     const test = this;
@@ -289,7 +274,7 @@
   };
 
   /**
-   * @param {string} panelName Name of the panel to show.
+   * @param panelName - Name of the panel to show.
    */
   TestSuite.prototype.showPanel = function(panelName) {
     return UI.InspectorView.InspectorView.instance().showPanel(panelName);
@@ -316,7 +301,7 @@
    * Tests that Recorder tab can be open.
    */
   TestSuite.prototype.testShowRecorderTab = function() {
-    this.showPanel('chrome_recorder')
+    this.showPanel('chrome-recorder')
         .then(() => {
           this.releaseControl();
         })
@@ -802,7 +787,7 @@
       this.releaseControl();
     });
 
-    Common.Settings.moduleSetting('activeKeybindSet').set('vsCode');
+    Common.Settings.moduleSetting('active-keybind-set').set('vsCode');
   };
 
   TestSuite.prototype.testDispatchKeyEventDoesNotCrash = function() {
@@ -942,7 +927,7 @@
 
     function step1() {
       testPreset(
-          MobileThrottling.networkPresets[2],
+          MobileThrottling.networkPresets[3],
           [
             'offline event: online = false', 'connection change event: type = none; downlinkMax = 0; effectiveType = 4g'
           ],
@@ -951,7 +936,7 @@
 
     function step2() {
       testPreset(
-          MobileThrottling.networkPresets[1],
+          MobileThrottling.networkPresets[2],
           [
             'online event: online = true',
             'connection change event: type = cellular; downlinkMax = 0.3814697265625; effectiveType = 2g'
@@ -961,98 +946,16 @@
 
     function step3() {
       testPreset(
+          MobileThrottling.networkPresets[1],
+          ['connection change event: type = cellular; downlinkMax = 1.373291015625; effectiveType = 3g'], step4);
+    }
+
+    function step4() {
+      testPreset(
           MobileThrottling.networkPresets[0],
-          ['connection change event: type = cellular; downlinkMax = 1.373291015625; effectiveType = 3g'],
+          ['connection change event: type = cellular; downlinkMax = 7.724761962890625; effectiveType = 4g'],
           test.releaseControl.bind(test));
     }
-  };
-
-  TestSuite.prototype.testScreenshotRecording = function() {
-    const test = this;
-
-    function performActionsInPage(callback) {
-      let count = 0;
-      const div = document.createElement('div');
-      div.setAttribute('style', 'left: 0px; top: 0px; width: 100px; height: 100px; position: absolute;');
-      document.body.appendChild(div);
-      requestAnimationFrame(frame);
-      function frame() {
-        const color = [0, 0, 0];
-        color[count % 3] = 255;
-        div.style.backgroundColor = 'rgb(' + color.join(',') + ')';
-        if (++count > 10) {
-          requestAnimationFrame(callback);
-        } else {
-          requestAnimationFrame(frame);
-        }
-      }
-    }
-
-    const captureFilmStripSetting =
-        Common.Settings.Settings.instance().createSetting('timelineCaptureFilmStrip', false);
-    captureFilmStripSetting.set(true);
-    test.evaluateInConsole_(performActionsInPage.toString(), function() {});
-    test.invokeAsyncWithTimeline_('performActionsInPage', onTimelineDone);
-
-    function onTimelineDone() {
-      captureFilmStripSetting.set(false);
-      const filmStripModel = Timeline.TimelinePanel.TimelinePanel.instance().performanceModel?.filmStripModel();
-      const frames = filmStripModel.frames();
-      test.assertTrue(frames.length > 4 && typeof frames.length === 'number');
-      loadFrameImages(frames);
-    }
-
-    function loadFrameImages(frames) {
-      const readyImages = [];
-      for (const frame of frames) {
-        frame.imageDataPromise().then(onGotImageData);
-      }
-
-      function onGotImageData(dataUri) {
-        const image = new Image();
-        test.assertTrue(Boolean(dataUri), 'No image data for frame');
-        image.addEventListener('load', onLoad);
-        image.src = dataUri;
-      }
-
-      function onLoad(event) {
-        readyImages.push(event.target);
-        if (readyImages.length === frames.length) {
-          validateImagesAndCompleteTest(readyImages);
-        }
-      }
-    }
-
-    function validateImagesAndCompleteTest(images) {
-      let redCount = 0;
-      let greenCount = 0;
-      let blueCount = 0;
-
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      for (const image of images) {
-        test.assertTrue(image.naturalWidth > 10);
-        test.assertTrue(image.naturalHeight > 10);
-        canvas.width = image.naturalWidth;
-        canvas.height = image.naturalHeight;
-        ctx.drawImage(image, 0, 0);
-        const data = ctx.getImageData(0, 0, 1, 1);
-        const color = Array.prototype.join.call(data.data, ',');
-        if (data.data[0] > 200) {
-          redCount++;
-        } else if (data.data[1] > 200) {
-          greenCount++;
-        } else if (data.data[2] > 200) {
-          blueCount++;
-        } else {
-          test.fail('Unexpected color: ' + color);
-        }
-      }
-      test.assertTrue(redCount && greenCount && blueCount, 'Color check failed');
-      test.releaseControl();
-    }
-
-    test.takeControl();
   };
 
   TestSuite.prototype.testSettings = function() {
@@ -1126,57 +1029,55 @@
     }
   };
 
-  TestSuite.prototype.testRawHeadersWithHSTS = function(url) {
+  TestSuite.prototype.testRawHeadersWithHSTS = async function(url) {
     const test = this;
     test.takeControl({slownessFactor: 10});
-    SDK.TargetManager.TargetManager.instance().addModelListener(
-        SDK.NetworkManager.NetworkManager, SDK.NetworkManager.Events.ResponseReceived, onResponseReceived);
 
-    this.evaluateInConsole_(
-        `
-      let img = document.createElement('img');
-      img.src = "${url}";
-      document.body.appendChild(img);
-    `,
-        () => {});
-
-    let count = 0;
-    function onResponseReceived(event) {
-      const networkRequest = event.data.request;
-      if (!networkRequest.url().startsWith('http')) {
-        return;
+    const rawResponseEventsPromise = new Promise(resolve => {
+      let count = 0;
+      this.addSniffer(SDK.NetworkManager.NetworkDispatcher.prototype, 'responseReceivedExtraInfo', function() {
+        if (++count === 2) {
+          resolve();
+        }
+      }, /* sticky=*/ true);
+    });
+    const requests = await new Promise(resolve => {
+      SDK.TargetManager.TargetManager.instance().addModelListener(
+          SDK.NetworkManager.NetworkManager, SDK.NetworkManager.Events.ResponseReceived, onResponseReceived);
+      const requests = [];
+      function onResponseReceived(event) {
+        const networkRequest = event.data.request;
+        console.error(`${networkRequest.url()} ${networkRequest.statusCode}`);
+        if (!networkRequest.url().startsWith('http')) {
+          return;
+        }
+        requests.push(networkRequest);
+        if (requests.length === 3) {
+          resolve(requests);
+        }
       }
-      switch (++count) {
-        case 1:  // Original redirect
-          test.assertEquals(301, networkRequest.statusCode);
-          test.assertEquals('Moved Permanently', networkRequest.statusText);
-          test.assertTrue(url.endsWith(networkRequest.responseHeaderValue('Location')));
-          break;
+      this.evaluateInConsole_(`location.href= "${url}";`, () => {});
+    });
 
-        case 2:  // HSTS internal redirect
-          test.assertTrue(networkRequest.url().startsWith('http://'));
-          test.assertEquals(307, networkRequest.statusCode);
-          test.assertEquals('Internal Redirect', networkRequest.statusText);
-          test.assertEquals('HSTS', networkRequest.responseHeaderValue('Non-Authoritative-Reason'));
-          test.assertTrue(networkRequest.responseHeaderValue('Location').startsWith('https://'));
-          break;
+    await rawResponseEventsPromise;
 
-        case 3:  // Final response
-          test.assertTrue(networkRequest.url().startsWith('https://'));
-          test.assertTrue(networkRequest.requestHeaderValue('Referer').startsWith('http://127.0.0.1'));
-          test.assertEquals(200, networkRequest.statusCode);
-          test.assertEquals('OK', networkRequest.statusText);
-          test.assertEquals('132', networkRequest.responseHeaderValue('Content-Length'));
-          test.releaseControl();
-      }
-    }
-  };
+    test.assertTrue(requests[0] !== requests[1]);
+    test.assertEquals(301, requests[0].statusCode);
+    test.assertEquals('Moved Permanently', requests[0].statusText);
+    test.assertTrue(url.endsWith(requests[0].responseHeaderValue('Location')));
 
-  TestSuite.prototype.testDOMWarnings = function() {
-    const messages = SDK.ConsoleModel.ConsoleModel.allMessagesUnordered();
-    this.assertEquals(1, messages.length);
-    const expectedPrefix = '[DOM] Found 2 elements with non-unique id #dup:';
-    this.assertTrue(messages[0].messageText.startsWith(expectedPrefix));
+    test.assertTrue(requests[1].url().startsWith('http://'));
+    test.assertEquals(307, requests[1].statusCode);
+    test.assertEquals('Internal Redirect', requests[1].statusText);
+    test.assertEquals('HSTS', requests[1].responseHeaderValue('Non-Authoritative-Reason'));
+    test.assertTrue(requests[1].responseHeaderValue('Location').startsWith('https://'));
+
+    test.assertTrue(requests[2].url().startsWith('https://'));
+    test.assertTrue(requests[2].requestHeaderValue('Referer').startsWith('http://127.0.0.1'));
+    test.assertEquals(200, requests[2].statusCode);
+    test.assertEquals('OK', requests[2].statusText);
+    test.assertEquals('132', requests[2].responseHeaderValue('Content-Length'));
+    test.releaseControl();
   };
 
   TestSuite.prototype.waitForTestResultsInConsole = function() {
@@ -1220,74 +1121,6 @@
     };
     top.addEventListener('message', onMessage);
     this.takeControl();
-  };
-
-  TestSuite.prototype._overrideMethod = function(receiver, methodName, override) {
-    const original = receiver[methodName];
-    if (typeof original !== 'function') {
-      this.fail(`TestSuite._overrideMethod: ${methodName} is not a function`);
-      return;
-    }
-    receiver[methodName] = function() {
-      let value;
-      try {
-        value = original.apply(receiver, arguments);
-      } finally {
-        receiver[methodName] = original;
-      }
-      override.apply(original, arguments);
-      return value;
-    };
-  };
-
-  TestSuite.prototype.startTimeline = function(callback) {
-    const test = this;
-    this.showPanel('timeline').then(function() {
-      const timeline = Timeline.TimelinePanel.TimelinePanel.instance();
-      test._overrideMethod(timeline, 'recordingStarted', callback);
-      timeline._toggleRecording();
-    });
-  };
-
-  TestSuite.prototype.stopTimeline = function(callback) {
-    const timeline = Timeline.TimelinePanel.TimelinePanel.instance();
-    this._overrideMethod(timeline, 'loadingComplete', callback);
-    timeline._toggleRecording();
-  };
-
-  TestSuite.prototype.invokePageFunctionAsync = function(functionName, opt_args, callback_is_always_last) {
-    const callback = arguments[arguments.length - 1];
-    const doneMessage = `DONE: ${functionName}.${++this._asyncInvocationId}`;
-    const argsString = arguments.length < 3 ?
-        '' :
-        Array.prototype.slice.call(arguments, 1, -1).map(arg => JSON.stringify(arg)).join(',') + ',';
-    this.evaluateInConsole_(
-        `${functionName}(${argsString} function() { console.log('${doneMessage}'); });`, function() {});
-    SDK.TargetManager.TargetManager.instance().addModelListener(
-        SDK.ConsoleModel.ConsoleModel, SDK.ConsoleModel.Events.MessageAdded, onConsoleMessage);
-
-    function onConsoleMessage(event) {
-      const text = event.data.messageText;
-      if (text === doneMessage) {
-        SDK.TargetManager.TargetManager.instance().removeModelListener(
-            SDK.ConsoleModel.ConsoleModel, SDK.ConsoleModel.Events.MessageAdded, onConsoleMessage);
-        callback();
-      }
-    }
-  };
-
-  TestSuite.prototype.invokeAsyncWithTimeline_ = function(functionName, callback) {
-    const test = this;
-
-    this.startTimeline(onRecordingStarted);
-
-    function onRecordingStarted() {
-      test.invokePageFunctionAsync(functionName, pageActionsDone);
-    }
-
-    function pageActionsDone() {
-      test.stopTimeline(callback);
-    }
   };
 
   TestSuite.prototype.enableExperiment = function(name) {
@@ -1368,8 +1201,8 @@
   };
 
   /**
-   * @param {string} url
-   * @return {!Promise<!SDK.Target.Target>}
+   * @param url
+   * @returns
    */
   async function createIsolatedTarget(url, opt_browserContextIds) {
     const targetAgent = SDK.TargetManager.TargetManager.instance().rootTarget()?.targetAgent();
@@ -1544,8 +1377,8 @@
 
   /**
    * Serializes array of uiSourceCodes to string.
-   * @param {!Array.<!Workspace.UISourceCode>} uiSourceCodes
-   * @return {string}
+   * @param uiSourceCodes
+   * @returns
    */
   TestSuite.prototype.uiSourceCodesToString_ = function(uiSourceCodes) {
     const names = [];
@@ -1583,11 +1416,11 @@
 
   /**
    * Returns all loaded non anonymous uiSourceCodes.
-   * @return {!Array.<!Workspace.UISourceCode>}
+   * @returns
    */
   TestSuite.prototype.nonAnonymousUISourceCodes_ = function() {
     /**
-     * @param {!Workspace.UISourceCode} uiSourceCode
+     * @param uiSourceCode
      */
     function filterOutService(uiSourceCode) {
       return !uiSourceCode.project().isServiceProject();
@@ -1630,9 +1463,9 @@
   /**
    * Checks that all expected scripts are present in the scripts list
    * in the Scripts panel.
-   * @param {!Array.<string>} expected Regular expressions describing
+   * @param expected - Regular expressions describing
    *     expected script names.
-   * @return {boolean} Whether all the scripts are in "scripts-files" select
+   * @returns Whether all the scripts are in "scripts-files" select
    *     box
    */
   TestSuite.prototype._scriptsAreParsed = function(expected) {
@@ -1652,7 +1485,7 @@
 
   /**
    * Waits for script pause, checks expectations, and invokes the callback.
-   * @param {function():void} callback
+   * @param callback
    */
   TestSuite.prototype._waitForScriptPause = function(callback) {
     this.addSniffer(SDK.DebuggerModel.DebuggerModel.prototype, 'pausedScript', callback);
@@ -1661,7 +1494,8 @@
   /**
    * Waits until all the scripts are parsed and invokes the callback.
    */
-  TestSuite.prototype._waitUntilScriptsAreParsed = function(expectedScripts, callback) {
+  TestSuite.prototype._waitUntilScriptsAreParsed = async function(expectedScripts, callback) {
+    const Sources = await self.runtime.loadLegacyModule('panels/sources/sources.js');
     const test = this;
 
     function waitForAllScripts() {

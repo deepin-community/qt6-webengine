@@ -3,10 +3,11 @@
 // found in the LICENSE file.
 
 import * as Common from '../../core/common/common.js';
-import * as FormatterActions from '../../entrypoints/formatter_worker/FormatterActions.js';  // eslint-disable-line rulesdir/es_modules_import
+import * as FormatterActions from '../../entrypoints/formatter_worker/FormatterActions.js';  // eslint-disable-line rulesdir/es-modules-import
+
 export {DefinitionKind, type ScopeTreeNode} from '../../entrypoints/formatter_worker/FormatterActions.js';
 
-const MAX_WORKERS = Math.min(2, navigator.hardwareConcurrency - 1);
+const MAX_WORKERS = Math.max(2, navigator.hardwareConcurrency - 1);
 
 let formatterWorkerPoolInstance: FormatterWorkerPool;
 
@@ -55,9 +56,7 @@ export class FormatterWorkerPool {
     }
   }
 
-  // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private onWorkerMessage(worker: Common.Worker.WorkerWrapper, event: MessageEvent<any>): void {
+  private onWorkerMessage(worker: Common.Worker.WorkerWrapper, event: MessageEvent): void {
     const task = this.workerTasks.get(worker);
     if (!task) {
       return;
@@ -82,18 +81,13 @@ export class FormatterWorkerPool {
     this.workerTasks.set(newWorker, null);
     this.processNextTask();
     if (task) {
-      task.callback(null);
+      task.errorCallback(event);
     }
   }
 
   private runChunkedTask(
-      methodName: string, params: {
-        [x: string]: string,
-      },
-      // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      callback: (arg0: boolean, arg1: any) => void): void {
-    const task = new Task(methodName, params, onData, true);
+      methodName: string, params: Record<string, string>, callback: (arg0: boolean, arg1: unknown) => void): void {
+    const task = new Task(methodName, params, onData, () => onData(null), true);
     this.taskQueue.push(task);
     this.processNextTask();
 
@@ -108,24 +102,24 @@ export class FormatterWorkerPool {
     }
   }
 
-  private runTask(methodName: FormatterActions.FormatterActions, params: {
-    [x: string]: unknown,
-    // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  }): Promise<any> {
-    return new Promise(resolve => {
-      const task = new Task(methodName, params, resolve, false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private runTask(methodName: FormatterActions.FormatterActions, params: Record<string, unknown>): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const task = new Task(methodName, params, resolve, reject, false);
       this.taskQueue.push(task);
       this.processNextTask();
     });
   }
 
   format(mimeType: string, content: string, indentString: string): Promise<FormatterActions.FormatResult> {
-    const parameters = {mimeType: mimeType, content: content, indentString: indentString};
+    const parameters = {mimeType, content, indentString};
     return this.runTask(FormatterActions.FormatterActions.FORMAT, parameters) as Promise<FormatterActions.FormatResult>;
   }
 
   javaScriptSubstitute(expression: string, mapping: Map<string, string|null>): Promise<string> {
+    if (mapping.size === 0) {
+      return Promise.resolve(expression);
+    }
     return this.runTask(FormatterActions.FormatterActions.JAVASCRIPT_SUBSTITUTE, {content: expression, mapping})
         .then(result => result || '');
   }
@@ -136,13 +130,8 @@ export class FormatterWorkerPool {
         .then(result => result || null);
   }
 
-  evaluatableJavaScriptSubstring(content: string): Promise<string> {
-    return this.runTask(FormatterActions.FormatterActions.EVALUATE_JAVASCRIPT_SUBSTRING, {content: content})
-        .then(text => text || '');
-  }
-
-  parseCSS(content: string, callback: (arg0: boolean, arg1: Array<CSSRule>) => void): void {
-    this.runChunkedTask(FormatterActions.FormatterActions.PARSE_CSS, {content: content}, onDataChunk);
+  parseCSS(content: string, callback: (arg0: boolean, arg1: CSSRule[]) => void): void {
+    this.runChunkedTask(FormatterActions.FormatterActions.PARSE_CSS, {content}, onDataChunk);
 
     // TODO(crbug.com/1172300) Ignored during the jsdoc to ts migration
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -157,11 +146,15 @@ class Task {
   method: string;
   params: unknown;
   callback: (arg0: MessageEvent|null) => void;
+  errorCallback: (arg0: Event) => void;
   isChunked: boolean|undefined;
-  constructor(method: string, params: unknown, callback: (arg0: MessageEvent|null) => void, isChunked?: boolean) {
+  constructor(
+      method: string, params: unknown, callback: (arg0: MessageEvent|null) => void,
+      errorCallback: (arg0: Event) => void, isChunked?: boolean) {
     this.method = method;
     this.params = params;
     this.callback = callback;
+    this.errorCallback = errorCallback;
     this.isChunked = isChunked;
   }
 }

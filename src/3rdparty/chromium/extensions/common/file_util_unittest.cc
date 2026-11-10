@@ -6,15 +6,17 @@
 
 #include <stddef.h>
 
+#include <array>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_reader.h"
-#include "base/json/json_string_value_serializer.h"
 #include "base/path_service.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -23,6 +25,7 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "extensions/common/constants.h"
+#include "extensions/common/error_utils.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_paths.h"
 #include "extensions/common/manifest.h"
@@ -68,14 +71,13 @@ scoped_refptr<Extension> LoadExtensionManifest(
     ManifestLocation location,
     int extra_flags,
     std::string* error) {
-  JSONStringValueDeserializer deserializer(manifest_value);
-  std::unique_ptr<base::Value> result =
-      deserializer.Deserialize(nullptr, error);
-  if (!result.get())
+  std::optional<base::Value::Dict> result =
+      base::JSONReader::ReadDict(manifest_value);
+  if (!result) {
     return nullptr;
-  CHECK_EQ(base::Value::Type::DICT, result->type());
-  return LoadExtensionManifest(std::move(*result).TakeDict(), manifest_dir,
-                               location, extra_flags, error);
+  }
+  return LoadExtensionManifest(std::move(*result), manifest_dir, location,
+                               extra_flags, error);
 }
 
 void RunUnderscoreDirectoriesTest(
@@ -86,8 +88,9 @@ void RunUnderscoreDirectoriesTest(
   base::FilePath ext_path = temp.GetPath();
   ASSERT_TRUE(base::CreateDirectory(ext_path));
 
-  for (const auto& dir : underscore_directories)
+  for (const auto& dir : underscore_directories) {
     ASSERT_TRUE(base::CreateDirectory(ext_path.AppendASCII(dir)));
+  }
 
   ASSERT_TRUE(
       base::WriteFile(ext_path.AppendASCII("manifest.json"), kManifestContent));
@@ -108,8 +111,9 @@ void RunUnderscoreDirectoriesTest(
         "Cannot load extension with file or directory name %s. Filenames "
         "starting with \"_\" are reserved for use by the system.",
         dir.c_str());
-    if (expected_warning == warnings[0].message)
+    if (expected_warning == warnings[0].message) {
       warning_matched = true;
+    }
   }
 
   EXPECT_TRUE(warning_matched)
@@ -125,7 +129,7 @@ struct UninstallTestData {
 };
 
 const std::vector<UninstallTestData>& GetTestData() {
-  // TODO(crbug.com/1378775): Condense/enhance with testing::Combine to try all
+  // TODO(crbug.com/40875193): Condense/enhance with testing::Combine to try all
   // permutations of known bad values.
   static const auto* test_data = new std::vector<UninstallTestData>{
       // Valid directory.
@@ -356,11 +360,11 @@ TEST_F(FileUtilTest, CheckIllegalFilenamesOnlyReserved) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
-  static const base::FilePath::CharType* const folders[] = {
-      kLocaleFolder, kPlatformSpecificFolder};
+  static const auto folders = std::to_array<const base::FilePath::CharType*>(
+      {kLocaleFolder, kPlatformSpecificFolder});
 
-  for (size_t i = 0; i < std::size(folders); i++) {
-    base::FilePath src_path = temp.GetPath().Append(folders[i]);
+  for (const auto* folder : folders) {
+    base::FilePath src_path = temp.GetPath().Append(folder);
     ASSERT_TRUE(base::CreateDirectory(src_path));
   }
 
@@ -440,16 +444,10 @@ TEST_F(FileUtilTest, LoadExtensionGivesHelpfullErrorOnBadManifest) {
       install_dir, ManifestLocation::kUnpacked, Extension::NO_FLAGS, &error));
   ASSERT_TRUE(extension.get() == nullptr);
   ASSERT_FALSE(error.empty());
-  if (base::JSONReader::UsingRust()) {
-    ASSERT_NE(
-        std::string::npos,
-        error.find(manifest_errors::kManifestParseError +
-                   std::string("  expected `,` or `}` at line 2 column 16")));
-  } else {
-    ASSERT_NE(std::string::npos,
-              error.find(manifest_errors::kManifestParseError +
-                         std::string("  Line: 2, column: 16,")));
-  }
+  ASSERT_NE(
+      std::string::npos,
+      error.find(manifest_errors::kManifestParseError +
+                 std::string("  expected `,` or `}` at line 2 column 16")));
 }
 
 TEST_F(FileUtilTest, ValidateThemeUTF8) {
@@ -509,16 +507,12 @@ TEST_F(FileUtilTest, BackgroundScriptsMustExist) {
 
   extension = LoadExtensionManifest(value, temp.GetPath(),
                                     ManifestLocation::kUnpacked, 0, &error);
-  ASSERT_TRUE(extension.get()) << error;
-
-  warnings.clear();
-  EXPECT_FALSE(
-      file_util::ValidateExtension(extension.get(), &error, &warnings));
-  EXPECT_EQ(
-      l10n_util::GetStringFUTF8(IDS_EXTENSION_LOAD_BACKGROUND_SCRIPT_FAILED,
-                                u"http://google.com/foo.js"),
+  ASSERT_FALSE(extension.get());
+  ASSERT_FALSE(error.empty());
+  ASSERT_EQ(
+      ErrorUtils::FormatErrorMessage(manifest_errors::kInvalidBackgroundScript,
+                                     base::NumberToString(0)),
       error);
-  EXPECT_EQ(0U, warnings.size());
 }
 
 // Private key, generated by Chrome specifically for this test, and
@@ -705,38 +699,38 @@ TEST_F(FileUtilTest, CheckInvisibleIconFilePacked) {
 
 TEST_F(FileUtilTest, ExtensionURLToRelativeFilePath) {
 #define URL_PREFIX "chrome-extension://extension-id/"
-  struct TestCase {
+  static constexpr struct {
     const char* url;
     const char* expected_relative_path;
   } test_cases[] = {
-    {URL_PREFIX "simple.html", "simple.html"},
-    {URL_PREFIX "directory/to/file.html", "directory/to/file.html"},
-    {URL_PREFIX "escape%20spaces.html", "escape spaces.html"},
-    {URL_PREFIX "%C3%9Cber.html",
-     "\xC3\x9C"
-     "ber.html"},
+      {URL_PREFIX "simple.html", "simple.html"},
+      {URL_PREFIX "directory/to/file.html", "directory/to/file.html"},
+      {URL_PREFIX "escape%20spaces.html", "escape spaces.html"},
+      {URL_PREFIX "%C3%9Cber.html",
+       "\xC3\x9C"
+       "ber.html"},
 #if BUILDFLAG(IS_WIN)
-    {URL_PREFIX "C%3A/simple.html", ""},
+      {URL_PREFIX "C%3A/simple.html", ""},
 #endif
-    {URL_PREFIX "////simple.html", "simple.html"},
-    {URL_PREFIX "/simple.html", "simple.html"},
-    {URL_PREFIX "\\simple.html", "simple.html"},
-    {URL_PREFIX "\\\\foo\\simple.html", "foo/simple.html"},
-    // Escaped file paths result in failure.
-    {URL_PREFIX "..%2f..%2fsimple.html", ""},
-    // Escaped things that look like escaped file paths, on the other hand,
-    // should work.
-    {URL_PREFIX "..%252f..%252fsimple.html", "..%2f..%2fsimple.html"},
-    // This is a UTF-8 lock icon, which is unsafe to display in the omnibox, but
-    // is a valid, if unusual, file name.
-    {URL_PREFIX "%F0%9F%94%93.html", "\xF0\x9F\x94\x93.html"},
+      {URL_PREFIX "////simple.html", "simple.html"},
+      {URL_PREFIX "/simple.html", "simple.html"},
+      {URL_PREFIX "\\simple.html", "simple.html"},
+      {URL_PREFIX "\\\\foo\\simple.html", "foo/simple.html"},
+      // Escaped file paths result in failure.
+      {URL_PREFIX "..%2f..%2fsimple.html", ""},
+      // Escaped things that look like escaped file paths, on the other hand,
+      // should work.
+      {URL_PREFIX "..%252f..%252fsimple.html", "..%2f..%2fsimple.html"},
+      // This is a UTF-8 lock icon, which is unsafe to display in the omnibox,
+      // but is a valid, if unusual, file name.
+      {URL_PREFIX "%F0%9F%94%93.html", "\xF0\x9F\x94\x93.html"},
   };
 #undef URL_PREFIX
 
-  for (size_t i = 0; i < std::size(test_cases); ++i) {
-    GURL url(test_cases[i].url);
+  for (const auto& test_case : test_cases) {
+    GURL url(test_case.url);
     base::FilePath expected_path =
-        base::FilePath::FromUTF8Unsafe(test_cases[i].expected_relative_path);
+        base::FilePath::FromUTF8Unsafe(test_case.expected_relative_path);
     base::FilePath actual_path = file_util::ExtensionURLToRelativeFilePath(url);
     EXPECT_FALSE(actual_path.IsAbsolute()) <<
       " For the path " << actual_path.value();
@@ -815,7 +809,7 @@ class UninstallTestParameterized
   }
 };
 
-// TODO(crbug.com/1378775): Create a custom test name generator that is more
+// TODO(crbug.com/40875193): Create a custom test name generator that is more
 // readable.
 // go/gunitadvanced#specifying-names-for-value-parameterized-test-parameters
 INSTANTIATE_TEST_SUITE_P(All,

@@ -14,14 +14,18 @@
 #include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/run_loop.h"
-#include "third_party/abseil-cpp/absl/base/attributes.h"
 
 namespace base {
 
 namespace {
 
-ABSL_CONST_INIT thread_local SingleThreadTaskRunner::CurrentDefaultHandle*
+constinit thread_local SingleThreadTaskRunner::CurrentDefaultHandle*
     current_default_handleSTTR = nullptr;
+
+constinit SingleThreadTaskRunner::MainThreadDefaultHandle*
+    main_thread_default_handle = nullptr;
+
+bool can_override = false;
 
 // This function can be removed, and the calls below replaced with direct
 // variable accesses, once the MSAN workaround is not necessary.
@@ -37,11 +41,15 @@ SingleThreadTaskRunner::CurrentDefaultHandle* GetCurrentDefaultHandle2() {
 
 }  // namespace
 
+bool SingleThreadTaskRunner::BelongsToCurrentThread() const {
+  return RunsTasksInCurrentSequence();
+}
+
 // static
 const scoped_refptr<SingleThreadTaskRunner>&
 SingleThreadTaskRunner::GetCurrentDefault() {
   const auto* const handle = GetCurrentDefaultHandle2();
-  CHECK(handle)
+  CHECK(handle && handle->task_runner_)
       << "Error: This caller requires a single-threaded context (i.e. the "
          "current task needs to run from a SingleThreadTaskRunner). If you're "
          "in a test refer to //docs/threading_and_tasks_testing.md."
@@ -56,71 +64,87 @@ SingleThreadTaskRunner::GetCurrentDefault() {
 
 // static
 bool SingleThreadTaskRunner::HasCurrentDefault() {
-  return !!GetCurrentDefaultHandle2();
+  return !!GetCurrentDefaultHandle2() &&
+         !!GetCurrentDefaultHandle2()->task_runner_;
+}
+
+// static
+const scoped_refptr<SingleThreadTaskRunner>&
+SingleThreadTaskRunner::GetMainThreadDefault() {
+  const auto* const handle = main_thread_default_handle;
+  CHECK(handle && handle->task_runner_)
+      << "Error: The main thread's handle is not initialized yet. This "
+         "probably means that you're calling this function too early in the "
+         "process's lifetime. If you're in a test, you can use "
+         "base::test::TaskEnvironement";
+  return handle->task_runner_;
+}
+
+// static
+bool SingleThreadTaskRunner::HasMainThreadDefault() {
+  return !!main_thread_default_handle &&
+         !!main_thread_default_handle->task_runner_;
 }
 
 SingleThreadTaskRunner::CurrentDefaultHandle::CurrentDefaultHandle(
     scoped_refptr<SingleThreadTaskRunner> task_runner)
-    : resetter_(&current_default_handleSTTR, this, nullptr),
-      task_runner_(std::move(task_runner)),
-      sequenced_task_runner_current_default_(task_runner_) {
-  DCHECK(task_runner_->BelongsToCurrentThread());
+    : CurrentDefaultHandle(std::move(task_runner), MayAlreadyExist{}) {
+  CHECK(!previous_handle_ || !previous_handle_->task_runner_);
 }
 
 SingleThreadTaskRunner::CurrentDefaultHandle::~CurrentDefaultHandle() {
-  DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK_EQ(GetCurrentDefaultHandle2(), this);
+  current_default_handleSTTR = previous_handle_;
 }
 
-SingleThreadTaskRunner::CurrentHandleOverride::CurrentHandleOverride(
-    scoped_refptr<SingleThreadTaskRunner> overriding_task_runner,
-    bool allow_nested_runloop) {
-  DCHECK(!SequencedTaskRunner::HasCurrentDefault() ||
-         SingleThreadTaskRunner::HasCurrentDefault())
-      << "SingleThreadTaskRunner::CurrentHandleOverride is not compatible with "
-         "a SequencedTaskRunner::CurrentDefaultHandle already "
-         "being set on this thread (except when it's "
-         "set by the current "
-         "SingleThreadTaskRunner::CurrentDefaultHandle).";
-
-  if (!SingleThreadTaskRunner::HasCurrentDefault()) {
-    top_level_thread_task_runner_current_default_.emplace(
-        std::move(overriding_task_runner));
-    return;
-  }
-
-#if DCHECK_IS_ON()
-  expected_task_runner_before_restore_ = overriding_task_runner.get();
-#endif
-  auto* const handle = GetCurrentDefaultHandle2();
-  SequencedTaskRunner::SetCurrentDefaultHandleTaskRunner(
-      handle->sequenced_task_runner_current_default_, overriding_task_runner);
-  handle->task_runner_.swap(overriding_task_runner);
-  // Due to the swap, now `handle->task_runner_` points to the overriding task
-  // runner and `overriding_task_runner_` points to the previous task runner.
-  task_runner_to_restore_ = std::move(overriding_task_runner);
-
-  if (!allow_nested_runloop) {
-    no_running_during_override_ =
-        std::make_unique<ScopedDisallowRunningRunLoop>();
-  }
+SingleThreadTaskRunner::CurrentDefaultHandle::CurrentDefaultHandle(
+    scoped_refptr<SingleThreadTaskRunner> task_runner,
+    MayAlreadyExist)
+    : task_runner_(std::move(task_runner)),
+      previous_handle_(GetCurrentDefaultHandle2()),
+      sequenced_handle_(
+          task_runner_,
+          SequencedTaskRunner::CurrentDefaultHandle::MayAlreadyExist{}) {
+  // Support overriding the current default with a null task runner or a task
+  // runner that belongs to the current thread.
+  DCHECK(!task_runner_ || task_runner_->BelongsToCurrentThread());
+  current_default_handleSTTR = this;
 }
 
-SingleThreadTaskRunner::CurrentHandleOverride::~CurrentHandleOverride() {
-  if (task_runner_to_restore_) {
-    auto* const handle = GetCurrentDefaultHandle2();
-#if DCHECK_IS_ON()
-    DCHECK_EQ(expected_task_runner_before_restore_, handle->task_runner_.get())
-        << "Nested overrides must expire their "
-           "SingleThreadTaskRunner::CurrentHandleOverride "
-           "in LIFO order.";
-#endif
+SingleThreadTaskRunner::CurrentHandleOverrideForTesting::
+    CurrentHandleOverrideForTesting(
+        scoped_refptr<SingleThreadTaskRunner> overriding_task_runner)
+    : current_default_handle_(std::move(overriding_task_runner),
+                              CurrentDefaultHandle::MayAlreadyExist{}),
+      no_running_during_override_(
+          std::make_unique<ScopedDisallowRunningRunLoop>()) {}
 
-    SequencedTaskRunner::SetCurrentDefaultHandleTaskRunner(
-        handle->sequenced_task_runner_current_default_,
-        task_runner_to_restore_);
-    handle->task_runner_.swap(task_runner_to_restore_);
-  }
+SingleThreadTaskRunner::CurrentHandleOverrideForTesting::
+    ~CurrentHandleOverrideForTesting() = default;
+
+SingleThreadTaskRunner::MainThreadDefaultHandle::MainThreadDefaultHandle(
+    scoped_refptr<SingleThreadTaskRunner> task_runner)
+    : task_runner_(std::move(task_runner)),
+      previous_handle_(main_thread_default_handle) {
+  CHECK(!main_thread_default_handle || can_override);
+  main_thread_default_handle = this;
+}
+
+SingleThreadTaskRunner::MainThreadDefaultHandle::~MainThreadDefaultHandle() {
+  DCHECK_EQ(main_thread_default_handle, this);
+  main_thread_default_handle = previous_handle_;
+}
+
+SingleThreadTaskRunner::ScopedCanOverrideMainThreadDefaultHandle::
+    ScopedCanOverrideMainThreadDefaultHandle() {
+  CHECK(!can_override);
+  can_override = true;
+}
+
+SingleThreadTaskRunner::ScopedCanOverrideMainThreadDefaultHandle::
+    ~ScopedCanOverrideMainThreadDefaultHandle() {
+  CHECK(can_override);
+  can_override = false;
 }
 
 }  // namespace base

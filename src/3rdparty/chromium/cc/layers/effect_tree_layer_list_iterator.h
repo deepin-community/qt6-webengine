@@ -70,7 +70,6 @@ class CC_EXPORT EffectTreeLayerListIterator {
         NOTREACHED();
     }
     NOTREACHED();
-    return nullptr;
   }
 
   struct Position {

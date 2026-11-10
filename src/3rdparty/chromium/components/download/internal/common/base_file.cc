@@ -2,17 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/download/public/common/base_file.h"
 
 #include <memory>
 #include <utility>
 
+#include "base/containers/heap_array.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/pickle.h"
 #include "base/strings/stringprintf.h"
@@ -79,12 +86,15 @@ void InitializeFile(base::File* file, const base::FilePath& file_path) {
 #endif  // BUILDFLAG(IS_ANDROID)
 
   // Use exclusive write to prevent another process from writing the file.
-  file->Initialize(file_path,
-                   base::File::FLAG_OPEN_ALWAYS | base::File::FLAG_WRITE |
-                       base::File::FLAG_READ |
-                       // Don't allow other processes to write to the file while
-                       // Chrome is writing (Windows-specific).
-                       base::File::FLAG_WIN_EXCLUSIVE_WRITE);
+  file->Initialize(
+      file_path,
+      base::File::FLAG_OPEN_ALWAYS | base::File::FLAG_WRITE |
+          base::File::FLAG_READ |
+          // Don't allow other processes to write to the file while
+          // Chrome is writing (Windows-specific).
+          base::File::FLAG_WIN_EXCLUSIVE_WRITE |
+          // Allow the file to be renamed or replaced (Windows-specific).
+          base::File::FLAG_WIN_SHARE_DELETE);
 }
 
 void DeleteFileWrapper(const base::FilePath& file_path) {
@@ -123,17 +133,48 @@ DownloadInterruptReason BaseFile::Initialize(
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!detached_);
 
+#if BUILDFLAG(IS_WIN)
+  constexpr uint32_t kTempFileFlags =
+      base::File::FLAG_READ | base::File::FLAG_WRITE |
+      base::File::FLAG_WIN_EXCLUSIVE_WRITE | base::File::FLAG_WIN_SHARE_DELETE;
+#endif
+
   if (full_path.empty()) {
     base::FilePath temp_file;
-    if ((default_directory.empty() ||
-         !base::CreateTemporaryFileInDir(default_directory, &temp_file)) &&
-        !base::CreateTemporaryFile(&temp_file)) {
-      return LogInterruptReason("Unable to create", 0,
-                                DOWNLOAD_INTERRUPT_REASON_FILE_FAILED);
+    base::File temp_base_file;
+    if (!default_directory.empty()) {
+#if BUILDFLAG(IS_WIN)
+      temp_base_file = base::CreateAndOpenTemporaryFileInDirWithFlags(
+          default_directory, &temp_file, kTempFileFlags);
+#else
+      temp_base_file =
+          base::CreateAndOpenTemporaryFileInDir(default_directory, &temp_file);
+#endif
+    }
+
+    if (!temp_base_file.IsValid()) {
+      base::FilePath system_temp_dir;
+      if (!base::GetTempDir(&system_temp_dir)) {
+        return LogInterruptReason("Unable to find temp directory", 0,
+                                  DOWNLOAD_INTERRUPT_REASON_FILE_FAILED);
+      }
+#if BUILDFLAG(IS_WIN)
+      temp_base_file = base::CreateAndOpenTemporaryFileInDirWithFlags(
+          system_temp_dir, &temp_file, kTempFileFlags);
+#else
+      temp_base_file =
+          base::CreateAndOpenTemporaryFileInDir(system_temp_dir, &temp_file);
+#endif
+      if (!temp_base_file.IsValid()) {
+        return LogInterruptReason("Unable to create temporary file", 0,
+                                  DOWNLOAD_INTERRUPT_REASON_FILE_FAILED);
+      }
     }
     full_path_ = temp_file;
+    file_ = std::move(temp_base_file);
   } else {
     full_path_ = full_path;
+    file_ = std::move(file);
   }
 
   bytes_so_far_ = bytes_so_far;
@@ -142,20 +183,27 @@ DownloadInterruptReason BaseFile::Initialize(
   // Sparse file doesn't validate hash.
   if (is_sparse_file_)
     secure_hash_.reset();
-  file_ = std::move(file);
 
   return Open(hash_so_far, bytes_wasted);
 }
 
-DownloadInterruptReason BaseFile::AppendDataToFile(const char* data,
-                                                   size_t data_len) {
+DownloadInterruptReason BaseFile::AppendDataToFile(
+    base::span<const uint8_t> data) {
   DCHECK(!is_sparse_file_);
-  return WriteDataToFile(bytes_so_far_, data, data_len);
+  return WriteDataToFile(bytes_so_far_, data);
 }
 
-DownloadInterruptReason BaseFile::WriteDataToFile(int64_t offset,
-                                                  const char* data,
-                                                  size_t data_len) {
+DownloadInterruptReason BaseFile::AppendDataToFile(const char* data,
+                                                   size_t data_len) {
+  UNSAFE_BUFFERS(
+      // SAFETY TODO(https://crbug.com/435230896): get rid of this.
+      return AppendDataToFile(
+                 base::span(reinterpret_cast<const uint8_t*>(data), data_len));)
+}
+
+DownloadInterruptReason BaseFile::WriteDataToFile(
+    int64_t offset,
+    base::span<const uint8_t> data) {
   // NOTE(benwells): The above DCHECK won't be present in release builds,
   // so we log any occurences to see how common this error is in the wild.
   if (detached_)
@@ -167,8 +215,9 @@ DownloadInterruptReason BaseFile::WriteDataToFile(int64_t offset,
   }
 
   // TODO(phajdan.jr): get rid of this check.
-  if (data_len == 0)
+  if (data.size() == 0) {
     return DOWNLOAD_INTERRUPT_REASON_NONE;
+  }
 
   // Use nestable async event instead of sync event so that all the writes
   // belong to the same download will be grouped together.
@@ -182,39 +231,46 @@ DownloadInterruptReason BaseFile::WriteDataToFile(int64_t offset,
   }
 
   // Writes to the file.
-  int64_t len = base::saturated_cast<int64_t>(data_len);
-  const char* current_data = data;
+  base::span<const uint8_t> current_data = data;
   int64_t current_offset = offset;
-  while (len > 0) {
+  while (!current_data.empty()) {
     // |write_result| may be less than |len|, and return an error on the next
     // write call when the disk is unavaliable.
-    int write_result = file_.Write(current_offset, current_data, len);
-    DCHECK_NE(0, write_result);
-
-    // Report errors on file writes.
-    if (write_result < 0)
+    std::optional<size_t> write_result =
+        file_.Write(current_offset, current_data);
+    if (!write_result.has_value()) {
       return LogSystemError("Write", logging::GetLastSystemErrorCode());
+    }
+
+    DCHECK_NE(0u, *write_result);
 
     // Update status.
-    DCHECK_LE(write_result, len);
-    len -= write_result;
-    current_data += write_result;
-    current_offset += write_result;
-    bytes_so_far_ += write_result;
+    bytes_so_far_ += *write_result;
+    current_offset += *write_result;
+    current_data = current_data.subspan(*write_result);
   }
 
   CONDITIONAL_TRACE(NESTABLE_ASYNC_END1("download", "DownloadFileWrite",
-                                        download_id_, "bytes", data_len));
+                                        download_id_, "bytes", data.size()));
 
   if (secure_hash_)
-    secure_hash_->Update(data, data_len);
+    secure_hash_->Update(data);
 
   return DOWNLOAD_INTERRUPT_REASON_NONE;
 }
 
+DownloadInterruptReason BaseFile::WriteDataToFile(int64_t offset,
+                                                  const char* data,
+                                                  size_t data_len) {
+  UNSAFE_BUFFERS(
+      // SAFETY TODO(https://crbug.com/435230896): get rid of this.
+      return WriteDataToFile(
+                 offset,
+                 base::span(reinterpret_cast<const uint8_t*>(data), data_len));)
+}
+
 bool BaseFile::ValidateDataInFile(int64_t offset,
-                                  const char* data,
-                                  size_t data_len) {
+                                  base::span<const uint8_t> data) {
   if (!file_.IsValid())
     return false;
 
@@ -223,15 +279,27 @@ bool BaseFile::ValidateDataInFile(int64_t offset,
   if (offset > bytes_so_far_)
     return false;
 
-  if (data_len <= 0)
+  if (data.size() == 0) {
     return true;
+  }
 
-  std::unique_ptr<char[]> buffer(new char[data_len]);
-  int bytes_read = file_.Read(offset, buffer.get(), data_len);
-  if (bytes_read < 0 || static_cast<size_t>(bytes_read) < data_len)
+  auto buffer = base::HeapArray<uint8_t>::Uninit(data.size());
+  std::optional<size_t> bytes_read = file_.Read(offset, buffer.as_span());
+  if (!bytes_read.has_value() || bytes_read.value() < data.size()) {
     return false;
+  }
 
-  return memcmp(data, buffer.get(), data_len) == 0;
+  return base::span(buffer) == data;
+}
+
+bool BaseFile::ValidateDataInFile(int64_t offset,
+                                  const char* data,
+                                  size_t data_len) {
+  UNSAFE_BUFFERS(
+      // SAFETY TODO(https://crbug.com/435230896): get rid of this.
+      return ValidateDataInFile(
+                 offset,
+                 base::span(reinterpret_cast<const uint8_t*>(data), data_len));)
 }
 
 DownloadInterruptReason BaseFile::Rename(const base::FilePath& new_path) {
@@ -450,6 +518,12 @@ DownloadInterruptReason BaseFile::Open(const std::string& hash_so_far,
       ClearFile();
       return LogSystemError("Truncating to last known offset", error);
     }
+
+    // If the file was truncated to the beginning, the hash state is no longer
+    // valid.
+    if (bytes_so_far_ == 0) {
+      secure_hash_ = crypto::SecureHash::Create(crypto::SecureHash::SHA256);
+    }
   } else if (file_size < bytes_so_far_) {
     // The file is shorter than we expected.  Our hashes won't be valid.
     *bytes_wasted = bytes_so_far_;
@@ -611,7 +685,7 @@ void BaseFile::OnQuarantineServiceError(const GURL& source_url,
   OnFileQuarantined(quarantine::SetInternetZoneIdentifierDirectly(
       full_path_, source_url, referrer_url));
 #else   // !BUILDFLAG(IS_WIN)
-  CHECK(false) << "In-process quarantine service should not have failed.";
+  NOTREACHED() << "In-process quarantine service should not have failed.";
 #endif  // !BUILDFLAG(IS_WIN)
 }
 
@@ -619,6 +693,7 @@ void BaseFile::AnnotateWithSourceInformation(
     const std::string& client_guid,
     const GURL& source_url,
     const GURL& referrer_url,
+    const std::optional<url::Origin>& request_initiator,
     mojo::PendingRemote<quarantine::mojom::Quarantine> remote_quarantine,
     OnAnnotationDoneCallback on_annotation_done_callback) {
   GURL authority_url = GetEffectiveAuthorityURL(source_url, referrer_url);
@@ -643,7 +718,7 @@ void BaseFile::AnnotateWithSourceInformation(
         authority_url, referrer_url));
 
     quarantine_service_->QuarantineFile(
-        full_path_, authority_url, referrer_url, client_guid,
+        full_path_, authority_url, referrer_url, request_initiator, client_guid,
         base::BindOnce(&BaseFile::OnFileQuarantined,
                        weak_factory_.GetWeakPtr()));
   }

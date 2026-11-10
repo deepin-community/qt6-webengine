@@ -27,11 +27,12 @@
 #include "libavutil/channel_layout.h"
 #include "libavutil/common.h"
 #include "libavutil/fifo.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 
 #include "audio.h"
 #include "avfilter.h"
-#include "internal.h"
+#include "filters.h"
 
 typedef struct MetaItem {
     int64_t pts;
@@ -195,9 +196,10 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
                     int j = i % buffer_size;
                     double ppeak = 0, pdelta;
 
-                    for (c = 0; c < channels; c++) {
-                        ppeak = FFMAX(ppeak, fabs(buffer[nextpos[j] + c]));
-                    }
+                    if (nextpos[j] >= 0)
+                        for (c = 0; c < channels; c++) {
+                            ppeak = FFMAX(ppeak, fabs(buffer[nextpos[j] + c]));
+                        }
                     pdelta = (limit / peak - limit / ppeak) / (((buffer_size - nextpos[j] + s->pos) % buffer_size) / channels);
                     if (pdelta < nextdelta[j]) {
                         nextdelta[j] = pdelta;
@@ -419,16 +421,16 @@ static const AVFilterPad alimiter_outputs[] = {
     },
 };
 
-const AVFilter ff_af_alimiter = {
-    .name           = "alimiter",
-    .description    = NULL_IF_CONFIG_SMALL("Audio lookahead limiter."),
+const FFFilter ff_af_alimiter = {
+    .p.name         = "alimiter",
+    .p.description  = NULL_IF_CONFIG_SMALL("Audio lookahead limiter."),
+    .p.priv_class   = &alimiter_class,
+    .p.flags        = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
     .priv_size      = sizeof(AudioLimiterContext),
-    .priv_class     = &alimiter_class,
     .init           = init,
     .uninit         = uninit,
     FILTER_INPUTS(alimiter_inputs),
     FILTER_OUTPUTS(alimiter_outputs),
     FILTER_SINGLE_SAMPLEFMT(AV_SAMPLE_FMT_DBL),
     .process_command = ff_filter_process_command,
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
 };

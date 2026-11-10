@@ -31,7 +31,6 @@ std::optional<DWORD> GetIntegrityLevelRid(IntegrityLevel integrity_level) {
   }
 
   NOTREACHED();
-  return std::nullopt;
 }
 
 DWORD SetObjectIntegrityLabel(HANDLE handle,

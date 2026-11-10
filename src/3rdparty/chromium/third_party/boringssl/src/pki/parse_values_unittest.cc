@@ -1,6 +1,16 @@
 // Copyright 2015 The Chromium Authors
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include "parse_values.h"
 
@@ -8,7 +18,8 @@
 
 #include <gtest/gtest.h>
 
-namespace bssl::der::test {
+BSSL_NAMESPACE_BEGIN
+namespace der::test {
 
 namespace {
 
@@ -317,7 +328,7 @@ TEST(ParseValuesTest, ParseBitStringEmptyNoUnusedBits) {
   ASSERT_TRUE(bit_string.has_value());
 
   EXPECT_EQ(0u, bit_string->unused_bits());
-  EXPECT_EQ(0u, bit_string->bytes().Length());
+  EXPECT_EQ(0u, bit_string->bytes().size());
 
   EXPECT_FALSE(bit_string->AssertsBit(0));
   EXPECT_FALSE(bit_string->AssertsBit(1));
@@ -349,7 +360,7 @@ TEST(ParseValuesTest, ParseBitStringSevenOneBits) {
   ASSERT_TRUE(bit_string.has_value());
 
   EXPECT_EQ(1u, bit_string->unused_bits());
-  EXPECT_EQ(1u, bit_string->bytes().Length());
+  EXPECT_EQ(1u, bit_string->bytes().size());
   EXPECT_EQ(0xFE, bit_string->bytes()[0]);
 
   EXPECT_TRUE(bit_string->AssertsBit(0));
@@ -461,4 +472,5 @@ TEST(ParseValuesTest, ParseUniversalString) {
       ParseUniversalString(der::Input(invalid_non_4_multiple_der), &s));
 }
 
-}  // namespace bssl::der::test
+}  // namespace der::test
+BSSL_NAMESPACE_END

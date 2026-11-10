@@ -5,9 +5,11 @@
 #include "components/heap_profiling/multi_process/heap_profiling_test_shim.h"
 
 #include "base/android/jni_string.h"
-#include "components/heap_profiling/multi_process/jni_headers/HeapProfilingTestShim_jni.h"
 #include "components/heap_profiling/multi_process/test_driver.h"
 #include "components/services/heap_profiling/public/cpp/settings.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/heap_profiling/multi_process/jni_headers/HeapProfilingTestShim_jni.h"
 
 using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
@@ -18,7 +20,9 @@ static jlong JNI_HeapProfilingTestShim_Init(JNIEnv* env,
   return reinterpret_cast<intptr_t>(profiler);
 }
 
-HeapProfilingTestShim::HeapProfilingTestShim(JNIEnv* env, jobject obj) {}
+HeapProfilingTestShim::HeapProfilingTestShim(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& obj) {}
 HeapProfilingTestShim::~HeapProfilingTestShim() = default;
 
 void HeapProfilingTestShim::Destroy(JNIEnv* env) {

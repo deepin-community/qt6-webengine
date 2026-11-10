@@ -13,6 +13,7 @@
 #include "gpu/ipc/common/gpu_channel.mojom.h"
 #include "gpu/ipc/service/gpu_channel_manager.h"
 #include "gpu/ipc/service/gpu_channel_test_common.h"
+#include "ipc/constants.mojom.h"
 
 namespace gpu {
 
@@ -22,70 +23,6 @@ class GpuChannelTest : public GpuChannelTestCommon {
   ~GpuChannelTest() override = default;
 };
 
-#if BUILDFLAG(IS_ANDROID)
-const SurfaceHandle kFakeSurfaceHandle = 1;
-
-TEST_F(GpuChannelTest, CreateViewCommandBufferAllowed) {
-  // TODO(https://crbug.com/1406585): Currently it's not possible to create
-  // onscreen GLSurface with Null binding with angle.
-  if (channel_manager()->use_passthrough_cmd_decoder()) {
-    GTEST_SKIP();
-  }
-
-  int32_t kClientId = 1;
-  bool is_gpu_host = true;
-  GpuChannel* channel = CreateChannel(kClientId, is_gpu_host);
-  ASSERT_TRUE(channel);
-
-  int32_t kRouteId =
-      static_cast<int32_t>(GpuChannelReservedRoutes::kMaxValue) + 1;
-  auto init_params = mojom::CreateCommandBufferParams::New();
-  init_params->surface_handle = kFakeSurfaceHandle;
-  init_params->share_group_id = MSG_ROUTING_NONE;
-  init_params->stream_id = 0;
-  init_params->stream_priority = SchedulingPriority::kNormal;
-  init_params->attribs = ContextCreationAttribs();
-  init_params->active_url = GURL();
-  gpu::ContextResult result = gpu::ContextResult::kSuccess;
-  gpu::Capabilities capabilities;
-  gpu::GLCapabilities gl_capabilities;
-  CreateCommandBuffer(*channel, std::move(init_params), kRouteId,
-                      GetSharedMemoryRegion(), &result, &capabilities,
-                      &gl_capabilities);
-  EXPECT_EQ(result, gpu::ContextResult::kSuccess);
-
-  CommandBufferStub* stub = channel->LookupCommandBuffer(kRouteId);
-  ASSERT_TRUE(stub);
-}
-
-TEST_F(GpuChannelTest, CreateViewCommandBufferDisallowed) {
-  int32_t kClientId = 1;
-  bool is_gpu_host = false;
-  GpuChannel* channel = CreateChannel(kClientId, is_gpu_host);
-  ASSERT_TRUE(channel);
-
-  int32_t kRouteId =
-      static_cast<int32_t>(GpuChannelReservedRoutes::kMaxValue) + 1;
-  auto init_params = mojom::CreateCommandBufferParams::New();
-  init_params->surface_handle = kFakeSurfaceHandle;
-  init_params->share_group_id = MSG_ROUTING_NONE;
-  init_params->stream_id = 0;
-  init_params->stream_priority = SchedulingPriority::kNormal;
-  init_params->attribs = ContextCreationAttribs();
-  init_params->active_url = GURL();
-  gpu::ContextResult result = gpu::ContextResult::kSuccess;
-  gpu::Capabilities capabilities;
-  gpu::GLCapabilities gl_capabilities;
-  CreateCommandBuffer(*channel, std::move(init_params), kRouteId,
-                      GetSharedMemoryRegion(), &result, &capabilities,
-                      &gl_capabilities);
-  EXPECT_EQ(result, gpu::ContextResult::kFatalFailure);
-
-  CommandBufferStub* stub = channel->LookupCommandBuffer(kRouteId);
-  EXPECT_FALSE(stub);
-}
-#endif
-
 TEST_F(GpuChannelTest, CreateOffscreenCommandBuffer) {
   int32_t kClientId = 1;
   GpuChannel* channel = CreateChannel(kClientId, true);
@@ -94,7 +31,7 @@ TEST_F(GpuChannelTest, CreateOffscreenCommandBuffer) {
   int32_t kRouteId =
       static_cast<int32_t>(GpuChannelReservedRoutes::kMaxValue) + 1;
   auto init_params = mojom::CreateCommandBufferParams::New();
-  init_params->share_group_id = MSG_ROUTING_NONE;
+  init_params->share_group_id = IPC::mojom::kRoutingIdNone;
   init_params->stream_id = 0;
   init_params->stream_priority = SchedulingPriority::kNormal;
   init_params->attribs = ContextCreationAttribs();
@@ -121,7 +58,7 @@ TEST_F(GpuChannelTest, IncompatibleStreamIds) {
       static_cast<int32_t>(GpuChannelReservedRoutes::kMaxValue) + 1;
   int32_t kStreamId1 = 1;
   auto init_params = mojom::CreateCommandBufferParams::New();
-  init_params->share_group_id = MSG_ROUTING_NONE;
+  init_params->share_group_id = IPC::mojom::kRoutingIdNone;
   init_params->stream_id = kStreamId1;
   init_params->stream_priority = SchedulingPriority::kNormal;
   auto init_params2 = init_params.Clone();
@@ -164,7 +101,7 @@ TEST_F(GpuChannelTest, CreateFailsIfSharedContextIsLost) {
   {
     SCOPED_TRACE("kSharedRouteId");
     auto init_params = mojom::CreateCommandBufferParams::New();
-    init_params->share_group_id = MSG_ROUTING_NONE;
+    init_params->share_group_id = IPC::mojom::kRoutingIdNone;
     init_params->stream_id = 0;
     init_params->stream_priority = SchedulingPriority::kNormal;
     init_params->attribs = ContextCreationAttribs();
@@ -262,7 +199,7 @@ TEST_F(GpuChannelExitForContextLostTest,
   int32_t kRouteId =
       static_cast<int32_t>(GpuChannelReservedRoutes::kMaxValue) + 1;
   auto init_params = mojom::CreateCommandBufferParams::New();
-  init_params->share_group_id = MSG_ROUTING_NONE;
+  init_params->share_group_id = IPC::mojom::kRoutingIdNone;
   init_params->stream_id = 0;
   init_params->stream_priority = SchedulingPriority::kNormal;
   init_params->attribs = ContextCreationAttribs();
@@ -293,7 +230,7 @@ TEST_F(GpuChannelExitForContextLostTest,
   int32_t kRouteId =
       static_cast<int32_t>(GpuChannelReservedRoutes::kMaxValue) + 1;
   auto init_params = mojom::CreateCommandBufferParams::New();
-  init_params->share_group_id = MSG_ROUTING_NONE;
+  init_params->share_group_id = IPC::mojom::kRoutingIdNone;
   init_params->stream_id = 0;
   init_params->stream_priority = SchedulingPriority::kNormal;
   init_params->attribs = ContextCreationAttribs();

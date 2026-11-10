@@ -9,6 +9,7 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/task/bind_post_task.h"
+#include "base/trace_event/trace_event.h"
 #include "base/unguessable_token.h"
 #include "content/browser/browser_main_loop.h"
 #include "content/browser/media/media_devices_permission_checker.h"
@@ -19,6 +20,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/content_features.h"
+#include "content/public/common/page_visibility_state.h"
 #include "media/capture/mojom/image_capture_types.h"
 #include "media/capture/video/video_capture_device.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
@@ -79,12 +81,14 @@ void TakePhotoOnIOThread(const std::string& source_id,
 // static
 void ImageCaptureImpl::Create(
     RenderFrameHost* render_frame_host,
-    mojo::PendingReceiver<media::mojom::ImageCapture> receiver) {
+    mojo::PendingReceiver<media::mojom::ImageCapture> receiver,
+    bool skip_connecting_to_media_stream_manager_for_testing) {
   CHECK(render_frame_host);
   // ImageCaptureImpl owns itself. It will self-destruct when a Mojo interface
   // error occurs, the RenderFrameHost is deleted, or the RenderFrameHost
   // navigates to a new document.
-  new ImageCaptureImpl(*render_frame_host, std::move(receiver));
+  new ImageCaptureImpl(*render_frame_host, std::move(receiver),
+                       skip_connecting_to_media_stream_manager_for_testing);
 }
 
 void ImageCaptureImpl::GetPhotoState(const std::string& source_id,
@@ -115,9 +119,16 @@ void ImageCaptureImpl::SetPhotoOptions(const std::string& source_id,
                        "ImageCaptureImpl::SetPhotoOptions",
                        TRACE_EVENT_SCOPE_PROCESS);
 
-  if ((settings->has_pan || settings->has_tilt || settings->has_zoom) &&
-      !HasPanTiltZoomPermissionGranted()) {
+  if (render_frame_host().GetVisibilityState() !=
+          content::PageVisibilityState::kVisible ||
+      ((settings->has_pan || settings->has_tilt || settings->has_zoom) &&
+       !HasPanTiltZoomPermissionGranted())) {
     std::move(callback).Run(false);
+    return;
+  }
+
+  if (skip_connecting_to_media_stream_manager_for_testing_) {
+    std::move(callback).Run(true);
     return;
   }
 
@@ -151,8 +162,11 @@ void ImageCaptureImpl::TakePhoto(const std::string& source_id,
 
 ImageCaptureImpl::ImageCaptureImpl(
     RenderFrameHost& render_frame_host,
-    mojo::PendingReceiver<media::mojom::ImageCapture> receiver)
-    : DocumentService(render_frame_host, std::move(receiver)) {}
+    mojo::PendingReceiver<media::mojom::ImageCapture> receiver,
+    bool skip_connecting_to_media_stream_manager_for_testing)
+    : DocumentService(render_frame_host, std::move(receiver)),
+      skip_connecting_to_media_stream_manager_for_testing_(
+          skip_connecting_to_media_stream_manager_for_testing) {}
 
 ImageCaptureImpl::~ImageCaptureImpl() = default;
 
@@ -172,7 +186,7 @@ bool ImageCaptureImpl::HasPanTiltZoomPermissionGranted() {
 
   return MediaDevicesPermissionChecker::
       HasPanTiltZoomPermissionGrantedOnUIThread(
-          render_frame_host().GetProcess()->GetID(),
+          render_frame_host().GetProcess()->GetDeprecatedID(),
           render_frame_host().GetRoutingID());
 }
 }  // namespace content

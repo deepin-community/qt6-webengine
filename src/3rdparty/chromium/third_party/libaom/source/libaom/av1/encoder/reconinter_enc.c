@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, Alliance for Open Media. All rights reserved
+ * Copyright (c) 2016, Alliance for Open Media. All rights reserved.
  *
  * This source code is subject to the terms of the BSD 2 Clause License and
  * the Alliance for Open Media Patent License 1.0. If the BSD 2 Clause License
@@ -10,6 +10,7 @@
  */
 
 #include <assert.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <limits.h>
 
@@ -28,7 +29,7 @@
 #include "av1/common/reconintra.h"
 #include "av1/encoder/reconinter_enc.h"
 
-static AOM_INLINE void enc_calc_subpel_params(
+static inline void enc_calc_subpel_params(
     const MV *const src_mv, InterPredParams *const inter_pred_params,
     uint8_t **pre, SubpelParams *subpel_params, int *src_stride) {
   struct buf_2d *pre_buf = &inter_pred_params->ref_frame_buf;
@@ -165,7 +166,7 @@ static void setup_address_for_obmc(MACROBLOCKD *xd, int mi_row_offset,
                        num_planes);
 }
 
-static INLINE void build_obmc_prediction(MACROBLOCKD *xd, int rel_mi_row,
+static inline void build_obmc_prediction(MACROBLOCKD *xd, int rel_mi_row,
                                          int rel_mi_col, uint8_t op_mi_size,
                                          int dir, MB_MODE_INFO *above_mbmi,
                                          void *fun_ctxt, const int num_planes) {
@@ -420,12 +421,9 @@ void av1_build_wedge_inter_predictor_from_buf(MACROBLOCKD *xd, BLOCK_SIZE bsize,
   }
 }
 
-// Get pred block from up-sampled reference.
-void aom_upsampled_pred_c(MACROBLOCKD *xd, const AV1_COMMON *const cm,
-                          int mi_row, int mi_col, const MV *const mv,
-                          uint8_t *comp_pred, int width, int height,
-                          int subpel_x_q3, int subpel_y_q3, const uint8_t *ref,
-                          int ref_stride, int subpel_search) {
+bool aom_upsampled_pred_scaled(MACROBLOCKD *xd, const AV1_COMMON *const cm,
+                               int mi_row, int mi_col, const MV *const mv,
+                               uint8_t *comp_pred, int width, int height) {
   // expect xd == NULL only in tests
   if (xd != NULL) {
     const MB_MODE_INFO *mi = xd->mi[0];
@@ -454,8 +452,21 @@ void aom_upsampled_pred_c(MACROBLOCKD *xd, const AV1_COMMON *const cm,
           xd->bd, is_cur_buf_hbd(xd), is_intrabc, sf, pre_buf, filters);
       av1_enc_build_one_inter_predictor(comp_pred, width, mv,
                                         &inter_pred_params);
-      return;
+      return true;
     }
+  }
+  return false;
+}
+
+// Get pred block from up-sampled reference.
+void aom_upsampled_pred_c(MACROBLOCKD *xd, const AV1_COMMON *const cm,
+                          int mi_row, int mi_col, const MV *const mv,
+                          uint8_t *comp_pred, int width, int height,
+                          int subpel_x_q3, int subpel_y_q3, const uint8_t *ref,
+                          int ref_stride, int subpel_search) {
+  if (aom_upsampled_pred_scaled(xd, cm, mi_row, mi_col, mv, comp_pred, width,
+                                height)) {
+    return;
   }
 
   const InterpFilterParams *filter = av1_get_filter(subpel_search);
@@ -523,39 +534,10 @@ void aom_comp_mask_upsampled_pred(MACROBLOCKD *xd, const AV1_COMMON *const cm,
                                   int ref_stride, const uint8_t *mask,
                                   int mask_stride, int invert_mask,
                                   int subpel_search) {
-  if (subpel_x_q3 | subpel_y_q3) {
-    aom_upsampled_pred(xd, cm, mi_row, mi_col, mv, comp_pred, width, height,
-                       subpel_x_q3, subpel_y_q3, ref, ref_stride,
-                       subpel_search);
-    ref = comp_pred;
-    ref_stride = width;
-  }
-  aom_comp_mask_pred(comp_pred, pred, width, height, ref, ref_stride, mask,
+  aom_upsampled_pred(xd, cm, mi_row, mi_col, mv, comp_pred, width, height,
+                     subpel_x_q3, subpel_y_q3, ref, ref_stride, subpel_search);
+  aom_comp_mask_pred(comp_pred, pred, width, height, comp_pred, width, mask,
                      mask_stride, invert_mask);
-}
-
-void aom_dist_wtd_comp_avg_upsampled_pred_c(
-    MACROBLOCKD *xd, const AV1_COMMON *const cm, int mi_row, int mi_col,
-    const MV *const mv, uint8_t *comp_pred, const uint8_t *pred, int width,
-    int height, int subpel_x_q3, int subpel_y_q3, const uint8_t *ref,
-    int ref_stride, const DIST_WTD_COMP_PARAMS *jcp_param, int subpel_search) {
-  int i, j;
-  const int fwd_offset = jcp_param->fwd_offset;
-  const int bck_offset = jcp_param->bck_offset;
-
-  aom_upsampled_pred_c(xd, cm, mi_row, mi_col, mv, comp_pred, width, height,
-                       subpel_x_q3, subpel_y_q3, ref, ref_stride,
-                       subpel_search);
-
-  for (i = 0; i < height; i++) {
-    for (j = 0; j < width; j++) {
-      int tmp = pred[j] * bck_offset + comp_pred[j] * fwd_offset;
-      tmp = ROUND_POWER_OF_TWO(tmp, DIST_PRECISION_BITS);
-      comp_pred[j] = (uint8_t)tmp;
-    }
-    comp_pred += width;
-    pred += width;
-  }
 }
 
 #if CONFIG_AV1_HIGHBITDEPTH
@@ -566,36 +548,9 @@ void aom_highbd_upsampled_pred_c(MACROBLOCKD *xd,
                                  int subpel_x_q3, int subpel_y_q3,
                                  const uint8_t *ref8, int ref_stride, int bd,
                                  int subpel_search) {
-  // expect xd == NULL only in tests
-  if (xd != NULL) {
-    const MB_MODE_INFO *mi = xd->mi[0];
-    const int ref_num = 0;
-    const int is_intrabc = is_intrabc_block(mi);
-    const struct scale_factors *const sf =
-        is_intrabc ? &cm->sf_identity : xd->block_ref_scale_factors[ref_num];
-    const int is_scaled = av1_is_scaled(sf);
-
-    if (is_scaled) {
-      int plane = 0;
-      const int mi_x = mi_col * MI_SIZE;
-      const int mi_y = mi_row * MI_SIZE;
-      const struct macroblockd_plane *const pd = &xd->plane[plane];
-      const struct buf_2d *const dst_buf = &pd->dst;
-      const struct buf_2d *const pre_buf =
-          is_intrabc ? dst_buf : &pd->pre[ref_num];
-
-      InterPredParams inter_pred_params;
-      inter_pred_params.conv_params = get_conv_params(0, plane, xd->bd);
-      const int_interpfilters filters =
-          av1_broadcast_interp_filter(EIGHTTAP_REGULAR);
-      av1_init_inter_params(
-          &inter_pred_params, width, height, mi_y >> pd->subsampling_y,
-          mi_x >> pd->subsampling_x, pd->subsampling_x, pd->subsampling_y,
-          xd->bd, is_cur_buf_hbd(xd), is_intrabc, sf, pre_buf, filters);
-      av1_enc_build_one_inter_predictor(comp_pred8, width, mv,
-                                        &inter_pred_params);
-      return;
-    }
+  if (aom_upsampled_pred_scaled(xd, cm, mi_row, mi_col, mv, comp_pred8, width,
+                                height)) {
+    return;
   }
 
   const InterpFilterParams *filter = av1_get_filter(subpel_search);
@@ -654,32 +609,6 @@ void aom_highbd_comp_avg_upsampled_pred_c(
   for (i = 0; i < height; ++i) {
     for (j = 0; j < width; ++j) {
       comp_pred[j] = ROUND_POWER_OF_TWO(pred[j] + comp_pred[j], 1);
-    }
-    comp_pred += width;
-    pred += width;
-  }
-}
-
-void aom_highbd_dist_wtd_comp_avg_upsampled_pred_c(
-    MACROBLOCKD *xd, const struct AV1Common *const cm, int mi_row, int mi_col,
-    const MV *const mv, uint8_t *comp_pred8, const uint8_t *pred8, int width,
-    int height, int subpel_x_q3, int subpel_y_q3, const uint8_t *ref8,
-    int ref_stride, int bd, const DIST_WTD_COMP_PARAMS *jcp_param,
-    int subpel_search) {
-  int i, j;
-  const int fwd_offset = jcp_param->fwd_offset;
-  const int bck_offset = jcp_param->bck_offset;
-  const uint16_t *pred = CONVERT_TO_SHORTPTR(pred8);
-  uint16_t *comp_pred = CONVERT_TO_SHORTPTR(comp_pred8);
-  aom_highbd_upsampled_pred_c(xd, cm, mi_row, mi_col, mv, comp_pred8, width,
-                              height, subpel_x_q3, subpel_y_q3, ref8,
-                              ref_stride, bd, subpel_search);
-
-  for (i = 0; i < height; i++) {
-    for (j = 0; j < width; j++) {
-      int tmp = pred[j] * bck_offset + comp_pred[j] * fwd_offset;
-      tmp = ROUND_POWER_OF_TWO(tmp, DIST_PRECISION_BITS);
-      comp_pred[j] = (uint16_t)tmp;
     }
     comp_pred += width;
     pred += width;

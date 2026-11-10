@@ -6,11 +6,9 @@
 
 #include <memory>
 
-#include "base/command_line.h"
 #include "base/lazy_instance.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/url_constants.h"
 #include "components/app_constants/constants.h"
@@ -66,12 +64,6 @@ AppLaunchInfo::AppLaunchInfo() = default;
 AppLaunchInfo::~AppLaunchInfo() = default;
 
 // static
-const std::string& AppLaunchInfo::GetLaunchLocalPath(
-    const Extension* extension) {
-  return GetAppLaunchInfo(extension).launch_local_path_;
-}
-
-// static
 const GURL& AppLaunchInfo::GetLaunchWebURL(const Extension* extension) {
   return GetAppLaunchInfo(extension).launch_web_url_;
 }
@@ -95,11 +87,8 @@ int AppLaunchInfo::GetLaunchHeight(const Extension* extension) {
 // static
 GURL AppLaunchInfo::GetFullLaunchURL(const Extension* extension) {
   const AppLaunchInfo& info = GetAppLaunchInfo(extension);
-  if (info.launch_local_path_.empty()) {
-    return info.launch_web_url_;
-  } else {
-    return extension->url().Resolve(info.launch_local_path_);
-  }
+  return info.launch_local_url_.is_valid() ? info.launch_local_url_
+                                           : info.launch_web_url_;
 }
 
 bool AppLaunchInfo::Parse(Extension* extension, std::u16string* error) {
@@ -131,19 +120,14 @@ bool AppLaunchInfo::LoadLaunchURL(Extension* extension, std::u16string* error) {
           keys::kLaunchLocalPath);
       return false;
     }
-    const std::string launch_path = temp->GetString();
 
-    // Ensure the launch path is a valid relative URL.
-    GURL resolved = extension->url().Resolve(launch_path);
-    if (!resolved.is_valid() ||
-        resolved.DeprecatedGetOriginAsURL() != extension->url()) {
+    launch_local_url_ = extension->GetResourceURL(temp->GetString());
+    if (!launch_local_url_.is_valid()) {
       *error = ErrorUtils::FormatErrorMessageUTF16(
           errors::kInvalidLaunchValue,
           keys::kLaunchLocalPath);
       return false;
     }
-
-    launch_local_path_ = launch_path;
   } else if (temp = extension->manifest()->FindPath(keys::kLaunchWebURL);
              temp) {
     if (!temp->is_string()) {
@@ -194,21 +178,6 @@ bool AppLaunchInfo::LoadLaunchURL(Extension* extension, std::u16string* error) {
     pattern.SetHost(launch_web_url_.host());
     pattern.SetPath("/*");
     extension->AddWebExtentPattern(pattern);
-  }
-
-  // In order for the --apps-gallery-url switch to work with the gallery
-  // process isolation, we must insert any provided value into the component
-  // app's launch url and web extent.
-  if (extension->id() == extensions::kWebStoreAppId) {
-    std::string gallery_url_str =
-        base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-            switches::kAppsGalleryURL);
-
-    // Empty string means option was not used.
-    if (!gallery_url_str.empty()) {
-      GURL gallery_url(gallery_url_str);
-      OverrideLaunchURL(extension, gallery_url);
-    }
   }
 
   return true;

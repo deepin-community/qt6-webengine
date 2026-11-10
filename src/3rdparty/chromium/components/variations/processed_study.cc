@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <set>
 #include <string>
+#include <string_view>
 
 #include "base/containers/contains.h"
 #include "base/logging.h"
@@ -24,31 +25,16 @@ void LogInvalidReason(InvalidStudyReason reason) {
   base::UmaHistogramEnumeration("Variations.InvalidStudyReason", reason);
 }
 
-// TODO(crbug/946593): Use base::FeatureList::IsValidFeatureOrFieldTrialName
-// once WebRTC trials with "," in group names are removed.
+// TODO(crbug.com/41449497): Use
+// base::FeatureList::IsValidFeatureOrFieldTrialName once WebRTC trials with ","
+// in group names are removed.
 bool IsValidExperimentName(const std::string& name) {
   return base::IsStringASCII(name) &&
          name.find_first_of("<*") == std::string::npos;
 }
 
-// Validates the sanity of |study| and computes the total probability and
-// whether all assignments are to a single group.
-bool ValidateStudyAndComputeTotalProbability(
-    const Study& study,
-    base::FieldTrial::Probability* total_probability,
-    bool* all_assignments_to_one_group) {
-  if (study.name().empty()) {
-    LogInvalidReason(InvalidStudyReason::kBlankStudyName);
-    DVLOG(1) << "study with missing study name";
-    return false;
-  }
-
-  if (!base::FeatureList::IsValidFeatureOrFieldTrialName(study.name())) {
-    LogInvalidReason(InvalidStudyReason::kInvalidStudyName);
-    DVLOG(1) << study.name() << " is an invalid experiment name";
-    return false;
-  }
-
+// Validates that all version numbers in the study are valid.
+bool ValidateVersionNumbers(const Study& study) {
   if (study.filter().has_min_version() &&
       !base::Version::IsValidWildcardString(study.filter().min_version())) {
     LogInvalidReason(InvalidStudyReason::kInvalidMinVersion);
@@ -77,52 +63,57 @@ bool ValidateStudyAndComputeTotalProbability(
              << study.filter().max_os_version();
     return false;
   }
+  return true;
+}
 
-  // Validate experiment names
-  {
-    std::set<std::string> experiment_names;
-    for (const auto& experiment : study.experiment()) {
-      if (experiment.name().empty()) {
-        LogInvalidReason(InvalidStudyReason::kMissingExperimentName);
-        DVLOG(1) << study.name() << " is missing an experiment name";
-        return false;
-      }
-      if (!IsValidExperimentName(experiment.name())) {
-        LogInvalidReason(InvalidStudyReason::kInvalidExperimentName);
-        DVLOG(1) << study.name() << " has a invalid experiment name "
-                 << experiment.name();
-        return false;
-      }
-      if (!experiment_names.insert(experiment.name()).second) {
-        LogInvalidReason(InvalidStudyReason::kRepeatedExperimentName);
-        DVLOG(1) << study.name() << " has a repeated experiment name "
-                 << experiment.name();
-        return false;
-      }
+// Validates that all experiment names in the study are valid.
+bool ValidateExperimentNames(const Study& study) {
+  std::set<std::string> experiment_names;
+  for (const auto& experiment : study.experiment()) {
+    if (experiment.name().empty()) {
+      LogInvalidReason(InvalidStudyReason::kMissingExperimentName);
+      DVLOG(1) << study.name() << " is missing an experiment name";
+      return false;
     }
-
-    // Specifying a default experiment is optional, so finding it in the
-    // experiment list is only required when it is specified.
-    if (!study.default_experiment_name().empty() &&
-        !base::Contains(experiment_names, study.default_experiment_name())) {
-      LogInvalidReason(InvalidStudyReason::kMissingDefaultExperimentInList);
-      DVLOG(1) << study.name() << " is missing default experiment ("
-               << study.default_experiment_name() << ") in its experiment list";
-      // The default group was not found in the list of groups. This study is
-      // not valid.
+    if (!IsValidExperimentName(experiment.name())) {
+      LogInvalidReason(InvalidStudyReason::kInvalidExperimentName);
+      DVLOG(1) << study.name() << " has a invalid experiment name "
+               << experiment.name();
+      return false;
+    }
+    if (!experiment_names.insert(experiment.name()).second) {
+      LogInvalidReason(InvalidStudyReason::kRepeatedExperimentName);
+      DVLOG(1) << study.name() << " has a repeated experiment name "
+               << experiment.name();
       return false;
     }
   }
 
+  // Specifying a default experiment is optional, so finding it in the
+  // experiment list is only required when it is specified.
+  if (!study.default_experiment_name().empty() &&
+      !base::Contains(experiment_names, study.default_experiment_name())) {
+    LogInvalidReason(InvalidStudyReason::kMissingDefaultExperimentInList);
+    DVLOG(1) << study.name() << " is missing default experiment ("
+             << study.default_experiment_name() << ") in its experiment list";
+    // The default group was not found in the list of groups. This study is
+    // not valid.
+    return false;
+  }
+  return true;
+}
+
+// Validates that all feature names in the study are valid.
+bool ValidateFeatureNames(const Study& study) {
   for (const auto& experiment : study.experiment()) {
-    if (!experiment.has_feature_association())
+    if (!experiment.has_feature_association()) {
       continue;
+    }
     for (const auto& feature :
          experiment.feature_association().enable_feature()) {
       if (!base::FeatureList::IsValidFeatureOrFieldTrialName(feature)) {
         LogInvalidReason(InvalidStudyReason::kInvalidFeatureName);
-        DVLOG(1) << study.name() << " has a feature experiment name "
-                 << feature;
+        DVLOG(1) << study.name() << " has an invalid feature name " << feature;
         return false;
       }
     }
@@ -130,39 +121,34 @@ bool ValidateStudyAndComputeTotalProbability(
          experiment.feature_association().disable_feature()) {
       if (!base::FeatureList::IsValidFeatureOrFieldTrialName(feature)) {
         LogInvalidReason(InvalidStudyReason::kInvalidFeatureName);
-        DVLOG(1) << study.name() << " has a feature experiment name "
-                 << feature;
+        DVLOG(1) << study.name() << " has an invalid feature name " << feature;
         return false;
       }
     }
     if (!base::FeatureList::IsValidFeatureOrFieldTrialName(
             experiment.feature_association().forcing_feature_on())) {
       LogInvalidReason(InvalidStudyReason::kInvalidFeatureName);
-      DVLOG(1) << study.name() << " has a feature experiment name "
+      DVLOG(1) << study.name() << " has an invalid feature name "
                << experiment.feature_association().forcing_feature_on();
       return false;
     }
     if (!base::FeatureList::IsValidFeatureOrFieldTrialName(
             experiment.feature_association().forcing_feature_off())) {
       LogInvalidReason(InvalidStudyReason::kInvalidFeatureName);
-      DVLOG(1) << study.name() << " has a feature experiment name "
+      DVLOG(1) << study.name() << " has an invalid feature name "
                << experiment.feature_association().forcing_feature_off();
       return false;
     }
   }
+  return true;
+}
 
-  for (const auto& experiment : study.experiment()) {
-    const auto& flag = experiment.forcing_flag();
-    // Forcing flags are passed to CommandLine::HasSwitch. It should be safe to
-    // pass invalid flags to that, but we do validation to prevent triggering
-    // the DCHECK there.
-    if (base::ToLowerASCII(flag) != flag) {
-      LogInvalidReason(InvalidStudyReason::kInvalidForcingFlag);
-      DVLOG(1) << study.name() << " has an invalid forcing flag " << flag;
-      return false;
-    }
-  }
-
+// Validates and computes the total probability and whether all assignments are
+// to a single group.
+bool ValidateAndComputeTotalProbability(
+    const Study& study,
+    base::FieldTrial::Probability* total_probability,
+    bool* all_assignments_to_one_group) {
   base::FieldTrial::Probability divisor = 0;
   bool multiple_assigned_groups = false;
 
@@ -178,8 +164,9 @@ bool ValidateStudyAndComputeTotalProbability(
 
     if (!experiment.has_forcing_flag() && experiment.probability_weight() > 0) {
       // If |divisor| is not 0, there was at least one prior non-zero group.
-      if (divisor != 0)
+      if (divisor != 0) {
         multiple_assigned_groups = true;
+      }
 
       if (experiment.probability_weight() >
           std::numeric_limits<base::FieldTrial::Probability>::max()) {
@@ -201,10 +188,55 @@ bool ValidateStudyAndComputeTotalProbability(
       divisor += experiment.probability_weight();
     }
   }
-
   *total_probability = divisor;
   *all_assignments_to_one_group = !multiple_assigned_groups;
   return true;
+}
+
+// Validates the sanity of |study| and computes the total probability and
+// whether all assignments are to a single group.
+bool ValidateStudyAndComputeTotalProbability(
+    const Study& study,
+    base::FieldTrial::Probability* total_probability,
+    bool* all_assignments_to_one_group) {
+  if (study.name().empty()) {
+    LogInvalidReason(InvalidStudyReason::kBlankStudyName);
+    DVLOG(1) << "study with missing study name";
+    return false;
+  }
+
+  if (!base::FeatureList::IsValidFeatureOrFieldTrialName(study.name())) {
+    LogInvalidReason(InvalidStudyReason::kInvalidStudyName);
+    DVLOG(1) << study.name() << " is an invalid experiment name";
+    return false;
+  }
+
+  if (!ValidateVersionNumbers(study)) {
+    return false;
+  }
+
+  if (!ValidateExperimentNames(study)) {
+    return false;
+  }
+
+  if (!ValidateFeatureNames(study)) {
+    return false;
+  }
+
+  for (const auto& experiment : study.experiment()) {
+    const auto& flag = experiment.forcing_flag();
+    // Forcing flags are passed to CommandLine::HasSwitch. It should be safe to
+    // pass invalid flags to that, but we do validation to prevent triggering
+    // the DCHECK there.
+    if (base::ToLowerASCII(flag) != flag) {
+      LogInvalidReason(InvalidStudyReason::kInvalidForcingFlag);
+      DVLOG(1) << study.name() << " has an invalid forcing flag " << flag;
+      return false;
+    }
+  }
+
+  return ValidateAndComputeTotalProbability(study, total_probability,
+                                            all_assignments_to_one_group);
 }
 
 }  // namespace
@@ -213,7 +245,7 @@ bool ValidateStudyAndComputeTotalProbability(
 const char ProcessedStudy::kGenericDefaultExperimentName[] =
     "VariationsDefaultExperiment";
 
-ProcessedStudy::ProcessedStudy() {}
+ProcessedStudy::ProcessedStudy() = default;
 
 ProcessedStudy::ProcessedStudy(const ProcessedStudy& other) = default;
 
@@ -234,42 +266,6 @@ bool ProcessedStudy::Init(const Study* study) {
   return true;
 }
 
-bool ProcessedStudy::ShouldStudyUseLowEntropy() const {
-  // This should be kept in sync with the server-side layer validation
-  // code: go/chrome-variations-layer-validation
-  for (const auto& experiment : study_->experiment()) {
-    if (experiment.has_google_web_experiment_id() ||
-        experiment.has_google_web_trigger_experiment_id() ||
-        experiment.has_chrome_sync_experiment_id()) {
-      return true;
-    }
-  }
-  return false;
-}
-
-const base::FieldTrial::EntropyProvider&
-ProcessedStudy::SelectEntropyProviderForStudy(
-    const EntropyProviders& entropy_providers,
-    const VariationsLayers& layers) const {
-  if (!study_->has_consistency() ||
-      study_->consistency() != Study_Consistency_PERMANENT ||
-      // If all assignments are to a single group, no need to enable one time
-      // randomization (which is more expensive to compute), since the result
-      // will be the same.
-      all_assignments_to_one_group_) {
-    return entropy_providers.session_entropy();
-  }
-  if (entropy_providers.default_entropy_is_high_entropy() &&
-      !ShouldStudyUseLowEntropy()) {
-    // We can use the high entropy source to randomize this study, which will
-    // be uniform even if the study is conditioned on layer membership.
-    return entropy_providers.default_entropy();
-  }
-  if (study_->has_layer())
-    return layers.GetRemainderEntropy(study_->layer().layer_id());
-  return entropy_providers.low_entropy();
-}
-
 int ProcessedStudy::GetExperimentIndexByName(const std::string& name) const {
   for (int i = 0; i < study_->experiment_size(); ++i) {
     if (study_->experiment(i).name() == name)
@@ -279,7 +275,7 @@ int ProcessedStudy::GetExperimentIndexByName(const std::string& name) const {
   return -1;
 }
 
-const base::StringPiece ProcessedStudy::GetDefaultExperimentName() const {
+const std::string_view ProcessedStudy::GetDefaultExperimentName() const {
   if (study_->default_experiment_name().empty())
     return kGenericDefaultExperimentName;
 

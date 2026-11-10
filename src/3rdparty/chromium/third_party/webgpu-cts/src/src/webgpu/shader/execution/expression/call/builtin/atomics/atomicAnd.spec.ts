@@ -10,7 +10,7 @@ Returns the original value stored in the atomic object.
 
 import { makeTestGroup } from '../../../../../../../common/framework/test_group.js';
 import { keysOf } from '../../../../../../../common/util/data_tables.js';
-import { GPUTest } from '../../../../../../gpu_test.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../../../../../gpu_test.js';
 
 import {
   dispatchSizes,
@@ -21,7 +21,7 @@ import {
   typedArrayCtor,
 } from './harness.js';
 
-export const g = makeTestGroup(GPUTest);
+export const g = makeTestGroup(AllFeaturesMaxLimitsGPUTest);
 
 g.test('and_storage')
   .specURL('https://www.w3.org/TR/WGSL/#atomic-rmw')
@@ -38,7 +38,7 @@ fn atomicAnd(atomic_ptr: ptr<AS, atomic<T>, read_write>, v: T) -> T
       .combine('workgroupSize', workgroupSizes)
       .combine('dispatchSize', dispatchSizes)
       .combine('mapId', keysOf(kMapId))
-      .combine('scalarType', ['u32', 'i32'])
+      .combine('scalarType', ['u32', 'i32'] as const)
   )
   .fn(t => {
     const numInvocations = t.params.workgroupSize * t.params.dispatchSize;
@@ -91,7 +91,7 @@ fn atomicAnd(atomic_ptr: ptr<AS, atomic<T>, read_write>, v: T) -> T
       .combine('workgroupSize', workgroupSizes)
       .combine('dispatchSize', dispatchSizes)
       .combine('mapId', keysOf(kMapId))
-      .combine('scalarType', ['u32', 'i32'])
+      .combine('scalarType', ['u32', 'i32'] as const)
   )
   .fn(t => {
     const numInvocations = t.params.workgroupSize;

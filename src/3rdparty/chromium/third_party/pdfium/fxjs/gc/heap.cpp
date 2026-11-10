@@ -6,8 +6,8 @@
 
 #include <utility>
 
+#include "core/fxcrt/check.h"
 #include "core/fxcrt/fx_system.h"
-#include "third_party/base/check.h"
 #include "v8/include/cppgc/heap.h"
 
 namespace {
@@ -41,6 +41,14 @@ class CFXGC_Platform final : public cppgc::Platform {
     return g_platform->GetForegroundTaskRunner(g_isolate);
   }
 
+  std::shared_ptr<cppgc::TaskRunner> GetForegroundTaskRunner(
+      cppgc::TaskPriority priority) override {
+    // V8's default platform creates a new task runner when passed the
+    // v8::Isolate pointer the first time. For non-default platforms this will
+    // require getting the appropriate task runner.
+    return g_platform->GetForegroundTaskRunner(g_isolate, priority);
+  }
+
   std::unique_ptr<cppgc::JobHandle> PostJob(
       cppgc::TaskPriority priority,
       std::unique_ptr<cppgc::JobTask> job_task) override {
@@ -68,8 +76,9 @@ FXGCScopedHeap FXGC_CreateHeap() {
   // we may still attempt to build a CPDFXFA_Context which will want a
   // heap. But we can't make one because JS is disabled.
   // TODO(tsepez): Stop the context from even being created.
-  if (!g_platform)
+  if (!g_platform) {
     return nullptr;
+  }
 
   ++g_platform_ref_count;
   auto heap = cppgc::Heap::Create(

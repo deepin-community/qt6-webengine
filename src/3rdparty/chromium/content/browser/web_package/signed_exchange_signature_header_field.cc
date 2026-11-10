@@ -4,12 +4,14 @@
 
 #include "content/browser/web_package/signed_exchange_signature_header_field.h"
 
+#include <string_view>
+
+#include "base/compiler_specific.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/trace_event/trace_event.h"
 #include "content/browser/web_package/signed_exchange_consts.h"
 #include "content/browser/web_package/signed_exchange_utils.h"
-#include "crypto/sha2.h"
+#include "crypto/hash.h"
 #include "net/http/structured_headers.h"
 
 namespace content {
@@ -17,7 +19,7 @@ namespace content {
 // static
 std::optional<std::vector<SignedExchangeSignatureHeaderField::Signature>>
 SignedExchangeSignatureHeaderField::ParseSignature(
-    base::StringPiece signature_str,
+    std::string_view signature_str,
     SignedExchangeDevToolsProxy* devtools_proxy) {
   TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("loading"),
                "SignedExchangeSignatureHeaderField::ParseSignature");
@@ -76,7 +78,7 @@ SignedExchangeSignatureHeaderField::ParseSignature(
     }
     sig.cert_url = GURL(cert_url_item.GetString());
     if (!sig.cert_url.is_valid() || sig.cert_url.has_ref()) {
-      // TODO(https://crbug.com/819467) : When we will support "ed25519Key", the
+      // TODO(crbug.com/40565993) : When we will support "ed25519Key", the
       // params may not have "cert-url".
       signed_exchange_utils::ReportErrorAndTraceEvent(
           devtools_proxy, "'cert-url' parameter is not a valid URL.");
@@ -95,18 +97,19 @@ SignedExchangeSignatureHeaderField::ParseSignature(
       return std::nullopt;
     }
     const std::string& cert_sha256_string = cert_sha256_item.GetString();
-    if (cert_sha256_string.size() != crypto::kSHA256Length) {
-      // TODO(https://crbug.com/819467) : When we will support "ed25519Key", the
+    if (cert_sha256_string.size() != crypto::hash::kSha256Size) {
+      // TODO(crbug.com/40565993) : When we will support "ed25519Key", the
       // params may not have "cert-sha256".
       signed_exchange_utils::ReportErrorAndTraceEvent(
           devtools_proxy, "'cert-sha256' parameter is not a SHA-256 digest.");
       return std::nullopt;
     }
     net::SHA256HashValue cert_sha256;
-    memcpy(&cert_sha256.data, cert_sha256_string.data(), crypto::kSHA256Length);
+    base::span<uint8_t>(cert_sha256)
+        .copy_from(base::as_byte_span(cert_sha256_string));
     sig.cert_sha256 = std::move(cert_sha256);
 
-    // TODO(https://crbug.com/819467): Support ed25519key.
+    // TODO(crbug.com/40565993): Support ed25519key.
     // sig.ed25519_key = value.params["ed25519Key"];
 
     const auto& validity_url_item = value.params[kValidityUrlKey];

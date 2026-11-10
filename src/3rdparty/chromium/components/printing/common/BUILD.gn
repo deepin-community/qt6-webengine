@@ -19,8 +19,7 @@ source_set("common") {
   deps = [
     ":mojo_interfaces",
     "//base",
-    "//build:chromeos_buildflags",
-    "//components/cloud_devices/common:common",
+    "//components/cloud_devices/common",
     "//printing",
     "//printing/backend",
     "//printing/common",
@@ -32,7 +31,7 @@ source_set("common") {
       "cloud_print_cdd_conversion.h",
     ]
     deps -= [
-      "//components/cloud_devices/common:common",
+      "//components/cloud_devices/common",
     ]
   }
 }
@@ -51,10 +50,6 @@ mojom("mojo_interfaces") {
   if (enable_print_preview) {
     enabled_features += [ "enable_print_preview" ]
   }
-
-  if (enable_print_content_analysis) {
-    enabled_features += [ "enable_print_content_analysis" ]
-  }
 }
 
 source_set("unit_tests") {
@@ -66,6 +61,14 @@ source_set("unit_tests") {
     "//printing/backend",
     "//printing/backend:test_support",
     "//testing/gtest",
-    "//ui/gfx/geometry:geometry",
+    "//ui/gfx/geometry",
   ]
+
+  if (is_chromeos) {
+    deps += [ "//printing" ]
+  }
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }

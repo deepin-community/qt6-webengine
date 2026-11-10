@@ -3,8 +3,6 @@
 // found in the LICENSE file.
 
 import * as i18n from '../../core/i18n/i18n.js';
-import * as Root from '../../core/root/root.js';
-import * as LegacyWrapper from '../../ui/components/legacy_wrapper/legacy_wrapper.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
 import type * as Autofill from './autofill.js';
@@ -18,7 +16,7 @@ const UIStrings = {
    *@description Command for showing the 'Autofill' pane
    */
   showAutofill: 'Show Autofill',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/autofill/autofill-meta.ts', UIStrings);
 const i18nLazyString = i18n.i18n.getLazilyComputedLocalizedString.bind(undefined, str_);
 
@@ -32,7 +30,6 @@ async function loadAutofillModule(): Promise<typeof Autofill> {
 }
 
 UI.ViewManager.registerViewExtension({
-  experiment: Root.Runtime.ExperimentName.AUTOFILL_VIEW,
   location: UI.ViewManager.ViewLocationValues.DRAWER_VIEW,
   id: 'autofill-view',
   title: i18nLazyString(UIStrings.autofill),
@@ -41,6 +38,6 @@ UI.ViewManager.registerViewExtension({
   persistence: UI.ViewManager.ViewPersistence.CLOSEABLE,
   async loadView() {
     const Autofill = await loadAutofillModule();
-    return LegacyWrapper.LegacyWrapper.legacyWrapper(UI.Widget.Widget, new Autofill.AutofillView.AutofillView());
+    return new Autofill.AutofillView.AutofillView();
   },
 });

@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 // Copyright (c) 2012 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
@@ -11,6 +12,8 @@
 #include "web_contents_delegate_qt.h"
 #include "web_contents_view_qt.h"
 #include "web_engine_settings.h"
+#include "permission_manager_qt.h"
+#include "type_conversion.h"
 
 #include "base/strings/strcat.h"
 #include "blink/public/common/page/page_zoom.h"
@@ -21,6 +24,8 @@
 #include "content/public/browser/desktop_streams_registry.h"
 #include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/media_capture_devices.h"
+#include "content/public/browser/permission_controller_delegate.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "media/audio/audio_device_description.h"
 #include "media/audio/audio_manager_base.h"
@@ -109,24 +114,24 @@ media::mojom::CaptureHandlePtr CreateCaptureHandle(content::WebContents *capture
     return result;
 }
 
-absl::optional<int> GetZoomLevel(content::WebContents *capturer,
+std::optional<int> GetZoomLevel(content::WebContents *capturer,
                                  const content::DesktopMediaID &captured_id)
 {
     content::RenderFrameHost *const captured_rfh =
             content::RenderFrameHost::FromID(captured_id.web_contents_id.render_process_id,
                                              captured_id.web_contents_id.main_render_frame_id);
     if (!captured_rfh || !captured_rfh->IsActive()) {
-        return absl::nullopt;
+        return std::nullopt;
     }
 
     content::WebContents *const captured_wc =
             content::WebContents::FromRenderFrameHost(captured_rfh);
     if (!captured_wc) {
-        return absl::nullopt;
+        return std::nullopt;
     }
 
     double zoom_level =
-            blink::PageZoomLevelToZoomFactor(content::HostZoomMap::GetZoomLevel(captured_wc));
+            blink::ZoomLevelToZoomFactor(content::HostZoomMap::GetZoomLevel(captured_wc));
     return std::round(100 * zoom_level);
 }
 
@@ -187,7 +192,7 @@ std::string DeviceNamePrefix(content::WebContents *web_contents,
     // dialog for DISPLAY_VIDEO_CAPTURE_THIS_TAB could still return something
     // other than the current tab - be it a screen, window, or another tab.
     if (media_id.type == content::DesktopMediaID::TYPE_WEB_CONTENTS &&
-            web_contents->GetPrimaryMainFrame()->GetProcess()->GetID() ==
+            web_contents->GetPrimaryMainFrame()->GetProcess()->GetDeprecatedID() ==
                 media_id.web_contents_id.render_process_id &&
             web_contents->GetPrimaryMainFrame()->GetRoutingID() ==
                 media_id.web_contents_id.main_render_frame_id) {
@@ -275,8 +280,13 @@ WebContentsAdapterClient::MediaRequestFlags mediaRequestFlagsForRequest(const co
         request.video_type == MediaStreamType::DISPLAY_VIDEO_CAPTURE_THIS_TAB)
         return {WebContentsAdapterClient::MediaDesktopAudioCapture, WebContentsAdapterClient::MediaDesktopVideoCapture};
 
+    if (request.audio_type == MediaStreamType::DISPLAY_AUDIO_CAPTURE &&
+        request.video_type == MediaStreamType::DISPLAY_VIDEO_CAPTURE_SET)
+        return {WebContentsAdapterClient::MediaDesktopAudioCapture, WebContentsAdapterClient::MediaDesktopVideoCapture};
+
     if (request.video_type == MediaStreamType::GUM_DESKTOP_VIDEO_CAPTURE ||
         request.video_type == MediaStreamType::DISPLAY_VIDEO_CAPTURE ||
+        request.video_type == MediaStreamType::DISPLAY_VIDEO_CAPTURE_SET ||
         request.video_type == MediaStreamType::DISPLAY_VIDEO_CAPTURE_THIS_TAB)
         return {WebContentsAdapterClient::MediaDesktopVideoCapture};
 
@@ -325,7 +335,7 @@ private:
         Q_UNUSED(label);
         Q_UNUSED(media_id);
     }
-    void OnDeviceStoppedForSourceChange(const std::string&, const content::DesktopMediaID&, const content::DesktopMediaID&) override
+    void OnDeviceStoppedForSourceChange(const std::string&, const content::DesktopMediaID&, const content::DesktopMediaID&, bool captured_surface_control_active) override
     {}
     base::WeakPtr<WebContentsDelegateQt> m_delegate;
     const blink::mojom::StreamDevices m_devices;
@@ -361,8 +371,12 @@ void MediaCaptureDevicesDispatcher::handleMediaAccessPermissionResponse(content:
     bool securityOriginsMatch = (requestSecurityOrigin.host() == securityOrigin.host()
                                  && requestSecurityOrigin.scheme() == securityOrigin.scheme()
                                  && requestSecurityOrigin.port() == securityOrigin.port());
-    if (!securityOriginsMatch)
-        qWarning("Security origin mismatch for media access permission: %s requested and %s provided\n", qPrintable(requestSecurityOrigin.toString()), qPrintable(securityOrigin.toString()));
+    if (!securityOriginsMatch) {
+        qWarning("Security origin mismatch for media access permission: %ls requested "
+                 "and %ls provided\n",
+                 qUtf16Printable(requestSecurityOrigin.toString()),
+                 qUtf16Printable(securityOrigin.toString()));
+    }
 
     WebContentsAdapterClient::MediaRequestFlags requestFlags = mediaRequestFlagsForRequest(request);
     WebContentsAdapterClient::MediaRequestFlags finalFlags = requestFlags & authorizationFlags;
@@ -384,7 +398,8 @@ void MediaCaptureDevicesDispatcher::handleMediaAccessPermissionResponse(content:
             case blink::MEDIA_DEVICE_UPDATE:
             case blink::MEDIA_GENERATE_STREAM:
             case blink::MEDIA_GET_OPEN_DEVICE:
-                getDefaultDevices(request.requested_audio_device_id, request.requested_video_device_id,
+                getDefaultDevices(request.requested_audio_device_ids.empty() ? "" :request.requested_audio_device_ids.front(),
+                                  request.requested_video_device_ids.empty() ? "" :request.requested_video_device_ids.front(),
                                   microphoneRequested, webcamRequested, deviceSet);
                 break;
             }
@@ -422,6 +437,13 @@ MediaCaptureDevicesDispatcher *MediaCaptureDevicesDispatcher::GetInstance()
     return base::Singleton<MediaCaptureDevicesDispatcher>::get();
 }
 
+// static
+bool MediaCaptureDevicesDispatcher::hasDeviceId(const content::MediaStreamRequest &request)
+{
+    return !request.requested_video_device_ids.empty()
+            && !request.requested_video_device_ids.front().empty();
+}
+
 MediaCaptureDevicesDispatcher::MediaCaptureDevicesDispatcher()
     : m_webContentsCollection(this)
 {
@@ -455,6 +477,7 @@ void MediaCaptureDevicesDispatcher::processMediaAccessRequest(
         return;
     }
 
+    bool hasDeviceId = MediaCaptureDevicesDispatcher::hasDeviceId(request);
     WebContentsDelegateQt *delegate = static_cast<WebContentsDelegateQt *>(webContents->GetDelegate());
     WebContentsAdapterClient *adapterClient = delegate->adapterClient();
 
@@ -462,12 +485,12 @@ void MediaCaptureDevicesDispatcher::processMediaAccessRequest(
         const bool screenCaptureEnabled = adapterClient->webEngineSettings()->testAttribute(
                 QWebEngineSettings::ScreenCaptureEnabled);
         const bool originIsSecure = network::IsUrlPotentiallyTrustworthy(request.security_origin);
-        if (!screenCaptureEnabled || !originIsSecure || (id.is_null() && request.requested_video_device_id.empty())) {
+        if (!screenCaptureEnabled || !originIsSecure || (id.is_null() && !hasDeviceId)) {
             std::move(callback).Run(blink::mojom::StreamDevicesSet(), MediaStreamRequestResult::INVALID_STATE, std::unique_ptr<content::MediaStreamUI>());
             return;
         }
 
-        if (!request.requested_video_device_id.empty()) {
+        if (hasDeviceId) {
             // Non-empty device id from the chooseDesktopMedia() extension API.
             processDesktopCaptureAccessRequest(webContents, request, std::move(callback));
             return;
@@ -475,8 +498,17 @@ void MediaCaptureDevicesDispatcher::processMediaAccessRequest(
     }
 
     enqueueMediaAccessRequest(webContents, request, std::move(callback), id);
-    // We might not require this approval for pepper requests.
-    adapterClient->runMediaAccessPermissionRequest(toQt(request.security_origin), flags);
+
+    PermissionManagerQt *permissionManager = static_cast<PermissionManagerQt *>(
+        webContents->GetBrowserContext()->GetPermissionControllerDelegate());
+    permissionManager->requestMediaPermissions(
+        content::RenderFrameHost::FromID(request.render_process_id, request.render_frame_id),
+        flags,
+        base::BindOnce(
+            &MediaCaptureDevicesDispatcher::handleMediaAccessPermissionResponse,
+            base::Unretained(this),
+            webContents,
+            toQt(request.url_origin)));
 }
 
 void MediaCaptureDevicesDispatcher::processDesktopCaptureAccessRequest(content::WebContents *webContents, const content::MediaStreamRequest &request, content::MediaResponseCallback callback)
@@ -491,10 +523,14 @@ void MediaCaptureDevicesDispatcher::processDesktopCaptureAccessRequest(content::
     if (main_frame) {
         // Resolve DesktopMediaID for the specified device id.
         mediaId = content::DesktopStreamsRegistry::GetInstance()->RequestMediaForStreamId(
-                request.requested_video_device_id, main_frame->GetProcess()->GetID(),
+                request.requested_video_device_ids.front(), main_frame->GetProcess()->GetDeprecatedID(),
                 main_frame->GetRoutingID(), url::Origin::Create(request.security_origin),
                 content::kRegistryStreamTypeDesktop);
     }
+
+    // Not in the registry — try parsing the raw device ID string directly.
+    if (mediaId.type == content::DesktopMediaID::TYPE_NONE)
+        mediaId = content::DesktopMediaID::Parse(request.requested_video_device_ids.front());
 
     // Received invalid device id.
     if (mediaId.type == content::DesktopMediaID::TYPE_NONE) {
@@ -540,9 +576,18 @@ void MediaCaptureDevicesDispatcher::ProcessQueuedAccessRequest(content::WebConte
 
     RequestsQueue &queue(it->second);
     content::MediaStreamRequest &request = queue.front()->request;
+    WebContentsAdapterClient::MediaRequestFlags flags = mediaRequestFlagsForRequest(request);
 
-    WebContentsAdapterClient *adapterClient = WebContentsViewQt::from(static_cast<content::WebContentsImpl *>(webContents)->GetView())->client();
-    adapterClient->runMediaAccessPermissionRequest(toQt(request.security_origin), mediaRequestFlagsForRequest(request));
+    PermissionManagerQt *permissionManager = static_cast<PermissionManagerQt *>(
+        webContents->GetBrowserContext()->GetPermissionControllerDelegate());
+    permissionManager->requestMediaPermissions(
+        content::RenderFrameHost::FromID(request.render_process_id, request.render_frame_id),
+        flags,
+        base::BindOnce(
+            &MediaCaptureDevicesDispatcher::handleMediaAccessPermissionResponse,
+            base::Unretained(this),
+            webContents,
+            toQt(request.url_origin)));
 }
 
 void MediaCaptureDevicesDispatcher::getDefaultDevices(const std::string &audioDeviceId, const std::string &videoDeviceId,

@@ -4,11 +4,11 @@
 
 #include "components/viz/service/surfaces/surface_allocation_group.h"
 
+#include <algorithm>
 #include <numeric>
 #include <utility>
 
 #include "base/memory/raw_ptr.h"
-#include "base/ranges/algorithm.h"
 #include "components/viz/service/surfaces/surface.h"
 #include "components/viz/service/surfaces/surface_manager.h"
 
@@ -43,8 +43,8 @@ void SurfaceAllocationGroup::RegisterSurface(Surface* surface) {
 }
 
 void SurfaceAllocationGroup::UnregisterSurface(Surface* surface) {
-  auto it = base::ranges::find(surfaces_, surface);
-  DCHECK(it != surfaces_.end());
+  auto it = std::ranges::find(surfaces_, surface);
+  CHECK(it != surfaces_.end());
   surfaces_.erase(it);
   MaybeMarkForDestruction();
 }
@@ -160,8 +160,11 @@ void SurfaceAllocationGroup::TakeAggregatedLatencyInfoUpTo(
 }
 
 void SurfaceAllocationGroup::OnFirstSurfaceActivation(Surface* surface) {
-  for (Surface* embedder : active_embedders_)
+  // Copy container as it can be mutated during iteration.
+  auto active_embedders = active_embedders_;
+  for (Surface* embedder : active_embedders) {
     embedder->OnChildActivatedForActiveFrame(surface->surface_id());
+  }
   base::flat_map<Surface*, SurfaceId> embedders_to_notify;
   for (const auto& entry : blocked_embedders_) {
     if (!entry.second.IsNewerThan(surface->surface_id()))

@@ -1,6 +1,7 @@
 // Copyright 2014 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
@@ -11,8 +12,7 @@ import * as Components from '../../ui/legacy/components/utils/utils.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
 import searchResultsPaneStyles from './searchResultsPane.css.js';
-
-import {type SearchResult} from './SearchScope.js';
+import type {SearchResult} from './SearchScope.js';
 
 const UIStrings = {
   /**
@@ -30,7 +30,7 @@ const UIStrings = {
    *@example {2} PH1
    */
   showDMore: 'Show {PH1} more',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/search/SearchResultsPane.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
@@ -42,12 +42,13 @@ export class SearchResultsPane extends UI.Widget.VBox {
   private matchesExpandedCount: number;
 
   constructor(searchConfig: Workspace.SearchConfig.SearchConfig) {
-    super(true);
+    super({useShadowDom: true});
     this.searchConfig = searchConfig;
 
     this.searchResults = [];
     this.treeElements = [];
     this.treeOutline = new UI.TreeOutline.TreeOutlineInShadow();
+    this.treeOutline.registerRequiredCSS(searchResultsPaneStyles);
     this.treeOutline.hideOverflow();
 
     this.contentElement.appendChild(this.treeOutline.element);
@@ -85,10 +86,6 @@ export class SearchResultsPane extends UI.Widget.VBox {
     }
     this.matchesExpandedCount += searchResult.matchesCount();
     this.treeElements.push(treeElement);
-  }
-  override wasShown(): void {
-    super.wasShown();
-    this.treeOutline.registerCSSFiles([searchResultsPaneStyles]);
   }
 }
 
@@ -198,8 +195,10 @@ export class SearchResultsTreeElement extends UI.TreeOutline.TreeElement {
         ({lineSegment: lineContent, matchRanges} = lineSegmentForMultipleMatches(lineContent, matchRanges));
       }
 
-      const anchor = Components.Linkifier.Linkifier.linkifyRevealable(searchResult.matchRevealable(i), '');
+      const anchor = Components.Linkifier.Linkifier.linkifyRevealable(
+          searchResult.matchRevealable(i), '', undefined, undefined, undefined, 'search-match');
       anchor.classList.add('search-match-link');
+      anchor.tabIndex = 0;
       const labelSpan = document.createElement('span');
       labelSpan.classList.add('search-match-line-number');
       const resultLabel = searchResult.matchLabel(i);

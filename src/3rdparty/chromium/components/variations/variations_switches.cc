@@ -21,8 +21,11 @@ const char kDisableVariationsSeedFetchThrottling[] =
     "disable-variations-seed-fetch-throttling";
 
 // TODO(asvitkine): Consider removing or renaming this functionality.
-// Enables the benchmarking extensions.
+// See flag_descriptions.cc for more details.
 const char kEnableBenchmarking[] = "enable-benchmarking";
+
+// Enables the benchmarking JavaScript API.
+const char kEnableBenchmarkingApi[] = "enable-benchmarking-api";
 
 // Enable field trial tests configured in fieldtrial_testing_config.json. If the
 // "disable_fieldtrial_testing_config" GN flag is set to true, then this switch
@@ -98,6 +101,17 @@ const char kEnableFinchSeedDeltaCompression[] =
 // testing purposes.
 const char kAcceptEmptySeedSignatureForTesting[] =
     "accept-empty-variations-seed-signature";
+
+// Use features defined in the value. Use this flag to reproduce experiments
+// related issues.
+// Copy 'Command-line Variations' value from chrome://version page. Save it
+// to a file and pass it via this flag.
+// The value is a base64 encoded JSON format produced by
+// `variations::VariationsCommandLine::WriteToString`.
+const char kVariationsStateFile[] = "variations-state-file";
+
+// Disable fetching of variations seed from the server for testing.
+const char kDisableVariationsSeedFetch[] = "disable-variations-seed-fetch";
 
 }  // namespace switches
 }  // namespace variations

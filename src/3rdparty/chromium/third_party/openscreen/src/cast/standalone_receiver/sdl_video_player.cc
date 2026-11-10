@@ -27,9 +27,9 @@ constexpr EnumNameTable<VideoCodec, 6> kFfmpegCodecDescriptors{
 
 SDLVideoPlayer::SDLVideoPlayer(ClockNowFunctionPtr now_function,
                                TaskRunner& task_runner,
-                               Receiver* receiver,
+                               Receiver& receiver,
                                VideoCodec codec,
-                               SDL_Renderer* renderer,
+                               SDL_Renderer& renderer,
                                std::function<void()> error_callback)
     : SDLPlayerBase(now_function,
                     task_runner,
@@ -37,9 +37,7 @@ SDLVideoPlayer::SDLVideoPlayer(ClockNowFunctionPtr now_function,
                     GetEnumName(kFfmpegCodecDescriptors, codec).value(),
                     std::move(error_callback),
                     kVideoMediaType),
-      renderer_(renderer) {
-  OSP_DCHECK(renderer_);
-}
+      renderer_(renderer) {}
 
 SDLVideoPlayer::~SDLVideoPlayer() = default;
 
@@ -58,16 +56,20 @@ bool SDLVideoPlayer::RenderWhileIdle(
 
   if (state() == kError) {
     // Paint "red splash" to indicate an error state.
-    constexpr struct { int r = 128, g = 0, b = 0, a = 255; } kRedSplashColor;
-    SDL_SetRenderDrawColor(renderer_, kRedSplashColor.r, kRedSplashColor.g,
+    constexpr struct {
+      int r = 128, g = 0, b = 0, a = 255;
+    } kRedSplashColor;
+    SDL_SetRenderDrawColor(&renderer_, kRedSplashColor.r, kRedSplashColor.g,
                            kRedSplashColor.b, kRedSplashColor.a);
-    SDL_RenderClear(renderer_);
+    SDL_RenderClear(&renderer_);
   } else if (state() == kWaitingForFirstFrame || !frame) {
     // Paint "blue splash" to indicate the "waiting for first frame" state.
-    constexpr struct { int r = 0, g = 0, b = 128, a = 255; } kBlueSplashColor;
-    SDL_SetRenderDrawColor(renderer_, kBlueSplashColor.r, kBlueSplashColor.g,
+    constexpr struct {
+      int r = 0, g = 0, b = 128, a = 255;
+    } kBlueSplashColor;
+    SDL_SetRenderDrawColor(&renderer_, kBlueSplashColor.r, kBlueSplashColor.g,
                            kBlueSplashColor.b, kBlueSplashColor.a);
-    SDL_RenderClear(renderer_);
+    SDL_RenderClear(&renderer_);
   }
 
   return state() != kScheduledToPresent;
@@ -76,10 +78,10 @@ bool SDLVideoPlayer::RenderWhileIdle(
 ErrorOr<Clock::time_point> SDLVideoPlayer::RenderNextFrame(
     const SDLPlayerBase::PresentableFrame& frame) {
   TRACE_DEFAULT_SCOPED(TraceCategory::kStandaloneReceiver);
-  OSP_DCHECK(frame.decoded_frame);
+  OSP_CHECK(frame.decoded_frame);
   const AVFrame& picture = *frame.decoded_frame;
 
-  // Punt if the |picture| format is not compatible with those supported by SDL.
+  // Punt if the `picture` format is not compatible with those supported by SDL.
   const uint32_t sdl_format = GetSDLPixelFormat(picture);
   if (sdl_format == SDL_PIXELFORMAT_UNKNOWN) {
     std::ostringstream error;
@@ -88,7 +90,7 @@ ErrorOr<Clock::time_point> SDLVideoPlayer::RenderNextFrame(
   }
 
   // If there is already a SDL texture, check that its format and size matches
-  // that of |picture|. If not, release the existing texture.
+  // that of `picture`. If not, release the existing texture.
   if (texture_) {
     uint32_t texture_format = SDL_PIXELFORMAT_UNKNOWN;
     int texture_width = -1;
@@ -102,7 +104,7 @@ ErrorOr<Clock::time_point> SDLVideoPlayer::RenderNextFrame(
   }
 
   // If necessary, recreate a SDL texture having the same format and size as
-  // that of |picture|.
+  // that of `picture`.
   if (!texture_) {
     const auto EvalDescriptionString = [&] {
       std::ostringstream error;
@@ -111,9 +113,9 @@ ErrorOr<Clock::time_point> SDLVideoPlayer::RenderNextFrame(
       return error.str();
     };
     OSP_LOG_INFO << "Creating SDL texture for " << EvalDescriptionString();
-    texture_ =
-        MakeUniqueSDLTexture(renderer_, sdl_format, SDL_TEXTUREACCESS_STREAMING,
-                             picture.width, picture.height);
+    texture_ = MakeUniqueSDLTexture(&renderer_, sdl_format,
+                                    SDL_TEXTUREACCESS_STREAMING, picture.width,
+                                    picture.height);
     if (!texture_) {
       std::ostringstream error;
       error << "Unable to (re)create SDL texture for format: "
@@ -122,7 +124,7 @@ ErrorOr<Clock::time_point> SDLVideoPlayer::RenderNextFrame(
     }
   }
 
-  // Upload the |picture_| to the SDL texture.
+  // Upload the `picture_` to the SDL texture.
   void* pixels = nullptr;
   int stride = 0;
   SDL_LockTexture(texture_.get(), nullptr, &pixels, &stride);
@@ -152,26 +154,26 @@ ErrorOr<Clock::time_point> SDLVideoPlayer::RenderNextFrame(
       picture.height -
           static_cast<int>(picture.crop_top + picture.crop_bottom)};
   SDL_Rect dst_rect = {0, 0, 0, 0};
-  SDL_RenderGetLogicalSize(renderer_, &dst_rect.w, &dst_rect.h);
+  SDL_RenderGetLogicalSize(&renderer_, &dst_rect.w, &dst_rect.h);
   if (src_rect.w != dst_rect.w || src_rect.h != dst_rect.h) {
     // Make the SDL rendering size the same as the frame's visible size. This
     // lets SDL automatically handle letterboxing and scaling details, so that
     // the video fits within the on-screen window.
     dst_rect.w = src_rect.w;
     dst_rect.h = src_rect.h;
-    SDL_RenderSetLogicalSize(renderer_, dst_rect.w, dst_rect.h);
+    SDL_RenderSetLogicalSize(&renderer_, dst_rect.w, dst_rect.h);
   }
   // Clear with black, for the "letterboxing" borders.
-  SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
-  SDL_RenderClear(renderer_);
-  SDL_RenderCopy(renderer_, texture_.get(), &src_rect, &dst_rect);
+  SDL_SetRenderDrawColor(&renderer_, 0, 0, 0, 255);
+  SDL_RenderClear(&renderer_);
+  SDL_RenderCopy(&renderer_, texture_.get(), &src_rect, &dst_rect);
 
   return frame.presentation_time;
 }
 
 void SDLVideoPlayer::Present() {
   TRACE_DEFAULT_SCOPED(TraceCategory::kStandaloneReceiver);
-  SDL_RenderPresent(renderer_);
+  SDL_RenderPresent(&renderer_);
 }
 
 // static

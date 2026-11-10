@@ -1,6 +1,7 @@
 // Copyright 2014 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+
 #include "components/discardable_memory/service/discardable_shared_memory_manager.h"
 
 #include <stddef.h>
@@ -9,6 +10,7 @@
 
 #include <memory>
 
+#include "base/compiler_specific.h"
 #include "base/memory/raw_ptr.h"
 #include "base/test/task_environment.h"
 #include "base/threading/simple_thread.h"
@@ -22,7 +24,7 @@ const int kInvalidUniqueID = -1;
 
 class TestDiscardableSharedMemory : public base::DiscardableSharedMemory {
  public:
-  TestDiscardableSharedMemory() {}
+  TestDiscardableSharedMemory() = default;
 
   explicit TestDiscardableSharedMemory(base::UnsafeSharedMemoryRegion region)
       : DiscardableSharedMemory(std::move(region)) {}
@@ -86,7 +88,7 @@ class DiscardableSharedMemoryManagerTest : public testing::Test {
 TEST_F(DiscardableSharedMemoryManagerTest, AllocateForClient) {
   const int kDataSize = 1024;
   uint8_t data[kDataSize];
-  memset(data, 0x80, kDataSize);
+  UNSAFE_TODO(memset(data, 0x80, kDataSize));
 
   base::UnsafeSharedMemoryRegion shared_region;
   manager_->AllocateLockedDiscardableSharedMemoryForClient(
@@ -97,12 +99,12 @@ TEST_F(DiscardableSharedMemoryManagerTest, AllocateForClient) {
   bool rv = memory.Map(kDataSize);
   ASSERT_TRUE(rv);
 
-  memcpy(memory.memory(), data, kDataSize);
+  memory.memory().copy_from(data);
   memory.SetNow(base::Time::FromSecondsSinceUnixEpoch(1));
   memory.Unlock(0, 0);
 
   ASSERT_EQ(base::DiscardableSharedMemory::SUCCESS, memory.Lock(0, 0));
-  EXPECT_EQ(memcmp(data, memory.memory(), kDataSize), 0);
+  EXPECT_EQ(data, memory.memory());
   memory.Unlock(0, 0);
 }
 
@@ -283,7 +285,7 @@ class SetMemoryLimitRunner : public base::DelegateSimpleThread::Delegate {
  public:
   SetMemoryLimitRunner(DiscardableSharedMemoryManager* manager, size_t limit)
       : manager_(manager), limit_(limit) {}
-  ~SetMemoryLimitRunner() override {}
+  ~SetMemoryLimitRunner() override = default;
 
   void Run() override { manager_->SetMemoryLimit(limit_); }
 

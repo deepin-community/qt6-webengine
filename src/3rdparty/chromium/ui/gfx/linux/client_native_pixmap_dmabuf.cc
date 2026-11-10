@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/354829279): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/gfx/linux/client_native_pixmap_dmabuf.h"
 
 #include <fcntl.h>
@@ -22,7 +27,6 @@
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "build/chromecast_buildflags.h"
-#include "build/chromeos_buildflags.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/linux/dmabuf_uapi.h"
 #include "ui/gfx/switches.h"
@@ -83,7 +87,7 @@ bool AllowCpuMappableBuffers() {
 
 }  // namespace
 
-ClientNativePixmapDmaBuf::PlaneInfo::PlaneInfo() {}
+ClientNativePixmapDmaBuf::PlaneInfo::PlaneInfo() = default;
 
 ClientNativePixmapDmaBuf::PlaneInfo::PlaneInfo(PlaneInfo&& info)
     : data(info.data), offset(info.offset), size(info.size) {
@@ -144,6 +148,7 @@ bool ClientNativePixmapDmaBuf::IsConfigurationSupported(
           format == gfx::BufferFormat::RGBX_8888 ||
           format == gfx::BufferFormat::RGBA_8888;
     case gfx::BufferUsage::SCANOUT_VDA_WRITE:  // fallthrough
+    case gfx::BufferUsage::PROTECTED_SCANOUT:
     case gfx::BufferUsage::PROTECTED_SCANOUT_VDA_WRITE:
       return false;
 
@@ -180,7 +185,6 @@ bool ClientNativePixmapDmaBuf::IsConfigurationSupported(
              format == gfx::BufferFormat::YUV_420_BIPLANAR;
   }
   NOTREACHED();
-  return false;
 }
 
 // static

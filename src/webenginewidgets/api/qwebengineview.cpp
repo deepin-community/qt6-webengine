@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:critical reason:data-parser
 
 #include "qapplication.h"
 #include "qwebenginenotificationpresenter_p.h"
@@ -439,6 +440,7 @@ void QWebEngineViewPrivate::widgetChanged(QtWebEngineCore::WebEngineQuickWidget 
 {
     Q_Q(QWebEngineView);
 
+    bool hasFocus = oldWidget ? oldWidget->hasFocus() : false;
     if (oldWidget) {
         q->layout()->removeWidget(oldWidget);
         oldWidget->hide();
@@ -457,7 +459,7 @@ void QWebEngineViewPrivate::widgetChanged(QtWebEngineCore::WebEngineQuickWidget 
 #endif
         q->layout()->addWidget(newWidget);
         q->setFocusProxy(newWidget);
-        if (oldWidget && oldWidget == QApplication::focusWidget())
+        if (hasFocus)
             newWidget->setFocus();
         newWidget->show();
     }
@@ -506,6 +508,8 @@ QStringList QWebEngineViewPrivate::chooseFiles(QWebEnginePage::FileSelectionMode
     QStringList ret;
     QString str;
     switch (static_cast<QtWebEngineCore::FilePickerController::FileChooserMode>(mode)) {
+    case QtWebEngineCore::FilePickerController::OpenDirectory:
+        Q_FALLTHROUGH();
     case QtWebEngineCore::FilePickerController::OpenMultiple:
         ret = QFileDialog::getOpenFileNames(q, QString(), QString(),
                                             filter.join(QStringLiteral(";;")), nullptr,
@@ -845,7 +849,7 @@ QObject *QWebEngineViewPrivate::accessibilityParentObject()
     return q;
 }
 
-void QWebEngineViewPrivate::didPrintPage(QPrinter *&currentPrinter, QSharedPointer<QByteArray> result)
+QThread* QWebEngineViewPrivate::didPrintPage(QPrinter *&currentPrinter, std::shared_ptr<QByteArray> result)
 {
 #if QT_CONFIG(webengine_printing_and_pdf)
     Q_Q(QWebEngineView);
@@ -877,9 +881,11 @@ void QWebEngineViewPrivate::didPrintPage(QPrinter *&currentPrinter, QSharedPoint
     printerWorker->moveToThread(printerThread);
     QMetaObject::invokeMethod(printerWorker, "print");
 
+    return printerThread;
 #else
     Q_UNUSED(currentPrinter);
     Q_UNUSED(result);
+    return nullptr;
 #endif
 }
 
@@ -1475,21 +1481,24 @@ void QWebEngineView::printToPdf(const std::function<void(const QByteArray&)> &re
 /*!
     Renders the current content of the page into a temporary PDF document, then prints it using \a printer.
 
+
     The settings for creating and printing the PDF document will be retrieved from the \a printer
     object.
 
     When finished the signal printFinished() is emitted with the \c true for success or \c false for failure.
 
-    It is the users responsibility to ensure the \a printer remains valid until printFinished()
-    has been emitted.
+    It is the user's responsibility to ensure the \a printer remains valid until printFinished()
+    has been emitted. If the page is destroyed before printFinished() is emitted, printing will
+    continue to run in the background for a short while. Users should ensure the printer remains
+    valid until its state is no longer active.
 
-    \note Printing runs on the browser process, which is by default not sandboxed.
+    \note Printing runs on the main process, which is by default not sandboxed.
 
     \note The data generation step of printing can be interrupted for a short period of time using
     the \l QWebEnginePage::Stop web action.
 
     \note This function rasterizes the result when rendering onto \a printer. Please consider raising
-    the default resolution of \a printer to at least 300 DPI or using printToPdf() to produce
+    the default resolution of \a printer to at least 300 DPI, or using printToPdf() to produce
     PDF file output more effectively.
 
     \since 6.2
@@ -1505,12 +1514,15 @@ void QWebEngineView::print(QPrinter *printer)
 
     dPage->currentPrinter = printer;
     dPage->ensureInitialized();
-    std::function callback = [dPage](QSharedPointer<QByteArray> result) {
+    auto callback = [dPage](std::shared_ptr<QByteArray> result) {
         dPage->didPrintPage(std::move(result));
     };
-    dPage->adapter->printToPDFCallbackResult(std::move(callback), printer->pageLayout(),
+    QtPrivate::SlotObjUniquePtr slotCallback(
+            QtPrivate::makeCallableObject<void(*)(std::shared_ptr<QByteArray>)>(std::move(callback)));
+
+    dPage->adapter->printToPDFCallbackResult(std::move(slotCallback), printer->pageLayout(),
                                              printer->pageRanges(),
-                                             printer->colorMode() == QPrinter::Color, false,
+                                             printer->colorMode() == QPrinter::Color,
                                              QtWebEngineCore::WebContentsAdapter::kUseMainFrameId);
 #else
     Q_UNUSED(printer);
@@ -1702,7 +1714,6 @@ void QWebEngineViewPrivate::hideTouchSelectionMenu()
 void QWebEngineViewPrivate::showTouchSelectionMenu(
         QtWebEngineCore::TouchSelectionMenuController *controller, const QRect &selectionBounds)
 {
-    Q_ASSERT(m_touchSelectionMenu == nullptr);
     Q_Q(QWebEngineView);
 
     // Do not show outside of view

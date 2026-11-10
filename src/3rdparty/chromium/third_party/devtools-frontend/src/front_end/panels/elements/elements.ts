@@ -37,6 +37,7 @@ import * as ColorSwatchPopoverIcon from './ColorSwatchPopoverIcon.js';
 import * as ComputedStyleModel from './ComputedStyleModel.js';
 import * as ComputedStyleWidget from './ComputedStyleWidget.js';
 import * as CSSRuleValidator from './CSSRuleValidator.js';
+import * as CSSValueTraceView from './CSSValueTraceView.js';
 import * as DOMLinkifier from './DOMLinkifier.js';
 import * as DOMPath from './DOMPath.js';
 import * as ElementsPanel from './ElementsPanel.js';
@@ -45,15 +46,17 @@ import * as ElementStatePaneWidget from './ElementStatePaneWidget.js';
 import * as ElementsTreeElement from './ElementsTreeElement.js';
 import * as ElementsTreeElementHighlighter from './ElementsTreeElementHighlighter.js';
 import * as ElementsTreeOutline from './ElementsTreeOutline.js';
+import * as ElementsTreeOutlineRenderer from './ElementsTreeOutlineRenderer.js';
 import * as EventListenersWidget from './EventListenersWidget.js';
 import * as InspectElementModeController from './InspectElementModeController.js';
 import * as LayersWidget from './LayersWidget.js';
+import * as LayoutPane from './LayoutPane.js';
 import * as MarkerDecorator from './MarkerDecorator.js';
 import * as MetricsSidebarPane from './MetricsSidebarPane.js';
 import * as NodeStackTraceWidget from './NodeStackTraceWidget.js';
 import * as PlatformFontsWidget from './PlatformFontsWidget.js';
 import * as PropertiesWidget from './PropertiesWidget.js';
-import * as PropertyParser from './PropertyParser.js';
+import * as PropertyRenderer from './PropertyRenderer.js';
 import * as StyleEditorWidget from './StyleEditorWidget.js';
 import * as StylePropertiesSection from './StylePropertiesSection.js';
 import * as StylePropertyHighlighter from './StylePropertyHighlighter.js';
@@ -71,6 +74,7 @@ export {
   ComputedStyleModel,
   ComputedStyleWidget,
   CSSRuleValidator,
+  CSSValueTraceView,
   DOMLinkifier,
   DOMPath,
   ElementsPanel,
@@ -79,15 +83,17 @@ export {
   ElementsTreeElement,
   ElementsTreeElementHighlighter,
   ElementsTreeOutline,
+  ElementsTreeOutlineRenderer,
   EventListenersWidget,
   InspectElementModeController,
   LayersWidget,
+  LayoutPane,
   MarkerDecorator,
   MetricsSidebarPane,
   NodeStackTraceWidget,
   PlatformFontsWidget,
   PropertiesWidget,
-  PropertyParser,
+  PropertyRenderer,
   StyleEditorWidget,
   StylePropertiesSection,
   StylePropertyHighlighter,

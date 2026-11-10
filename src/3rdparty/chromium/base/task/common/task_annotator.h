@@ -7,15 +7,21 @@
 
 #include <stdint.h>
 
+#include <string_view>
+
 #include "base/auto_reset.h"
 #include "base/base_export.h"
 #include "base/memory/raw_ptr_exclusion.h"
 #include "base/pending_task.h"
-#include "base/strings/string_piece.h"
 #include "base/time/tick_clock.h"
-#include "base/trace_event/base_tracing.h"
+#include "base/trace_event/trace_event.h"
+#include "base/types/pass_key.h"
 
 namespace base {
+
+namespace sequence_manager::internal {
+class WorkQueue;
+}
 
 // Constant used to measure which long-running tasks should be traced.
 constexpr TimeDelta kMaxTaskDurationTimeDelta = Milliseconds(4);
@@ -42,12 +48,21 @@ class BASE_EXPORT TaskAnnotator {
   class LongTaskTracker;
 
   static const PendingTask* CurrentTaskForThread();
+  static void SetCurrentTaskForThread(
+      PassKey<sequence_manager::internal::WorkQueue>,
+      const PendingTask* pending_task);
 
   static void OnIPCReceived(const char* interface_name,
                             uint32_t (*method_info)(),
                             bool is_response);
 
   static void MarkCurrentTaskAsInterestingForTracing();
+
+  //  TRACE_EVENT argument helper, writing the task start time into
+  //  EventContext.
+  //  NOTE: Should only be used with TRACE_EVENT or TRACE_EVENT_BEGIN since the
+  //          function records the timestamp for event start at call time.
+  static void EmitTaskTimingDetails(perfetto::EventContext& ctx);
 
   TaskAnnotator();
 
@@ -101,7 +116,6 @@ class BASE_EXPORT TaskAnnotator {
   static void RegisterObserverForTesting(ObserverForTesting* observer);
   static void ClearObserverForTesting();
 
-#if BUILDFLAG(ENABLE_BASE_TRACING)
   // TRACE_EVENT argument helper, writing the task location data into
   // EventContext.
   static void EmitTaskLocation(perfetto::EventContext& ctx,
@@ -116,7 +130,6 @@ class BASE_EXPORT TaskAnnotator {
 
   void MaybeEmitIPCHash(perfetto::EventContext& ctx,
                         const PendingTask& task) const;
-#endif  //  BUILDFLAG(ENABLE_BASE_TRACING)
 };
 
 class BASE_EXPORT [[maybe_unused, nodiscard]] TaskAnnotator::ScopedSetIpcHash {
@@ -135,7 +148,7 @@ class BASE_EXPORT [[maybe_unused, nodiscard]] TaskAnnotator::ScopedSetIpcHash {
   uint32_t GetIpcHash() const { return ipc_hash_; }
   const char* GetIpcInterfaceName() const { return ipc_interface_name_; }
 
-  static uint32_t MD5HashMetricName(base::StringPiece name);
+  static uint32_t MD5HashMetricName(std::string_view name);
 
  private:
   ScopedSetIpcHash(uint32_t ipc_hash, const char* ipc_interface_name);
@@ -147,9 +160,10 @@ class BASE_EXPORT [[maybe_unused, nodiscard]] TaskAnnotator::ScopedSetIpcHash {
 
 class BASE_EXPORT [[maybe_unused, nodiscard]] TaskAnnotator::LongTaskTracker {
  public:
-  explicit LongTaskTracker(const TickClock* tick_clock,
-                           PendingTask& pending_task,
-                           TaskAnnotator* task_annotator);
+  LongTaskTracker(const TickClock* tick_clock,
+                  PendingTask& pending_task,
+                  TaskAnnotator* task_annotator,
+                  TimeTicks task_start_time);
 
   LongTaskTracker(const LongTaskTracker&) = delete;
 
@@ -167,6 +181,8 @@ class BASE_EXPORT [[maybe_unused, nodiscard]] TaskAnnotator::LongTaskTracker {
   // calculating scroll jank metrics.
   bool is_interesting_task = false;
 
+  TimeTicks GetTaskStartTime() const { return task_start_time_; }
+
  private:
   void EmitReceivedIPCDetails(perfetto::EventContext& ctx);
 
@@ -177,14 +193,13 @@ class BASE_EXPORT [[maybe_unused, nodiscard]] TaskAnnotator::LongTaskTracker {
   // RAW_PTR_EXCLUSION: Performance reasons: based on analysis of sampling
   // profiler data (TaskAnnotator::LongTaskTracker::~LongTaskTracker).
   RAW_PTR_EXCLUSION const TickClock* tick_clock_;  // Not owned.
+
+  // Task start time, sampled before the LongTaskTracker instance
+  // is created.
   TimeTicks task_start_time_;
   TimeTicks task_end_time_;
 
   // Tracing variables.
-
-  // Use this to ensure that tracing and NowTicks() are not called
-  // unnecessarily.
-  bool is_tracing_;
   const char* ipc_interface_name_ = nullptr;
   uint32_t ipc_hash_ = 0;
 

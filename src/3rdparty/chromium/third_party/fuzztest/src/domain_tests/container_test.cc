@@ -32,16 +32,16 @@
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/random/random.h"
-#include "./fuzztest/domain.h"
+#include "./fuzztest/domain_core.h"
 #include "./domain_tests/domain_testing.h"
-#include "./fuzztest/internal/coverage.h"
-#include "./fuzztest/internal/type_support.h"
+#include "./fuzztest/internal/table_of_recent_compares.h"
 
 namespace fuzztest {
 namespace {
 
 using ::testing::Contains;
 using ::testing::Gt;
+using ::testing::Not;
 using ::testing::SizeIs;
 using ::testing::UnorderedElementsAre;
 
@@ -59,7 +59,7 @@ using ContainerTypes = testing::Types<
     std::map<int, int>, std::unordered_map<int, int>,
     absl::flat_hash_map<std::string, int>>;
 
-TYPED_TEST_SUITE(ContainerTest, ContainerTypes);
+TYPED_TEST_SUITE(ContainerTest, ContainerTypes, );
 
 TYPED_TEST(ContainerTest, Arbitrary) {
   using T = TypeParam;
@@ -74,7 +74,7 @@ TYPED_TEST(ContainerTest, Arbitrary) {
     // Basic checks to make sure we have a few sizes and values.
     // TODO: Check these values in a more principled way.
     absl::flat_hash_map<size_t, size_t> size_distribution;
-    absl::flat_hash_map<internal::value_type_t<T>, size_t> value_distribution;
+    absl::flat_hash_map<typename T::value_type, size_t> value_distribution;
     for (const auto& s : values) {
       ++size_distribution[s.user_value.size()];
       for (const auto& v : s.user_value) ++value_distribution[v];
@@ -109,7 +109,7 @@ void TestMinMaxContainerSize(Domain domain, size_t min_size, size_t max_size) {
 
     ASSERT_THAT(v.user_value, size_match);
     sizes.insert(v.user_value.size());
-    v.Mutate(domain, bitgen, false);
+    v.Mutate(domain, bitgen, {}, false);
     ASSERT_THAT(v.user_value, size_match);
 
     // Mutating the value can reach the max, but only for small max sizes
@@ -117,7 +117,7 @@ void TestMinMaxContainerSize(Domain domain, size_t min_size, size_t max_size) {
     if (max_size <= 10) {
       auto max_v = v;
       while (max_v.user_value.size() < max_size) {
-        v.Mutate(domain, bitgen, false);
+        v.Mutate(domain, bitgen, {}, false);
         if (v.user_value.size() > max_v.user_value.size()) {
           max_v = v;
         } else if (v.user_value.size() < max_v.user_value.size()) {
@@ -129,10 +129,10 @@ void TestMinMaxContainerSize(Domain domain, size_t min_size, size_t max_size) {
 
     // Shinking the value will reach the min.
     while (v.user_value.size() > min_size) {
-      v.Mutate(domain, bitgen, true);
+      v.Mutate(domain, bitgen, {}, true);
     }
     // Mutating again won't go below.
-    v.Mutate(domain, bitgen, true);
+    v.Mutate(domain, bitgen, {}, true);
     ASSERT_THAT(v.user_value, SizeIs(min_size));
   }
   // Check that there is some in between.
@@ -151,7 +151,7 @@ TYPED_TEST(ContainerTest, SettingSizesLimitsOutput) {
   TestMinMaxContainerSize(Arbitrary<T>().WithMaxSize(7), 0, 7);
   TestMinMaxContainerSize(Arbitrary<T>().WithMinSize(3).WithMaxSize(7), 3, 7);
 
-  auto inner = Arbitrary<internal::value_type_t<T>>();
+  auto inner = Arbitrary<typename T::value_type>();
 
   TestMinMaxContainerSize(ContainerOf<T>(inner).WithSize(7), 7, 7);
   TestMinMaxContainerSize(ContainerOf<T>(inner).WithMinSize(7), 7, ~size_t{});
@@ -173,6 +173,29 @@ TYPED_TEST(ContainerTest, InitGeneratesSeeds) {
   domain.WithSeeds({seed.user_value});
 
   EXPECT_THAT(GenerateInitialValues(domain, 1000), Contains(seed));
+}
+
+TEST(StringTest, GetRandomValueYieldsSeedsAndOtherValues) {
+  Domain<std::string> domain = Arbitrary<std::string>().WithSeeds({"seed"});
+
+  absl::BitGen prng;
+  bool seed_seen = false;
+  bool other_seen = false;
+  // To hit the seed, we need to first hit an initial value (p=1/1000) and
+  // then hit the actual seed (p=1/2).
+  static constexpr double kHitSeedProbability = 1.0 / 1000 * 1.0 / 2;
+  for (int i = 0; !(seed_seen && other_seen) &&
+                  i < IterationsToHitAll(/*num_cases=*/1, kHitSeedProbability);
+       ++i) {
+    auto val = domain.GetRandomValue(prng);
+    if (val == "seed") {
+      seed_seen = true;
+    } else {
+      other_seen = true;
+    }
+  }
+
+  EXPECT_TRUE(seed_seen && other_seen);
 }
 
 TEST(Container, ValidationRejectsInvalidSize) {
@@ -219,28 +242,16 @@ TEST(Container, ValidationRejectsInvalidElements) {
 // enabled, but we test on strings for simplification.
 TEST(Container, MemoryDictionaryMutationMutatesEveryPossibleMatch) {
   auto domain = Arbitrary<std::string>();
-  class ScopedExecutionCoverage {
-   public:
-    ScopedExecutionCoverage() { internal::SetExecutionCoverage(&coverage); }
-
-    ~ScopedExecutionCoverage() { internal::SetExecutionCoverage(nullptr); }
-
-   private:
-    internal::ExecutionCoverage coverage =
-        internal::ExecutionCoverage(/*counter_map=*/{});
-  };
-  ScopedExecutionCoverage scoped_coverage;
-  fuzztest::internal::GetExecutionCoverage()
-      ->GetTablesOfRecentCompares()
-      .GetMutable<0>()
-      .Insert(reinterpret_cast<const uint8_t*>("abcd"),
-              reinterpret_cast<const uint8_t*>("1234"), 4);
+  internal::TablesOfRecentCompares cmp_tables;
+  cmp_tables.GetMutable<0>().Insert(reinterpret_cast<const uint8_t*>("abcd"),
+                                    reinterpret_cast<const uint8_t*>("1234"),
+                                    4);
 
   absl::BitGen bitgen;
   std::vector<std::string> mutants;
   for (int i = 0; i < 1000000; ++i) {
     std::string mutant = "abcdabcdabcdabcd";
-    domain.Mutate(mutant, bitgen, false);
+    domain.Mutate(mutant, bitgen, {/*cmp_tables=*/&cmp_tables}, false);
     mutants.push_back(std::move(mutant));
   }
 
@@ -250,6 +261,41 @@ TEST(Container, MemoryDictionaryMutationMutatesEveryPossibleMatch) {
                            "abcdabcd1234abcd",
                            "abcdabcdabcd1234",
                        }));
+}
+
+TEST(Container, ValidatesMemoryDictionaryMutationForInnerDomain) {
+  auto domain = VectorOf(InRange<uint8_t>(10, 128));
+  internal::TablesOfRecentCompares cmp_tables;
+  std::vector<std::vector<uint8_t>> cmp_entries = {{10, 11, 12, 13},
+                                                   {129, 129, 129, 129},
+                                                   {10, 11, 12, 13},
+                                                   {17, 31, 113, 71}};
+  // Fill the table with the same entries repeatly.
+  for (int i = 0; i < cmp_tables.GetMutable<0>().kTableSize; ++i) {
+    cmp_tables.GetMutable<0>().Insert(cmp_entries[0].data(),
+                                      cmp_entries[1].data(), 4);
+    cmp_tables.GetMutable<0>().Insert(cmp_entries[2].data(),
+                                      cmp_entries[3].data(), 4);
+  }
+
+  absl::BitGen bitgen;
+  std::vector<std::vector<uint8_t>> mutants;
+  const double hit_probability =  //
+      1.0 / 4                     // to use dictionaries
+      * 1.0 / 4                   // to use cmp tables
+      * 1.0 / 2                   // to pick the memcmp table
+      * 1.0 / 2                   // to pick one of the entries
+      * 1.0 / 2                   // to apply replacement
+      ;
+  for (int i = 0; i < 1 * IterationsToHitAll(/*num_cases=*/2, hit_probability);
+       ++i) {
+    std::vector<uint8_t> mutant = {10, 11, 12, 13};
+    domain.Mutate(mutant, bitgen, {/*cmp_tables=*/&cmp_tables}, false);
+    mutants.push_back(std::move(mutant));
+  }
+
+  EXPECT_THAT(mutants, Contains(std::vector<uint8_t>{17, 31, 113, 71}));
+  EXPECT_THAT(mutants, Not(Contains(std::vector<uint8_t>{129, 129, 129, 129})));
 }
 
 }  // namespace

@@ -1,17 +1,16 @@
-/* Copyright (c) 2024, Google Inc.
- *
- * Permission to use, copy, modify, and/or distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
- * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
- * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
+// Copyright 2024 The BoringSSL Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 //! Helpers to ensure that some temporary objects are always freed.
 
@@ -67,6 +66,61 @@ impl Drop for EcKey {
     }
 }
 
+/// A scoped `EVP_HPKE_CTX`.
+pub struct EvpHpkeCtx(*mut bssl_sys::EVP_HPKE_CTX);
+// bssl_sys::EVP_HPKE_CTX is heap-allocated and safe to transfer
+// between threads.
+unsafe impl Send for EvpHpkeCtx {}
+
+impl EvpHpkeCtx {
+    pub fn new() -> Self {
+        let ptr = unsafe { bssl_sys::EVP_HPKE_CTX_new() };
+        // `ptr` is only NULL if we're out of memory, which this crate
+        // doesn't handle.
+        assert!(!ptr.is_null());
+        EvpHpkeCtx(ptr)
+    }
+
+    pub fn as_ffi_ptr(&self) -> *const bssl_sys::EVP_HPKE_CTX {
+        self.0
+    }
+
+    pub fn as_mut_ffi_ptr(&mut self) -> *mut bssl_sys::EVP_HPKE_CTX {
+        self.0
+    }
+}
+
+impl Drop for EvpHpkeCtx {
+    fn drop(&mut self) {
+        unsafe { bssl_sys::EVP_HPKE_CTX_free(self.0) }
+    }
+}
+
+/// A scoped `EVP_HPKE_KEY`.
+pub struct EvpHpkeKey(bssl_sys::EVP_HPKE_KEY);
+
+impl EvpHpkeKey {
+    pub fn new() -> Self {
+        EvpHpkeKey(unsafe { initialized_struct(|ptr| bssl_sys::EVP_HPKE_KEY_zero(ptr)) })
+    }
+
+    pub fn as_ffi_ptr(&self) -> *const bssl_sys::EVP_HPKE_KEY {
+        &self.0
+    }
+
+    pub fn as_mut_ffi_ptr(&mut self) -> *mut bssl_sys::EVP_HPKE_KEY {
+        &mut self.0
+    }
+}
+
+impl Drop for EvpHpkeKey {
+    fn drop(&mut self) {
+        // unsafe: the only way to create a `EvpHpkeKey` is via `new` and that
+        // ensures that this structure is initialized.
+        unsafe { bssl_sys::EVP_HPKE_KEY_cleanup(&mut self.0) }
+    }
+}
+
 /// A scoped `BIGNUM`.
 pub struct Bignum(bssl_sys::BIGNUM);
 
@@ -77,7 +131,7 @@ impl Bignum {
         ret
     }
 
-    pub unsafe fn as_ffi_ptr(&self) -> *const bssl_sys::BIGNUM {
+    pub fn as_ffi_ptr(&self) -> *const bssl_sys::BIGNUM {
         &self.0
     }
 }

@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 // Loosely based on print_view_manager.cc and print_preview_message_handler.cc
 // Copyright 2013 The Chromium Authors. All rights reserved.
@@ -18,13 +19,16 @@
 #include <QtGui/qpagelayout.h>
 #include <QtGui/qpageranges.h>
 #include <QtGui/qpagesize.h>
+#include <QWebEngineSettings>
 
 #include "base/values.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/task/thread_pool.h"
+#include "base/unguessable_token.h"
 #include "chrome/browser/printing/print_job_manager.h"
 #include "chrome/browser/printing/printer_query.h"
 #include "components/printing/common/print.mojom.h"
+#include "components/url_formatter/url_formatter.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -40,37 +44,25 @@ namespace {
 
 static const qreal kMicronsToMillimeter = 1000.0f;
 
-static QSharedPointer<QByteArray> GetStdVectorFromHandle(const base::ReadOnlySharedMemoryRegion &handle)
+static std::shared_ptr<QByteArray> GetStdVectorFromHandle(const base::ReadOnlySharedMemoryRegion &handle)
 {
     base::ReadOnlySharedMemoryMapping map = handle.Map();
     if (!map.IsValid())
-        return QSharedPointer<QByteArray>(new QByteArray);
+        return std::shared_ptr<QByteArray>(new QByteArray);
 
     const char* data = static_cast<const char*>(map.memory());
-    return QSharedPointer<QByteArray>(new QByteArray(data, map.size()));
-}
-
-static scoped_refptr<base::RefCountedBytes>
-GetBytesFromHandle(const base::ReadOnlySharedMemoryRegion &handle)
-{
-    base::ReadOnlySharedMemoryMapping map = handle.Map();
-    if (!map.IsValid())
-        return nullptr;
-
-    const unsigned char* data = static_cast<const unsigned char*>(map.memory());
-    std::vector<unsigned char> dataVector(data, data + map.size());
-    return base::RefCountedBytes::TakeVector(&dataVector);
+    return std::shared_ptr<QByteArray>(new QByteArray(data, map.size()));
 }
 
 // Write the PDF file to disk.
-static void SavePdfFile(scoped_refptr<base::RefCountedBytes> data,
+static void SavePdfFile(scoped_refptr<base::RefCountedSharedMemoryMapping> data,
                         const base::FilePath &path,
                         QtWebEngineCore::PrintViewManagerQt::PrintToPDFFileCallback saveCallback)
 {
     DCHECK_GT(data->size(), 0U);
 
     printing::MetafileSkia metafile;
-    metafile.InitFromData(base::as_bytes(base::make_span(data->front(), data->size())));
+    metafile.InitFromData(*data);
 
     base::File file(path,
                     base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
@@ -98,7 +90,6 @@ static base::Value::Dict createPrintSettings()
     printSettings.Set(printing::kSettingCopies, 1);
     printSettings.Set(printing::kSettingPagesPerSheet, 1);
     printSettings.Set(printing::kSettingCollate, false);
-//    printSettings->SetBoolean(printing::kSettingGenerateDraftData, false);
     printSettings.Set(printing::kSettingPreviewModifiable, false);
 
     printSettings.Set(printing::kSettingShouldPrintSelectionOnly, base::Value(false));
@@ -107,43 +98,36 @@ static base::Value::Dict createPrintSettings()
     printSettings.Set(printing::kSettingRasterizePdf, base::Value(false));
     printSettings.Set(printing::kSettingScaleFactor, 100);
     printSettings.Set(printing::kSettingDeviceName, "");
-    printSettings.Set(printing::kPreviewUIID, 12345678);
+    printSettings.Set(printing::kPreviewUIID, base::UnguessableToken::Create().ToString());
 
     return printSettings;
 }
 
 static base::Value::Dict createPrintSettingsFromQPageLayout(const QPageLayout &pageLayout,
-                                                                 bool useCustomMargins)
+                                                            bool useCSSMargins)
 {
     base::Value::Dict printSettings = createPrintSettings();
-    QRectF pageSizeInMillimeter;
 
-    if (useCustomMargins) {
-        // Apply page margins when printing to PDF
-        pageSizeInMillimeter = pageLayout.pageSize().rect(QPageSize::Millimeter);
-
+    if (useCSSMargins) {
+        printSettings.Set(printing::kSettingMarginsType,
+                          (int)printing::mojom::MarginType::kDefaultMargins);
+    } else {
         QMargins pageMarginsInPoints = pageLayout.marginsPoints();
         base::Value::Dict marginsDict;
         marginsDict.Set(printing::kSettingMarginTop, pageMarginsInPoints.top());
         marginsDict.Set(printing::kSettingMarginBottom, pageMarginsInPoints.bottom());
         marginsDict.Set(printing::kSettingMarginLeft, pageMarginsInPoints.left());
         marginsDict.Set(printing::kSettingMarginRight, pageMarginsInPoints.right());
-
         printSettings.Set(printing::kSettingMarginsCustom, std::move(marginsDict));
-        printSettings.Set(printing::kSettingMarginsType, (int)printing::mojom::MarginType::kCustomMargins);
-
-        // pageSizeInMillimeter is in portrait orientation. Transpose it if necessary.
-        printSettings.Set(printing::kSettingLandscape, pageLayout.orientation() == QPageLayout::Landscape);
-    } else {
-        // QPrinter will handle margins
-        pageSizeInMillimeter = pageLayout.paintRect(QPageLayout::Millimeter);
-        printSettings.Set(printing::kSettingMarginsType, (int)printing::mojom::MarginType::kNoMargins);
-
-        // pageSizeInMillimeter already contains the orientation.
-        printSettings.Set(printing::kSettingLandscape, false);
+        printSettings.Set(printing::kSettingMarginsType,
+                          (int)printing::mojom::MarginType::kCustomMargins);
     }
 
-    //Set page size attributes, chromium expects these in micrometers
+    printSettings.Set(printing::kSettingLandscape,
+                      pageLayout.orientation() == QPageLayout::Landscape);
+
+    // Set page size attributes, Chromium expects these in micrometers
+    QRectF pageSizeInMillimeter = pageLayout.pageSize().rect(QPageSize::Millimeter);
     base::Value::Dict sizeDict;
     sizeDict.Set(printing::kSettingMediaSizeWidthMicrons, int(pageSizeInMillimeter.width() * kMicronsToMillimeter));
     sizeDict.Set(printing::kSettingMediaSizeHeightMicrons, int(pageSizeInMillimeter.height() * kMicronsToMillimeter));
@@ -189,8 +173,7 @@ void PrintViewManagerQt::PrintToPDFFileWithCallback(const QPageLayout &pageLayou
 
     m_pdfOutputPath = toFilePath(filePath);
     m_pdfSaveCallback = std::move(callback);
-    if (!PrintToPDFInternal(pageLayout, pageRanges, printInColor, /*useCustomMargins*/ true,
-                            frameId)) {
+    if (!PrintToPDFInternal(pageLayout, pageRanges, printInColor, frameId)) {
         content::GetUIThreadTaskRunner({})->PostTask(FROM_HERE,
                        base::BindOnce(std::move(m_pdfSaveCallback), false));
         resetPdfState();
@@ -199,8 +182,7 @@ void PrintViewManagerQt::PrintToPDFFileWithCallback(const QPageLayout &pageLayou
 
 void PrintViewManagerQt::PrintToPDFWithCallback(const QPageLayout &pageLayout,
                                                 const QPageRanges &pageRanges, bool printInColor,
-                                                bool useCustomMargins, quint64 frameId,
-                                                PrintToPDFCallback callback)
+                                                quint64 frameId, PrintToPDFCallback callback)
 {
     if (callback.is_null())
         return;
@@ -208,14 +190,14 @@ void PrintViewManagerQt::PrintToPDFWithCallback(const QPageLayout &pageLayout,
     // If there already is a pending print in progress, don't try starting another one.
     if (!m_printSettings.empty()) {
         content::GetUIThreadTaskRunner({})->PostTask(FROM_HERE,
-                       base::BindOnce(std::move(callback), QSharedPointer<QByteArray>()));
+                       base::BindOnce(std::move(callback), std::shared_ptr<QByteArray>()));
         return;
     }
 
     m_pdfPrintCallback = std::move(callback);
-    if (!PrintToPDFInternal(pageLayout, pageRanges, printInColor, useCustomMargins, frameId)) {
+    if (!PrintToPDFInternal(pageLayout, pageRanges, printInColor, frameId)) {
         content::GetUIThreadTaskRunner({})->PostTask(FROM_HERE,
-                       base::BindOnce(std::move(m_pdfPrintCallback), QSharedPointer<QByteArray>()));
+                       base::BindOnce(std::move(m_pdfPrintCallback), std::shared_ptr<QByteArray>()));
 
         resetPdfState();
     }
@@ -223,18 +205,40 @@ void PrintViewManagerQt::PrintToPDFWithCallback(const QPageLayout &pageLayout,
 
 bool PrintViewManagerQt::PrintToPDFInternal(const QPageLayout &pageLayout,
                                             const QPageRanges &pageRanges, const bool printInColor,
-                                            const bool useCustomMargins, quint64 frameId)
+                                            quint64 frameId)
 {
     if (!pageLayout.isValid())
         return false;
 
-    m_printSettings = createPrintSettingsFromQPageLayout(pageLayout, useCustomMargins);
+    bool printHeaderAndFooter = false;
+    bool useCSSMargins = false;
+    content::WebContentsView *view =
+            static_cast<content::WebContentsImpl *>(web_contents()->GetOutermostWebContents())
+                    ->GetView();
+    if (WebContentsAdapterClient *client = WebContentsViewQt::from(view)->client()) {
+        QWebEngineSettings *settings = client->webEngineSettings();
+        printHeaderAndFooter = settings->testAttribute(QWebEngineSettings::PrintHeaderAndFooter);
+        useCSSMargins = settings->testAttribute(QWebEngineSettings::PreferCSSMarginsForPrinting);
+    }
+
+    m_printSettings = createPrintSettingsFromQPageLayout(pageLayout, useCSSMargins);
     m_printSettings.Set(printing::kSettingShouldPrintBackgrounds,
                                 web_contents()->GetOrCreateWebPreferences().should_print_backgrounds);
     m_printSettings.Set(printing::kSettingColor,
                                 int(printInColor ? printing::mojom::ColorModel::kColor : printing::mojom::ColorModel::kGrayscale));
     if (!pageRanges.isEmpty())
         m_printSettings.Set(printing::kSettingPageRange, createPageRangeSettings(pageRanges.toRangeList()));
+
+    if (printHeaderAndFooter) {
+        m_printSettings.Set(printing::kSettingHeaderFooterEnabled, true);
+        m_printSettings.Set(printing::kSettingHeaderFooterTitle, web_contents()->GetTitle());
+        GURL::Replacements sanitizer;
+        sanitizer.ClearUsername();
+        sanitizer.ClearPassword();
+        const GURL &url = web_contents()->GetLastCommittedURL();
+        m_printSettings.Set(printing::kSettingHeaderFooterURL,
+                            url_formatter::FormatUrl(url.ReplaceComponents(sanitizer)));
+    }
 
     if (web_contents()->IsCrashed())
         return false;
@@ -250,11 +254,17 @@ bool PrintViewManagerQt::PrintToPDFInternal(const QPageLayout &pageLayout,
                     FindPdfChildFrame(full_page_plugin ? full_page_plugin : rfh))
             rfh = pdf_rfh;
     } else {
-        auto *ftn = content::FrameTreeNode::GloballyFindByID(static_cast<int>(frameId));
+        auto *ftn = content::FrameTreeNode::GloballyFindByID(
+                static_cast<content::FrameTreeNodeId>(frameId));
         if (!ftn)
             return false;
         rfh = ftn->current_frame_host();
     }
+
+    if (rfh && rfh->IsNestedWithinFencedFrame()) {
+        return false;
+    }
+
     GetPrintRenderFrame(rfh)->InitiatePrintPreview(false);
 
     DCHECK(!m_printPreviewRfh);
@@ -304,7 +314,7 @@ void PrintViewManagerQt::NavigationStopped()
 {
     if (!m_pdfPrintCallback.is_null()) {
         content::GetUIThreadTaskRunner({})->PostTask(FROM_HERE,
-                       base::BindOnce(std::move(m_pdfPrintCallback), QSharedPointer<QByteArray>()));
+                       base::BindOnce(std::move(m_pdfPrintCallback), std::shared_ptr<QByteArray>()));
     }
     resetPdfState();
     PrintViewManagerBaseQt::NavigationStopped();
@@ -315,7 +325,7 @@ void PrintViewManagerQt::PrimaryMainFrameRenderProcessGone(base::TerminationStat
     PrintViewManagerBaseQt::PrimaryMainFrameRenderProcessGone(status);
     if (!m_pdfPrintCallback.is_null()) {
         content::GetUIThreadTaskRunner({})->PostTask(FROM_HERE,
-                       base::BindOnce(std::move(m_pdfPrintCallback), QSharedPointer<QByteArray>()));
+                       base::BindOnce(std::move(m_pdfPrintCallback), std::shared_ptr<QByteArray>()));
     }
     resetPdfState();
 }
@@ -347,7 +357,8 @@ void PrintViewManagerQt::SetupScriptedPrintPreview(SetupScriptedPrintPreviewCall
     if (web_contents()->GetPrimaryMainFrame() == rfh)
         client->printRequested();
     else
-        client->printRequestedByFrame(static_cast<quint64>(rfh->GetFrameTreeNodeId()));
+        client->printRequestedByFrame(
+                static_cast<quint64>(rfh->GetFrameTreeNodeId().GetUnsafeValue()));
 }
 
 void PrintViewManagerQt::ShowScriptedPrintPreview(bool /*source_is_modifiable*/)
@@ -383,9 +394,8 @@ void PrintViewManagerQt::RequestPrintPreview(printing::mojom::RequestPrintPrevie
     PrintPreviewDone();
 }
 
-void PrintViewManagerQt::CheckForCancel(int32_t preview_ui_id,
-                                        int32_t request_id,
-                                        CheckForCancelCallback callback)
+void PrintViewManagerQt::CheckForCancel(const base::UnguessableToken &preview_ui_id,
+                                        int32_t request_id, CheckForCancelCallback callback)
 {
     Q_UNUSED(preview_ui_id);
     Q_UNUSED(request_id);
@@ -411,13 +421,13 @@ void PrintViewManagerQt::MetafileReadyForPrinting(printing::mojom::DidPreviewDoc
     resetPdfState();
 
     if (!pdf_print_callback.is_null()) {
-        QSharedPointer<QByteArray> data_array = GetStdVectorFromHandle(params->content->metafile_data_region);
+        std::shared_ptr<QByteArray> data_array = GetStdVectorFromHandle(params->content->metafile_data_region);
         content::GetUIThreadTaskRunner({})->PostTask(FROM_HERE,
                        base::BindOnce(std::move(pdf_print_callback), data_array));
     } else {
-        scoped_refptr<base::RefCountedBytes> data_bytes = GetBytesFromHandle(params->content->metafile_data_region);
+        auto data_bytes = base::RefCountedSharedMemoryMapping::CreateFromWholeRegion(params->content->metafile_data_region);
         base::ThreadPool::PostTask(FROM_HERE, { base::MayBlock() },
-                                   base::BindOnce(&SavePdfFile, data_bytes, pdfOutputPath, std::move(pdf_save_callback)));
+                                   base::BindOnce(&SavePdfFile, std::move(data_bytes), pdfOutputPath, std::move(pdf_save_callback)));
     }
 }
 

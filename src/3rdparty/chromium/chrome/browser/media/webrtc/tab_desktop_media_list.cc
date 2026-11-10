@@ -6,18 +6,21 @@
 
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/containers/adapters.h"
 #include "base/functional/bind.h"
 #include "base/hash/hash.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
+#include "chrome/browser/browser_features.h"
 #include "chrome/browser/media/webrtc/desktop_media_list_layout_config.h"
 #include "chrome/browser/media/webrtc/desktop_media_picker_utils.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/web_applications/app_browser_controller.h"
 #include "components/favicon/content/content_favicon_driver.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -75,8 +78,8 @@ void HandleCapturedBitmap(
   gfx::ImageSkia image;
 
   // Only scale and update if the frame appears to be new.
-  const uint32_t hash = base::FastHash(base::make_span(
-      static_cast<uint8_t*>(bitmap.getPixels()), bitmap.computeByteSize()));
+  const uint32_t hash = base::FastHash(UNSAFE_TODO(base::span(
+      static_cast<uint8_t*>(bitmap.getPixels()), bitmap.computeByteSize())));
   if (!last_hash.has_value() || hash != last_hash.value()) {
     image = ScaleBitmap(bitmap, desktopcapture::kPreviewSize);
   }
@@ -145,8 +148,16 @@ void TabDesktopMediaList::Refresh(bool update_thumnails) {
 
   std::vector<Browser*> browsers;
   for (Browser* browser : *BrowserList::GetInstance()) {
-    if (browser->profile()->GetOriginalProfile() ==
-        profile->GetOriginalProfile()) {
+    // Omit all the IWAs for TabDesktopMediaList as they are already
+    // present in NativeDesktopMediaList.
+    bool is_isolated_web_app = browser->app_controller() &&
+                               browser->app_controller()->IsIsolatedWebApp();
+
+    if ((!base::FeatureList::IsEnabled(
+             features::kRemovalOfIWAsFromTabCapture) ||
+         !is_isolated_web_app) &&
+        browser->profile()->GetOriginalProfile() ==
+            profile->GetOriginalProfile()) {
       browsers.push_back(browser);
     }
   }
@@ -169,7 +180,7 @@ void TabDesktopMediaList::Refresh(bool update_thumnails) {
     // Find all AppWindows for the given profile.
     const extensions::AppWindowRegistry::AppWindowList& window_list =
         extensions::AppWindowRegistry::Get(profile)->app_windows();
-    for (const auto* app_window : window_list) {
+    for (const extensions::AppWindow* app_window : window_list) {
       if (!app_window->is_hidden())
         contents_list.push_back(app_window->web_contents());
     }
@@ -185,13 +196,14 @@ void TabDesktopMediaList::Refresh(bool update_thumnails) {
       continue;
     content::RenderFrameHost* main_frame = contents->GetPrimaryMainFrame();
     DCHECK(main_frame);
-    DesktopMediaID media_id(
-        DesktopMediaID::TYPE_WEB_CONTENTS, DesktopMediaID::kNullId,
-        content::WebContentsMediaCaptureId(main_frame->GetProcess()->GetID(),
-                                           main_frame->GetRoutingID()));
+    DesktopMediaID media_id(DesktopMediaID::TYPE_WEB_CONTENTS,
+                            DesktopMediaID::kNullId,
+                            content::WebContentsMediaCaptureId(
+                                main_frame->GetProcess()->GetDeprecatedID(),
+                                main_frame->GetRoutingID()));
 
     // Get tab's last active time stamp.
-    const base::TimeTicks t = contents->GetLastActiveTime();
+    const base::TimeTicks t = contents->GetLastActiveTimeTicks();
     tab_map.insert(
         std::make_pair(t, SourceDescription(media_id, contents->GetTitle())));
 
@@ -289,7 +301,7 @@ void TabDesktopMediaList::ScreenshotReceived(
     return;
   }
 
-  // TODO(crbug.com/1224342): Listen for a newly drawn frame to be ready when a
+  // TODO(crbug.com/40187992): Listen for a newly drawn frame to be ready when a
   // hidden tab is woken up,rather than just retrying after an arbitrary delay.
   constexpr base::TimeDelta kScreenshotRetryDelayMs = base::Milliseconds(20);
 
@@ -361,7 +373,7 @@ void TabDesktopMediaList::SetPreviewedSource(
       /*is_activity=*/false);
 
   // Capture a new previewed image.
-  // TODO(crbug.com/1224342): Schedule this delayed if there has been another
+  // TODO(crbug.com/40187992): Schedule this delayed if there has been another
   // update recently to avoid churning when a user scrolls quickly through the
   // list.
   constexpr int kMaxPreviewRetries = 5;

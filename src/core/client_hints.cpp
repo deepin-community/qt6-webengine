@@ -1,5 +1,7 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
+
 #include "client_hints.h"
 
 #include "profile_qt.h"
@@ -9,6 +11,7 @@
 #include "components/embedder_support/user_agent_utils.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "content/public/browser/network_service_instance.h"
+#include "content/public/browser/web_contents.h"
 #include "extensions/buildflags/buildflags.h"
 #include "services/network/public/cpp/is_potentially_trustworthy.h"
 #include "services/network/public/cpp/network_quality_tracker.h"
@@ -44,9 +47,9 @@ ClientHintsFactory::ClientHintsFactory()
 
 ClientHintsFactory::~ClientHintsFactory() = default;
 
-KeyedService *ClientHintsFactory::BuildServiceInstanceFor(content::BrowserContext *context) const
+std::unique_ptr<KeyedService> ClientHintsFactory::BuildServiceInstanceForBrowserContext(content::BrowserContext *profile) const
 {
-    return new ClientHints(context);
+    return std::make_unique<ClientHints>(profile);
 }
 
 content::BrowserContext *ClientHintsFactory::GetBrowserContextToUse(content::BrowserContext *context) const
@@ -153,11 +156,6 @@ bool ClientHints::IsJavaScriptAllowed(const GURL &url, content::RenderFrameHost 
         }
     }
     return true;
-}
-
-bool ClientHints::AreThirdPartyCookiesBlocked(const GURL &url, content::RenderFrameHost *rfh)
-{
-    return false; // we probably can not report anything more specific
 }
 
 blink::UserAgentMetadata ClientHints::GetUserAgentMetadata()

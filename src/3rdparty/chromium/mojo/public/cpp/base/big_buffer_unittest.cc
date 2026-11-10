@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "mojo/public/cpp/base/big_buffer.h"
+
 #include <algorithm>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/rand_util.h"
-#include "mojo/public/cpp/base/big_buffer.h"
 #include "mojo/public/cpp/base/big_buffer_mojom_traits.h"
 #include "mojo/public/cpp/test_support/test_utils.h"
 #include "mojo/public/mojom/base/big_buffer.mojom.h"
@@ -18,8 +20,9 @@ namespace big_buffer_unittest {
 namespace {
 
 bool BufferEquals(const BigBuffer& a, const BigBuffer& b) {
-  return a.size() == b.size() && std::equal(a.data(), a.data() + a.size(),
-                                            b.data(), b.data() + b.size());
+  return a.size() == b.size() &&
+         std::equal(a.data(), UNSAFE_TODO(a.data() + a.size()), b.data(),
+                    UNSAFE_TODO(b.data() + b.size()));
 }
 
 }  // namespace
@@ -37,7 +40,7 @@ TEST(BigBufferTest, EmptyBuffer) {
 }
 
 TEST(BigBufferTest, SmallDataSize) {
-  BigBuffer in(std::vector<uint8_t>{1, 2, 3});
+  BigBuffer in(std::array<uint8_t, 3>{1, 2, 3});
   EXPECT_EQ(BigBuffer::StorageType::kBytes, in.storage_type());
 
   BigBuffer out;
@@ -49,8 +52,8 @@ TEST(BigBufferTest, SmallDataSize) {
 
 TEST(BigBufferTest, LargeDataSize) {
   constexpr size_t kLargeDataSize = BigBuffer::kMaxInlineBytes * 2;
-  std::vector<uint8_t> data(kLargeDataSize);
-  base::RandBytes(data.data(), kLargeDataSize);
+  std::array<uint8_t, kLargeDataSize> data;
+  base::RandBytes(data);
 
   BigBuffer in(data);
   EXPECT_EQ(BigBuffer::StorageType::kSharedMemory, in.storage_type());
@@ -62,7 +65,7 @@ TEST(BigBufferTest, LargeDataSize) {
 
   // NOTE: It's not safe to compare to |in| here since serialization will have
   // taken ownership of its internal shared buffer handle.
-  EXPECT_TRUE(BufferEquals(data, out));
+  EXPECT_TRUE(BufferEquals(base::span<const uint8_t>(data), out));
 }
 
 TEST(BigBufferTest, InvalidBuffer) {

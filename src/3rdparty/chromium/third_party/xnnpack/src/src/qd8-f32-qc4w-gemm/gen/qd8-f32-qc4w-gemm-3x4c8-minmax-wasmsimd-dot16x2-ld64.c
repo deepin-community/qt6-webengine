@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-gemm/MRx4c8-wasmsimd-dot16x2.c.in
 //   Generator: tools/xngen
@@ -11,8 +12,8 @@
 
 #include <wasm_simd128.h>
 
-#include <xnnpack/gemm.h>
-#include <xnnpack/math.h>
+#include "src/xnnpack/gemm.h"
+#include "src/xnnpack/math.h"
 
 
 void xnn_qd8_f32_qc4w_gemm_minmax_ukernel_3x4c8__wasmsimd_dot16x2_ld64(
@@ -25,8 +26,8 @@ void xnn_qd8_f32_qc4w_gemm_minmax_ukernel_3x4c8__wasmsimd_dot16x2_ld64(
     float* restrict c,
     size_t cm_stride,
     size_t cn_stride,
-    const union xnn_f32_qc4w_minmax_params params[restrict XNN_MIN_ELEMENTS(1)],
-    const struct xnn_qd8_quantization_params quantization_params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f32_qc4w_minmax_params* restrict params,
+    const struct xnn_qd8_quantization_params* restrict quantization_params) XNN_OOB_READS
 {
   assert(mr != 0);
   assert(mr <= 3);
@@ -53,7 +54,12 @@ void xnn_qd8_f32_qc4w_gemm_minmax_ukernel_3x4c8__wasmsimd_dot16x2_ld64(
     c2 = c1;
   }
 
-  const v128_t vmask = wasm_v128_load64_splat(params->wasmsimd.mask);  // 0xF0
+  const v128_t vmin = wasm_v128_load32_splat(&params->scalar.min);
+  const v128_t vmax = wasm_v128_load32_splat(&params->scalar.max);
+  XNN_FORCE_REALIZATION(vmin);
+  XNN_FORCE_REALIZATION(vmax);
+
+  const v128_t vmask = wasm_i8x16_const_splat(0xF0);
   do {
     const v128_t vksum0123 = wasm_v128_load(w);
     const v128_t vinput_zero_point0 = wasm_v128_load32_splat(&quantization_params[0].zero_point);
@@ -212,12 +218,10 @@ void xnn_qd8_f32_qc4w_gemm_minmax_ukernel_3x4c8__wasmsimd_dot16x2_ld64(
     vacc2x0123 = wasm_f32x4_add(vacc2x0123, vbias0123);
     w = (const float*) w + 4;
 
-    const v128_t vmin = wasm_v128_load64_splat(params->wasmsimd.min);
     vacc0x0123 = wasm_f32x4_pmax(vacc0x0123, vmin);
     vacc1x0123 = wasm_f32x4_pmax(vacc1x0123, vmin);
     vacc2x0123 = wasm_f32x4_pmax(vacc2x0123, vmin);
 
-    const v128_t vmax = wasm_v128_load64_splat(params->wasmsimd.max);
     vacc0x0123 = wasm_f32x4_pmin(vacc0x0123, vmax);
     vacc1x0123 = wasm_f32x4_pmin(vacc1x0123, vmax);
     vacc2x0123 = wasm_f32x4_pmin(vacc2x0123, vmax);

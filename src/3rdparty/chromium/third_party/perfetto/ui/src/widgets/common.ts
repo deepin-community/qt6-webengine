@@ -12,51 +12,103 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import {assertUnreachable} from '../base/logging';
 
 // This file contains interfaces for attributes for various HTML elements.
 // They are typically used by widgets which pass attributes down to their
 // internal child, to provide a type-safe interface to users of those widgets.
 // Note: This is a non-exhaustive list, and is added to when required.
 // Feel free to add any missing attributes as they arise.
-export type Style = string|Partial<CSSStyleDeclaration>;
+export type Style = string | Partial<CSSStyleDeclaration>;
 
 export interface HTMLAttrs {
-  ref?: string;  // This is a common attribute used in Perfetto.
-  style?: Style;
-  id?: string;
-  title?: string;
-  className?: string;
-  onclick?: (e: PointerEvent) => void;
-  onmouseover?: (e: MouseEvent) => void;
-  onmouseout?: (e: MouseEvent) => void;
-  onmousedown?: (e: MouseEvent) => void;
-  onmouseup?: (e: MouseEvent) => void;
-  onmousemove?: (e: MouseEvent) => void;
-  onload?: (e: Event) => void;
+  readonly ref?: string; // This is a common attribute used in Perfetto.
+  readonly style?: Style;
+  readonly id?: string;
+  readonly title?: string;
+  readonly className?: string;
+  readonly onclick?: (e: PointerEvent) => void;
+  readonly ondblclick?: (e: PointerEvent) => void;
+  readonly onmouseover?: (e: MouseEvent) => void;
+  readonly onmouseenter?: (e: MouseEvent) => void;
+  readonly onmouseout?: (e: MouseEvent) => void;
+  readonly onmousedown?: (e: MouseEvent) => void;
+  readonly onmouseup?: (e: MouseEvent) => void;
+  readonly onmousemove?: (e: MouseEvent) => void;
+  readonly onload?: (e: Event) => void;
 }
 
-export interface HTMLInputAttrs extends HTMLAttrs {
-  disabled?: boolean;
-  type?: string;
-  onchange?: (e: Event) => void;
-  oninput?: (e: KeyboardEvent) => void;
-  onkeydown?: (e: KeyboardEvent) => void;
-  onkeyup?: (e: KeyboardEvent) => void;
-  value?: string;
-  placeholder?: string;
+export interface HTMLFocusableAttrs extends HTMLAttrs {
+  readonly onblur?: (e: FocusEvent) => void;
+  readonly onfocus?: (e: FocusEvent) => void;
+}
+
+export interface HTMLInputAttrs extends HTMLFocusableAttrs {
+  readonly disabled?: boolean;
+  readonly type?: string;
+  readonly onchange?: (e: InputEvent) => void;
+  readonly oninput?: (e: KeyboardEvent) => void;
+  readonly onkeydown?: (e: KeyboardEvent) => void;
+  readonly onkeyup?: (e: KeyboardEvent) => void;
+  readonly value?: string | number;
+  readonly placeholder?: string;
+  readonly min?: number;
+  readonly max?: number;
 }
 
 export interface HTMLCheckboxAttrs extends HTMLInputAttrs {
-  checked?: boolean;
+  readonly checked?: boolean;
 }
 
 export interface HTMLButtonAttrs extends HTMLInputAttrs {}
 
 export interface HTMLAnchorAttrs extends HTMLAttrs {
-  href?: string;
-  target?: string;
+  readonly href?: string;
+  readonly target?: string;
 }
 
 export interface HTMLLabelAttrs extends HTMLAttrs {
-  for?: string;
+  readonly for?: string;
+}
+
+export enum Intent {
+  None = 'None',
+  Primary = 'Primary',
+  Success = 'Success',
+  Danger = 'Danger',
+  Warning = 'Warning',
+}
+
+export function classForIntent(intent: Intent): string | undefined {
+  switch (intent) {
+    case Intent.None:
+      return undefined;
+    case Intent.Primary:
+      return 'pf-intent-primary';
+    case Intent.Success:
+      return 'pf-intent-success';
+    case Intent.Danger:
+      return 'pf-intent-danger';
+    case Intent.Warning:
+      return 'pf-intent-warning';
+    default:
+      return assertUnreachable(intent);
+  }
+}
+
+export type Spacing = 'none' | 'small' | 'medium' | 'large';
+
+export function classForSpacing(spacing: Spacing): string {
+  switch (spacing) {
+    case 'none':
+      return 'pf-spacing-none';
+    case 'small':
+      return 'pf-spacing-small';
+    case 'medium':
+      return 'pf-spacing-medium';
+    case 'large':
+      return 'pf-spacing-large';
+    default:
+      assertUnreachable(spacing);
+  }
 }

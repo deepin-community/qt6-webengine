@@ -5,8 +5,8 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_BROWSER_METRICS_PAYMENTS_CREDIT_CARD_SAVE_METRICS_H_
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_METRICS_PAYMENTS_CREDIT_CARD_SAVE_METRICS_H_
 
-#include "components/autofill/core/browser/autofill_client.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics.h"
+#include "components/autofill/core/browser/payments/payments_autofill_client.h"
 
 namespace autofill::autofill_metrics {
 
@@ -90,7 +90,7 @@ enum class CardUploadEnabled {
   kUsingExplicitSyncPassphrase = 5,
   kLocalSyncEnabled = 6,
   // Deprecated: kPaymentsIntegrationDisabled = 7,
-  kEmailEmpty = 8,
+  // Deprecated: kEmailEmpty = 8,
   // Deprecated: kEmailDomainNotSupported = 9,
   // Deprecated: kAutofillUpstreamDisabled = 10,
   // Deprecated: kCardUploadEnabled = 11,
@@ -99,6 +99,9 @@ enum class CardUploadEnabled {
   kEnabledByFlag = 14,
   kMaxValue = kEnabledByFlag,
 };
+
+// TODO(crbug.com/395731509): Refactor Save Card offer metrics across all
+// platforms.
 
 // Metrics to track event when the save card prompt is offered.
 enum class SaveCardPromptOffer {
@@ -113,7 +116,10 @@ enum class SaveCardPromptOffer {
   // The prompt is not shown because the required delay since last strike has
   // not passed.
   kNotShownRequiredDelay = 2,
-  kMaxValue = kNotShownRequiredDelay,
+  // The prompt may have been for a card update instead of a new card upload, in
+  // which case CVC is required, but it was missing.
+  kCvcMissingForPotentialUpdate = 3,
+  kMaxValue = kCvcMissingForPotentialUpdate,
 };
 
 enum class SaveCardPromptResult {
@@ -201,21 +207,30 @@ void LogSaveCardCardholderNamePrefilled(bool prefilled);
 // from its prefilled value or not.
 void LogSaveCardCardholderNameWasEdited(bool edited);
 
+// Logs whether the save credit card prompt is shown or not. The metric logged
+// is platform-agnostic. Should not be called for prompt re-shows (e.g., prompt
+// reshown from the omnibox icon on desktop).
+void LogSaveCreditCardPromptOfferMetric(SaveCardPromptOffer metric,
+                                        bool is_upload_save);
+
+// TODO(crbug.com/430588721): Clean up this function once refactored save card
+// metrics have rolled out.
 void LogSaveCardPromptOfferMetric(
     SaveCardPromptOffer metric,
     bool is_uploading,
     bool is_reshow,
-    AutofillClient::SaveCreditCardOptions options,
-    security_state::SecurityLevel security_level,
+    payments::PaymentsAutofillClient::SaveCreditCardOptions options,
     AutofillMetrics::PaymentsSigninState sync_state);
 
+// `has_saved_cards` indicates that local or server cards existed before the
+// save prompt was accepted/denied.
 void LogSaveCardPromptResultMetric(
     SaveCardPromptResult metric,
     bool is_uploading,
     bool is_reshow,
-    AutofillClient::SaveCreditCardOptions options,
-    security_state::SecurityLevel security_level,
-    AutofillMetrics::PaymentsSigninState sync_state);
+    payments::PaymentsAutofillClient::SaveCreditCardOptions options,
+    AutofillMetrics::PaymentsSigninState sync_state,
+    bool has_saved_cards);
 
 void LogSaveCvcPromptOfferMetric(SaveCardPromptOffer metric,
                                  bool is_uploading,
@@ -231,11 +246,27 @@ void LogCvcInfoBarMetric(AutofillMetrics::InfoBarMetric metric,
 void LogSaveCardRequestExpirationDateReasonMetric(
     SaveCardRequestExpirationDateReason metric);
 
+void LogCreditCardUploadRanLocalSaveFallbackMetric(bool new_local_card_added);
+
+void LogCreditCardUploadLoadingViewShownMetric(bool is_shown);
+
+void LogCreditCardUploadConfirmationViewShownMetric(bool is_shown,
+                                                    bool is_card_uploaded);
+
+void LogCreditCardUploadLoadingViewResultMetric(SaveCardPromptResult metric);
+
+void LogCreditCardUploadConfirmationViewResultMetric(
+    SaveCardPromptResult metric,
+    bool is_card_uploaded);
+
+void LogGetCardUploadDetailsRequestLatencyMetric(base::TimeDelta duration,
+                                                 bool is_successful);
+
 // Clank-specific metrics.
 void LogSaveCreditCardPromptResult(
     SaveCreditCardPromptResult event,
     bool is_upload,
-    AutofillClient::SaveCreditCardOptions options);
+    payments::PaymentsAutofillClient::SaveCreditCardOptions options);
 
 }  // namespace autofill::autofill_metrics
 

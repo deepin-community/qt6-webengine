@@ -27,7 +27,14 @@ OpenXrPlatformHelperAndroid::~OpenXrPlatformHelperAndroid() = default;
 
 std::unique_ptr<device::OpenXrGraphicsBinding>
 OpenXrPlatformHelperAndroid::GetGraphicsBinding() {
-  return std::make_unique<device::OpenXrGraphicsBindingOpenGLES>();
+  auto graphics_binding =
+      std::make_unique<device::OpenXrGraphicsBindingOpenGLES>(
+          GetExtensionEnumeration());
+  if (graphics_binding->InitializeGl()) {
+    return graphics_binding;
+  }
+
+  return nullptr;
 }
 
 void OpenXrPlatformHelperAndroid::GetPlatformCreateInfo(
@@ -37,8 +44,15 @@ void OpenXrPlatformHelperAndroid::GetPlatformCreateInfo(
   auto activity_ready_callback =
       base::BindOnce(&OpenXrPlatformHelperAndroid::OnXrActivityReady,
                      base::Unretained(this), std::move(result_callback));
-  session_coordinator_->RequestXrSession(std::move(activity_ready_callback),
-                                         std::move(shutdown_callback));
+  session_coordinator_->RequestXrSession(
+      create_info.render_process_id, create_info.render_frame_id,
+      create_info.needs_separate_activity, std::move(activity_ready_callback),
+      std::move(shutdown_callback));
+}
+
+void OpenXrPlatformHelperAndroid::PrepareForSessionShutdown(
+    base::OnceClosure shutdown_ready_callback) {
+  session_coordinator_->EndSession(std::move(shutdown_ready_callback));
 }
 
 void OpenXrPlatformHelperAndroid::OnXrActivityReady(
@@ -83,8 +97,7 @@ bool OpenXrPlatformHelperAndroid::Initialize() {
 
 bool OpenXrPlatformHelperAndroid::CheckHardwareSupport(
     content::WebContents* web_contents) {
-  if (!base::FeatureList::IsEnabled(
-          device::features::kOpenXrExtendedFeatureSupport)) {
+  if (!device::features::IsOpenXrArEnabled()) {
     return true;
   }
 
@@ -122,6 +135,15 @@ XrResult OpenXrPlatformHelperAndroid::CreateTemporaryInstance(
   create_info.applicationActivity = activity_.obj();
 
   return CreateInstance(instance, &create_info);
+}
+
+void OpenXrPlatformHelperAndroid::OnInstanceCreateFailure() {
+  // Note that this may be called in the normal case of failing to create a
+  // "temporary" instance that we were using solely to check support, and so
+  // StartXrSession may not have been called yet; however, this method just
+  // forwards the call to the corresponding Java class who appropriately no-ops
+  // if there is no active session.
+  session_coordinator_->EndSession();
 }
 
 XrResult OpenXrPlatformHelperAndroid::DestroyInstance(XrInstance& instance) {

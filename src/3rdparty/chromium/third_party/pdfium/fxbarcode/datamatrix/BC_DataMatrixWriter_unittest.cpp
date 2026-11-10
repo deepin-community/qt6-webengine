@@ -7,19 +7,22 @@
 #include <stdint.h>
 
 #include "core/fxcrt/data_vector.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-class CBC_DataMatrixWriterTest : public testing::Test {
+using testing::ElementsAreArray;
+
+class CBCDataMatrixWriterTest : public testing::Test {
  public:
-  CBC_DataMatrixWriterTest() = default;
-  ~CBC_DataMatrixWriterTest() override = default;
+  CBCDataMatrixWriterTest() = default;
+  ~CBCDataMatrixWriterTest() override = default;
 
   // testing::Test:
   void SetUp() override { BC_Library_Init(); }
   void TearDown() override { BC_Library_Destroy(); }
 };
 
-TEST_F(CBC_DataMatrixWriterTest, Encode) {
+TEST_F(CBCDataMatrixWriterTest, Encode) {
   CBC_DataMatrixWriter writer;
   int32_t width = -1;
   int32_t height = -1;
@@ -44,8 +47,7 @@ TEST_F(CBC_DataMatrixWriterTest, Encode) {
     ASSERT_EQ(std::size(kExpectedData), data.size());
     ASSERT_EQ(kExpectedDimension, width);
     ASSERT_EQ(kExpectedDimension, height);
-    for (size_t i = 0; i < std::size(kExpectedData); ++i)
-      EXPECT_EQ(kExpectedData[i], data[i]) << i;
+    EXPECT_THAT(data, ElementsAreArray(kExpectedData));
   }
   {
     static constexpr int kExpectedDimension = 14;
@@ -71,8 +73,7 @@ TEST_F(CBC_DataMatrixWriterTest, Encode) {
     ASSERT_EQ(std::size(kExpectedData), data.size());
     ASSERT_EQ(kExpectedDimension, width);
     ASSERT_EQ(kExpectedDimension, height);
-    for (size_t i = 0; i < std::size(kExpectedData); ++i)
-      EXPECT_EQ(kExpectedData[i], data[i]) << i;
+    EXPECT_THAT(data, ElementsAreArray(kExpectedData));
   }
   {
     static constexpr int kExpectedDimension = 10;
@@ -94,8 +95,7 @@ TEST_F(CBC_DataMatrixWriterTest, Encode) {
     ASSERT_EQ(std::size(kExpectedData), data.size());
     ASSERT_EQ(kExpectedDimension, width);
     ASSERT_EQ(kExpectedDimension, height);
-    for (size_t i = 0; i < std::size(kExpectedData); ++i)
-      EXPECT_EQ(kExpectedData[i], data[i]) << i;
+    EXPECT_THAT(data, ElementsAreArray(kExpectedData));
   }
   {
     static constexpr int kExpectedDimension = 18;
@@ -126,8 +126,7 @@ TEST_F(CBC_DataMatrixWriterTest, Encode) {
     ASSERT_EQ(std::size(kExpectedData), data.size());
     ASSERT_EQ(kExpectedDimension, width);
     ASSERT_EQ(kExpectedDimension, height);
-    for (size_t i = 0; i < std::size(kExpectedData); ++i)
-      EXPECT_EQ(kExpectedData[i], data[i]) << i;
+    EXPECT_THAT(data, ElementsAreArray(kExpectedData));
   }
   {
     DataVector<uint8_t> data = writer.Encode(L"hello world", &width, &height);
@@ -135,15 +134,16 @@ TEST_F(CBC_DataMatrixWriterTest, Encode) {
   }
 }
 
-TEST_F(CBC_DataMatrixWriterTest, EncodeLimitAlphaNumeric) {
+TEST_F(CBCDataMatrixWriterTest, EncodeLimitAlphaNumeric) {
   CBC_DataMatrixWriter writer;
   int32_t width = -1;
   int32_t height = -1;
 
   static constexpr int kMaxInputLength = 2335;  // Per spec.
   WideString input;
-  for (size_t i = 0; i < kMaxInputLength; ++i)
+  for (size_t i = 0; i < kMaxInputLength; ++i) {
     input.InsertAtBack(L'a');
+  }
 
   {
     static constexpr int kExpectedDimension = 144;
@@ -165,15 +165,16 @@ TEST_F(CBC_DataMatrixWriterTest, EncodeLimitAlphaNumeric) {
   }
 }
 
-TEST_F(CBC_DataMatrixWriterTest, EncodeLimitNumbers) {
+TEST_F(CBCDataMatrixWriterTest, EncodeLimitNumbers) {
   CBC_DataMatrixWriter writer;
   int32_t width = -1;
   int32_t height = -1;
 
   static constexpr int kMaxInputLength = 3116;  // Per spec.
   WideString input;
-  for (size_t i = 0; i < kMaxInputLength; ++i)
+  for (size_t i = 0; i < kMaxInputLength; ++i) {
     input.InsertAtBack(L'1');
+  }
 
   {
     static constexpr int kExpectedDimension = 144;

@@ -7,6 +7,7 @@
 
 #include "cc/input/hit_test_opaqueness.h"
 #include "third_party/blink/renderer/core/style/computed_style_constants.h"
+#include "third_party/blink/renderer/platform/geometry/physical_offset.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 
 namespace gfx {
@@ -18,7 +19,6 @@ namespace blink {
 class DisplayItemClient;
 class LayoutObject;
 struct PaintInfo;
-struct PhysicalOffset;
 
 class ObjectPainter {
   STACK_ALLOCATED();
@@ -56,6 +56,8 @@ class ObjectPainter {
   void RecordHitTestData(const PaintInfo&,
                          const gfx::Rect& paint_rect,
                          const DisplayItemClient&);
+
+  cc::HitTestOpaqueness GetHitTestOpaqueness() const;
 
   // If true, we should record hit test data for the second purpose described
   // above. As an optimization, some callers of RecordHitTestData() doesn't

@@ -13,14 +13,27 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/strings/string_view.h"
-#include "absl/types/optional.h"
-#include "api/video/i420_buffer.h"
+#include "api/environment/environment.h"
+#include "api/scoped_refptr.h"
+#include "api/test/video_quality_analyzer_interface.h"
+#include "api/video/encoded_image.h"
 #include "api/video/video_frame.h"
+#include "api/video/video_frame_buffer.h"
+#include "api/video_codecs/sdp_video_format.h"
+#include "api/video_codecs/video_codec.h"
+#include "api/video_codecs/video_decoder.h"
+#include "api/video_codecs/video_decoder_factory.h"
 #include "modules/video_coding/include/video_error_codes.h"
+#include "rtc_base/checks.h"
 #include "rtc_base/logging.h"
+#include "rtc_base/synchronization/mutex.h"
+#include "test/pc/e2e/analyzer/video/encoded_image_data_injector.h"
 #include "test/pc/e2e/analyzer/video/simulcast_dummy_buffer_helper.h"
 
 namespace webrtc {
@@ -156,8 +169,8 @@ void QualityAnalyzingVideoDecoder::DecoderCallback::SetDelegateCallback(
 // method on `delegate_callback_`, as was called on `this` callback.
 int32_t QualityAnalyzingVideoDecoder::DecoderCallback::Decoded(
     VideoFrame& decodedImage) {
-  decoder_->OnFrameDecoded(&decodedImage, /*decode_time_ms=*/absl::nullopt,
-                           /*qp=*/absl::nullopt);
+  decoder_->OnFrameDecoded(&decodedImage, /*decode_time_ms=*/std::nullopt,
+                           /*qp=*/std::nullopt);
 
   MutexLock lock(&callback_mutex_);
   RTC_DCHECK(delegate_callback_);
@@ -167,7 +180,7 @@ int32_t QualityAnalyzingVideoDecoder::DecoderCallback::Decoded(
 int32_t QualityAnalyzingVideoDecoder::DecoderCallback::Decoded(
     VideoFrame& decodedImage,
     int64_t decode_time_ms) {
-  decoder_->OnFrameDecoded(&decodedImage, decode_time_ms, /*qp=*/absl::nullopt);
+  decoder_->OnFrameDecoded(&decodedImage, decode_time_ms, /*qp=*/std::nullopt);
 
   MutexLock lock(&callback_mutex_);
   RTC_DCHECK(delegate_callback_);
@@ -176,8 +189,8 @@ int32_t QualityAnalyzingVideoDecoder::DecoderCallback::Decoded(
 
 void QualityAnalyzingVideoDecoder::DecoderCallback::Decoded(
     VideoFrame& decodedImage,
-    absl::optional<int32_t> decode_time_ms,
-    absl::optional<uint8_t> qp) {
+    std::optional<int32_t> decode_time_ms,
+    std::optional<uint8_t> qp) {
   decoder_->OnFrameDecoded(&decodedImage, decode_time_ms, qp);
 
   MutexLock lock(&callback_mutex_);
@@ -189,19 +202,18 @@ int32_t
 QualityAnalyzingVideoDecoder::DecoderCallback::IrrelevantSimulcastStreamDecoded(
     uint16_t frame_id,
     uint32_t timestamp_ms) {
-  webrtc::VideoFrame dummy_frame =
-      webrtc::VideoFrame::Builder()
-          .set_video_frame_buffer(GetDummyFrameBuffer())
-          .set_timestamp_rtp(timestamp_ms)
-          .set_id(frame_id)
-          .build();
+  VideoFrame dummy_frame = VideoFrame::Builder()
+                               .set_video_frame_buffer(GetDummyFrameBuffer())
+                               .set_rtp_timestamp(timestamp_ms)
+                               .set_id(frame_id)
+                               .build();
   MutexLock lock(&callback_mutex_);
   RTC_DCHECK(delegate_callback_);
-  delegate_callback_->Decoded(dummy_frame, absl::nullopt, absl::nullopt);
+  delegate_callback_->Decoded(dummy_frame, std::nullopt, std::nullopt);
   return WEBRTC_VIDEO_CODEC_OK;
 }
 
-rtc::scoped_refptr<webrtc::VideoFrameBuffer>
+scoped_refptr<VideoFrameBuffer>
 QualityAnalyzingVideoDecoder::DecoderCallback::GetDummyFrameBuffer() {
   if (!dummy_frame_buffer_) {
     dummy_frame_buffer_ = CreateDummyFrameBuffer();
@@ -212,25 +224,25 @@ QualityAnalyzingVideoDecoder::DecoderCallback::GetDummyFrameBuffer() {
 
 void QualityAnalyzingVideoDecoder::OnFrameDecoded(
     VideoFrame* frame,
-    absl::optional<int32_t> decode_time_ms,
-    absl::optional<uint8_t> qp) {
-  absl::optional<uint16_t> frame_id;
+    std::optional<int32_t> decode_time_ms,
+    std::optional<uint8_t> qp) {
+  std::optional<uint16_t> frame_id;
   std::string codec_name;
   {
     MutexLock lock(&mutex_);
-    auto it = timestamp_to_frame_id_.find(frame->timestamp());
+    auto it = timestamp_to_frame_id_.find(frame->rtp_timestamp());
     if (it == timestamp_to_frame_id_.end()) {
       // Ensure, that we have info about this frame. It can happen that for some
       // reasons decoder response, that it failed to decode, when we were
       // posting frame to it, but then call the callback for this frame.
       RTC_LOG(LS_ERROR) << "QualityAnalyzingVideoDecoder::OnFrameDecoded: No "
                            "frame id for frame for frame->timestamp()="
-                        << frame->timestamp();
+                        << frame->rtp_timestamp();
       return;
     }
     frame_id = it->second;
     timestamp_to_frame_id_.erase(it);
-    decoding_images_.erase(frame->timestamp());
+    decoding_images_.erase(frame->rtp_timestamp());
     codec_name = codec_name_;
   }
   // Set frame id to the value, that was extracted from corresponding encoded
@@ -239,6 +251,7 @@ void QualityAnalyzingVideoDecoder::OnFrameDecoded(
   VideoQualityAnalyzerInterface::DecoderStats stats;
   stats.decoder_name = codec_name;
   stats.decode_time_ms = decode_time_ms;
+  stats.qp = qp;
   analyzer_->OnFrameDecoded(peer_name_, *frame, stats);
 }
 
@@ -259,10 +272,10 @@ QualityAnalyzingVideoDecoderFactory::GetSupportedFormats() const {
   return delegate_->GetSupportedFormats();
 }
 
-std::unique_ptr<VideoDecoder>
-QualityAnalyzingVideoDecoderFactory::CreateVideoDecoder(
+std::unique_ptr<VideoDecoder> QualityAnalyzingVideoDecoderFactory::Create(
+    const Environment& env,
     const SdpVideoFormat& format) {
-  std::unique_ptr<VideoDecoder> decoder = delegate_->CreateVideoDecoder(format);
+  std::unique_ptr<VideoDecoder> decoder = delegate_->Create(env, format);
   return std::make_unique<QualityAnalyzingVideoDecoder>(
       peer_name_, std::move(decoder), extractor_, analyzer_);
 }

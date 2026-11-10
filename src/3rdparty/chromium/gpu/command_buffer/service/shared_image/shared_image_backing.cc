@@ -4,8 +4,10 @@
 
 #include "gpu/command_buffer/service/shared_image/shared_image_backing.h"
 
+#include <algorithm>
+
+#include "base/notimplemented.h"
 #include "base/notreached.h"
-#include "base/ranges/algorithm.h"
 #include "base/trace_event/process_memory_dump.h"
 #include "build/build_config.h"
 #include "components/viz/common/resources/shared_image_format_utils.h"
@@ -64,7 +66,7 @@ const char* BackingTypeToString(SharedImageBackingType type) {
     case SharedImageBackingType::kWrappedGraphiteTexture:
       return "WrappedGraphiteTexture";
   }
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 }  // namespace
@@ -76,7 +78,8 @@ SharedImageBacking::SharedImageBacking(
     const gfx::ColorSpace& color_space,
     GrSurfaceOrigin surface_origin,
     SkAlphaType alpha_type,
-    uint32_t usage,
+    SharedImageUsageSet usage,
+    std::string debug_label,
     size_t estimated_size,
     bool is_thread_safe,
     std::optional<gfx::BufferUsage> buffer_usage)
@@ -87,6 +90,7 @@ SharedImageBacking::SharedImageBacking(
       surface_origin_(surface_origin),
       alpha_type_(alpha_type),
       usage_(usage),
+      debug_label_(std::move(debug_label)),
       estimated_size_(estimated_size),
       buffer_usage_(std::move(buffer_usage)) {
   DCHECK_CALLED_ON_VALID_THREAD(factory_thread_checker_);
@@ -106,13 +110,17 @@ void SharedImageBacking::OnContextLost() {
 SkImageInfo SharedImageBacking::AsSkImageInfo(int plane_index) const {
   gfx::Size plane_size = format_.GetPlaneSize(plane_index, size_);
   return SkImageInfo::Make(plane_size.width(), plane_size.height(),
-                           viz::ToClosestSkColorType(
-                               /*gpu_compositing=*/true, format(), plane_index),
+                           viz::ToClosestSkColorType(format(), plane_index),
                            alpha_type_, color_space_.ToSkColorSpace());
 }
 
 bool SharedImageBacking::CopyToGpuMemoryBuffer() {
-  return false;
+  NOTREACHED();
+}
+
+void SharedImageBacking::CopyToGpuMemoryBufferAsync(
+    base::OnceCallback<void(bool)> callback) {
+  std::move(callback).Run(CopyToGpuMemoryBuffer());
 }
 
 void SharedImageBacking::Update(std::unique_ptr<gfx::GpuFence> in_fence) {}
@@ -120,13 +128,17 @@ void SharedImageBacking::Update(std::unique_ptr<gfx::GpuFence> in_fence) {}
 bool SharedImageBacking::UploadFromMemory(
     const std::vector<SkPixmap>& pixmaps) {
   NOTREACHED();
-  return false;
 }
 
 bool SharedImageBacking::ReadbackToMemory(
     const std::vector<SkPixmap>& pixmaps) {
   NOTREACHED();
-  return false;
+}
+
+void SharedImageBacking::ReadbackToMemoryAsync(
+    const std::vector<SkPixmap>& pixmaps,
+    base::OnceCallback<void(bool)> callback) {
+  std::move(callback).Run(ReadbackToMemory(pixmaps));
 }
 
 bool SharedImageBacking::PresentSwapChain() {
@@ -140,15 +152,20 @@ base::trace_event::MemoryAllocatorDump* SharedImageBacking::OnMemoryDump(
     uint64_t client_tracing_id) {
   base::trace_event::MemoryAllocatorDump* dump =
       pmd->CreateAllocatorDump(dump_name);
+  auto byte_size = GetEstimatedSizeForMemoryDump();
   dump->AddScalar(base::trace_event::MemoryAllocatorDump::kNameSize,
                   base::trace_event::MemoryAllocatorDump::kUnitsBytes,
-                  GetEstimatedSizeForMemoryDump());
+                  byte_size);
 
   dump->AddString("type", "", GetName());
   dump->AddString("dimensions", "", size().ToString());
   dump->AddString("format", "", format().ToString());
   dump->AddString("usage", "", CreateLabelForSharedImageUsage(usage()));
+  dump->AddString("debug label", "", debug_label_);
   dump->AddScalar("purgeable", "bool", IsPurgeable());
+#if BUILDFLAG(IS_CHROMEOS)
+  dump->AddScalar("non_exo_size", "bool", IsImportedFromExo() ? 0 : byte_size);
+#endif
 
   // Add ownership edge to `client_guid` which expresses shared ownership with
   // the client process.
@@ -176,11 +193,32 @@ std::unique_ptr<SkiaImageRepresentation> SharedImageBacking::ProduceSkia(
     MemoryTypeTracker* tracker,
     scoped_refptr<SharedContextState> context_state) {
   // For testing if no context state, then default to SkiaGanesh representation.
-  if (!context_state || context_state->gr_context()) {
+  if (!context_state) {
     return ProduceSkiaGanesh(manager, tracker, context_state);
   }
-  CHECK(context_state->graphite_context());
-  return ProduceSkiaGraphite(manager, tracker, context_state);
+
+  switch (context_state->gr_context_type()) {
+    case gpu::GrContextType::kNone:
+      // `kNone` signifies that the GPU process is being used only for WebGL via
+      // SwiftShader. Skia is not initialized and should never be used in this
+      // case but renderer/extension processes find out about software
+      // compositing fallback asynchronously. They could issue GPU work before
+      // finding out.
+      // TODO(crbug.com/335279173): This would never be reached if clients found
+      // out about compositing mode from the GPU process when they initialize a
+      // GPU channel.
+      return nullptr;
+    case gpu::GrContextType::kGL:
+    case gpu::GrContextType::kVulkan:
+      return ProduceSkiaGanesh(manager, tracker, context_state);
+    case gpu::GrContextType::kGraphiteMetal:
+    case gpu::GrContextType::kGraphiteDawn:
+      return ProduceSkiaGraphite(manager, tracker, context_state);
+      // NOTE: Do not add a default case to force any new types to be
+      // handled here on addition.
+  }
+
+  NOTREACHED();
 }
 
 std::unique_ptr<SkiaGaneshImageRepresentation>
@@ -209,16 +247,23 @@ std::unique_ptr<DawnImageRepresentation> SharedImageBacking::ProduceDawn(
   return nullptr;
 }
 
-std::unique_ptr<OverlayImageRepresentation> SharedImageBacking::ProduceOverlay(
+std::unique_ptr<DawnBufferRepresentation> SharedImageBacking::ProduceDawnBuffer(
     SharedImageManager* manager,
-    MemoryTypeTracker* tracker) {
+    MemoryTypeTracker* tracker,
+    const wgpu::Device& device,
+    wgpu::BackendType backend_type) {
   return nullptr;
 }
 
-std::unique_ptr<VaapiImageRepresentation> SharedImageBacking::ProduceVASurface(
+std::unique_ptr<WebNNTensorRepresentation>
+SharedImageBacking::ProduceWebNNTensor(SharedImageManager* manager,
+                                       MemoryTypeTracker* tracker) {
+  return nullptr;
+}
+
+std::unique_ptr<OverlayImageRepresentation> SharedImageBacking::ProduceOverlay(
     SharedImageManager* manager,
-    MemoryTypeTracker* tracker,
-    VaapiDependenciesFactory* dep_factory) {
+    MemoryTypeTracker* tracker) {
   return nullptr;
 }
 
@@ -234,10 +279,10 @@ std::unique_ptr<RasterImageRepresentation> SharedImageBacking::ProduceRaster(
   return nullptr;
 }
 
-std::unique_ptr<VideoDecodeImageRepresentation>
-SharedImageBacking::ProduceVideoDecode(SharedImageManager* manager,
-                                       MemoryTypeTracker* tracker,
-                                       VideoDecodeDevice device) {
+std::unique_ptr<VideoImageRepresentation> SharedImageBacking::ProduceVideo(
+    SharedImageManager* manager,
+    MemoryTypeTracker* tracker,
+    VideoDevice device) {
   return nullptr;
 }
 
@@ -246,7 +291,8 @@ std::unique_ptr<VulkanImageRepresentation> SharedImageBacking::ProduceVulkan(
     SharedImageManager* manager,
     MemoryTypeTracker* tracker,
     gpu::VulkanDeviceQueue* vulkan_device_queue,
-    gpu::VulkanImplementation& vulkan_impl) {
+    gpu::VulkanImplementation& vulkan_impl,
+    bool needs_detiling) {
   return nullptr;
 }
 #endif
@@ -304,8 +350,8 @@ void SharedImageBacking::ReleaseRef(SharedImageRepresentation* representation) {
   AutoLock auto_lock(this);
   DCHECK(is_ref_counted_);
 
-  auto found = base::ranges::find(refs_, representation);
-  DCHECK(found != refs_.end());
+  auto found = std::ranges::find(refs_, representation);
+  CHECK(found != refs_.end());
 
   // If the found representation is the first (owning) ref, free the attributed
   // memory.
@@ -345,6 +391,12 @@ void SharedImageBacking::UnregisterImageFactory() {
   factory_ = nullptr;
 }
 
+void SharedImageBacking::SetSharedImagePoolId(SharedImagePoolId pool_id) {
+  // There should be no existing pool_id already on this backing.
+  CHECK(!pool_id_);
+  pool_id_ = std::move(pool_id);
+}
+
 const char* SharedImageBacking::GetName() const {
   return BackingTypeToString(GetType());
 }
@@ -353,19 +405,6 @@ bool SharedImageBacking::HasAnyRefs() const {
   AutoLock auto_lock(this);
 
   return !refs_.empty();
-}
-
-void SharedImageBacking::OnReadSucceeded() {
-  AutoLock auto_lock(this);
-  if (scoped_write_uma_) {
-    scoped_write_uma_->SetConsumed();
-    scoped_write_uma_.reset();
-  }
-}
-
-void SharedImageBacking::OnWriteSucceeded() {
-  AutoLock auto_lock(this);
-  scoped_write_uma_.emplace();
 }
 
 size_t SharedImageBacking::GetEstimatedSize() const {
@@ -403,7 +442,8 @@ ClearTrackingSharedImageBacking::ClearTrackingSharedImageBacking(
     const gfx::ColorSpace& color_space,
     GrSurfaceOrigin surface_origin,
     SkAlphaType alpha_type,
-    uint32_t usage,
+    gpu::SharedImageUsageSet usage,
+    std::string debug_label,
     size_t estimated_size,
     bool is_thread_safe,
     std::optional<gfx::BufferUsage> buffer_usage)
@@ -414,6 +454,7 @@ ClearTrackingSharedImageBacking::ClearTrackingSharedImageBacking(
                          surface_origin,
                          alpha_type,
                          usage,
+                         std::move(debug_label),
                          estimated_size,
                          is_thread_safe,
                          std::move(buffer_usage)) {}
@@ -438,6 +479,14 @@ void ClearTrackingSharedImageBacking::SetClearedRectInternal(
   cleared_rect_ = cleared_rect;
 }
 
+void ClearTrackingSharedImageBacking::SetClearedInternal() {
+  cleared_rect_ = gfx::Rect(size());
+}
+
+bool ClearTrackingSharedImageBacking::IsClearedInternal() const {
+  return cleared_rect_ == gfx::Rect(size());
+}
+
 scoped_refptr<gfx::NativePixmap> SharedImageBacking::GetNativePixmap() {
   return nullptr;
 }
@@ -447,10 +496,13 @@ gfx::GpuMemoryBufferHandle SharedImageBacking::GetGpuMemoryBufferHandle() {
   // backings which implements it,i.e., memory buffer handle should only be
   // retrieved from the backings which supports native buffer or shared memory.
   NOTREACHED();
-  return gfx::GpuMemoryBufferHandle();
 }
 
 bool SharedImageBacking::IsPurgeable() const {
+  return false;
+}
+
+bool SharedImageBacking::IsImportedFromExo() {
   return false;
 }
 

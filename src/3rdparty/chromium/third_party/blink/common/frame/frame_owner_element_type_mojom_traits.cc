@@ -27,7 +27,6 @@ blink::mojom::FrameOwnerElementType EnumTraits<
       return blink::mojom::FrameOwnerElementType::kNone;
   }
   NOTREACHED();
-  return blink::mojom::FrameOwnerElementType::kFrame;
 }
 
 bool EnumTraits<blink::mojom::FrameOwnerElementType,

@@ -1,22 +1,21 @@
 // Copyright 2020 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
 
 import type * as Platform from '../../../core/platform/platform.js';
-import * as ComponentHelpers from '../../../ui/components/helpers/helpers.js';
-import * as LitHtml from '../../../ui/lit-html/lit-html.js';
+import {html, render} from '../../../ui/lit/lit.js';
+import * as VisualElements from '../../visual_logging/visual_logging.js';
 
 import adornerStyles from './adorner.css.js';
 
-const {render, html} = LitHtml;
-
 export interface AdornerData {
   name: string;
-  content: HTMLElement;
+  content?: HTMLElement;
+  jslogContext?: string;
 }
 
 export class Adorner extends HTMLElement {
-  static readonly litTagName = LitHtml.literal`devtools-adorner`;
   name = '';
 
   readonly #shadow = this.attachShadow({mode: 'open'});
@@ -24,21 +23,32 @@ export class Adorner extends HTMLElement {
   #ariaLabelDefault?: string;
   #ariaLabelActive?: string;
   #content?: HTMLElement;
+  #jslogContext?: string;
 
   set data(data: AdornerData) {
     this.name = data.name;
-    data.content.slot = 'content';
-    this.#content?.remove();
-    this.append(data.content);
-    this.#content = data.content;
+    this.#jslogContext = data.jslogContext;
+    if (data.content) {
+      this.#content?.remove();
+      this.append(data.content);
+      this.#content = data.content;
+    }
     this.#render();
+  }
+
+  override cloneNode(deep?: boolean): Node {
+    const node = super.cloneNode(deep) as Adorner;
+    node.data = {name: this.name, content: this.#content, jslogContext: this.#jslogContext};
+    return node;
   }
 
   connectedCallback(): void {
     if (!this.getAttribute('aria-label')) {
       this.setAttribute('aria-label', this.name);
     }
-    this.#shadow.adoptedStyleSheets = [adornerStyles];
+    if (this.#jslogContext && !this.getAttribute('jslog')) {
+      this.setAttribute('jslog', `${VisualElements.adorner(this.#jslogContext)}`);
+    }
   }
 
   isActive(): boolean {
@@ -82,6 +92,9 @@ export class Adorner extends HTMLElement {
     this.#ariaLabelDefault = ariaLabelDefault;
     this.#ariaLabelActive = ariaLabelActive;
     this.setAttribute('aria-label', ariaLabelDefault);
+    if (this.#jslogContext) {
+      this.setAttribute('jslog', `${VisualElements.adorner(this.#jslogContext).track({click: true})}`);
+    }
 
     if (isToggle) {
       this.addEventListener('click', () => {
@@ -107,20 +120,13 @@ export class Adorner extends HTMLElement {
   }
 
   #render(): void {
-    // Disabled until https://crbug.com/1079231 is fixed.
-    // clang-format off
-    render(html`
-      <slot name="content"></slot>
-    `, this.#shadow, {
-      host: this,
-    });
+    render(html`<style>${adornerStyles}</style><slot></slot>`, this.#shadow, {host: this});
   }
 }
 
-ComponentHelpers.CustomElements.defineComponent('devtools-adorner', Adorner);
+customElements.define('devtools-adorner', Adorner);
 
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface HTMLElementTagNameMap {
     'devtools-adorner': Adorner;
   }

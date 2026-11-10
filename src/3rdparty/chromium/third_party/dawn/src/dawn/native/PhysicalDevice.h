@@ -37,6 +37,7 @@
 #include "dawn/common/Ref.h"
 #include "dawn/common/RefCounted.h"
 #include "dawn/common/ityp_span.h"
+#include "dawn/native/Device.h"
 #include "dawn/native/Error.h"
 #include "dawn/native/Features.h"
 #include "dawn/native/Forward.h"
@@ -47,6 +48,14 @@
 namespace dawn::native {
 
 class DeviceBase;
+
+// Structure that holds surface capabilities for a (Surface, PhysicalDevice) pair.
+struct PhysicalDeviceSurfaceCapabilities {
+    wgpu::TextureUsage usages;
+    std::vector<wgpu::TextureFormat> formats;
+    std::vector<wgpu::PresentMode> presentModes;
+    std::vector<wgpu::CompositeAlphaMode> alphaModes;
+};
 
 struct FeatureValidationResult {
     // Constructor of successful result
@@ -60,14 +69,15 @@ struct FeatureValidationResult {
 
 class PhysicalDeviceBase : public RefCounted {
   public:
-    PhysicalDeviceBase(InstanceBase* instance, wgpu::BackendType backend);
+    explicit PhysicalDeviceBase(wgpu::BackendType backend);
     ~PhysicalDeviceBase() override;
 
     MaybeError Initialize();
 
     ResultOrError<Ref<DeviceBase>> CreateDevice(AdapterBase* adapter,
                                                 const UnpackedPtr<DeviceDescriptor>& descriptor,
-                                                const TogglesState& deviceToggles);
+                                                const TogglesState& deviceToggles,
+                                                Ref<DeviceBase::DeviceLostEvent>&& lostEvent);
 
     uint32_t GetVendorId() const;
     uint32_t GetDeviceId() const;
@@ -78,12 +88,10 @@ class PhysicalDeviceBase : public RefCounted {
     const std::string& GetDriverDescription() const;
     wgpu::AdapterType GetAdapterType() const;
     wgpu::BackendType GetBackendType() const;
+    uint32_t GetSubgroupMinSize() const;
+    uint32_t GetSubgroupMaxSize() const;
 
-    // This method differs from APIGetInstance() in that it won't increase the ref count of the
-    // instance.
-    InstanceBase* GetInstance() const;
-
-    void ResetInternalDeviceForTesting();
+    MaybeError ResetInternalDeviceForTesting();
 
     // Get all features supported by the physical device and suitable with given toggles.
     FeaturesSet GetSupportedFeatures(const TogglesState& toggles) const;
@@ -96,19 +104,33 @@ class PhysicalDeviceBase : public RefCounted {
 
     virtual bool SupportsExternalImages() const = 0;
 
-    virtual bool SupportsFeatureLevel(FeatureLevel featureLevel) const = 0;
+    // `instance` is an optional parameter used to log warnings but may be null.
+    virtual bool SupportsFeatureLevel(wgpu::FeatureLevel featureLevel,
+                                      InstanceBase* instance) const = 0;
 
     // Backend-specific force-setting and defaulting device toggles
-    virtual void SetupBackendAdapterToggles(TogglesState* adapterToggles) const = 0;
+    virtual void SetupBackendAdapterToggles(dawn::platform::Platform* platform,
+                                            TogglesState* adapterToggles) const = 0;
     // Backend-specific force-setting and defaulting device toggles
-    virtual void SetupBackendDeviceToggles(TogglesState* deviceToggles) const = 0;
+    virtual void SetupBackendDeviceToggles(dawn::platform::Platform* platform,
+                                           TogglesState* deviceToggles) const = 0;
 
     // Check if a feature os supported by this adapter AND suitable with given toggles.
     FeatureValidationResult ValidateFeatureSupportedWithToggles(wgpu::FeatureName feature,
                                                                 const TogglesState& toggles) const;
 
     // Populate backend properties. Ownership of allocations written are owned by the caller.
-    virtual void PopulateBackendProperties(UnpackedPtr<AdapterProperties>& properties) const = 0;
+    virtual void PopulateBackendProperties(UnpackedPtr<AdapterInfo>& info) const = 0;
+
+    // Populate backend format capabilities. Ownership of allocations written are owned by the
+    // caller.
+    virtual void PopulateBackendFormatCapabilities(
+        wgpu::TextureFormat format,
+        UnpackedPtr<DawnFormatCapabilities>& capabilities) const;
+
+    virtual ResultOrError<PhysicalDeviceSurfaceCapabilities> GetSurfaceCapabilities(
+        InstanceBase* instance,
+        const Surface* surface) const = 0;
 
   protected:
     uint32_t mVendorId = 0xFFFFFFFF;
@@ -119,6 +141,10 @@ class PhysicalDeviceBase : public RefCounted {
     wgpu::AdapterType mAdapterType = wgpu::AdapterType::Unknown;
     gpu_info::DriverVersion mDriverVersion;
     std::string mDriverDescription;
+    // When the feature is *not* supported, these must be 4 and 128. Set those defaults now, but a
+    // backend may override this.
+    uint32_t mSubgroupMinSize = kDefaultSubgroupMinSize;
+    uint32_t mSubgroupMaxSize = kDefaultSubgroupMaxSize;
 
     // Juat a wrapper of ValidateFeatureSupportedWithToggles, return true if a feature is supported
     // by this adapter AND suitable with given toggles.
@@ -129,13 +155,14 @@ class PhysicalDeviceBase : public RefCounted {
     // Used for the tests that intend to use an adapter without all features enabled.
     void SetSupportedFeaturesForTesting(const std::vector<wgpu::FeatureName>& requiredFeatures);
 
-    void GetDefaultLimitsForSupportedFeatureLevel(Limits* limits) const;
+    void GetDefaultLimitsForSupportedFeatureLevel(CombinedLimits* limits) const;
 
   private:
     virtual ResultOrError<Ref<DeviceBase>> CreateDeviceImpl(
         AdapterBase* adapter,
         const UnpackedPtr<DeviceDescriptor>& descriptor,
-        const TogglesState& deviceToggles) = 0;
+        const TogglesState& deviceToggles,
+        Ref<DeviceBase::DeviceLostEvent>&& lostEvent) = 0;
 
     virtual MaybeError InitializeImpl() = 0;
 
@@ -152,7 +179,6 @@ class PhysicalDeviceBase : public RefCounted {
         const TogglesState& toggles) const = 0;
 
     virtual MaybeError ResetInternalDeviceForTestingImpl();
-    Ref<InstanceBase> mInstance;
     wgpu::BackendType mBackend;
 
     // Features set that CAN be supported by devices of this adapter. Some features in this set may

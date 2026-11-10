@@ -7,21 +7,123 @@
 #include <string>
 #include <vector>
 
+#include "base/functional/bind.h"
+#include "base/functional/callback_helpers.h"
+#include "base/strings/strcat.h"
+#include "base/strings/stringprintf.h"
+#include "base/test/bind.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/test/values_test_util.h"
 #include "base/time/time.h"
+#include "google_apis/gaia/gaia_id.h"
+#include "google_apis/gaia/token_binding_response_encryption_error.h"
 #include "net/cookies/canonical_cookie.h"
-#include "testing/gmock/include/gmock/gmock-matchers.h"
+#include "net/http/http_status_code.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using ::net::CanonicalCookie;
+using ::testing::_;
+using ::testing::AllOf;
 using ::testing::DoubleNear;
 using ::testing::ElementsAre;
 using ::testing::Eq;
+using ::testing::Field;
+using ::testing::FieldsAre;
+using ::testing::IsEmpty;
+using ::testing::IsTrue;
+using ::testing::Optional;
 using ::testing::Property;
-using ::testing::_;
+using ::testing::UnorderedElementsAre;
+
+using Credential = ::RegisterBoundSessionPayload::Credential;
+using DeviceBoundSession = ::OAuthMultiloginResult::DeviceBoundSession;
+using Scope = ::RegisterBoundSessionPayload::Credential::Scope;
+
+using enum ::OAuthMultiloginResult::DeviceBoundSession::Domain;
+
+namespace {
+
+constexpr char kInvalidTokensResponseFormat[] =
+    R"()]}'
+        {
+          "status": "%s",
+          "failed_accounts": [
+            {
+              "status": "RECOVERABLE",
+              "obfuscated_id": "account1",
+              "token_binding_retry_response": {
+                "challenge": "test_challenge1"
+              }
+            },
+            {
+              "status": "OK",
+              "obfuscated_id": "account2"
+            },
+            {
+              "status": "RECOVERABLE",
+              "obfuscated_id": "account3",
+              "token_binding_retry_response": {
+                "challenge": "test_challenge3"
+              }
+            },
+            {
+              "status": "NON_RECOVERABLE",
+              "obfuscated_id": "account4"
+            }
+          ]
+        }
+      )";
+
+constexpr char kResponseWithEncryptedCookiesFormat[] =
+    R"()]}'
+        {
+          "status": "OK",
+          "token_binding_directed_response": {},
+          "cookies":[
+            {
+              "name":"SID",
+              "value":"%s",
+              "domain":".google.com",
+              "path":"/",
+              "isSecure":true,
+              "isHttpOnly":false,
+              "priority":"HIGH",
+              "maxAge":63070000
+            },
+            {
+              "name":"SAPISID",
+              "value":"%s",
+              "host":"google.com",
+              "path":"/",
+              "isSecure":false,
+              "isHttpOnly":true,
+              "priority":"HIGH",
+              "maxAge":63070000,
+              "sameSite":"Lax"
+            },
+            {
+              "name":"APISID",
+              "value":"%s",
+              "host":"google.com",
+              "path":"/",
+              "isSecure":false,
+              "isHttpOnly":true,
+              "priority":"HIGH",
+              "maxAge":63070000,
+              "sameSite":"Lax"
+            }
+          ]
+        }
+      )";
+
+static constexpr char kEncryptionErrorHistogram[] =
+    "Signin.OAuthMultiloginResponseEncryptionError";
+
+}  // namespace
 
 TEST(OAuthMultiloginResultTest, TryParseCookiesFromValue) {
-  OAuthMultiloginResult result("");
+  OAuthMultiloginResult result(OAuthMultiloginResponseStatus::kOk);
   // SID: typical response for a domain cookie
   // SAPISID: typical response for a host cookie
   // SSID: not canonical cookie because of the wrong path, should not be added
@@ -130,20 +232,21 @@ TEST(OAuthMultiloginResultTest, TryParseCookiesFromValue) {
                   Property(&CanonicalCookie::IsDomainCookie, Eq(false)),
                   Property(&CanonicalCookie::IsDomainCookie, Eq(true))));
   EXPECT_THAT(result.cookies(),
-              ElementsAre(Property(&CanonicalCookie::IsCanonical, Eq(true)),
-                          Property(&CanonicalCookie::IsCanonical, Eq(true)),
-                          Property(&CanonicalCookie::IsCanonical, Eq(true)),
-                          Property(&CanonicalCookie::IsCanonical, Eq(true))));
+              ElementsAre(Property(&CanonicalCookie::IsCanonical, IsTrue()),
+                          Property(&CanonicalCookie::IsCanonical, IsTrue()),
+                          Property(&CanonicalCookie::IsCanonical, IsTrue()),
+                          Property(&CanonicalCookie::IsCanonical, IsTrue())));
   EXPECT_THAT(result.cookies(),
               ElementsAre(Property(&CanonicalCookie::IsHttpOnly, Eq(false)),
                           Property(&CanonicalCookie::IsHttpOnly, Eq(true)),
                           Property(&CanonicalCookie::IsHttpOnly, Eq(true)),
                           Property(&CanonicalCookie::IsHttpOnly, Eq(true))));
-  EXPECT_THAT(result.cookies(),
-              ElementsAre(Property(&CanonicalCookie::IsSecure, Eq(true)),
-                          Property(&CanonicalCookie::IsSecure, Eq(false)),
-                          Property(&CanonicalCookie::IsSecure, Eq(true)),
-                          Property(&CanonicalCookie::IsSecure, Eq(true))));
+  EXPECT_THAT(
+      result.cookies(),
+      ElementsAre(Property(&CanonicalCookie::SecureAttribute, Eq(true)),
+                  Property(&CanonicalCookie::SecureAttribute, Eq(false)),
+                  Property(&CanonicalCookie::SecureAttribute, Eq(true)),
+                  Property(&CanonicalCookie::SecureAttribute, Eq(true))));
   EXPECT_THAT(result.cookies(),
               ElementsAre(Property(&CanonicalCookie::SameSite,
                                    Eq(net::CookieSameSite::UNSPECIFIED)),
@@ -191,7 +294,8 @@ TEST(OAuthMultiloginResultTest, CreateOAuthMultiloginResultFromString) {
             }
           ]
         }
-      )");
+      )",
+                                net::HTTP_OK);
   EXPECT_EQ(result1.status(), OAuthMultiloginResponseStatus::kOk);
   EXPECT_FALSE(result1.cookies().empty());
 
@@ -211,7 +315,8 @@ TEST(OAuthMultiloginResultTest, CreateOAuthMultiloginResultFromString) {
             }
           ]
         }
-      )");
+      )",
+                                net::HTTP_OK);
   EXPECT_EQ(result2.status(), OAuthMultiloginResponseStatus::kOk);
   EXPECT_FALSE(result2.cookies().empty());
 
@@ -230,7 +335,8 @@ TEST(OAuthMultiloginResultTest, CreateOAuthMultiloginResultFromString) {
             }
           ]
         }
-      )");
+      )",
+                                net::HTTP_OK);
   EXPECT_EQ(result3.status(), OAuthMultiloginResponseStatus::kUnknownStatus);
 }
 
@@ -253,7 +359,7 @@ TEST(OAuthMultiloginResultTest, ProduceErrorFromResponseStatus) {
           ]
         }
       )";
-  OAuthMultiloginResult result1(data_error_none);
+  OAuthMultiloginResult result1(data_error_none, net::HTTP_OK);
   EXPECT_EQ(result1.status(), OAuthMultiloginResponseStatus::kOk);
 
   std::string data_error_transient =
@@ -274,7 +380,8 @@ TEST(OAuthMultiloginResultTest, ProduceErrorFromResponseStatus) {
           ]
         }
       )";
-  OAuthMultiloginResult result2(data_error_transient);
+  OAuthMultiloginResult result2(data_error_transient,
+                                net::HTTP_SERVICE_UNAVAILABLE);
   EXPECT_EQ(result2.status(), OAuthMultiloginResponseStatus::kRetry);
 
   // "ERROR" is a real response status that Gaia sends. This is a persistent
@@ -297,7 +404,8 @@ TEST(OAuthMultiloginResultTest, ProduceErrorFromResponseStatus) {
           ]
         }
       )";
-  OAuthMultiloginResult result3(data_error_persistent);
+  OAuthMultiloginResult result3(data_error_persistent,
+                                net::HTTP_INTERNAL_SERVER_ERROR);
   EXPECT_EQ(result3.status(), OAuthMultiloginResponseStatus::kError);
 
   std::string data_error_invalid_credentials =
@@ -328,9 +436,11 @@ TEST(OAuthMultiloginResultTest, ProduceErrorFromResponseStatus) {
           ]
         }
       )";
-  OAuthMultiloginResult result4(data_error_invalid_credentials);
+  OAuthMultiloginResult result4(data_error_invalid_credentials,
+                                net::HTTP_FORBIDDEN);
   EXPECT_EQ(result4.status(), OAuthMultiloginResponseStatus::kInvalidTokens);
-  EXPECT_THAT(result4.failed_gaia_ids(), ElementsAre(Eq("account1")));
+  EXPECT_THAT(result4.failed_accounts(),
+              ElementsAre(FieldsAre(GaiaId("account1"), "")));
 
   // Unknown status.
   OAuthMultiloginResult unknown_status(R"()]}'
@@ -349,7 +459,8 @@ TEST(OAuthMultiloginResultTest, ProduceErrorFromResponseStatus) {
             }
           ]
         }
-      )");
+      )",
+                                       net::HTTP_OK);
   EXPECT_EQ(unknown_status.status(),
             OAuthMultiloginResponseStatus::kUnknownStatus);
   EXPECT_TRUE(unknown_status.cookies().empty());
@@ -358,25 +469,33 @@ TEST(OAuthMultiloginResultTest, ProduceErrorFromResponseStatus) {
 TEST(OAuthMultiloginResultTest, ParseResponseStatus) {
   struct TestCase {
     std::string status_string;
+    int http_response_code;
     OAuthMultiloginResponseStatus expected_status;
   };
 
   std::vector<TestCase> test_cases = {
-      {"FOO", OAuthMultiloginResponseStatus::kUnknownStatus},
-      {"OK", OAuthMultiloginResponseStatus::kOk},
-      {"RETRY", OAuthMultiloginResponseStatus::kRetry},
-      {"INVALID_INPUT", OAuthMultiloginResponseStatus::kInvalidInput},
-      {"INVALID_TOKENS", OAuthMultiloginResponseStatus::kInvalidTokens},
-      {"ERROR", OAuthMultiloginResponseStatus::kError}};
+      {"FOO", net::HTTP_OK, OAuthMultiloginResponseStatus::kUnknownStatus},
+      {"OK", net::HTTP_OK, OAuthMultiloginResponseStatus::kOk},
+      {"RETRY", net::HTTP_SERVICE_UNAVAILABLE,
+       OAuthMultiloginResponseStatus::kRetry},
+      {"RETRY", net::HTTP_BAD_REQUEST,
+       OAuthMultiloginResponseStatus::kRetryWithTokenBindingChallenge},
+      {"INVALID_INPUT", net::HTTP_BAD_REQUEST,
+       OAuthMultiloginResponseStatus::kInvalidInput},
+      {"INVALID_TOKENS", net::HTTP_FORBIDDEN,
+       OAuthMultiloginResponseStatus::kInvalidTokens},
+      {"ERROR", net::HTTP_INTERNAL_SERVER_ERROR,
+       OAuthMultiloginResponseStatus::kError}};
 
   for (const auto& test_case : test_cases) {
     EXPECT_EQ(test_case.expected_status,
-              ParseOAuthMultiloginResponseStatus(test_case.status_string));
+              ParseOAuthMultiloginResponseStatus(test_case.status_string,
+                                                 test_case.http_response_code));
   }
 }
 
 TEST(OAuthMultiloginResultTest, ParseRealResponseFromGaia_2021_10) {
-  OAuthMultiloginResult result("");
+  OAuthMultiloginResult result(OAuthMultiloginResponseStatus::kOk);
   // SID: typical response for a domain cookie
   // SAPISID: typical response for a host cookie
   // SSID: not canonical cookie because of the wrong path, should not be added
@@ -772,4 +891,438 @@ TEST(OAuthMultiloginResultTest, ParseRealResponseFromGaia_2021_10) {
                   Property(&CanonicalCookie::Name, Eq("__Secure-3PAPISID")),
 
                   Property(&CanonicalCookie::Name, Eq("__Host-GAPS"))));
+}
+
+TEST(OAuthMultiloginResultTest, ParseRetryResponseWithTokenBindingChallenge) {
+  OAuthMultiloginResult result(
+      base::StringPrintf(kInvalidTokensResponseFormat, "RETRY"),
+      net::HTTP_BAD_REQUEST);
+  EXPECT_EQ(result.status(),
+            OAuthMultiloginResponseStatus::kRetryWithTokenBindingChallenge);
+  EXPECT_THAT(result.failed_accounts(),
+              ElementsAre(FieldsAre(GaiaId("account1"), "test_challenge1"),
+                          FieldsAre(GaiaId("account3"), "test_challenge3"),
+                          FieldsAre(GaiaId("account4"), std::string())));
+}
+
+TEST(OAuthMultiloginResultTest,
+     ParseInvalidTokensResponseWithTokenBindingChallenge) {
+  // Token binding challenges are ignored if status is INVALID_TOKENS.
+  OAuthMultiloginResult result(
+      base::StringPrintf(kInvalidTokensResponseFormat, "INVALID_TOKENS"),
+      net::HTTP_FORBIDDEN);
+  EXPECT_EQ(result.status(), OAuthMultiloginResponseStatus::kInvalidTokens);
+  EXPECT_THAT(result.failed_accounts(),
+              ElementsAre(FieldsAre(GaiaId("account1"), std::string()),
+                          FieldsAre(GaiaId("account3"), std::string()),
+                          FieldsAre(GaiaId("account4"), std::string())));
+}
+
+// Decryptor is successfully used if cookies in the response are encrypted.
+TEST(OAuthMultiloginResultTest, ParseEncryptedCookies) {
+  base::HistogramTester histogram_tester;
+  std::string response = base::StringPrintf(kResponseWithEncryptedCookiesFormat,
+                                            "vAlUe1", "vAlUe2", "vAlUe3");
+  auto decryptor = [](std::string_view encrypted_cookie) {
+    return base::StrCat({encrypted_cookie, ".decrypted"});
+  };
+
+  OAuthMultiloginResult result(response, net::HTTP_OK,
+                               base::BindRepeating(decryptor));
+
+  EXPECT_THAT(
+      result.cookies(),
+      ElementsAre(Property(&CanonicalCookie::Value, "vAlUe1.decrypted"),
+                  Property(&CanonicalCookie::Value, "vAlUe2.decrypted"),
+                  Property(&CanonicalCookie::Value, "vAlUe3.decrypted")));
+  histogram_tester.ExpectUniqueSample(
+      kEncryptionErrorHistogram,
+      TokenBindingResponseEncryptionError::kSuccessfullyDecrypted,
+      /*expected_bucket_count=*/3);
+}
+
+// Decryptor is ignored if cookies in the response are not encrypted.
+TEST(OAuthMultiloginResultTest, ParseCookiesIgnoresDecryptor) {
+  constexpr char kResponseWithNonEncryptedCookiesFormat[] =
+      R"()]}'
+        {
+          "status": "OK",
+          "cookies":[
+            {
+              "name":"SID",
+              "value":"%s",
+              "domain":".google.com",
+              "path":"/",
+              "isSecure":true,
+              "isHttpOnly":false,
+              "priority":"HIGH",
+              "maxAge":63070000
+            },
+            {
+              "name":"SAPISID",
+              "value":"%s",
+              "host":"google.com",
+              "path":"/",
+              "isSecure":false,
+              "isHttpOnly":true,
+              "priority":"HIGH",
+              "maxAge":63070000,
+              "sameSite":"Lax"
+            }
+          ]
+        }
+      )";
+  base::HistogramTester histogram_tester;
+  std::string response = base::StringPrintf(
+      kResponseWithNonEncryptedCookiesFormat, "vAlUe1", "vAlUe2");
+  auto decryptor = [](std::string_view encrypted_cookie) {
+    ADD_FAILURE()
+        << "Decryptor was called unexpectedly for cookie with value \""
+        << encrypted_cookie << "\"";
+    return std::string();
+  };
+
+  OAuthMultiloginResult result(response, net::HTTP_OK,
+                               base::BindRepeating(decryptor));
+
+  EXPECT_THAT(result.cookies(),
+              ElementsAre(Property(&CanonicalCookie::Value, "vAlUe1"),
+                          Property(&CanonicalCookie::Value, "vAlUe2")));
+  histogram_tester.ExpectUniqueSample(
+      kEncryptionErrorHistogram,
+      TokenBindingResponseEncryptionError::kSuccessNoEncryption,
+      /*expected_bucket_count=*/2);
+}
+
+// Result is set to failure if cookies are encrypted but a decryptor is not set.
+TEST(OAuthMultiloginResultTest, ParseEncryptedCookiesFailsWithoutDecryptor) {
+  base::HistogramTester histogram_tester;
+  std::string response = base::StringPrintf(kResponseWithEncryptedCookiesFormat,
+                                            "vAlUe1", "vAlUe2", "vAlUe3");
+
+  OAuthMultiloginResult result(response, net::HTTP_OK, base::NullCallback());
+
+  EXPECT_EQ(result.status(), OAuthMultiloginResponseStatus::kUnknownStatus);
+  EXPECT_THAT(result.cookies(), IsEmpty());
+  histogram_tester.ExpectUniqueSample(
+      kEncryptionErrorHistogram,
+      TokenBindingResponseEncryptionError::kResponseUnexpectedlyEncrypted,
+      /*expected_bucket_count=*/3);
+}
+
+// Cookies that failed to decrypt are omitted from the result.
+TEST(OAuthMultiloginResultTest, ParseEncryptedCookiesDecryptionFails) {
+  base::HistogramTester histogram_tester;
+  std::string response = base::StringPrintf(kResponseWithEncryptedCookiesFormat,
+                                            "vAlUe1", "vAlUe2", "vAlUe3");
+  auto decryptor = [](std::string_view encrypted_cookie) {
+    return encrypted_cookie != "vAlUe2"
+               ? std::string()
+               : base::StrCat({encrypted_cookie, ".decrypted"});
+  };
+
+  OAuthMultiloginResult result(response, net::HTTP_OK,
+                               base::BindRepeating(decryptor));
+
+  EXPECT_THAT(result.cookies(), ElementsAre(Property(&CanonicalCookie::Value,
+                                                     "vAlUe2.decrypted")));
+  EXPECT_THAT(
+      histogram_tester.GetAllSamples(kEncryptionErrorHistogram),
+      ElementsAre(
+          base::Bucket(TokenBindingResponseEncryptionError::kDecryptionFailed,
+                       /*count=*/2),
+          base::Bucket(
+              TokenBindingResponseEncryptionError::kSuccessfullyDecrypted,
+              /*count=*/1)));
+}
+
+TEST(OAuthMultiloginResultTest, NoDeviceBoundSessionInfo) {
+  const std::string raw_data =
+      R"()]}'
+        {
+          "status": "OK",
+          "cookies":[
+            {
+              "name": "__Secure-1PSIDTS",
+              "value": "secure-1p-sidts-value",
+              "domain": ".google.com",
+              "path": "/",
+              "isSecure": true,
+              "isHttpOnly": true,
+              "maxAge": 31536000,
+              "priority": "HIGH",
+              "sameParty": "1"
+            }
+          ],
+          "token_binding_directed_response": {}
+        }
+      )";
+  const OAuthMultiloginResult result(
+      raw_data, net::HTTP_OK,
+      /*cookie_decryptor=*/
+      base::BindLambdaForTesting([](std::string_view encrypted_cookie) {
+        return base::StrCat({encrypted_cookie, ".decrypted"});
+      }));
+  ASSERT_EQ(result.status(), OAuthMultiloginResponseStatus::kOk);
+  EXPECT_THAT(result.device_bound_sessions(), IsEmpty());
+}
+
+TEST(OAuthMultiloginResultTest, ReuseExistingDeviceBoundSession) {
+  const std::string raw_data =
+      R"()]}'
+        {
+          "status": "OK",
+          "cookies":[
+            {
+              "name": "__Secure-1PSIDTS",
+              "value": "secure-1p-sidts-value",
+              "domain": ".google.com",
+              "path": "/",
+              "isSecure": true,
+              "isHttpOnly": true,
+              "maxAge": 31536000,
+              "priority": "HIGH",
+              "sameParty": "1"
+            }
+          ],
+          "token_binding_directed_response": {},
+          "device_bound_session_info": [
+            {
+              "domain": "GOOGLE_COM",
+              "is_device_bound": true
+            }
+          ]
+        }
+      )";
+  const OAuthMultiloginResult result(
+      raw_data, net::HTTP_OK,
+      /*cookie_decryptor=*/
+      base::BindLambdaForTesting([](std::string_view encrypted_cookie) {
+        return base::StrCat({encrypted_cookie, ".decrypted"});
+      }));
+  ASSERT_EQ(result.status(), OAuthMultiloginResponseStatus::kOk);
+  EXPECT_THAT(result.device_bound_sessions(),
+              UnorderedElementsAre(
+                  AllOf(Field(&DeviceBoundSession::is_device_bound, true),
+                        Field(&DeviceBoundSession::domain, kGoogle),
+                        Field(&DeviceBoundSession::register_session_payload,
+                              Eq(std::nullopt)))));
+}
+
+TEST(OAuthMultiloginResultTest, RegisterNewDeviceBoundSession) {
+  const std::string raw_data =
+      R"()]}'
+        {
+          "status": "OK",
+          "cookies":[
+            {
+              "name": "__Secure-1PSIDTS",
+              "value": "secure-1p-sidts-value",
+              "domain": ".youtube.com",
+              "path": "/",
+              "isSecure": true,
+              "isHttpOnly": true,
+              "maxAge": 31536000,
+              "priority": "HIGH",
+              "sameParty": "1"
+            },
+            {
+              "name": "__Secure-Google-Cookie",
+              "value": "secure-google-cookie-value",
+              "domain": ".google.com",
+              "path": "/",
+              "isSecure": true,
+              "isHttpOnly": true,
+              "maxAge": 31536000,
+              "priority": "HIGH",
+              "sameParty": "1"
+            }
+          ],
+          "token_binding_directed_response": {},
+          "device_bound_session_info": [
+            {
+              "domain": "YOUTUBE_COM",
+              "is_device_bound": true,
+              "register_session_payload": {
+                "session_identifier": "id",
+                "credentials": [
+                  {
+                    "type": "cookie",
+                    "name": "__Secure-1PSIDTS",
+                    "scope": {
+                      "domain": ".youtube.com",
+                      "path": "/"
+                    }
+                  }
+                ],
+                "refresh_url": "/RotateBoundCookies"
+              }
+            },
+            {
+              "domain": "GOOGLE_COM",
+              "is_device_bound": true
+            }
+          ]
+        }
+      )";
+  const OAuthMultiloginResult result(
+      raw_data, net::HTTP_OK,
+      /*cookie_decryptor=*/
+      base::BindLambdaForTesting([](std::string_view encrypted_cookie) {
+        return base::StrCat({encrypted_cookie, ".decrypted"});
+      }));
+  ASSERT_EQ(result.status(), OAuthMultiloginResponseStatus::kOk);
+  EXPECT_THAT(
+      result.device_bound_sessions(),
+      UnorderedElementsAre(
+          AllOf(
+              Field(&DeviceBoundSession::is_device_bound, true),
+              Field(&DeviceBoundSession::domain, kYoutube),
+              Field(&DeviceBoundSession::register_session_payload,
+                    Optional(AllOf(
+                        Field(&RegisterBoundSessionPayload::session_id, "id"),
+                        Field(&RegisterBoundSessionPayload::refresh_url,
+                              "/RotateBoundCookies"),
+                        Field(&RegisterBoundSessionPayload::credentials,
+                              UnorderedElementsAre(AllOf(
+                                  Field(&Credential::name, "__Secure-1PSIDTS"),
+                                  Field(&Credential::type, "cookie"),
+                                  Field(&Credential::scope,
+                                        AllOf(Field(&Scope::domain,
+                                                    ".youtube.com"),
+                                              Field(&Scope::path, "/")))))))))),
+          AllOf(Field(&DeviceBoundSession::is_device_bound, true),
+                Field(&DeviceBoundSession::domain, kGoogle))));
+}
+
+TEST(OAuthMultiloginResultTest, UnknownDeviceBoundSessionDomain) {
+  const std::string raw_data =
+      R"()]}'
+        {
+          "status": "OK",
+          "cookies":[
+            {
+              "name": "unknown-cookie",
+              "value": "unknown-cookie-value",
+              "domain": ".unknown.com",
+              "path": "/",
+              "isSecure": true,
+              "isHttpOnly": true,
+              "maxAge": 31536000,
+              "priority": "HIGH",
+              "sameParty": "1"
+            }
+          ],
+          "token_binding_directed_response": {},
+          "device_bound_session_info": [
+            {
+              "domain": "UNKNOWN_COM",
+              "is_device_bound": true
+            },
+            {
+              "domain": "GOOGLE_COM",
+              "is_device_bound": true
+            }
+          ]
+        }
+      )";
+  const OAuthMultiloginResult result(
+      raw_data, net::HTTP_OK,
+      /*cookie_decryptor=*/
+      base::BindLambdaForTesting([](std::string_view encrypted_cookie) {
+        return base::StrCat({encrypted_cookie, ".decrypted"});
+      }));
+  ASSERT_EQ(result.status(), OAuthMultiloginResponseStatus::kOk);
+  EXPECT_THAT(result.device_bound_sessions(),
+              UnorderedElementsAre(
+                  AllOf(Field(&DeviceBoundSession::is_device_bound, true),
+                        Field(&DeviceBoundSession::domain, kGoogle))));
+}
+
+TEST(OAuthMultiloginResultTest, IsNotDeviceBoundSession) {
+  const std::string raw_data =
+      R"()]}'
+        {
+          "status": "OK",
+          "cookies":[
+            {
+              "name": "__Secure-1PSIDTS",
+              "value": "secure-1p-sidts-value",
+              "domain": ".google.com",
+              "path": "/",
+              "isSecure": true,
+              "isHttpOnly": true,
+              "maxAge": 31536000,
+              "priority": "HIGH",
+              "sameParty": "1"
+            }
+          ],
+          "token_binding_directed_response": {},
+          "device_bound_session_info": [
+            {
+              "domain": "GOOGLE_COM",
+              "is_device_bound": false
+            }
+          ]
+        }
+      )";
+  const OAuthMultiloginResult result(
+      raw_data, net::HTTP_OK,
+      /*cookie_decryptor=*/
+      base::BindLambdaForTesting([](std::string_view encrypted_cookie) {
+        return base::StrCat({encrypted_cookie, ".decrypted"});
+      }));
+  ASSERT_EQ(result.status(), OAuthMultiloginResponseStatus::kOk);
+  EXPECT_THAT(result.device_bound_sessions(), IsEmpty());
+}
+
+TEST(OAuthMultiloginResultTest, RegisterNewDeviceBoundSessionInvalidPayload) {
+  // The payload is invalid because it's missing the `session_identifier` field.
+  const std::string raw_data =
+      R"()]}'
+        {
+          "status": "OK",
+          "cookies":[
+            {
+              "name": "__Secure-1PSIDTS",
+              "value": "secure-1p-sidts-value",
+              "domain": ".youtube.com",
+              "path": "/",
+              "isSecure": true,
+              "isHttpOnly": true,
+              "maxAge": 31536000,
+              "priority": "HIGH",
+              "sameParty": "1"
+            }
+          ],
+          "token_binding_directed_response": {},
+          "device_bound_session_info": [
+            {
+              "domain": "YOUTUBE_COM",
+              "is_device_bound": true,
+              "register_session_payload": {
+                "credentials": [
+                  {
+                    "type": "cookie",
+                    "name": "__Secure-1PSIDTS",
+                    "scope": {
+                      "domain": ".youtube.com",
+                      "path": "/"
+                    }
+                  }
+                ],
+                "refresh_url": "/RotateBoundCookies"
+              }
+            }
+          ]
+        }
+      )";
+  const OAuthMultiloginResult result(
+      raw_data, net::HTTP_OK,
+      /*cookie_decryptor=*/
+      base::BindLambdaForTesting([](std::string_view encrypted_cookie) {
+        return base::StrCat({encrypted_cookie, ".decrypted"});
+      }));
+  ASSERT_EQ(result.status(), OAuthMultiloginResponseStatus::kOk);
+  EXPECT_THAT(result.device_bound_sessions(), IsEmpty());
 }

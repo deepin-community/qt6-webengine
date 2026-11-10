@@ -6,8 +6,10 @@
 
 #include <stddef.h>
 
+#include <array>
 #include <list>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 
@@ -53,7 +55,7 @@ namespace content {
 
 namespace {
 
-std::u16string SerializeUpdate(base::StringPiece function,
+std::u16string SerializeUpdate(std::string_view function,
                                const base::ValueView value) {
   base::ValueView args[] = {value};
   return content::WebUI::GetJavascriptCall(function, args);
@@ -63,14 +65,20 @@ std::string EffectsToString(int effects) {
   if (effects == media::AudioParameters::NO_EFFECTS)
     return "NO_EFFECTS";
 
-  struct {
+  struct Flags {
     int flag;
     const char* name;
-  } flags[] = {
+  };
+  auto flags = std::to_array<Flags>({
       {media::AudioParameters::ECHO_CANCELLER, "ECHO_CANCELLER"},
       {media::AudioParameters::DUCKING, "DUCKING"},
       {media::AudioParameters::HOTWORD, "HOTWORD"},
-  };
+      {media::AudioParameters::NOISE_SUPPRESSION, "NOISE_SUPPRESSION"},
+      {media::AudioParameters::AUTOMATIC_GAIN_CONTROL,
+       "AUTOMATIC_GAIN_CONTROL"},
+      {media::AudioParameters::DEEP_NOISE_SUPPRESSION,
+       "DEEP_NOISE_SUPPRESSION"},
+  });
 
   std::string ret;
   for (size_t i = 0; i < std::size(flags); ++i) {
@@ -384,7 +392,7 @@ static bool ConvertEventToUpdate(int render_process_id,
 
   base::Value::Dict dict;
   dict.Set("renderer", render_process_id);
-  dict.Set("player", event.id);
+  dict.Set("player", static_cast<int>(event.id.value()));
 
   // TODO(dalecurtis): This is technically not correct.  TimeTicks "can't" be
   // converted to to a human readable time format.  See base/time/time.h.
@@ -502,29 +510,15 @@ void MediaInternals::SendGeneralAudioInformation() {
       GetContentClient()->browser()->ShouldSandboxAudioService());
 #if BUILDFLAG(CHROME_WIDE_ECHO_CANCELLATION)
   std::string chrome_wide_echo_cancellation_value_string =
-      media::IsChromeWideEchoCancellationEnabled()
-          ? base::StrCat(
-                {"Enabled, minimize_resampling = ",
-                 media::kChromeWideEchoCancellationMinimizeResampling.Get()
-                     ? "true"
-                     : "false",
-                 ", allow_all_sample_rates = ",
-                 media::kChromeWideEchoCancellationAllowAllSampleRates.Get()
-                     ? "true"
-                     : "false"})
-          : "Disabled";
+      media::IsChromeWideEchoCancellationEnabled() ? "Enabled" : "Disabled";
   audio_info_data.Set(media::kChromeWideEchoCancellation.name,
                       base::Value(chrome_wide_echo_cancellation_value_string));
-
-  std::string decrease_processing_audio_fifo_size_value_string =
-      base::FeatureList::IsEnabled(media::kDecreaseProcessingAudioFifoSize)
-          ? base::StrCat(
-                {"Enabled, fifo_size = ",
-                 base::NumberToString(media::GetProcessingAudioFifoSize())})
-          : "Disabled";
-  audio_info_data.Set(
-      media::kDecreaseProcessingAudioFifoSize.name,
-      base::Value(decrease_processing_audio_fifo_size_value_string));
+#endif
+#if (BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN))
+  std::string system_echo_cancellation_value_string =
+      media::IsSystemEchoCancellationEnforced() ? "Enabled" : "Disabled";
+  audio_info_data.Set(media::kEnforceSystemEchoCancellation.name,
+                      base::Value(system_echo_cancellation_value_string));
 #endif
   std::u16string audio_info_update =
       SerializeUpdate("media.updateGeneralAudioInformation", audio_info_data);
@@ -601,7 +595,8 @@ void MediaInternals::UpdateVideoCaptureDeviceCapabilities(
 std::unique_ptr<media::AudioLog> MediaInternals::CreateAudioLog(
     AudioComponent component,
     int component_id) {
-  return CreateAudioLogImpl(component, component_id, -1, MSG_ROUTING_NONE);
+  return CreateAudioLogImpl(component, component_id, -1,
+                            IPC::mojom::kRoutingIdNone);
 }
 
 mojo::PendingRemote<media::mojom::AudioLog> MediaInternals::CreateMojoAudioLog(
@@ -671,7 +666,7 @@ void MediaInternals::SaveEvent(int process_id,
   if (saved_events.size() > media::MediaLog::kLogLimit) {
     // Remove all events for a given player as soon as we have to remove a
     // single event for that player to avoid showing incomplete players.
-    const int id_to_remove = saved_events.front().id;
+    const media::MediaPlayerLoggingID id_to_remove = saved_events.front().id;
     std::erase_if(saved_events, [&](const media::MediaLogRecord& event) {
       return event.id == id_to_remove;
     });
@@ -680,13 +675,19 @@ void MediaInternals::SaveEvent(int process_id,
 
 void MediaInternals::EraseSavedEvents(RenderProcessHost* host) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  // Orderly cleanup can be expensive if there are a lot of active players, so
+  // just skip it during shutdown -- it'll be cleared up by the process kill.
+  if (GetContentClient()->browser()->IsShuttingDown()) {
+    return;
+  }
+
   // TODO(sandersd): Send a termination event before clearing the log.
-  saved_events_by_process_.erase(host->GetID());
+  saved_events_by_process_.erase(host->GetDeprecatedID());
 }
 
 void MediaInternals::UpdateAudioLog(AudioLogUpdateType type,
-                                    base::StringPiece cache_key,
-                                    base::StringPiece function,
+                                    std::string_view cache_key,
+                                    std::string_view function,
                                     const base::Value::Dict& value) {
   {
     base::AutoLock auto_lock(lock_);

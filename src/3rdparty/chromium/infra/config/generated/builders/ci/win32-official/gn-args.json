@@ -2,6 +2,9 @@
   "gn_args": {
     "is_official_build": true,
     "target_cpu": "x86",
-    "use_remoteexec": true
+    "target_os": "win",
+    "use_reclient": false,
+    "use_remoteexec": true,
+    "use_siso": true
   }
 }

@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/bf16-gemm/c8-neon-shland.c.in
 //   Generator: tools/xngen
@@ -8,24 +9,28 @@
 // LICENSE file in the root directory of this source tree.
 
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/gemm.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/gemm.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
 
 
 void xnn_bf16_gemm_minmax_ukernel_2x4c8__neonfma_shland(
     size_t mr,
     size_t nc,
     size_t kc,
-    const void* restrict a,
+    const xnn_bfloat16* restrict a,
     size_t a_stride,
-    const void* restrict w_ptr,
-    void* restrict c,
+    const xnn_bfloat16* restrict w_ptr,
+    xnn_bfloat16* restrict c,
     size_t cm_stride,
     size_t cn_stride,
-    const union xnn_bf16_minmax_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const struct xnn_bf16_minmax_params* restrict params)
 {
   assert(mr != 0);
   assert(mr <= 2);
@@ -193,11 +198,11 @@ void xnn_bf16_gemm_minmax_ukernel_2x4c8__neonfma_shland(
     float32x4_t vacc1x0123 = vcombine_f32(vpadd_f32(vsum1x0, vsum1x1), vpadd_f32(vsum1x2, vsum1x3));
 #endif
 
-    const float32x4_t vmax = vld1q_dup_f32(&params->scalar.max);
+    const float32x4_t vmax = vdupq_n_f32(params->scalar.max);
     vacc0x0123 = vminq_f32(vacc0x0123, vmax);
     vacc1x0123 = vminq_f32(vacc1x0123, vmax);
 
-    const float32x4_t vmin = vld1q_dup_f32(&params->scalar.min);
+    const float32x4_t vmin = vdupq_n_f32(params->scalar.min);
     vacc0x0123 = vmaxq_f32(vacc0x0123, vmin);
     vacc1x0123 = vmaxq_f32(vacc1x0123, vmin);
 

@@ -5,13 +5,14 @@
 #include "base/task/thread_pool/thread_pool_impl.h"
 
 #include <algorithm>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
-#include "base/debug/alias.h"
 #include "base/debug/leak_annotations.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
@@ -22,6 +23,7 @@
 #include "base/strings/string_util.h"
 #include "base/system/sys_info.h"
 #include "base/task/scoped_set_task_priority_for_current_thread.h"
+#include "base/task/task_traits.h"
 #include "base/task/thread_pool/pooled_parallel_task_runner.h"
 #include "base/task/thread_pool/pooled_sequenced_task_runner.h"
 #include "base/task/thread_pool/task.h"
@@ -33,10 +35,8 @@
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
-namespace base {
-namespace internal {
+namespace base::internal {
 
 namespace {
 
@@ -48,6 +48,10 @@ constexpr EnvironmentParams kUtilityPoolEnvironmentParams{
 
 constexpr EnvironmentParams kBackgroundPoolEnvironmentParams{
     "Background", base::ThreadType::kBackground};
+
+// Used for ThreadGroupProfiler to tag profiles collected for different thread
+// groups.
+enum ThreadGroupType { FOREGROUND = 0, UTILITY, BACKGROUND };
 
 constexpr size_t kMaxBestEffortTasks = 2;
 
@@ -68,10 +72,10 @@ bool g_synchronous_thread_start_for_testing = false;
 
 }  // namespace
 
-ThreadPoolImpl::ThreadPoolImpl(StringPiece histogram_label)
+ThreadPoolImpl::ThreadPoolImpl(std::string_view histogram_label)
     : ThreadPoolImpl(histogram_label, std::make_unique<TaskTrackerImpl>()) {}
 
-ThreadPoolImpl::ThreadPoolImpl(StringPiece histogram_label,
+ThreadPoolImpl::ThreadPoolImpl(std::string_view histogram_label,
                                std::unique_ptr<TaskTrackerImpl> task_tracker,
                                bool use_background_threads)
     : histogram_label_(histogram_label),
@@ -88,7 +92,8 @@ ThreadPoolImpl::ThreadPoolImpl(StringPiece histogram_label,
                 "."),
       kForegroundPoolEnvironmentParams.name_suffix,
       kForegroundPoolEnvironmentParams.thread_type_hint,
-      task_tracker_->GetTrackedRef(), tracked_ref_factory_.GetTrackedRef());
+      ThreadGroupType::FOREGROUND, task_tracker_->GetTrackedRef(),
+      tracked_ref_factory_.GetTrackedRef());
 
   if (CanUseBackgroundThreadTypeForWorkerThread()) {
     background_thread_group_ = std::make_unique<ThreadGroupImpl>(
@@ -101,7 +106,8 @@ ThreadPoolImpl::ThreadPoolImpl(StringPiece histogram_label,
         use_background_threads
             ? kBackgroundPoolEnvironmentParams.thread_type_hint
             : kForegroundPoolEnvironmentParams.thread_type_hint,
-        task_tracker_->GetTrackedRef(), tracked_ref_factory_.GetTrackedRef());
+        ThreadGroupType::BACKGROUND, task_tracker_->GetTrackedRef(),
+        tracked_ref_factory_.GetTrackedRef());
   }
 }
 
@@ -131,14 +137,15 @@ void ThreadPoolImpl::Start(const ThreadPoolInstance::InitParams& init_params,
   // FileDescriptorWatcher in the scope in which tasks run.
   ServiceThread::Options service_thread_options;
   service_thread_options.message_pump_type =
-#if (BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_NACL)) || BUILDFLAG(IS_FUCHSIA)
+#if BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_FUCHSIA)
       MessagePumpType::IO;
 #else
       MessagePumpType::DEFAULT;
 #endif
   CHECK(service_thread_.StartWithOptions(std::move(service_thread_options)));
-  if (g_synchronous_thread_start_for_testing)
+  if (g_synchronous_thread_start_for_testing) {
     service_thread_.WaitUntilThreadStarted();
+  }
 
   if (FeatureList::IsEnabled(kUseUtilityThreadGroup) &&
       CanUseUtilityThreadTypeForWorkerThread()) {
@@ -150,7 +157,8 @@ void ThreadPoolImpl::Start(const ThreadPoolInstance::InitParams& init_params,
                   "."),
         kUtilityPoolEnvironmentParams.name_suffix,
         kUtilityPoolEnvironmentParams.thread_type_hint,
-        task_tracker_->GetTrackedRef(), tracked_ref_factory_.GetTrackedRef());
+        ThreadGroupType::UTILITY, task_tracker_->GetTrackedRef(),
+        tracked_ref_factory_.GetTrackedRef());
     foreground_thread_group_
         ->HandoffNonUserBlockingTaskSourcesToOtherThreadGroup(
             utility_thread_group_.get());
@@ -186,26 +194,29 @@ void ThreadPoolImpl::Start(const ThreadPoolInstance::InitParams& init_params,
   // tasks that can run in foreground pools to ensure that there is always
   // room for incoming foreground tasks and to minimize the performance impact
   // of best-effort tasks.
-  static_cast<ThreadGroupImpl*>(foreground_thread_group_.get())
-      ->Start(foreground_threads, max_best_effort_tasks,
-              init_params.suggested_reclaim_time, service_thread_task_runner,
-              worker_thread_observer, worker_environment,
-              g_synchronous_thread_start_for_testing);
+  foreground_thread_group_.get()->Start(
+      foreground_threads, max_best_effort_tasks,
+      init_params.suggested_reclaim_time, service_thread_task_runner,
+      worker_thread_observer, worker_environment,
+      g_synchronous_thread_start_for_testing,
+      /*may_block_threshold=*/{});
 
   if (utility_thread_group_) {
-    static_cast<ThreadGroupImpl*>(utility_thread_group_.get())
-        ->Start(utility_threads, max_best_effort_tasks,
-                init_params.suggested_reclaim_time, service_thread_task_runner,
-                worker_thread_observer, worker_environment,
-                g_synchronous_thread_start_for_testing);
+    utility_thread_group_.get()->Start(
+        utility_threads, max_best_effort_tasks,
+        init_params.suggested_reclaim_time, service_thread_task_runner,
+        worker_thread_observer, worker_environment,
+        g_synchronous_thread_start_for_testing,
+        /*may_block_threshold=*/{});
   }
 
   if (background_thread_group_) {
-    static_cast<ThreadGroupImpl*>(background_thread_group_.get())
-        ->Start(max_best_effort_tasks, max_best_effort_tasks,
-                init_params.suggested_reclaim_time, service_thread_task_runner,
-                worker_thread_observer, worker_environment,
-                g_synchronous_thread_start_for_testing);
+    background_thread_group_.get()->Start(
+        max_best_effort_tasks, max_best_effort_tasks,
+        init_params.suggested_reclaim_time, service_thread_task_runner,
+        worker_thread_observer, worker_environment,
+        g_synchronous_thread_start_for_testing,
+        /*may_block_threshold=*/{});
   }
 
   started_ = true;
@@ -218,6 +229,26 @@ bool ThreadPoolImpl::WasStarted() const {
 
 bool ThreadPoolImpl::WasStartedUnsafe() const {
   return TS_UNCHECKED_READ(started_);
+}
+
+void ThreadPoolImpl::BeginRestrictedTasks() {
+  foreground_thread_group_->SetMaxTasks(2);
+  if (utility_thread_group_) {
+    utility_thread_group_->SetMaxTasks(1);
+  }
+  if (background_thread_group_) {
+    background_thread_group_->SetMaxTasks(1);
+  }
+}
+
+void ThreadPoolImpl::EndRestrictedTasks() {
+  foreground_thread_group_->ResetMaxTasks();
+  if (utility_thread_group_) {
+    utility_thread_group_->ResetMaxTasks();
+  }
+  if (background_thread_group_) {
+    background_thread_group_->ResetMaxTasks();
+  }
 }
 
 bool ThreadPoolImpl::PostDelayedTask(const Location& from_here,
@@ -264,10 +295,29 @@ ThreadPoolImpl::CreateUpdateableSequencedTaskRunner(const TaskTraits& traits) {
   return MakeRefCounted<PooledSequencedTaskRunner>(traits, this);
 }
 
-absl::optional<TimeTicks> ThreadPoolImpl::NextScheduledRunTimeForTesting()
+scoped_refptr<SequencedTaskRunner>
+ThreadPoolImpl::CreateSequencedTaskRunnerForResource(
+    const TaskTraits& traits,
+    const base::FilePath& path) {
+  AutoLock lock(sequences_for_resources_lock_);
+  auto iter = sequences_for_resources_.find(path);
+  if (iter != sequences_for_resources_.end()) {
+    // The sequence must use the same traits.
+    CHECK(iter->second->sequence()->traits() == traits);
+    return iter->second;
+  }
+
+  scoped_refptr<PooledSequencedTaskRunner> task_runner =
+      MakeRefCounted<PooledSequencedTaskRunner>(traits, this);
+  sequences_for_resources_[path] = task_runner;
+  return task_runner;
+}
+
+std::optional<TimeTicks> ThreadPoolImpl::NextScheduledRunTimeForTesting()
     const {
-  if (task_tracker_->HasIncompleteTaskSourcesForTesting())
+  if (task_tracker_->HasIncompleteTaskSourcesForTesting()) {
     return TimeTicks::Now();
+  }
   return delayed_task_manager_.NextScheduledRunTime();
 }
 
@@ -314,11 +364,15 @@ void ThreadPoolImpl::Shutdown() {
 
   // Ensures that there are enough background worker to run BLOCK_SHUTDOWN
   // tasks.
+  // Shutdown must happen after service thread STOP as ThreadGroupProfiler
+  // destructor expects exclusive access to the instance during destruction.
   foreground_thread_group_->OnShutdownStarted();
-  if (utility_thread_group_)
+  if (utility_thread_group_) {
     utility_thread_group_->OnShutdownStarted();
-  if (background_thread_group_)
+  }
+  if (background_thread_group_) {
     background_thread_group_->OnShutdownStarted();
+  }
 
   task_tracker_->CompleteShutdown();
 }
@@ -345,10 +399,12 @@ void ThreadPoolImpl::JoinForTesting() {
   service_thread_.Stop();
   single_thread_task_runner_manager_.JoinForTesting();
   foreground_thread_group_->JoinForTesting();
-  if (utility_thread_group_)
+  if (utility_thread_group_) {
     utility_thread_group_->JoinForTesting();  // IN-TEST
-  if (background_thread_group_)
+  }
+  if (background_thread_group_) {
     background_thread_group_->JoinForTesting();
+  }
 #if DCHECK_IS_ON()
   join_for_testing_returned_.Set();
 #endif
@@ -396,11 +452,13 @@ bool ThreadPoolImpl::PostTaskWithSequenceNow(Task task,
   if (sequence_should_be_queued) {
     task_source = task_tracker_->RegisterTaskSource(sequence);
     // We shouldn't push |task| if we're not allowed to queue |task_source|.
-    if (!task_source)
+    if (!task_source) {
       return false;
+    }
   }
-  if (!task_tracker_->WillPostTaskNow(task, transaction.traits().priority()))
+  if (!task_tracker_->WillPostTaskNow(task, transaction.traits().priority())) {
     return false;
+  }
   transaction.PushImmediateTask(std::move(task));
   if (task_source) {
     const TaskTraits traits = transaction.traits();
@@ -416,15 +474,6 @@ bool ThreadPoolImpl::PostTaskWithSequence(Task task,
   // for details.
   CHECK(task.task);
   DCHECK(sequence);
-
-#if BUILDFLAG(IS_WIN) && !defined(TOOLKIT_QT)
-  // Force reading |task.posted_from.file_name()| to produce a useful crash
-  // report if the address is invalid. A crash report generated later when the
-  // task is executed would not contain the PostTask stack.
-  //
-  // TODO(crbug.com/1224432): Remove after resolving the crash.
-  DEBUG_ALIAS_FOR_CSTR(task_posted_from, task.posted_from.file_name(), 32);
-#endif
 
   if (!task_tracker_->WillPostTask(&task, sequence->shutdown_behavior())) {
     // `task`'s destructor may run sequence-affine code, so it must be leaked
@@ -462,8 +511,9 @@ bool ThreadPoolImpl::ShouldYield(const TaskSource* task_source) {
       GetThreadGroupForTraits({priority, task_source->thread_policy()});
   // A task whose priority changed and is now running in the wrong thread group
   // should yield so it's rescheduled in the right one.
-  if (!thread_group->IsBoundToCurrentThread())
+  if (!thread_group->IsBoundToCurrentThread()) {
     return true;
+  }
   return GetThreadGroupForTraits({priority, task_source->thread_policy()})
       ->ShouldYield(task_source->GetSortKey());
 }
@@ -472,8 +522,9 @@ bool ThreadPoolImpl::EnqueueJobTaskSource(
     scoped_refptr<JobTaskSource> task_source) {
   auto registered_task_source =
       task_tracker_->RegisterTaskSource(std::move(task_source));
-  if (!registered_task_source)
+  if (!registered_task_source) {
     return false;
+  }
   task_tracker_->WillEnqueueJob(
       static_cast<JobTaskSource*>(registered_task_source.get()));
   auto transaction = registered_task_source->BeginTransaction();
@@ -486,17 +537,16 @@ bool ThreadPoolImpl::EnqueueJobTaskSource(
 void ThreadPoolImpl::RemoveJobTaskSource(
     scoped_refptr<JobTaskSource> task_source) {
   auto transaction = task_source->BeginTransaction();
-  ThreadGroup* const current_thread_group =
-      GetThreadGroupForTraits(transaction.traits());
-  current_thread_group->RemoveTaskSource(*task_source);
+  GetThreadGroupForTraits(transaction.traits())->RemoveTaskSource(*task_source);
 }
 
 void ThreadPoolImpl::UpdatePriority(scoped_refptr<TaskSource> task_source,
                                     TaskPriority priority) {
   auto transaction = task_source->BeginTransaction();
 
-  if (transaction.traits().priority() == priority)
+  if (transaction.traits().priority() == priority) {
     return;
+  }
 
   if (transaction.traits().priority() == TaskPriority::BEST_EFFORT) {
     DCHECK(transaction.traits().thread_policy_set_explicitly())
@@ -505,21 +555,21 @@ void ThreadPoolImpl::UpdatePriority(scoped_refptr<TaskSource> task_source,
            "BEST_EFFORT. See ThreadPolicy documentation.";
   }
 
-  ThreadGroup* const current_thread_group =
+  ThreadGroup* const old_thread_group =
       GetThreadGroupForTraits(transaction.traits());
   transaction.UpdatePriority(priority);
   ThreadGroup* const new_thread_group =
       GetThreadGroupForTraits(transaction.traits());
 
-  if (new_thread_group == current_thread_group) {
+  if (new_thread_group == old_thread_group) {
     // |task_source|'s position needs to be updated within its current thread
     // group.
-    current_thread_group->UpdateSortKey(std::move(transaction));
+    old_thread_group->UpdateSortKey(std::move(transaction));
   } else {
     // |task_source| is changing thread groups; remove it from its current
     // thread group and reenqueue it.
     auto registered_task_source =
-        current_thread_group->RemoveTaskSource(*task_source);
+        old_thread_group->RemoveTaskSource(*task_source);
     if (registered_task_source) {
       DCHECK(task_source);
       new_thread_group->PushTaskSourceAndWakeUpWorkers(
@@ -571,12 +621,13 @@ void ThreadPoolImpl::UpdateCanRunPolicy() {
 
   task_tracker_->SetCanRunPolicy(can_run_policy);
   foreground_thread_group_->DidUpdateCanRunPolicy();
-  if (utility_thread_group_)
+  if (utility_thread_group_) {
     utility_thread_group_->DidUpdateCanRunPolicy();
-  if (background_thread_group_)
+  }
+  if (background_thread_group_) {
     background_thread_group_->DidUpdateCanRunPolicy();
+  }
   single_thread_task_runner_manager_.DidUpdateCanRunPolicy();
 }
 
-}  // namespace internal
-}  // namespace base
+}  // namespace base::internal

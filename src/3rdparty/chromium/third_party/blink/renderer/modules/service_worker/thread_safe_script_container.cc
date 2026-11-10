@@ -77,7 +77,7 @@ std::unique_ptr<ThreadSafeScriptContainer::RawScriptData>
 ThreadSafeScriptContainer::TakeOnWorkerThread(const KURL& url) {
   base::AutoLock locker(lock_);
   auto it = script_data_.find(url);
-  DCHECK(it != script_data_.end())
+  CHECK(it != script_data_.end())
       << "Script should have been received before calling Take";
   std::pair<ScriptStatus, std::unique_ptr<RawScriptData>>& pair = it->value;
   DCHECK_EQ(ScriptStatus::kReceived, pair.first);

@@ -31,6 +31,7 @@
 
 #include "third_party/blink/renderer/core/editing/commands/clipboard_commands.h"
 
+#include "base/auto_reset.h"
 #include "third_party/blink/public/platform/web_content_settings_client.h"
 #include "third_party/blink/renderer/core/clipboard/clipboard_utilities.h"
 #include "third_party/blink/renderer/core/clipboard/data_transfer_access_policy.h"
@@ -92,7 +93,7 @@ class ExecutionContextClipboardEventState
 
   struct State {
     const AtomicString* event_type = nullptr;
-    absl::optional<EditorCommandSource> source;
+    std::optional<EditorCommandSource> source;
   };
 
   base::AutoReset<State> SetState(const AtomicString& event_type,
@@ -165,9 +166,19 @@ Element* ClipboardCommands::FindEventTargetForClipboardEvent(
   //  "Set target to be the element that contains the start of the selection in
   //   document order, or the body element if there is no selection or cursor."
   // We treat hidden selections as "no selection or cursor".
+  //  "if the context is not editable, then set target to the focused node,
+  //   or the body element if no node has focus."
   if (source == EditorCommandSource::kMenuOrKeyBinding &&
-      frame.Selection().IsHidden())
+      frame.Selection().IsHidden()) {
+    if (RuntimeEnabledFeatures::
+            ClipboardEventTargetCanBeFocusedElementEnabled()) {
+      Element* focusedElement = frame.GetDocument()->FocusedElement();
+      if (focusedElement && !IsEditable(*focusedElement)) {
+        return focusedElement;
+      }
+    }
     return frame.Selection().GetDocument().body();
+  }
 
   return FindEventTargetFrom(
       frame, frame.Selection().ComputeVisibleSelectionInDOMTree());
@@ -462,7 +473,7 @@ ClipboardCommands::GetFragmentFromClipboard(LocalFrame& frame) {
     KURL url;
     const String markup =
         frame.GetSystemClipboard()->ReadHTML(url, fragment_start, fragment_end);
-    fragment = CreateSanitizedFragmentFromMarkupWithContext(
+    fragment = CreateStrictlyProcessedFragmentFromMarkupWithContext(
         *frame.GetDocument(), markup, fragment_start, fragment_end, url);
   }
   if (fragment)
@@ -640,7 +651,7 @@ class CORE_EXPORT PasteImageResourceObserver final
     unsigned fragment_start = 0;
     unsigned fragment_end = 0;
 
-    return CreateSanitizedFragmentFromMarkupWithContext(
+    return CreateStrictlyProcessedFragmentFromMarkupWithContext(
         *(frame_->GetDocument()), BuildMarkup(), fragment_start, fragment_end,
         String());
   }

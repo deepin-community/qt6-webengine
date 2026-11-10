@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <unordered_set>
+
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "build/build_config.h"
@@ -81,7 +82,7 @@ class BluetoothLowEnergyExtensionFunction : public ExtensionFunction {
   ResponseAction Run() override;
 
   // Implemented by individual bluetoothLowEnergy extension functions to perform
-  // the body of the function. This invoked asynchonously after Run after
+  // the body of the function. This invoked asynchronously after Run after
   // the BluetoothLowEnergyEventRouter has obtained a handle on the
   // BluetoothAdapter.
   virtual void DoWork() = 0;

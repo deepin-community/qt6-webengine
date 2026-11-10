@@ -10,12 +10,13 @@
 #ifndef NET_DCSCTP_TX_MOCK_SEND_QUEUE_H_
 #define NET_DCSCTP_TX_MOCK_SEND_QUEUE_H_
 
-#include <cstdint>
+#include <cstddef>
+#include <optional>
 #include <vector>
 
-#include "absl/types/optional.h"
-#include "api/array_view.h"
 #include "api/units/timestamp.h"
+#include "net/dcsctp/common/internal_types.h"
+#include "net/dcsctp/public/types.h"
 #include "net/dcsctp/tx/send_queue.h"
 #include "test/gmock.h"
 
@@ -25,12 +26,12 @@ class MockSendQueue : public SendQueue {
  public:
   MockSendQueue() {
     ON_CALL(*this, Produce)
-        .WillByDefault([](webrtc::Timestamp now, size_t max_size) {
-          return absl::nullopt;
+        .WillByDefault([](webrtc::Timestamp /* now */, size_t /* max_size */) {
+          return std::nullopt;
         });
   }
 
-  MOCK_METHOD(absl::optional<SendQueue::DataToSend>,
+  MOCK_METHOD(std::optional<SendQueue::DataToSend>,
               Produce,
               (webrtc::Timestamp now, size_t max_size),
               (override));

@@ -47,7 +47,7 @@ AdSize::~AdSize() = default;
 
 AdDescriptor::AdDescriptor() = default;
 
-AdDescriptor::AdDescriptor(GURL url, absl::optional<AdSize> size)
+AdDescriptor::AdDescriptor(GURL url, std::optional<AdSize> size)
     : url(url), size(size) {}
 
 AdDescriptor::AdDescriptor(const AdDescriptor&) = default;
@@ -58,12 +58,10 @@ AdDescriptor& AdDescriptor::operator=(const AdDescriptor&) = default;
 
 AdDescriptor& AdDescriptor::operator=(AdDescriptor&&) = default;
 
-bool AdDescriptor::operator==(const AdDescriptor& other) const {
-  return std::tie(url, size) == std::tie(other.url, other.size);
-}
+bool AdDescriptor::operator==(const AdDescriptor& other) const = default;
 
-bool AdDescriptor::operator!=(const AdDescriptor& other) const {
-  return !(*this == other);
+bool AdDescriptor::operator<(const AdDescriptor& other) const {
+  return std::tie(url, size) < std::tie(other.url, other.size);
 }
 
 AdDescriptor::~AdDescriptor() = default;

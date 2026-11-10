@@ -8,10 +8,11 @@
 
 #include <algorithm>
 #include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 
-#include <optional>
+#include "base/notreached.h"
 #include "base/rand_util.h"
 #include "base/values.h"
 #include "cc/base/math_util.h"
@@ -54,7 +55,7 @@ InvalidationBenchmark::InvalidationBenchmark(
   } else if (mode_string == "viewport") {
     mode_ = VIEWPORT;
   } else {
-    CHECK(false) << "Invalid mode: " << mode_string
+    NOTREACHED() << "Invalid mode: " << mode_string
                  << ". One of {fixed_size, layer, viewport, random} expected.";
   }
 }

@@ -4,7 +4,8 @@
 
 #include "third_party/blink/renderer/core/animation/scroll_timeline.h"
 
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include <optional>
+
 #include "third_party/blink/renderer/bindings/core/v8/v8_scroll_timeline_options.h"
 #include "third_party/blink/renderer/core/animation/scroll_timeline_util.h"
 #include "third_party/blink/renderer/core/dom/document.h"
@@ -16,21 +17,6 @@
 namespace blink {
 
 namespace {
-
-ScrollOrientation ToPhysicalScrollOrientation(ScrollAxis axis,
-                                              const LayoutBox& source_box) {
-  bool is_horizontal = source_box.IsHorizontalWritingMode();
-  switch (axis) {
-    case ScrollAxis::kBlock:
-      return is_horizontal ? kVerticalScroll : kHorizontalScroll;
-    case ScrollAxis::kInline:
-      return is_horizontal ? kHorizontalScroll : kVerticalScroll;
-    case ScrollAxis::kX:
-      return kHorizontalScroll;
-    case ScrollAxis::kY:
-      return kVerticalScroll;
-  }
-}
 
 Node* ResolveSource(Element* source) {
   if (source && source == source->GetDocument().ScrollingElementNoLayout()) {
@@ -44,9 +30,9 @@ Node* ResolveSource(Element* source) {
 ScrollTimeline* ScrollTimeline::Create(Document& document,
                                        ScrollTimelineOptions* options,
                                        ExceptionState& exception_state) {
-  absl::optional<Element*> source = options->hasSource()
-                                        ? absl::make_optional(options->source())
-                                        : absl::nullopt;
+  std::optional<Element*> source = options->hasSource()
+                                       ? std::make_optional(options->source())
+                                       : std::nullopt;
 
   ScrollAxis axis =
       options->hasAxis() ? options->axis().AsEnum() : ScrollAxis::kBlock;
@@ -142,13 +128,13 @@ ScrollTimeline::TimelineState ScrollTimeline::ComputeTimelineState() const {
   state.zoom = scroll_container->StyleRef().EffectiveZoom();
   // Timeline is inactive unless the scroll offset range is positive.
   // github.com/w3c/csswg-drafts/issues/7401
-  if (std::abs(state.scroll_offsets->end - state.scroll_offsets->start) > 0) {
+  if (state.scroll_offsets->end - state.scroll_offsets->start > 0) {
     state.phase = TimelinePhase::kActive;
     double offset = current_offset - state.scroll_offsets->start;
     double range = state.scroll_offsets->end - state.scroll_offsets->start;
     double duration_in_microseconds =
         range * kScrollTimelineMicrosecondsPerPixel;
-    state.duration = absl::make_optional(ANIMATION_TIME_DELTA_FROM_MILLISECONDS(
+    state.duration = std::make_optional(ANIMATION_TIME_DELTA_FROM_MILLISECONDS(
         duration_in_microseconds / 1000));
     state.current_time =
         base::Microseconds(offset * kScrollTimelineMicrosecondsPerPixel);
@@ -159,12 +145,8 @@ ScrollTimeline::TimelineState ScrollTimeline::ComputeTimelineState() const {
 void ScrollTimeline::CalculateOffsets(PaintLayerScrollableArea* scrollable_area,
                                       ScrollOrientation physical_orientation,
                                       TimelineState* state) const {
-  ScrollOffset scroll_dimensions = scrollable_area->MaximumScrollOffset() -
-                                   scrollable_area->MinimumScrollOffset();
-  double end_offset = physical_orientation == kHorizontalScroll
-                          ? scroll_dimensions.x()
-                          : scroll_dimensions.y();
-  state->scroll_offsets = absl::make_optional<ScrollOffsets>(0, end_offset);
+  CalculateScrollLimits(scrollable_area, physical_orientation, state);
+  state->scroll_offsets = state->scroll_limits;
 }
 
 Element* ScrollTimeline::source() const {
@@ -214,7 +196,6 @@ Element* ScrollTimeline::ComputeSourceNoLayout() const {
 
   if (!node) {
     NOTREACHED();
-    return nullptr;
   }
 
   if (node->IsElementNode()) {
@@ -225,7 +206,6 @@ Element* ScrollTimeline::ComputeSourceNoLayout() const {
   }
 
   NOTREACHED();
-  return nullptr;
 }
 
 void ScrollTimeline::AnimationAttached(Animation* animation) {
@@ -239,7 +219,7 @@ void ScrollTimeline::AnimationAttached(Animation* animation) {
 void ScrollTimeline::AnimationDetached(Animation* animation) {
   AnimationTimeline::AnimationDetached(animation);
 
-  if (RetainingElement() && !HasAnimations()) {
+  if (RetainingElement() && !HasAnimations() && triggers_.empty()) {
     RetainingElement()->UnregisterScrollTimeline(this);
   }
 }
@@ -264,20 +244,20 @@ ScrollAxis ScrollTimeline::GetAxis() const {
   return axis_;
 }
 
-absl::optional<double> ScrollTimeline::GetMaximumScrollPosition() const {
-  absl::optional<ScrollOffsets> scroll_offsets = GetResolvedScrollOffsets();
+std::optional<double> ScrollTimeline::GetMaximumScrollPosition() const {
+  std::optional<ScrollOffsets> scroll_offsets = GetResolvedScrollOffsets();
   if (!scroll_offsets) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   LayoutBox* scroll_container = ScrollContainer();
   if (!scroll_container) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   PaintLayerScrollableArea* scrollable_area =
       scroll_container->GetScrollableArea();
   if (!scrollable_area) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   ScrollOffset scroll_dimensions = scrollable_area->MaximumScrollOffset() -
                                    scrollable_area->MinimumScrollOffset();
@@ -285,6 +265,57 @@ absl::optional<double> ScrollTimeline::GetMaximumScrollPosition() const {
       ToPhysicalScrollOrientation(GetAxis(), *scroll_container);
   return physical_orientation == kHorizontalScroll ? scroll_dimensions.x()
                                                    : scroll_dimensions.y();
+}
+
+std::optional<double> ScrollTimeline::GetCurrentScrollPosition() const {
+  Node* source = ComputeResolvedSource();
+  LayoutBox* scroll_container = ComputeScrollContainer(source);
+  if (!scroll_container) {
+    return std::nullopt;
+  }
+
+  PaintLayerScrollableArea* scrollable_area =
+      scroll_container->GetScrollableArea();
+  if (!scrollable_area) {
+    return std::nullopt;
+  }
+
+  ScrollOffset scroll_offset = scrollable_area->GetScrollOffset();
+  auto physical_orientation =
+      ToPhysicalScrollOrientation(GetAxis(), *scroll_container);
+  return (physical_orientation == kHorizontalScroll) ? scroll_offset.x()
+                                                     : scroll_offset.y();
+}
+
+void ScrollTimeline::AddAnimationTrigger(AnimationTrigger* trigger) {
+  AnimationTimeline::AddAnimationTrigger(trigger);
+  if (RetainingElement()) {
+    RetainingElement()->RegisterScrollTimeline(this);
+  }
+}
+
+void ScrollTimeline::RemoveAnimationTrigger(AnimationTrigger* trigger) {
+  AnimationTimeline::RemoveAnimationTrigger(trigger);
+  if (RetainingElement() && triggers_.empty() && !HasAnimations()) {
+    RetainingElement()->UnregisterScrollTimeline(this);
+  }
+}
+
+// static
+ScrollOrientation ScrollTimeline::ToPhysicalScrollOrientation(
+    ScrollAxis axis,
+    const LayoutBox& source_box) {
+  bool is_horizontal = source_box.IsHorizontalWritingMode();
+  switch (axis) {
+    case ScrollAxis::kBlock:
+      return is_horizontal ? kVerticalScroll : kHorizontalScroll;
+    case ScrollAxis::kInline:
+      return is_horizontal ? kHorizontalScroll : kVerticalScroll;
+    case ScrollAxis::kX:
+      return kHorizontalScroll;
+    case ScrollAxis::kY:
+      return kVerticalScroll;
+  }
 }
 
 }  // namespace blink

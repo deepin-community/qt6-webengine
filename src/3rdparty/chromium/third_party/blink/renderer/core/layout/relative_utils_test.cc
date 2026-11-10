@@ -5,9 +5,9 @@
 #include "third_party/blink/renderer/core/layout/relative_utils.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/renderer/core/layout/geometry/physical_offset.h"
-#include "third_party/blink/renderer/core/layout/geometry/physical_size.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
+#include "third_party/blink/renderer/platform/geometry/physical_offset.h"
+#include "third_party/blink/renderer/platform/geometry/physical_size.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
 
 namespace blink {
@@ -23,7 +23,7 @@ const LayoutUnit kZero{0};
 class RelativeUtilsTest : public testing::Test {
  protected:
   void SetUp() override {
-    initial_style_ = ComputedStyle::CreateInitialStyleSingleton();
+    initial_style_ = ComputedStyle::GetInitialStyleSingleton();
   }
 
   const ComputedStyle* CreateStyle(LayoutUnit top,

@@ -126,24 +126,6 @@ enum class PredictionModelDownloadStatus {
   kMaxValue = kFailedInvalidAdditionalFile,
 };
 
-// The status for the page content annotations being stored.
-//
-// Keep in sync with OptimizationGuidePageContentAnnotationsStorageStatus in
-// enums.xml.
-enum PageContentAnnotationsStorageStatus {
-  kUnknown = 0,
-  // The content annotations were requested to be stored in the History Service.
-  kSuccess = 1,
-  // There were no visits for the URL found in the History Service.
-  kNoVisitsForUrl = 2,
-  // The specific visit that we wanted to annotate could not be found in the
-  // History Service.
-  kSpecificVisitForUrlNotFound = 3,
-
-  // Add new values above this line.
-  kMaxValue = kSpecificVisitForUrlNotFound,
-};
-
 // Different events of the prediction model delivery lifecycle for an
 // OptimizationTarget.
 // Keep in sync with OptimizationGuideModelDeliveryEvent in enums.xml.
@@ -193,12 +175,12 @@ enum class ModelDeliveryEvent {
 // The various model quality user feedback.
 enum class ModelQualityUserFeedback {
   kUnknown = 0,
-  kThumbsUp = 1,
-  kThumbsDown = 2,
+  kThumbsDown = 1,
+  kThumbsUp = 2,
 
   // Keep in sync with OptimizationGuideUserFeedback in
   // tools/metrics/histograms/metadata/optimization/enums.xml.
-  kMaxValue = kThumbsDown,
+  kMaxValue = kThumbsUp,
 };
 
 // The various results of an access token request.
@@ -248,70 +230,6 @@ enum class FetcherRequestStatus {
   kMaxValue = kUserNotSignedIn
 };
 
-// Reasons for whether the on-device model was eligible for use.
-//
-// These values are persisted to logs. Entries should not be renumbered and
-// numeric values should never be reused.
-enum class OnDeviceModelEligibilityReason {
-  kUnknown = 0,
-  // Success.
-  kSuccess = 1,
-  // The feature flag gating on-device model execution was disabled.
-  kFeatureNotEnabled = 2,
-  // There was no on-device model available.
-  kModelNotAvailable = 3,
-  // The on-device model was available but there was not an execution config
-  // available for the feature.
-  kConfigNotAvailableForFeature = 4,
-  // The GPU is blocked.
-  kGpuBlocked = 5,
-  // The on-device model process crashed too many times for this version.
-  kTooManyRecentCrashes = 6,
-  // The on-device model took too long too many times for this version.
-  kTooManyRecentTimeouts = 7,
-  // The on-device safety model was required but not available.
-  kSafetyModelNotAvailable = 8,
-  // The on-device safety model was available but there was not a safety config
-  // available for the feature.
-  kSafetyConfigNotAvailableForFeature = 9,
-  // The on-device language detection model was required but not available.
-  kLanguageDetectionModelNotAvailable = 10,
-
-  // This must be kept in sync with
-  // OptimizationGuideOnDeviceModelEligibilityReason in optimization/enums.xml.
-
-  // Insert new values before this line.
-  kMaxValue = kLanguageDetectionModelNotAvailable,
-};
-
-// Status of the on-device model.
-//
-// These values are persisted to logs. Entries should not be renumbered and
-// numeric values should never be reused.
-enum class OnDeviceModelStatus {
-  // Model is installed and ready to use.
-  kReady = 0,
-  // Criteria to install model have not been met.
-  kNotEligible = 1,
-  // Criteria to install are met, but model not installed yet.
-  kInstallNotComplete = 2,
-  // The model installer was not registered, even though the client would be
-  // eligible to install right now. This likely means the state of the system
-  // has changed recently.
-  kModelInstallerNotRegisteredForUnknownReason = 3,
-  // The model is ready, but it wasn't ready early enough for
-  // OnDeviceModelServiceController to use it.
-  kModelInstalledTooLate = 4,
-  // The model is not ready, and the reason is unknown.
-  kNotReadyForUnknownReason = 5,
-
-  // This must be kept in sync with
-  // OptimizationGuideOnDeviceModelStatus in optimization/enums.xml.
-
-  // Insert new values before this line.
-  kMaxValue = kNotReadyForUnknownReason,
-};
-
 // Status of a model quality logs upload request.
 enum class ModelQualityLogsUploadStatus {
   kUnknown = 0,
@@ -321,16 +239,19 @@ enum class ModelQualityLogsUploadStatus {
   kLoggingNotEnabled = 2,
   // Upload was not successful because of network error.
   kNetError = 3,
-  // Upload is disabled due to user's metrics consent.
-  kNoMetricsConsent = 4,
+  // Upload is disabled due to metrics reporting being disabled in
+  // chrome://settings.
+  kMetricsReportingDisabled = 4,
   // Upload is disabled due to enterprise policy.
   kDisabledDueToEnterprisePolicy = 5,
+  // Upload is disabled because the feature is not enabled for the user.
+  kFeatureNotEnabledForUser = 6,
 
   // Insert new values before this line.
   // This enum must remain synchronized with the enum
   // |OptimizationGuideModelQualityLogsUploadStatus| in
-  // tools/metrics/histograms/enums.xml.
-  kMaxValue = kDisabledDueToEnterprisePolicy,
+  // tools/metrics/histograms/metadata/optimization/enums.xml.
+  kMaxValue = kFeatureNotEnabledForUser,
 };
 
 // Performance class of this device.
@@ -367,29 +288,6 @@ enum class OnDeviceModelPerformanceClass : int {
   kMaxValue = kFailedToLoadLibrary,
 };
 
-// The result of loading an on-device model.
-//
-// These values are persisted to logs. Entries should not be renumbered and
-// numeric values should never be reused.
-enum class OnDeviceModelLoadResult {
-  kUnknown = 0,
-
-  // Model loaded successfully.
-  kSuccess = 1,
-
-  // GPU was blocklisted.
-  kGpuBlocked = 2,
-
-  // Native library failed to load.
-  kFailedToLoadLibrary = 3,
-
-  // This must be kept in sync with
-  // OnDeviceModelLoadResult in optimization/enums.xml.
-
-  // Insert new values before this line.
-  kMaxValue = kFailedToLoadLibrary,
-};
-
 // The validity of the model metadata packaged with the text safety model.
 //
 // These values are persisted to logs. Entries should not be renumbered and
@@ -413,6 +311,14 @@ enum class TextSafetyModelMetadataValidity {
   // optimization/enums.xml.
 
   kMaxValue = kValid,
+};
+
+// Whether a response is complete or not.
+enum class ResponseCompleteness {
+  // This is a partial response, more output may follow.
+  kPartial,
+  // The response is complete and no more output will be produced.
+  kComplete,
 };
 
 }  // namespace optimization_guide

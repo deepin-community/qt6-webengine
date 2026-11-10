@@ -80,8 +80,9 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
   ui::EventTargeter* GetDefaultEventTargeter() override;
 
   // Repost event for re-processing. Used when exiting context menus.
-  // We support the ET_MOUSE_PRESSED, ET_TOUCH_PRESSED and ET_GESTURE_TAP_DOWN
-  // event types (although the latter is currently a no-op).
+  // We support the EventType::kMousePressed, EventType::kTouchPressed and
+  // EventType::kGestureTapDown event types (although the latter is currently a
+  // no-op).
   void RepostEvent(const ui::LocatedEvent* event);
 
   // Invoked when the mouse events get enabled or disabled.
@@ -89,7 +90,7 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
 
   void DispatchCancelModeEvent();
 
-  // Dispatches a ui::ET_MOUSE_EXITED event at |point| to the |target|
+  // Dispatches a ui::EventType::kMouseExited event at |point| to the |target|
   // If the |target| is NULL, we will dispatch the event to the root-window.
   // |event_flags| will be set on the dispatched exit event.
   // TODO(beng): needed only for WTH::OnCursorVisibilityChanged().
@@ -128,6 +129,9 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
 
   void OnHostLostMouseGrab();
   void OnCursorMovedToRootLocation(const gfx::Point& root_location);
+
+  // Invoked when mouse exit the underlying window tree host.
+  void OnHostCursorExit();
 
   // TODO(beng): This is only needed because this cleanup needs to happen after
   //             all other observers are notified of OnWindowDestroying() but
@@ -232,6 +236,7 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
                                              const ui::Event& event) override;
 
   // Overridden from ui::GestureEventHelper.
+  base::WeakPtr<ui::GestureEventHelper> GetWeakPtr() override;
   bool CanDispatchToConsumer(ui::GestureConsumer* consumer) override;
   void DispatchGestureEvent(ui::GestureConsumer* raw_input_consumer,
                             ui::GestureEvent* event) override;
@@ -269,7 +274,7 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
 
   // Posts a task to send synthesized mouse move event if there is no a pending
   // task.
-  void PostSynthesizeMouseMove();
+  void PostSynthesizeMouseMove(Window* window);
 
   // Creates and dispatches synthesized mouse move event using the current mouse
   // location.
@@ -354,6 +359,8 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
 
   // Used to schedule DispatchHeldEvents() when |move_hold_count_| goes to 0.
   base::WeakPtrFactory<WindowEventDispatcher> held_event_factory_{this};
+
+  base::WeakPtrFactory<WindowEventDispatcher> weak_ptr_factory_{this};
 };
 
 }  // namespace aura

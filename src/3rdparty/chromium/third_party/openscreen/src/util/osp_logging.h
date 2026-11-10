@@ -6,6 +6,7 @@
 #define UTIL_OSP_LOGGING_H_
 
 #include <sstream>
+#include <string_view>
 #include <utility>
 
 #include "platform/api/logging.h"
@@ -50,8 +51,9 @@ class Voidify {
 
 #define OSP_LAZY_STREAM(condition, stream) \
   !(condition) ? (void)0 : openscreen::internal::Voidify() & (stream)
-#define OSP_LOG_IS_ON(level_enum) \
-  openscreen::IsLoggingOn(openscreen::LogLevel::level_enum, __FILE__)
+#define OSP_LOG_IS_ON(level_enum)                           \
+  openscreen::IsLoggingOn(openscreen::LogLevel::level_enum, \
+                          std::string_view(__FILE__, std::size(__FILE__)))
 #define OSP_LOG_STREAM(level_enum)                                             \
   openscreen::internal::LogMessage(openscreen::LogLevel::level_enum, __FILE__, \
                                    __LINE__)                                   \
@@ -97,7 +99,7 @@ class Voidify {
 #else
 #define OSP_DCHECK_IS_ON() 0
 // When DCHECKs are off, nothing will be logged. Use that fact to make
-// references to the |condition| expression (or |a| and |b|) so the compiler
+// references to the `condition` expression (or `a` and `b`) so the compiler
 // won't emit unused variable warnings/errors when DCHECKs are turned off.
 #define OSP_EAT_STREAM OSP_LOG_IF(FATAL, false)
 #define OSP_DCHECK(condition) OSP_EAT_STREAM << !(condition)

@@ -2,7 +2,8 @@ Name: Wasmparser
 Short Name: wasmparser
 URL: https://github.com/wasdk/wasmparser
 Version: 5.4.0
-License: Apache
+Revision: e0a3281fdd678e6e3d5624b6d939bdf7c3d215ad
+License: Apache-2.0
 License File: package/LICENSE
 Security Critical: no
 Shipped: yes

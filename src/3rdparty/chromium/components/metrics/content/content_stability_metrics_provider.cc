@@ -11,13 +11,10 @@
 #include "content/public/browser/browser_child_process_observer.h"
 #include "content/public/browser/child_process_data.h"
 #include "content/public/browser/child_process_termination_info.h"
-#include "content/public/browser/notification_service.h"
-#include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/page_visibility_state.h"
 #include "content/public/common/process_type.h"
-#include "ppapi/buildflags/buildflags.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "components/crash/content/browser/crash_metrics_reporter_android.h"
@@ -77,6 +74,18 @@ RendererHostedContentType DetermineHostedContentType(
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
 
+bool IsCdmUtilityProcess(const content::ChildProcessData& data) {
+  return (data.process_type == content::PROCESS_TYPE_UTILITY &&
+          (data.sandbox_type == sandbox::mojom::Sandbox::kCdm
+#if BUILDFLAG(IS_WIN)
+           || data.sandbox_type == sandbox::mojom::Sandbox::kMediaFoundationCdm
+#endif
+#if BUILDFLAG(IS_ANDROID)
+           || data.metrics_name == "media.mojom.MediaDrmSupport"
+#endif
+           ));
+}
+
 }  // namespace
 
 ContentStabilityMetricsProvider::ContentStabilityMetricsProvider(
@@ -121,6 +130,18 @@ void ContentStabilityMetricsProvider::OnRenderProcessHostCreated(
   }
 }
 
+void ContentStabilityMetricsProvider::OnRenderProcessHostCreationFailed(
+    content::RenderProcessHost* host,
+    const content::ChildProcessTerminationInfo& info) {
+#if BUILDFLAG(IS_IOS)
+  helper_.LogRendererCrash();
+#elif !BUILDFLAG(IS_ANDROID)
+  helper_.LogRendererCrash(
+      DetermineHostedContentType(host, extensions_helper_.get()), info.status,
+      info.exit_code);
+#endif
+}
+
 void ContentStabilityMetricsProvider::RenderProcessExited(
     content::RenderProcessHost* host,
     const content::ChildProcessTerminationInfo& info) {
@@ -149,6 +170,10 @@ void ContentStabilityMetricsProvider::BrowserChildProcessCrashed(
   DCHECK(!data.metrics_name.empty());
   if (data.process_type == content::PROCESS_TYPE_UTILITY)
     helper_.BrowserUtilityProcessCrashed(data.metrics_name, info.exit_code);
+
+  if (IsCdmUtilityProcess(data)) {
+    helper_.CdmUtilityProcessCrashed(data.metrics_name, info.exit_code);
+  }
 }
 
 void ContentStabilityMetricsProvider::BrowserChildProcessLaunchedAndConnected(
@@ -156,6 +181,10 @@ void ContentStabilityMetricsProvider::BrowserChildProcessLaunchedAndConnected(
   DCHECK(!data.metrics_name.empty());
   if (data.process_type == content::PROCESS_TYPE_UTILITY)
     helper_.BrowserUtilityProcessLaunched(data.metrics_name);
+
+  if (IsCdmUtilityProcess(data)) {
+    helper_.CdmUtilityProcessLaunched(data.metrics_name);
+  }
 }
 
 void ContentStabilityMetricsProvider::BrowserChildProcessLaunchFailed(
@@ -170,6 +199,15 @@ void ContentStabilityMetricsProvider::BrowserChildProcessLaunchFailed(
                                               info.last_error
 #endif
     );
+
+  if (IsCdmUtilityProcess(data)) {
+    helper_.CdmUtilityProcessLaunchFailed(data.metrics_name, info.exit_code
+#if BUILDFLAG(IS_WIN)
+                                          ,
+                                          info.last_error
+#endif
+    );
+  }
 }
 
 #if BUILDFLAG(IS_ANDROID)

@@ -2,12 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "components/paint_preview/common/serial_utils.h"
 
 #include "base/trace_event/common/trace_event_common.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "components/paint_preview/common/subset_font.h"
+#include "skia/ext/codec_utils.h"
 #include "skia/ext/font_utils.h"
 #include "third_party/skia/include/codec/SkBmpDecoder.h"
 #include "third_party/skia/include/codec/SkCodec.h"
@@ -24,7 +30,6 @@
 #include "third_party/skia/include/core/SkPictureRecorder.h"
 #include "third_party/skia/include/core/SkString.h"
 #include "third_party/skia/include/core/SkTypeface.h"
-#include "third_party/skia/include/encode/SkPngEncoder.h"
 #include "third_party/skia/include/private/chromium/Slug.h"
 
 namespace paint_preview {
@@ -159,9 +164,9 @@ sk_sp<SkData> SerializeImage(SkImage* image, void* ctx) {
   sk_sp<SkData> encoded_data = image->refEncodedData();
   if (!encoded_data || !is_supported_codec(encoded_data)) {
     // Use the default PNG at quality 100 as it is safe.
-    // TODO(crbug/1198304): Investigate supporting JPEG at quality 100 for
+    // TODO(crbug.com/40177283): Investigate supporting JPEG at quality 100 for
     // opaque images.
-    encoded_data = SkPngEncoder::Encode(nullptr, image, {});
+    encoded_data = skia::EncodePngAsSkData(nullptr, image);
   }
 
   if (!encoded_data) {

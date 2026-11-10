@@ -9,22 +9,19 @@
 
 #include "modules/video_coding/timing/jitter_estimator.h"
 
-#include <stdint.h>
-
-#include <memory>
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "absl/types/optional.h"
-#include "api/array_view.h"
 #include "api/field_trials.h"
 #include "api/units/data_size.h"
 #include "api/units/frequency.h"
 #include "api/units/time_delta.h"
 #include "rtc_base/numerics/histogram_percentile_counter.h"
-#include "rtc_base/time_utils.h"
 #include "system_wrappers/include/clock.h"
+#include "test/create_test_field_trials.h"
 #include "test/gtest.h"
 
 namespace webrtc {
@@ -57,10 +54,10 @@ class JitterEstimatorTest : public ::testing::Test {
  protected:
   explicit JitterEstimatorTest(const std::string& field_trials)
       : fake_clock_(0),
-        field_trials_(FieldTrials::CreateNoGlobal(field_trials)),
-        estimator_(&fake_clock_, *field_trials_) {}
+        field_trials_(CreateTestFieldTrials(field_trials)),
+        estimator_(&fake_clock_, field_trials_) {}
   JitterEstimatorTest() : JitterEstimatorTest("") {}
-  virtual ~JitterEstimatorTest() {}
+  ~JitterEstimatorTest() override {}
 
   void Run(int duration_s, int framerate_fps, ValueGenerator& gen) {
     TimeDelta tick = 1 / Frequency::Hertz(framerate_fps);
@@ -72,14 +69,14 @@ class JitterEstimatorTest : public ::testing::Test {
   }
 
   SimulatedClock fake_clock_;
-  std::unique_ptr<FieldTrials> field_trials_;
+  FieldTrials field_trials_;
   JitterEstimator estimator_;
 };
 
 TEST_F(JitterEstimatorTest, SteadyStateConvergence) {
   ValueGenerator gen(10);
   Run(/*duration_s=*/60, /*framerate_fps=*/30, gen);
-  EXPECT_EQ(estimator_.GetJitterEstimate(0, absl::nullopt).ms(), 54);
+  EXPECT_EQ(estimator_.GetJitterEstimate(0, std::nullopt).ms(), 54);
 }
 
 TEST_F(JitterEstimatorTest,
@@ -88,12 +85,11 @@ TEST_F(JitterEstimatorTest,
 
   // Steady state.
   Run(/*duration_s=*/60, /*framerate_fps=*/30, gen);
-  TimeDelta steady_state_jitter =
-      estimator_.GetJitterEstimate(0, absl::nullopt);
+  TimeDelta steady_state_jitter = estimator_.GetJitterEstimate(0, std::nullopt);
 
   // A single outlier frame size...
   estimator_.UpdateEstimate(gen.Delay(), 10 * gen.FrameSize());
-  TimeDelta outlier_jitter = estimator_.GetJitterEstimate(0, absl::nullopt);
+  TimeDelta outlier_jitter = estimator_.GetJitterEstimate(0, std::nullopt);
 
   // ...changes the estimate.
   EXPECT_GT(outlier_jitter.ms(), 1.25 * steady_state_jitter.ms());
@@ -107,14 +103,14 @@ TEST_F(JitterEstimatorTest, LowFramerateDisablesJitterEstimator) {
     estimator_.UpdateEstimate(gen.Delay(), gen.FrameSize());
     fake_clock_.AdvanceTime(time_delta);
     if (i > 2)
-      EXPECT_EQ(estimator_.GetJitterEstimate(0, absl::nullopt),
+      EXPECT_EQ(estimator_.GetJitterEstimate(0, std::nullopt),
                 TimeDelta::Zero());
     gen.Advance();
   }
 }
 
 TEST_F(JitterEstimatorTest, RttMultAddCap) {
-  std::vector<std::pair<TimeDelta, rtc::HistogramPercentileCounter>>
+  std::vector<std::pair<TimeDelta, HistogramPercentileCounter>>
       jitter_by_rtt_mult_cap;
   jitter_by_rtt_mult_cap.emplace_back(
       /*rtt_mult_add_cap=*/TimeDelta::Millis(10), /*long_tail_boundary=*/1000);
@@ -150,12 +146,11 @@ TEST_F(JitterEstimatorTest, Single2xFrameSizeImpactsJitterEstimate) {
 
   // Steady state.
   Run(/*duration_s=*/60, /*framerate_fps=*/30, gen);
-  TimeDelta steady_state_jitter =
-      estimator_.GetJitterEstimate(0, absl::nullopt);
+  TimeDelta steady_state_jitter = estimator_.GetJitterEstimate(0, std::nullopt);
 
   // A single outlier frame size...
   estimator_.UpdateEstimate(gen.Delay(), 2 * gen.FrameSize());
-  TimeDelta outlier_jitter = estimator_.GetJitterEstimate(0, absl::nullopt);
+  TimeDelta outlier_jitter = estimator_.GetJitterEstimate(0, std::nullopt);
 
   // ...impacts the estimate.
   EXPECT_GT(outlier_jitter.ms(), steady_state_jitter.ms());
@@ -168,12 +163,11 @@ TEST_F(JitterEstimatorTest, CongestedFrameImpactsJitterEstimate) {
 
   // Steady state.
   Run(/*duration_s=*/10, /*framerate_fps=*/30, gen);
-  TimeDelta steady_state_jitter =
-      estimator_.GetJitterEstimate(0, absl::nullopt);
+  TimeDelta steady_state_jitter = estimator_.GetJitterEstimate(0, std::nullopt);
 
   // Congested frame...
   estimator_.UpdateEstimate(-10 * gen.Delay(), 0.1 * gen.FrameSize());
-  TimeDelta outlier_jitter = estimator_.GetJitterEstimate(0, absl::nullopt);
+  TimeDelta outlier_jitter = estimator_.GetJitterEstimate(0, std::nullopt);
 
   // ...impacts the estimate.
   EXPECT_GT(outlier_jitter.ms(), steady_state_jitter.ms());
@@ -203,8 +197,10 @@ class FieldTrialsOverriddenJitterEstimatorTest : public JitterEstimatorTest {
             "num_stddev_delay_outlier:2,"
             "num_stddev_size_outlier:3.1,"
             "congestion_rejection_factor:-1.55,"
-            "estimate_noise_when_congested:false/") {}
-  ~FieldTrialsOverriddenJitterEstimatorTest() {}
+            "estimate_noise_when_congested:false,"
+            "nack_limit:2,"
+            "nack_count_timeout:100ms/") {}
+  ~FieldTrialsOverriddenJitterEstimatorTest() override {}
 };
 
 TEST_F(FieldTrialsOverriddenJitterEstimatorTest, FieldTrialsParsesCorrectly) {
@@ -217,6 +213,8 @@ TEST_F(FieldTrialsOverriddenJitterEstimatorTest, FieldTrialsParsesCorrectly) {
   EXPECT_EQ(*config.num_stddev_size_outlier, 3.1);
   EXPECT_EQ(*config.congestion_rejection_factor, -1.55);
   EXPECT_FALSE(config.estimate_noise_when_congested);
+  EXPECT_EQ(*config.nack_limit, 2);
+  EXPECT_EQ(*config.nack_count_timeout, TimeDelta::Millis(100));
 }
 
 TEST_F(FieldTrialsOverriddenJitterEstimatorTest,
@@ -225,12 +223,11 @@ TEST_F(FieldTrialsOverriddenJitterEstimatorTest,
 
   // Steady state.
   Run(/*duration_s=*/60, /*framerate_fps=*/30, gen);
-  TimeDelta steady_state_jitter =
-      estimator_.GetJitterEstimate(0, absl::nullopt);
+  TimeDelta steady_state_jitter = estimator_.GetJitterEstimate(0, std::nullopt);
 
   // A single outlier frame size...
   estimator_.UpdateEstimate(10 * gen.Delay(), gen.FrameSize());
-  TimeDelta outlier_jitter = estimator_.GetJitterEstimate(0, absl::nullopt);
+  TimeDelta outlier_jitter = estimator_.GetJitterEstimate(0, std::nullopt);
 
   // ...does not change the estimate.
   EXPECT_EQ(outlier_jitter.ms(), steady_state_jitter.ms());
@@ -244,19 +241,18 @@ TEST_F(FieldTrialsOverriddenJitterEstimatorTest,
 
   // Steady state.
   Run(/*duration_s=*/60, /*framerate_fps=*/30, gen);
-  TimeDelta steady_state_jitter =
-      estimator_.GetJitterEstimate(0, absl::nullopt);
+  TimeDelta steady_state_jitter = estimator_.GetJitterEstimate(0, std::nullopt);
 
   // Three outlier frames do not impact the jitter estimate.
   for (int i = 0; i < 3; ++i) {
     estimator_.UpdateEstimate(gen.Delay(), 2 * gen.FrameSize());
   }
-  TimeDelta outlier_jitter_3x = estimator_.GetJitterEstimate(0, absl::nullopt);
+  TimeDelta outlier_jitter_3x = estimator_.GetJitterEstimate(0, std::nullopt);
   EXPECT_EQ(outlier_jitter_3x.ms(), steady_state_jitter.ms());
 
   // Four outlier frames do impact the jitter estimate.
   estimator_.UpdateEstimate(gen.Delay(), 2 * gen.FrameSize());
-  TimeDelta outlier_jitter_4x = estimator_.GetJitterEstimate(0, absl::nullopt);
+  TimeDelta outlier_jitter_4x = estimator_.GetJitterEstimate(0, std::nullopt);
   EXPECT_GT(outlier_jitter_4x.ms(), outlier_jitter_3x.ms());
 }
 
@@ -268,15 +264,59 @@ TEST_F(FieldTrialsOverriddenJitterEstimatorTest,
 
   // Steady state.
   Run(/*duration_s=*/10, /*framerate_fps=*/30, gen);
-  TimeDelta steady_state_jitter =
-      estimator_.GetJitterEstimate(0, absl::nullopt);
+  TimeDelta steady_state_jitter = estimator_.GetJitterEstimate(0, std::nullopt);
 
   // Congested frame...
   estimator_.UpdateEstimate(-10 * gen.Delay(), 0.1 * gen.FrameSize());
-  TimeDelta outlier_jitter = estimator_.GetJitterEstimate(0, absl::nullopt);
+  TimeDelta outlier_jitter = estimator_.GetJitterEstimate(0, std::nullopt);
 
   // ...does not impact the estimate.
   EXPECT_EQ(outlier_jitter.ms(), steady_state_jitter.ms());
+}
+
+TEST_F(FieldTrialsOverriddenJitterEstimatorTest,
+       NackedFramesIncreaseEstimateWithinTimeoutWindow) {
+  ValueGenerator gen(10);
+  constexpr double kRttMult = 1.0;
+  constexpr TimeDelta kRttMultAddCap = TimeDelta::Millis(200);
+  constexpr TimeDelta kRtt = TimeDelta::Millis(100);
+  constexpr TimeDelta kInterArrivalTime = TimeDelta::Millis(33);
+  estimator_.UpdateRtt(kRtt);
+
+  // Ten perfect frames stabilize the estimate.
+  for (int i = 0; i < 10; ++i) {
+    fake_clock_.AdvanceTime(kInterArrivalTime);
+    estimator_.UpdateEstimate(gen.Delay(), gen.FrameSize());
+    gen.Advance();
+  }
+  EXPECT_EQ(estimator_.GetJitterEstimate(kRttMult, kRttMultAddCap),
+            TimeDelta::Millis(11));
+
+  // RTT is added to estimate after two NACKed frames.
+  fake_clock_.AdvanceTime(kInterArrivalTime);
+  estimator_.FrameNacked();
+  estimator_.UpdateEstimate(gen.Delay() + kRtt, gen.FrameSize());
+  gen.Advance();
+  EXPECT_EQ(estimator_.GetJitterEstimate(kRttMult, kRttMultAddCap),
+            TimeDelta::Millis(11));
+  fake_clock_.AdvanceTime(kInterArrivalTime);
+  estimator_.FrameNacked();
+  estimator_.UpdateEstimate(gen.Delay(), gen.FrameSize());
+  gen.Advance();
+  EXPECT_EQ(estimator_.GetJitterEstimate(kRttMult, kRttMultAddCap),
+            TimeDelta::Millis(111));
+
+  // RTT is removed from estimate after 101ms of no NACKed frames.
+  fake_clock_.AdvanceTime(TimeDelta::Millis(100));
+  estimator_.UpdateEstimate(gen.Delay() - kRtt, gen.FrameSize());
+  gen.Advance();
+  EXPECT_EQ(estimator_.GetJitterEstimate(kRttMult, kRttMultAddCap),
+            TimeDelta::Millis(111));
+  fake_clock_.AdvanceTime(TimeDelta::Millis(1));
+  estimator_.UpdateEstimate(gen.Delay(), gen.FrameSize());
+  gen.Advance();
+  EXPECT_EQ(estimator_.GetJitterEstimate(kRttMult, kRttMultAddCap),
+            TimeDelta::Millis(11));
 }
 
 class MisconfiguredFieldTrialsJitterEstimatorTest : public JitterEstimatorTest {
@@ -288,8 +328,10 @@ class MisconfiguredFieldTrialsJitterEstimatorTest : public JitterEstimatorTest {
             "frame_size_window:-1,"
             "num_stddev_delay_clamp:-1.9,"
             "num_stddev_delay_outlier:-2,"
-            "num_stddev_size_outlier:-23.1/") {}
-  ~MisconfiguredFieldTrialsJitterEstimatorTest() {}
+            "num_stddev_size_outlier:-23.1,"
+            "nack_limit:-1,"
+            "nack_count_timeout:0s/") {}
+  ~MisconfiguredFieldTrialsJitterEstimatorTest() override {}
 };
 
 TEST_F(MisconfiguredFieldTrialsJitterEstimatorTest, FieldTrialsAreValidated) {
@@ -299,6 +341,8 @@ TEST_F(MisconfiguredFieldTrialsJitterEstimatorTest, FieldTrialsAreValidated) {
   EXPECT_EQ(*config.num_stddev_delay_clamp, 0.0);
   EXPECT_EQ(*config.num_stddev_delay_outlier, 0.0);
   EXPECT_EQ(*config.num_stddev_size_outlier, 0.0);
+  EXPECT_FALSE(config.nack_limit.has_value());
+  EXPECT_FALSE(config.nack_count_timeout.has_value());
 }
 
 }  // namespace

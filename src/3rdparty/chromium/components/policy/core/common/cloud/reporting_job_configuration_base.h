@@ -6,15 +6,16 @@
 #define COMPONENTS_POLICY_CORE_COMMON_CLOUD_REPORTING_JOB_CONFIGURATION_BASE_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 
 #include "base/functional/callback.h"
 #include "base/values.h"
+#include "components/enterprise/common/proto/synced_from_google3/chrome_reporting_entity.pb.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
 #include "components/policy/policy_export.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace policy {
 
@@ -45,7 +46,7 @@ class POLICY_EXPORT ReportingJobConfigurationBase
       base::OnceCallback<void(DeviceManagementService::Job* job,
                               DeviceManagementStatus status,
                               int response_code,
-                              absl::optional<base::Value::Dict>)>;
+                              std::optional<base::Value::Dict>)>;
 
   // Builds a Device dictionary for uploading information about the device to
   // the server.
@@ -57,12 +58,17 @@ class POLICY_EXPORT ReportingJobConfigurationBase
     static base::Value::Dict BuildDeviceDictionary(
         const std::string& dm_token,
         const std::string& client_id);
+    static ::chrome::cros::reporting::proto::Device BuildDeviceProto(
+        const std::string& dm_token,
+        const std::string& client_id);
 
     static std::string GetDMTokenPath();
     static std::string GetClientIdPath();
     static std::string GetOSVersionPath();
     static std::string GetOSPlatformPath();
     static std::string GetNamePath();
+    static std::string GetDeviceFqdnPath();
+    static std::string GetNetworkNamePath();
 
    private:
     static std::string GetStringPath(std::string_view leaf_name);
@@ -73,6 +79,8 @@ class POLICY_EXPORT ReportingJobConfigurationBase
     static const char kOSVersion[];
     static const char kOSPlatform[];
     static const char kName[];
+    static const char kDeviceFqdn[];
+    static const char kNetworkName[];
   };
 
   // Builds a Browser dictionary for uploading information about the browser to
@@ -83,6 +91,9 @@ class POLICY_EXPORT ReportingJobConfigurationBase
     static const char kBrowserKey[];
 
     static base::Value::Dict BuildBrowserDictionary(bool include_device_info);
+
+    static ::chrome::cros::reporting::proto::Browser BuildBrowserProto(
+        bool include_device_info);
 
     static std::string GetBrowserIdPath();
     static std::string GetUserAgentPath();
@@ -159,7 +170,7 @@ class POLICY_EXPORT ReportingJobConfigurationBase
   // being generated can be seen with the ::reporting::GetContext function. Once
   // |GetPayload| is called, |context_| will be merged into the payload and
   // reset.
-  absl::optional<base::Value::Dict> context_;
+  std::optional<base::Value::Dict> context_;
 
   UploadCompleteCallback callback_;
 

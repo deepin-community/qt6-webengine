@@ -7,7 +7,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
 #include "third_party/blink/renderer/platform/fonts/font_selection_types.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 
 namespace blink {
 
@@ -47,7 +46,7 @@ class FontCacheMacTest : public testing::TestWithParam<FontSelectionValue> {
       FontDescription font_description =
           CreateFontDescriptionWithFontSynthesisNone(weight, kNormalSlopeValue,
                                                      kNormalWidthValue);
-      std::unique_ptr<FontPlatformData> font_platform_data =
+      const FontPlatformData* font_platform_data =
           font_cache.CreateFontPlatformData(
               font_description,
               FontFaceCreationParams(font_family_names::kSystemUi), size);
@@ -61,12 +60,6 @@ INSTANTIATE_TEST_SUITE_P(SystemUISyntheticBold,
                          testing::ValuesIn(Weights));
 
 TEST_P(FontCacheMacTest, SystemUISyntheticBoldCoreText) {
-  ScopedFontMatchingCTMigrationForTest scoped_feature(true);
-  TestSystemUISyntheticBold();
-}
-
-TEST_P(FontCacheMacTest, SystemUISyntheticBoldAppKit) {
-  ScopedFontMatchingCTMigrationForTest scoped_feature(false);
   TestSystemUISyntheticBold();
 }
 

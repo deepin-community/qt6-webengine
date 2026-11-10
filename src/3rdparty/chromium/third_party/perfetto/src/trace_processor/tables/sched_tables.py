@@ -14,8 +14,9 @@
 """Contains tables for relevant for sched."""
 
 from python.generators.trace_processor_table.public import Column as C
-from python.generators.trace_processor_table.public import ColumnDoc
+from python.generators.trace_processor_table.public import CppAccessDuration
 from python.generators.trace_processor_table.public import ColumnFlag
+from python.generators.trace_processor_table.public import CppAccess
 from python.generators.trace_processor_table.public import CppInt32
 from python.generators.trace_processor_table.public import CppInt64
 from python.generators.trace_processor_table.public import CppOptional
@@ -27,18 +28,32 @@ from python.generators.trace_processor_table.public import Table
 from python.generators.trace_processor_table.public import TableDoc
 from python.generators.trace_processor_table.public import WrappingSqlView
 
+from src.trace_processor.tables.metadata_tables import CPU_TABLE
+
 SCHED_SLICE_TABLE = Table(
     python_module=__file__,
     class_name='SchedSliceTable',
-    sql_name='sched_slice',
+    sql_name='__intrinsic_sched_slice',
     columns=[
-        C('ts', CppInt64(), flags=ColumnFlag.SORTED),
-        C('dur', CppInt64()),
-        C('cpu', CppUint32()),
-        C('utid', CppUint32()),
-        C('end_state', CppString()),
+        C('ts',
+          CppInt64(),
+          flags=ColumnFlag.SORTED,
+          cpp_access=CppAccess.READ,
+          cpp_access_duration=CppAccessDuration.POST_FINALIZATION),
+        C('dur',
+          CppInt64(),
+          cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+          cpp_access_duration=CppAccessDuration.POST_FINALIZATION),
+        C('utid', CppUint32(), cpp_access=CppAccess.READ),
+        C(
+            'end_state',
+            CppString(),
+            cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+        ),
         C('priority', CppInt32()),
+        C('ucpu', CppTableId(CPU_TABLE)),
     ],
+    wrapping_sql_view=WrappingSqlView('sched'),
     tabledoc=TableDoc(
         doc='''
           This table holds slices with kernel thread scheduling information.
@@ -55,9 +70,7 @@ SCHED_SLICE_TABLE = Table(
             'dur':
                 '''The duration of the slice (in nanoseconds).''',
             'utid':
-                '''The thread's unique id in the trace..''',
-            'cpu':
-                '''The CPU that the slice executed on.''',
+                '''The thread's unique id in the trace.''',
             'end_state':
                 '''
                   A string representing the scheduling state of the kernel
@@ -70,7 +83,11 @@ SCHED_SLICE_TABLE = Table(
                   cleanup).
                 ''',
             'priority':
-                '''The kernel priority that the thread ran at.'''
+                '''The kernel priority that the thread ran at.''',
+            'ucpu':
+                '''
+                  The unique CPU identifier that the slice executed on.
+                ''',
         }))
 
 SPURIOUS_SCHED_WAKEUP_TABLE = Table(
@@ -82,46 +99,81 @@ SPURIOUS_SCHED_WAKEUP_TABLE = Table(
         C('thread_state_id', CppInt64()),
         C('irq_context', CppOptional(CppUint32())),
         C('utid', CppUint32()),
-        C('waker_utid', CppUint32()),
+        C('waker_utid', CppUint32())
     ],
     tabledoc=TableDoc(
         doc='''
-          This table contains the scheduling wakeups that occurred while a thread was
-          not blocked, i.e. running or runnable. Such wakeups are not tracked in the
-          |thread_state_table|.
+          This table contains the scheduling wakeups that occurred while a
+          thread was not blocked, i.e. running or runnable. Such wakeups are not
+          tracked in the |thread_state_table|.
         ''',
         group='Events',
         columns={
             'ts':
                 'The timestamp at the start of the slice (in nanoseconds).',
             'thread_state_id':
-                'The id of the row in the thread_state table that this row is associated with.',
+                '''
+                  The id of the row in the thread_state table that this row is
+                  associated with.
+                ''',
             'irq_context':
-                '''Whether the wakeup was from interrupt context or process context.''',
+                '''
+                  Whether the wakeup was from interrupt context or process
+                  context.
+                ''',
             'utid':
                 '''The thread's unique id in the trace..''',
             'waker_utid':
                 '''
                   The unique thread id of the thread which caused a wakeup of
                   this thread.
-                '''
+                ''',
         }))
 
 THREAD_STATE_TABLE = Table(
     python_module=__file__,
     class_name='ThreadStateTable',
-    sql_name='thread_state',
+    sql_name='__intrinsic_thread_state',
     columns=[
-        C('ts', CppInt64(), flags=ColumnFlag.SORTED),
-        C('dur', CppInt64()),
-        C('cpu', CppOptional(CppUint32())),
-        C('utid', CppUint32()),
-        C('state', CppString()),
-        C('io_wait', CppOptional(CppUint32())),
-        C('blocked_function', CppOptional(CppString())),
-        C('waker_utid', CppOptional(CppUint32())),
-        C('irq_context', CppOptional(CppUint32())),
+        C('ts',
+          CppInt64(),
+          flags=ColumnFlag.SORTED,
+          cpp_access=CppAccess.READ,
+          cpp_access_duration=CppAccessDuration.POST_FINALIZATION),
+        C('dur',
+          CppInt64(),
+          cpp_access=CppAccess.READ_AND_HIGH_PERF_WRITE,
+          cpp_access_duration=CppAccessDuration.POST_FINALIZATION),
+        C('utid', CppUint32(), cpp_access=CppAccess.READ),
+        C('state', CppString(), cpp_access=CppAccess.READ_AND_HIGH_PERF_WRITE),
+        C(
+            'io_wait',
+            CppOptional(CppUint32()),
+            cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+        ),
+        C(
+            'blocked_function',
+            CppOptional(CppString()),
+            cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+        ),
+        C(
+            'waker_utid',
+            CppOptional(CppUint32()),
+            cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+        ),
+        C('waker_id', CppOptional(CppSelfTableId())),
+        C(
+            'irq_context',
+            CppOptional(CppUint32()),
+            cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+        ),
+        C(
+            'ucpu',
+            CppOptional(CppTableId(CPU_TABLE)),
+            cpp_access=CppAccess.READ_AND_LOW_PERF_WRITE,
+        ),
     ],
+    wrapping_sql_view=WrappingSqlView('thread_state'),
     tabledoc=TableDoc(
         doc='''
           This table contains the scheduling state of every thread on the
@@ -136,12 +188,8 @@ THREAD_STATE_TABLE = Table(
                 'The timestamp at the start of the slice (in nanoseconds).',
             'dur':
                 'The duration of the slice (in nanoseconds).',
-            'cpu':
-                '''The CPU that the slice executed on.''',
-            'irq_context':
-                '''Whether the wakeup was from interrupt context or process context.''',
             'utid':
-                '''The thread's unique id in the trace..''',
+                '''The thread's unique id in the trace.''',
             'state':
                 '''
                   The scheduling state of the thread. Can be "Running" or any
@@ -155,7 +203,21 @@ THREAD_STATE_TABLE = Table(
                 '''
                   The unique thread id of the thread which caused a wakeup of
                   this thread.
+                ''',
+            'waker_id':
                 '''
+                  The unique thread state id which caused a wakeup of this
+                  thread.
+                ''',
+            'irq_context':
+                '''
+                  Whether the wakeup was from interrupt context or process
+                  context.
+                ''',
+            'ucpu':
+                '''
+                  The unique CPU identifier that the thread executed on.
+                ''',
         }))
 
 # Keep this list sorted.

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.22.1)
 
 project(SwiftShader C CXX ASM)
 
@@ -84,6 +84,17 @@ if(CMAKE_OSX_ARCHITECTURES)
     endif()
 endif()
 
+# Cross compiling with `cmake -A <arch>`.
+if(CMAKE_GENERATOR_PLATFORM)
+    if(CMAKE_GENERATOR_PLATFORM MATCHES "^(Win32|win32|X86|x86)$")
+        set(ARCH "x86")
+    elseif(CMAKE_GENERATOR_PLATFORM MATCHES "^(Win64|win64|X64|x64)$")
+        set(ARCH "x86_64")
+    elseif(CMAKE_GENERATOR_PLATFORM MATCHES "^(ARM64|Arm64|arm64)$")
+        set(ARCH "aarch64")
+    endif()
+endif()
+
 set(CMAKE_MACOSX_RPATH TRUE)
 
 if ((CMAKE_GENERATOR MATCHES "Visual Studio") AND (CMAKE_GENERATOR_TOOLSET STREQUAL ""))
@@ -105,7 +116,7 @@ endif()
 # Install Gerrit commit hook
 ###########################################################
 
-if(NOT EXISTS ${CMAKE_SOURCE_DIR}/.git/hooks/commit-msg)
+if(IS_DIRECTORY ${CMAKE_SOURCE_DIR}/.git AND NOT EXISTS ${CMAKE_SOURCE_DIR}/.git/hooks/commit-msg)
     message(WARNING "
         .git/hooks/commit-msg was not found.
         Downloading from https://gerrit-review.googlesource.com/tools/hooks/commit-msg...
@@ -792,6 +803,7 @@ if (NOT TARGET SPIRV-Tools)
     set(SPIRV-Headers_SOURCE_DIR "${THIRD_PARTY_DIR}/SPIRV-Headers")
     set(SPIRV_SKIP_TESTS TRUE CACHE BOOL "" FORCE)
     set(SPIRV_SKIP_EXECUTABLES TRUE CACHE BOOL "" FORCE)
+    set(SPIRV_WERROR FALSE CACHE BOOL "" FORCE)
     add_subdirectory(${THIRD_PARTY_DIR}/SPIRV-Tools) # Add SPIRV-Tools target
 endif()
 

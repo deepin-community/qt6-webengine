@@ -22,6 +22,7 @@
 #include <cstring>
 #include <filesystem>  // NOLINT
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/log/check.h"
@@ -30,15 +31,15 @@
 #include "absl/strings/string_view.h"
 #include "./centipede/centipede_callbacks.h"
 #include "./centipede/command.h"
-#include "./centipede/defs.h"
 #include "./centipede/environment.h"
 #include "./centipede/feature.h"
-#include "./centipede/logging.h"
 #include "./centipede/runner_result.h"
 #include "./centipede/shared_memory_blob_sequence.h"
 #include "./centipede/util.h"
+#include "./common/defs.h"
+#include "./common/logging.h"
 
-namespace centipede {
+namespace fuzztest::internal {
 namespace {
 
 void UpdateFeatures(const ByteArray& content, FeatureVec& features) {
@@ -78,7 +79,7 @@ void UpdateBatchResult(const bool feature_only_feedback,
     ByteArray content;
     ReadFromLocalFile(std::string(entries[index]), content);
     if (content.empty()) {
-      LOG(WARNING) << "Skip updating batch result with an emtpy output file: "
+      LOG(WARNING) << "Skip updating batch result with an empty output file: "
                    << entries[index];
       continue;
     }
@@ -148,7 +149,12 @@ bool CustomizedCallbacks::Execute(std::string_view binary,
   }
 
   // Execute.
-  Command cmd{env_.binary, args, env, tmp_log_filepath, tmp_log_filepath};
+  Command::Options cmd_options;
+  cmd_options.args = std::move(args);
+  cmd_options.env_add = std::move(env);
+  cmd_options.stdout_file = tmp_log_filepath;
+  cmd_options.stderr_file = tmp_log_filepath;
+  Command cmd{env_.binary, std::move(cmd_options)};
   const int retval = cmd.Execute();
 
   std::string tmp_log;
@@ -162,4 +168,4 @@ bool CustomizedCallbacks::Execute(std::string_view binary,
   return retval == 0;
 }
 
-}  // namespace centipede
+}  // namespace fuzztest::internal

@@ -80,7 +80,7 @@ class Info {
 
     /// @param highest_node_id the last allocated (numerically highest) AST node identifier.
     void Reserve(ast::NodeID highest_node_id) {
-        nodes_.resize(std::max(highest_node_id.value + 1, nodes_.size()));
+        nodes_.Resize(std::max(highest_node_id.value + 1, static_cast<uint32_t>(nodes_.Length())));
     }
 
     /// Get looks up the semantic information for the AST node `ast_node`.
@@ -93,7 +93,7 @@ class Info {
         static_assert(std::is_same_v<SEM, InferFromAST> ||
                           !tint::traits::IsTypeOrDerived<SemanticNodeTypeFor<AST>, SEM>,
                       "explicit template argument is unnecessary");
-        if (ast_node && ast_node->node_id.value < nodes_.size()) {
+        if (ast_node && ast_node->node_id.value < nodes_.Length()) {
             return As<RESULT>(nodes_[ast_node->node_id.value]);
         }
         return nullptr;
@@ -127,20 +127,6 @@ class Info {
         nodes_[ast_node->node_id.value] = sem_node;
     }
 
-    /// Wrap returns a new Info created with the contents of `inner`.
-    /// The Info returned by Wrap is intended to temporarily extend the contents
-    /// of an existing immutable Info.
-    /// As the copied contents are owned by `inner`, `inner` must not be
-    /// destructed or assigned while using the returned Info.
-    /// @param inner the immutable Info to extend
-    /// @return the Info that wraps `inner`
-    static Info Wrap(const Info& inner) {
-        Info out;
-        out.nodes_ = inner.nodes_;
-        out.module_ = inner.module_;
-        return out;
-    }
-
     /// Assigns the semantic module.
     /// @param module the module to assign.
     void SetModule(sem::Module* module) { module_ = module; }
@@ -157,7 +143,7 @@ class Info {
 
   private:
     // AST node index to semantic node
-    std::vector<const CastableBase*> nodes_;
+    tint::Vector<const CastableBase*, 0> nodes_;
     // The semantic module
     sem::Module* module_ = nullptr;
 };

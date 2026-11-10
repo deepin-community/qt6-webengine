@@ -27,18 +27,18 @@
 
 #include <string>
 
-#include "gtest/gtest-spi.h"
 #include "src/tint/lang/wgsl/ast/diagnostic_control.h"
 #include "src/tint/lang/wgsl/ast/helper_test.h"
-#include "src/tint/lang/wgsl/diagnostic_severity.h"
+#include "src/tint/lang/wgsl/enums.h"
 
 namespace tint::ast {
 namespace {
 
 using DiagnosticControlTest = TestHelper;
+using DiagnosticControlDeathTest = DiagnosticControlTest;
 
-TEST_F(DiagnosticControlTest, Assert_RuleNotNull) {
-    EXPECT_FATAL_FAILURE(
+TEST_F(DiagnosticControlDeathTest, Assert_RuleNotNull) {
+    EXPECT_DEATH_IF_SUPPORTED(
         {
             ProgramBuilder b;
             DiagnosticControl control(wgsl::DiagnosticSeverity::kWarning, nullptr);

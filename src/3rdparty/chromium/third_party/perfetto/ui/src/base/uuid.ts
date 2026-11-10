@@ -13,5 +13,16 @@
 // limitations under the License.
 
 import {v4} from 'uuid';
+import {sqlNameSafe} from './string_utils';
 
 export const uuidv4 = v4;
+
+/**
+ * Get a SQL friendly UUID, or convert a pre-existing one.
+ * @param uuid Optional: Pre-existing uuid to format.
+ * @returns string The resulting uuid.
+ */
+export function uuidv4Sql(uuid?: string): string {
+  const str = uuid ?? uuidv4();
+  return sqlNameSafe(str);
+}

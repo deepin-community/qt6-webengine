@@ -32,12 +32,10 @@ const char kTargetTabRequiredFromServiceWorker[] =
 }  // namespace
 
 DesktopCaptureChooseDesktopMediaFunction::
-    DesktopCaptureChooseDesktopMediaFunction() {
-}
+    DesktopCaptureChooseDesktopMediaFunction() = default;
 
 DesktopCaptureChooseDesktopMediaFunction::
-    ~DesktopCaptureChooseDesktopMediaFunction() {
-}
+    ~DesktopCaptureChooseDesktopMediaFunction() = default;
 
 ExtensionFunction::ResponseAction
 DesktopCaptureChooseDesktopMediaFunction::Run() {
@@ -48,7 +46,7 @@ DesktopCaptureChooseDesktopMediaFunction::Run() {
   DesktopCaptureRequestsRegistry::GetInstance()->AddRequest(source_process_id(),
                                                             request_id_, this);
 
-  mutable_args().erase(args().begin());
+  GetMutableArgs().erase(args().begin());
 
   std::optional<api::desktop_capture::ChooseDesktopMedia::Params> params =
       api::desktop_capture::ChooseDesktopMedia::Params::Create(args());
@@ -99,8 +97,9 @@ DesktopCaptureChooseDesktopMediaFunction::Run() {
     target_render_frame_host = render_frame_host();
   }
 
-  if (!target_render_frame_host)
+  if (!target_render_frame_host) {
     return RespondNow(Error(kTargetTabRequiredFromServiceWorker));
+  }
 
   const bool exclude_system_audio =
       params->options &&
@@ -136,9 +135,9 @@ std::string DesktopCaptureChooseDesktopMediaFunction::GetExtensionTargetName()
 }
 
 DesktopCaptureCancelChooseDesktopMediaFunction::
-    DesktopCaptureCancelChooseDesktopMediaFunction() {}
+    DesktopCaptureCancelChooseDesktopMediaFunction() = default;
 
 DesktopCaptureCancelChooseDesktopMediaFunction::
-    ~DesktopCaptureCancelChooseDesktopMediaFunction() {}
+    ~DesktopCaptureCancelChooseDesktopMediaFunction() = default;
 
 }  // namespace extensions

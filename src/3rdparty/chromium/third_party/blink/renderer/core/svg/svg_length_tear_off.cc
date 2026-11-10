@@ -35,6 +35,7 @@
 #include "third_party/blink/renderer/core/svg/svg_length_context.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
 
@@ -183,7 +184,7 @@ void SVGLengthTearOff::setValue(float value, ExceptionState& exception_state) {
     Target()->SetValueInSpecifiedUnits(length_context.ConvertValueFromUserUnits(
         value, Target()->UnitMode(), Target()->NumericLiteralType()));
   }
-  CommitChange();
+  CommitChange(SVGPropertyCommitReason::kUpdated);
 }
 
 float SVGLengthTearOff::valueInSpecifiedUnits() {
@@ -203,7 +204,7 @@ void SVGLengthTearOff::setValueInSpecifiedUnits(
     Target()->SetValueAsNumber(value);
   else
     Target()->SetValueInSpecifiedUnits(value);
-  CommitChange();
+  CommitChange(SVGPropertyCommitReason::kUpdated);
 }
 
 String SVGLengthTearOff::valueAsString() {
@@ -220,10 +221,10 @@ void SVGLengthTearOff::setValueAsString(const String& str,
   if (status != SVGParseStatus::kNoError) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kSyntaxError,
-        "The value provided ('" + str + "') is invalid.");
+        StrCat({"The value provided ('", str, "') is invalid."}));
     return;
   }
-  CommitChange();
+  CommitChange(SVGPropertyCommitReason::kUpdated);
 }
 
 void SVGLengthTearOff::newValueSpecifiedUnits(uint16_t unit_type,
@@ -236,13 +237,13 @@ void SVGLengthTearOff::newValueSpecifiedUnits(uint16_t unit_type,
   if (!IsValidLengthUnit(unit_type)) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotSupportedError,
-        "Cannot set value with unknown or invalid units (" +
-            String::Number(unit_type) + ").");
+        StrCat({"Cannot set value with unknown or invalid units (",
+                String::Number(unit_type), ")."}));
     return;
   }
   Target()->NewValueSpecifiedUnits(ToCSSUnitType(unit_type),
                                    value_in_specified_units);
-  CommitChange();
+  CommitChange(SVGPropertyCommitReason::kUpdated);
 }
 
 void SVGLengthTearOff::convertToSpecifiedUnits(
@@ -255,8 +256,8 @@ void SVGLengthTearOff::convertToSpecifiedUnits(
   if (!IsValidLengthUnit(unit_type)) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotSupportedError,
-        "Cannot convert to unknown or invalid units (" +
-            String::Number(unit_type) + ").");
+        StrCat({"Cannot convert to unknown or invalid units (",
+                String::Number(unit_type), ")."}));
     return;
   }
   SVGElement* context_element = ContextElement();
@@ -266,7 +267,7 @@ void SVGLengthTearOff::convertToSpecifiedUnits(
   }
   SVGLengthContext length_context(context_element);
   Target()->ConvertToSpecifiedUnits(ToCSSUnitType(unit_type), length_context);
-  CommitChange();
+  CommitChange(SVGPropertyCommitReason::kUpdated);
 }
 
 SVGLengthTearOff::SVGLengthTearOff(SVGLength* target,

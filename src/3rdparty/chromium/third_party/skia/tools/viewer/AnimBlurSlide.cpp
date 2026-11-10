@@ -7,9 +7,9 @@
 
 #include "include/core/SkBlurTypes.h"
 #include "include/core/SkCanvas.h"
-#include "include/core/SkColorPriv.h"
 #include "include/core/SkMaskFilter.h"
 #include "src/base/SkRandom.h"
+#include "src/core/SkColorPriv.h"
 #include "tools/viewer/Slide.h"
 
 #include <iterator>
@@ -19,7 +19,7 @@ SkScalar get_anim_sin(double secs, SkScalar amplitude, SkScalar periodInSec, SkS
         return 0;
     }
     double t = secs + phaseInSec;
-    t *= SkScalarToFloat(2 * SK_ScalarPI) / periodInSec;
+    t *= (2 * SK_ScalarPI) / periodInSec;
     amplitude = SK_ScalarHalf * amplitude;
     return amplitude * SkDoubleToScalar(sin(t)) + amplitude;
 }

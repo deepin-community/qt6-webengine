@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <optional>
+
 #include "base/files/file_path.h"
 #include "base/functional/callback.h"
 #include "base/logging.h"
@@ -18,6 +19,7 @@
 #include "extensions/browser/extension_error.h"
 #include "extensions/browser/updater/scoped_extension_updater_keep_alive.h"
 #include "extensions/common/constants.h"
+#include "extensions/common/extension_id.h"
 #include "extensions/common/permissions/permission_set.h"
 #include "url/gurl.h"
 
@@ -51,6 +53,8 @@ void ExtensionsBrowserClient::AddAPIProvider(
   providers_.push_back(std::move(provider));
 }
 
+void ExtensionsBrowserClient::StartTearDown() {}
+
 scoped_refptr<update_client::UpdateClient>
 ExtensionsBrowserClient::CreateUpdateClient(content::BrowserContext* context) {
   return scoped_refptr<update_client::UpdateClient>(nullptr);
@@ -82,7 +86,7 @@ void ExtensionsBrowserClient::GetTabAndWindowIdForWebContents(
 }
 
 bool ExtensionsBrowserClient::IsExtensionEnabled(
-    const std::string& extension_id,
+    const ExtensionId& extension_id,
     content::BrowserContext* context) const {
   return false;
 }
@@ -104,10 +108,6 @@ UserScriptListener* ExtensionsBrowserClient::GetUserScriptListener() {
 void ExtensionsBrowserClient::SignalContentScriptsLoaded(
     content::BrowserContext* context) {}
 
-std::string ExtensionsBrowserClient::GetUserAgent() const {
-  return std::string();
-}
-
 bool ExtensionsBrowserClient::ShouldSchemeBypassNavigationChecks(
     const std::string& scheme) const {
   return false;
@@ -123,7 +123,7 @@ void ExtensionsBrowserClient::SetLastSaveFilePath(
     const base::FilePath& path) {}
 
 bool ExtensionsBrowserClient::HasIsolatedStorage(
-    const std::string& extension_id,
+    const ExtensionId& extension_id,
     content::BrowserContext* context) {
   return false;
 }
@@ -133,30 +133,18 @@ bool ExtensionsBrowserClient::IsScreenshotRestricted(
   return false;
 }
 
-bool ExtensionsBrowserClient::IsValidTabId(content::BrowserContext* context,
-                                           int tab_id) const {
+bool ExtensionsBrowserClient::IsValidTabId(
+    content::BrowserContext* browser_context,
+    int tab_id,
+    bool include_incognito,
+    content::WebContents** web_contents) const {
   return false;
 }
 
-void ExtensionsBrowserClient::NotifyExtensionApiTabExecuteScript(
-    content::BrowserContext* context,
-    const ExtensionId& extension_id,
-    const std::string& code) const {}
-
-bool ExtensionsBrowserClient::IsExtensionTelemetryServiceEnabled(
-    content::BrowserContext* context) const {
-  return false;
+ScriptExecutor* ExtensionsBrowserClient::GetScriptExecutorForTab(
+    content::WebContents& web_contents) {
+  return nullptr;
 }
-
-void ExtensionsBrowserClient::NotifyExtensionApiDeclarativeNetRequest(
-    content::BrowserContext* context,
-    const ExtensionId& extension_id,
-    const std::vector<api::declarative_net_request::Rule>& rules) const {}
-
-void ExtensionsBrowserClient::NotifyExtensionRemoteHostContacted(
-    content::BrowserContext* context,
-    const ExtensionId& extension_id,
-    const GURL& url) const {}
 
 bool ExtensionsBrowserClient::IsUsbDeviceAllowedByPolicy(
     content::BrowserContext* context,
@@ -240,13 +228,16 @@ void ExtensionsBrowserClient::GetWebViewStoragePartitionConfig(
   std::move(callback).Run(partition_config);
 }
 
-void ExtensionsBrowserClient::CreatePasswordReuseDetectionManager(
-    content::WebContents* web_contents) const {}
-
 media_device_salt::MediaDeviceSaltService*
 ExtensionsBrowserClient::GetMediaDeviceSaltService(
     content::BrowserContext* context) {
   return nullptr;
+}
+
+bool ExtensionsBrowserClient::HasControlledFrameCapability(
+    content::BrowserContext* context,
+    const GURL& url) {
+  return false;
 }
 
 }  // namespace extensions

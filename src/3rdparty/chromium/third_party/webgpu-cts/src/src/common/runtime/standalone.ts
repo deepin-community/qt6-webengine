@@ -1,4 +1,5 @@
 // Implements the standalone test runner (see also: /standalone/index.html).
+
 /* eslint no-console: "off" */
 
 import { dataCache } from '../framework/data_cache.js';
@@ -21,18 +22,19 @@ import {
   OptionsInfos,
   camelCaseToSnakeCase,
 } from './helper/options.js';
-import { TestWorker } from './helper/test_worker.js';
+import { TestDedicatedWorker, TestSharedWorker, TestServiceWorker } from './helper/test_worker.js';
 
 const rootQuerySpec = 'webgpu:*';
-let promptBeforeReload = false;
 let isFullCTS = false;
 
 globalTestConfig.frameworkDebugLog = console.log;
 
-window.onbeforeunload = () => {
-  // Prompt user before reloading if there are any results
-  return promptBeforeReload ? false : undefined;
-};
+// Prompt before reloading to avoid losing test results.
+function enablePromptBeforeReload() {
+  window.addEventListener('beforeunload', () => {
+    return false;
+  });
+}
 
 const kOpenTestLinkAltText = 'Open';
 
@@ -47,16 +49,28 @@ const { queries: qs, options } = parseSearchParamLikeWithOptions(
   kStandaloneOptionsInfos,
   window.location.search || rootQuerySpec
 );
-const { runnow, debug, unrollConstEvalLoops, powerPreference, compatibility } = options;
-globalTestConfig.unrollConstEvalLoops = unrollConstEvalLoops;
+const { runnow, powerPreference, compatibility, forceFallbackAdapter } = options;
+globalTestConfig.enableDebugLogs = options.debug;
+globalTestConfig.unrollConstEvalLoops = options.unrollConstEvalLoops;
 globalTestConfig.compatibility = compatibility;
+globalTestConfig.enforceDefaultLimits = options.enforceDefaultLimits;
+globalTestConfig.blockAllFeatures = options.blockAllFeatures;
+globalTestConfig.logToWebSocket = options.logToWebSocket;
 
-Logger.globalDebugMode = debug;
 const logger = new Logger();
 
 setBaseResourcePath('../out/resources');
 
-const worker = options.worker ? new TestWorker(options) : undefined;
+const testWorker =
+  options.worker === null
+    ? null
+    : options.worker === 'dedicated'
+    ? new TestDedicatedWorker(options)
+    : options.worker === 'shared'
+    ? new TestSharedWorker(options)
+    : options.worker === 'service'
+    ? new TestServiceWorker(options)
+    : unreachable();
 
 const autoCloseOnPass = document.getElementById('autoCloseOnPass') as HTMLInputElement;
 const resultsVis = document.getElementById('resultsVis')!;
@@ -70,11 +84,11 @@ stopButtonElem.addEventListener('click', () => {
   stopRequested = true;
 });
 
-if (powerPreference || compatibility) {
+if (powerPreference || compatibility || forceFallbackAdapter) {
   setDefaultRequestAdapterOptions({
     ...(powerPreference && { powerPreference }),
-    // MAINTENANCE_TODO: Change this to whatever the option ends up being
-    ...(compatibility && { compatibilityMode: true }),
+    ...(compatibility && { featureLevel: 'compatibility' }),
+    ...(forceFallbackAdapter && { forceFallbackAdapter: true }),
   });
 }
 
@@ -168,8 +182,8 @@ function makeCaseHTML(t: TestTreeLeaf): VisualizedSubtree {
 
     const [rec, res] = logger.record(name);
     caseResult = res;
-    if (worker) {
-      await worker.run(rec, name);
+    if (testWorker) {
+      await testWorker.run(rec, name);
     } else {
       await t.run(rec);
     }
@@ -270,7 +284,7 @@ function makeSubtreeHTML(n: TestSubtree, parentLevel: TestQueryLevel): Visualize
       progressElem.style.display = '';
       // only prompt if this is the full CTS and we started from the root.
       if (isFullCTS && n.query.filePathParts.length === 0) {
-        promptBeforeReload = true;
+        enablePromptBeforeReload();
       }
     }
     if (stopRequested) {
@@ -357,6 +371,9 @@ function makeSubtreeChildrenHTML(
   const runMySubtree = async () => {
     const results: SubtreeResult[] = [];
     for (const { runSubtree } of childFns) {
+      if (stopRequested) {
+        break;
+      }
       results.push(await runSubtree());
     }
     return mergeSubtreeResults(...results);
@@ -479,6 +496,7 @@ function makeTreeNodeHeaderHTML(
   {
     $('<input>')
       .attr('type', 'text')
+      .attr('title', n.query.toString())
       .prop('readonly', true)
       .addClass('nodequery')
       .on('click', event => {
@@ -506,13 +524,11 @@ function makeTreeNodeHeaderHTML(
 // Collapse s:f:t:* or s:f:t:c by default.
 let lastQueryLevelToExpand: TestQueryLevel = 2;
 
-type ParamValue = string | undefined | null | boolean | string[];
-
 /**
  * Takes an array of string, ParamValue and returns an array of pairs
  * of [key, value] where value is a string. Converts boolean to '0' or '1'.
  */
-function keyValueToPairs([k, v]: [string, ParamValue]): [string, string][] {
+function keyValueToPairs([k, v]: [string, boolean | string | null]): [string, string][] {
   const key = camelCaseToSnakeCase(k);
   if (typeof v === 'boolean') {
     return [[key, v ? '1' : '0']];
@@ -533,9 +549,9 @@ function keyValueToPairs([k, v]: [string, ParamValue]): [string, string][] {
  * @param params Some object with key value pairs.
  * @returns a search string.
  */
-function prepareParams(params: Record<string, ParamValue>): string {
+function prepareParams(params: Record<string, boolean | string | null>): string {
   const pairsArrays = Object.entries(params)
-    .filter(([, v]) => !!v)
+    .filter(([, v]) => !(v === false || v === null || v === '0'))
     .map(keyValueToPairs);
   const pairs = pairsArrays.flat();
   return new URLSearchParams(pairs).toString();
@@ -543,7 +559,7 @@ function prepareParams(params: Record<string, ParamValue>): string {
 
 // This is just a cast in one place.
 export function optionsToRecord(options: CTSOptions) {
-  return options as unknown as Record<string, boolean | string>;
+  return options as unknown as Record<string, boolean | string | null>;
 }
 
 /**
@@ -603,32 +619,36 @@ void (async () => {
     };
 
     const createSelect = (optionName: string, info: OptionInfo) => {
-      const select = $('<select>').on('change', function () {
-        optionValues[optionName] = (this as HTMLInputElement).value;
+      const select = $('<select>').on('change', function (this: HTMLSelectElement) {
+        optionValues[optionName] = JSON.parse(this.value);
         updateURLsWithCurrentOptions();
       });
       const currentValue = optionValues[optionName];
       for (const { value, description } of info.selectValueDescriptions!) {
         $('<option>')
           .text(description)
-          .val(value)
+          .val(JSON.stringify(value))
           .prop('selected', value === currentValue)
           .appendTo(select);
       }
       return select;
     };
 
-    for (const [optionName, info] of Object.entries(optionsInfos)) {
+    Object.entries(optionsInfos).forEach(([optionName, info], i) => {
+      const id = `option${i}`;
       const input =
         typeof optionValues[optionName] === 'boolean'
           ? createCheckbox(optionName)
           : createSelect(optionName, info);
+      input.attr('id', id);
       $('<tr>')
         .append($('<td>').append(input))
-        .append($('<td>').text(camelCaseToSnakeCase(optionName)))
+        .append(
+          $('<td>').append($('<label>').attr('for', id).text(camelCaseToSnakeCase(optionName)))
+        )
         .append($('<td>').text(info.description))
         .appendTo(optionsElem);
-    }
+    });
   };
   addOptionsToPage(options, kStandaloneOptionsInfos);
 
@@ -666,6 +686,8 @@ void (async () => {
     return;
   }
 
+  document.title = `${document.title} ${compatibility ? '(compat)' : ''} - ${rootQuery.toString()}`;
+
   tree.dissolveSingleChildTrees();
 
   const { runSubtree, generateSubtreeHTML } = makeSubtreeHTML(tree.root, 1);
@@ -677,6 +699,15 @@ void (async () => {
 
   document.getElementById('copyResultsJSON')!.addEventListener('click', () => {
     void navigator.clipboard.writeText(logger.asJSON(2));
+  });
+
+  document.getElementById('saveResultsJSON')!.addEventListener('click', () => {
+    const text = logger.asJSON(2);
+    const blob = new Blob([text], { type: 'text/plain' });
+    const link = document.createElement('a');
+    link.download = 'results-webgpu-cts.json';
+    link.href = window.URL.createObjectURL(blob);
+    link.click();
   });
 
   if (runnow) {

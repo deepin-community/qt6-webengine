@@ -22,9 +22,11 @@ import "quiche/blind_sign_auth/proto/public_metadata.proto";
 import "anonymous_tokens/proto/anonymous_tokens.proto";
 
 option java_multiple_files = true;
+option java_package = "com.google.privacy.ppn.proto";
 
 // Request data needed to prepare for AuthAndSign.
 message GetInitialDataRequest {
+
   // Whether the client wants to use attestation as part of authentication.
   bool use_attestation = 1;
 
@@ -35,9 +37,11 @@ message GetInitialDataRequest {
   enum LocationGranularity {
     UNKNOWN = 0;
     COUNTRY = 1;
+
     // Geographic area with population greater than 1 million.
     CITY_GEOS = 2;
   }
+
   // The user selected granularity of exit IP location.
   LocationGranularity location_granularity = 3;
 
@@ -68,5 +72,6 @@ message GetInitialDataResponse {
     bytes token_key_id = 1;
     bytes public_metadata_extensions = 2;
   }
+
   PrivacyPassData privacy_pass_data = 5;
 }

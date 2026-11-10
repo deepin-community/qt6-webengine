@@ -50,8 +50,8 @@ void FontMetrics::AscentDescentWithHacks(
     const FontPlatformData& platform_data,
     const SkFont& font,
     bool subpixel_ascent_descent,
-    absl::optional<float> ascent_override,
-    absl::optional<float> descent_override) {
+    std::optional<float> ascent_override,
+    std::optional<float> descent_override) {
   SkTypeface* face = font.getTypeface();
   DCHECK(face);
 
@@ -79,14 +79,14 @@ void FontMetrics::AscentDescentWithHacks(
        font.getHinting() == SkFontHinting::kNormal)) {
     size_t vdmx_size = face->getTableSize(kVdmxTag);
     if (vdmx_size && vdmx_size < kMaxVDMXTableSize) {
-      uint8_t* vdmx_table = (uint8_t*)WTF::Partitions::FastMalloc(
+      uint8_t* vdmx_table = (uint8_t*)Partitions::FastMalloc(
           vdmx_size, WTF_HEAP_PROFILER_TYPE_NAME(FontMetrics));
       if (vdmx_table &&
           face->getTableData(kVdmxTag, 0, vdmx_size, vdmx_table) == vdmx_size &&
           ParseVDMX(&vdmx_ascent, &vdmx_descent, vdmx_table, vdmx_size,
                     pixel_size))
         is_vdmx_valid = true;
-      WTF::Partitions::FastFree(vdmx_table);
+      Partitions::FastFree(vdmx_table);
     }
   }
 #endif
@@ -147,10 +147,6 @@ float FontMetrics::FloatAscentInternal(
   switch (baseline_type) {
     case kAlphabeticBaseline:
       NOTREACHED();
-      if (alphabetic_baseline_position_.has_value() && apply_baseline_table) {
-        return float_ascent_ - alphabetic_baseline_position_.value();
-      }
-      return float_ascent_;
     case kCentralBaseline:
       return FloatHeight() / 2;
 
@@ -179,7 +175,6 @@ float FontMetrics::FloatAscentInternal(
       return 0;
   }
   NOTREACHED();
-  return float_ascent_;
 }
 
 int FontMetrics::IntAscentInternal(
@@ -188,12 +183,6 @@ int FontMetrics::IntAscentInternal(
   switch (baseline_type) {
     case kAlphabeticBaseline:
       NOTREACHED();
-      if (alphabetic_baseline_position_.has_value() && apply_baseline_table) {
-        return static_cast<int>(
-            int_ascent_ -
-            static_cast<int>(lroundf(alphabetic_baseline_position_.value())));
-      }
-      return int_ascent_;
     case kCentralBaseline:
       return Height() - Height() / 2;
 
@@ -225,6 +214,5 @@ int FontMetrics::IntAscentInternal(
       return 0;
   }
   NOTREACHED();
-  return int_ascent_;
 }
 }

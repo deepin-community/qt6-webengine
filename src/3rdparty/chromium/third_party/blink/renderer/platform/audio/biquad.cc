@@ -26,6 +26,11 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "third_party/blink/renderer/platform/audio/biquad.h"
 
 #include "build/build_config.h"
@@ -127,16 +132,13 @@ void Biquad::Process(const float* source_p,
     // documented so it's not clear how to update them anyway.
   } else {
 #if BUILDFLAG(IS_MAC)
-    double* input_p = input_buffer_.Data();
-    double* output_p = output_buffer_.Data();
-
     // Set up filter state.  This is needed in case we're switching from
     // filtering with variable coefficients (i.e., with automations) to
     // fixed coefficients (without automations).
-    input_p[0] = x2_;
-    input_p[1] = x1_;
-    output_p[0] = y2_;
-    output_p[1] = y1_;
+    input_buffer_[0] = x2_;
+    input_buffer_[1] = x1_;
+    output_buffer_[0] = y2_;
+    output_buffer_[1] = y1_;
 
     // Use vecLib if available
     ProcessFast(source_p, dest_p, frames_to_process);
@@ -146,11 +148,12 @@ void Biquad::Process(const float* source_p,
     // automation which needs the history to continue correctly.  Because
     // sourceP and destP can be the same block of memory, we can't read from
     // sourceP to get the last inputs.  Fortunately, processFast has put the
-    // last inputs in input[0] and input[1].
-    x1_ = input_p[1];
-    x2_ = input_p[0];
-    y1_ = dest_p[frames_to_process - 1];
-    y2_ = dest_p[frames_to_process - 2];
+    // last inputs in input_buffer_[0] and input_buffer_[1] and the last outputs
+    // in output_buffer_[0] and output_buffer_[1].
+    x1_ = input_buffer_[1];
+    x2_ = input_buffer_[0];
+    y1_ = output_buffer_[1];
+    y2_ = output_buffer_[0];
 
 #else
     int n = frames_to_process;
@@ -205,12 +208,6 @@ void Biquad::ProcessFast(const float* source_p,
   filter_coefficients[3] = a1_[0];
   filter_coefficients[4] = a2_[0];
 
-  double* input_p = input_buffer_.Data();
-  double* output_p = output_buffer_.Data();
-
-  double* input2p = input_p + 2;
-  double* output2p = output_p + 2;
-
   // Break up processing into smaller slices (kBiquadBufferSize) if necessary.
 
   int n = frames_to_process;
@@ -219,14 +216,17 @@ void Biquad::ProcessFast(const float* source_p,
     int frames_this_time = n < kBiquadBufferSize ? n : kBiquadBufferSize;
 
     // Copy input to input buffer
-    for (int i = 0; i < frames_this_time; ++i)
-      input2p[i] = *source_p++;
+    for (int i = 0; i < frames_this_time; ++i) {
+      input_buffer_[i + 2] = *source_p++;
+    }
 
-    ProcessSliceFast(input_p, output_p, filter_coefficients, frames_this_time);
+    ProcessSliceFast(input_buffer_.Data(), output_buffer_.Data(),
+                     filter_coefficients, frames_this_time);
 
     // Copy output buffer to output (converts float -> double).
-    for (int i = 0; i < frames_this_time; ++i)
-      *dest_p++ = static_cast<float>(output2p[i]);
+    for (int i = 0; i < frames_this_time; ++i) {
+      *dest_p++ = static_cast<float>(output_buffer_[i + 2]);
+    }
 
     n -= frames_this_time;
   }
@@ -243,10 +243,10 @@ void Biquad::ProcessSliceFast(double* source_p,
   // m_outputBuffer respectively.  These buffers are allocated (in the
   // constructor) with space for two extra samples so it's OK to access array
   // values two beyond framesToProcess.
-  source_p[0] = source_p[frames_to_process - 2 + 2];
-  source_p[1] = source_p[frames_to_process - 1 + 2];
-  dest_p[0] = dest_p[frames_to_process - 2 + 2];
-  dest_p[1] = dest_p[frames_to_process - 1 + 2];
+  source_p[0] = source_p[frames_to_process];
+  source_p[1] = source_p[frames_to_process + 1];
+  dest_p[0] = dest_p[frames_to_process];
+  dest_p[1] = dest_p[frames_to_process + 1];
 }
 
 #endif  // BUILDFLAG(IS_MAC)
@@ -254,13 +254,11 @@ void Biquad::ProcessSliceFast(double* source_p,
 void Biquad::Reset() {
 #if BUILDFLAG(IS_MAC)
   // Two extra samples for filter history
-  double* input_p = input_buffer_.Data();
-  input_p[0] = 0;
-  input_p[1] = 0;
+  input_buffer_[0] = 0;
+  input_buffer_[1] = 0;
 
-  double* output_p = output_buffer_.Data();
-  output_p[0] = 0;
-  output_p[1] = 0;
+  output_buffer_[0] = 0;
+  output_buffer_[1] = 0;
 
 #endif
   x1_ = x2_ = y1_ = y2_ = 0;
@@ -557,7 +555,7 @@ void Biquad::SetBandpassParams(int index, double frequency, double q) {
 void Biquad::GetFrequencyResponse(int n_frequencies,
                                   const float* frequency,
                                   float* mag_response,
-                                  float* phase_response) {
+                                  float* phase_response) const {
   // Evaluate the Z-transform of the filter at given normalized
   // frequency from 0 to 1.  (1 corresponds to the Nyquist
   // frequency.)
@@ -687,7 +685,7 @@ static double RootFinder(double low,
   return root;
 }
 
-double Biquad::TailFrame(int coef_index, double max_frame) {
+double Biquad::TailFrame(int coef_index, double max_frame) const {
   // The Biquad filter is given by
   //
   //   H(z) = (b0 + b1/z + b2/z^2)/(1 + a1/z + a2/z^2).

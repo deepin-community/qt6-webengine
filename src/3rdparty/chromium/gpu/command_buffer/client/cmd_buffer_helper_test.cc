@@ -4,17 +4,19 @@
 
 // Tests for the Command Buffer Helper.
 
+#include "gpu/command_buffer/client/cmd_buffer_helper.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
 #include <memory>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
 #include "base/test/task_environment.h"
-#include "gpu/command_buffer/client/cmd_buffer_helper.h"
 #include "gpu/command_buffer/client/command_buffer_direct_locked.h"
 #include "gpu/command_buffer/service/mocks.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -65,6 +67,8 @@ class CommandBufferHelperTest : public testing::Test {
     return helper_->immediate_entry_count_;
   }
 
+  int32_t TotalEntryCount() const { return helper_->total_entry_count_; }
+
   // Adds a command to the buffer through the helper, while adding it as an
   // expected call on the API mock.
   void AddCommandWithExpect(error::Error _return,
@@ -77,9 +81,9 @@ class CommandBufferHelperTest : public testing::Test {
     CommandBufferEntry* cmds =
         static_cast<CommandBufferEntry*>(helper_->GetSpace(arg_count + 1));
     CommandBufferOffset put = 0;
-    cmds[put++].value_header = header;
+    UNSAFE_TODO(cmds[put++]).value_header = header;
     for (int ii = 0; ii < arg_count; ++ii) {
-      cmds[put++] = args[ii];
+      UNSAFE_TODO(cmds[put++]) = UNSAFE_TODO(args[ii]);
     }
 
     EXPECT_CALL(*api_mock_, DoCommand(command, arg_count,
@@ -455,7 +459,7 @@ TEST_F(CommandBufferHelperTest, TestCommandWrappingExactMultiple) {
                 "kTotalNumCommandEntries should be a multiple of kCommandSize");
   CommandBufferEntry args1[kNumArgs];
   for (size_t ii = 0; ii < kNumArgs; ++ii) {
-    args1[ii].value_uint32 = ii + 1;
+    UNSAFE_TODO(args1[ii]).value_uint32 = ii + 1;
   }
 
   for (unsigned int i = 0; i < 5; ++i) {
@@ -651,6 +655,17 @@ TEST_F(CommandBufferHelperTest, IsContextLost) {
   EXPECT_FALSE(helper_->IsContextLost());
   command_buffer_->service()->SetParseError(error::kGenericError);
   EXPECT_TRUE(helper_->IsContextLost());
+}
+
+TEST_F(CommandBufferHelperTest, TestInvalidGetOffset) {
+  EXPECT_FALSE(helper_->IsContextLost());
+  EXPECT_TRUE(helper_->usable());
+
+  command_buffer_->SetGetOffsetForTest(TotalEntryCount() + 1);
+  helper_->RefreshCachedToken();  // calls UpdateCachedState internally.
+
+  EXPECT_TRUE(helper_->IsContextLost());
+  EXPECT_FALSE(helper_->usable());
 }
 
 // Checks helper's 'flush generation' updates.

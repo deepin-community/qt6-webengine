@@ -2,11 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import '../strings.m.js';
+import '/strings.m.js';
 import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
 import 'chrome://resources/d3/d3.min.js';
 
-import {PricePoint} from '//shopping-insights-side-panel.top-chrome/shared/shopping_list.mojom-webui.js';
+import type {PricePoint} from '//resources/cr_components/commerce/shopping_service.mojom-webui.js';
 import {assert} from 'chrome://resources/js/assert.js';
 import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
@@ -56,32 +56,24 @@ export class ShoppingInsightsHistoryGraphElement extends PolymerElement {
     };
   }
 
-  data: PricePoint[];
-  locale: string;
-  currency: string;
+  declare data: PricePoint[];
+  declare locale: string;
+  declare currency: string;
   private points: Array<{date: Date, price: number}>;
   private isGraphInteracted_: boolean = false;
   private currentPricePointIndex_?: number;
   private resizeObserver_: ResizeObserver;
   private currentWidth_: number;
   private graphSvg_: any;
-  private dateTopMarginPx_ = 8;
-  private priceRightMarginPx_ = 4;
-  private bubbleHorizontalPaddingPx_ = 4;
-  private bubbleTopPaddingPx_ = 4;
-  private bubbleBottomPaddingPx_ = 4;
+  private dateTopMarginPx_ = 12;
+  private priceRightMarginPx_ = 8;
+  private bubbleHorizontalPaddingPx_ = 6;
+  private bubbleTopPaddingPx_ = 3;
+  private bubbleBottomPaddingPx_ = 2;
   private bubbleCornerRadiusPx_ = 3;
 
   override connectedCallback() {
     super.connectedCallback();
-
-    if (document.documentElement.hasAttribute('chrome-refresh-2023')) {
-      this.dateTopMarginPx_ = 12;
-      this.priceRightMarginPx_ = 8;
-      this.bubbleHorizontalPaddingPx_ = 6;
-      this.bubbleTopPaddingPx_ = 3;
-      this.bubbleBottomPaddingPx_ = 2;
-    }
 
     this.points = this.data.map(
         d => ({date: this.stringToDate_(d.date), price: d.price}));
@@ -234,12 +226,10 @@ export class ShoppingInsightsHistoryGraphElement extends PolymerElement {
                        .attr('opacity', 0)
                        .classed(CssClass.CIRCLE, true);
 
-    if (document.documentElement.hasAttribute('chrome-refresh-2023')) {
-      this.bubbleCornerRadiusPx_ =
-          (this.bubbleTopPaddingPx_ + this.bubbleBottomPaddingPx_ +
-           tooltipHeight) /
-          2;
-    }
+    this.bubbleCornerRadiusPx_ =
+        (this.bubbleTopPaddingPx_ + this.bubbleBottomPaddingPx_ +
+        tooltipHeight) /
+        2;
     const bubble = svg.append('rect')
                        .attr('opacity', 0)
                        .attr('y', 0)

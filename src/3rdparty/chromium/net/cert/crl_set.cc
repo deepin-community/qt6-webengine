@@ -8,12 +8,14 @@
 #include <string_view>
 
 #include "base/base64.h"
+#include "base/containers/span.h"
 #include "base/json/json_reader.h"
+#include "base/strings/string_view_util.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "base/values.h"
 #include "crypto/sha2.h"
 #include "net/base/trace_constants.h"
-#include "net/base/tracing.h"
 #include "third_party/boringssl/src/include/openssl/bytestring.h"
 #include "third_party/boringssl/src/include/openssl/mem.h"
 
@@ -54,29 +56,30 @@ namespace {
 // ReadHeader reads the header (including length prefix) from |data| and
 // updates |data| to remove the header on return. Caller takes ownership of the
 // returned pointer.
-absl::optional<base::Value> ReadHeader(std::string_view* data) {
+std::optional<base::Value> ReadHeader(std::string_view* data) {
   uint16_t header_len;
   if (data->size() < sizeof(header_len)) {
-    return absl::nullopt;
+    return std::nullopt;
   }
   // Assumes little-endian.
-  memcpy(&header_len, data->data(), sizeof(header_len));
+  base::byte_span_from_ref(header_len)
+      .copy_from(base::as_byte_span(*data).first(sizeof(header_len)));
   data->remove_prefix(sizeof(header_len));
 
   if (data->size() < header_len) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   const std::string_view header_bytes = data->substr(0, header_len);
   data->remove_prefix(header_len);
 
-  absl::optional<base::Value> header =
-      base::JSONReader::Read(header_bytes, base::JSON_ALLOW_TRAILING_COMMAS);
-  if (!header || !header->is_dict()) {
-    return absl::nullopt;
+  std::optional<base::Value::Dict> header = base::JSONReader::ReadDict(
+      header_bytes, base::JSON_ALLOW_TRAILING_COMMAS);
+  if (!header) {
+    return std::nullopt;
   }
 
-  return header;
+  return base::Value(std::move(*header));
 }
 
 // kCurrentFileVersion is the version of the CRLSet file format that we
@@ -95,7 +98,8 @@ bool ReadCRL(std::string_view* data,
   if (data->size() < sizeof(num_serials))
     return false;
   // Assumes little endian.
-  memcpy(&num_serials, data->data(), sizeof(num_serials));
+  base::byte_span_from_ref(num_serials)
+      .copy_from(base::as_byte_span(*data).first(sizeof(num_serials)));
   data->remove_prefix(sizeof(num_serials));
 
   if (num_serials > 32 * 1024 * 1024)  // Sanity check.
@@ -215,7 +219,7 @@ bool CRLSet::Parse(std::string_view data, scoped_refptr<CRLSet>* out_crl_set) {
 #error assumes little endian
 #endif
 
-  absl::optional<base::Value> header_value = ReadHeader(&data);
+  std::optional<base::Value> header_value = ReadHeader(&data);
   if (!header_value) {
     return false;
   }
@@ -229,7 +233,7 @@ bool CRLSet::Parse(std::string_view data, scoped_refptr<CRLSet>* out_crl_set) {
   if (header_dict.FindInt("Version") != kCurrentFileVersion)
     return false;
 
-  absl::optional<int> sequence = header_dict.FindInt("Sequence");
+  std::optional<int> sequence = header_dict.FindInt("Sequence");
   if (!sequence)
     return false;
 
@@ -346,9 +350,10 @@ CRLSet::Result CRLSet::CheckSerial(std::string_view serial_number,
   return GOOD;
 }
 
-bool CRLSet::IsKnownInterceptionKey(std::string_view spki_hash) const {
+bool CRLSet::IsKnownInterceptionKey(base::span<const uint8_t> spki_hash) const {
   return std::binary_search(known_interception_spkis_.begin(),
-                            known_interception_spkis_.end(), spki_hash);
+                            known_interception_spkis_.end(),
+                            base::as_string_view(spki_hash));
 }
 
 bool CRLSet::IsExpired() const {
@@ -429,8 +434,7 @@ scoped_refptr<CRLSet> CRLSet::ForTesting(
     crl_set->not_after_ = 1;
 
   if (issuer_spki) {
-    const std::string spki(reinterpret_cast<const char*>(issuer_spki->data),
-                           sizeof(issuer_spki->data));
+    std::string spki(base::as_string_view(*issuer_spki));
     std::vector<std::string> serials;
     if (!serial_number.empty()) {
       serials.push_back(std::string(serial_number));

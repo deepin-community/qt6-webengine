@@ -434,6 +434,12 @@
     "glFlushMappedNamedBufferRange": {
         "buffer": "BufferID"
     },
+    "glFramebufferFoveationConfig": {
+        "framebuffer": "FramebufferID"
+    },
+    "glFramebufferFoveationParameters": {
+        "framebuffer": "FramebufferID"
+    },
     "glFramebufferRenderbuffer": {
         "renderbuffer": "RenderbufferID"
     },
@@ -1500,6 +1506,13 @@
     "glShaderStorageBlockBinding": {
         "program": "ShaderProgramID"
     },
+    "glShadingRate": {
+        "rate": "ShadingRate"
+    },
+    "glShadingRateCombinerOps": {
+        "combinerOp0": "CombinerOp",
+        "combinerOp1": "CombinerOp"
+    },
     "glSignalSemaphore": {
         "buffers": "const BufferID *",
         "semaphore": "SemaphoreID",
@@ -1680,6 +1693,9 @@
     },
     "glTextureBufferRange": {
         "buffer": "BufferID",
+        "texture": "TextureID"
+    },
+    "glTextureFoveationParameters": {
         "texture": "TextureID"
     },
     "glTextureParameterf": {

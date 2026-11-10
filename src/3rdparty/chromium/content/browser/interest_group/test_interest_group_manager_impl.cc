@@ -50,7 +50,9 @@ TestInterestGroupManagerImpl::TestInterestGroupManagerImpl(
   set_k_anonymity_manager_for_testing(
       std::make_unique<InterestGroupKAnonymityManager>(
           /*interest_group_manager=*/this,
-          /*k_anonymity_service_callback=*/base::BindLambdaForTesting(
+          /*caching_storage=*/GetCachingStorageForTesting(),
+          /*k_anonymity_service_callback=*/
+          base::BindLambdaForTesting(
               [&]() -> KAnonymityServiceDelegate* { return this; })));
 }
 
@@ -61,7 +63,9 @@ TestInterestGroupManagerImpl::~TestInterestGroupManagerImpl() {
   set_k_anonymity_manager_for_testing(
       std::make_unique<InterestGroupKAnonymityManager>(
           /*interest_group_manager=*/this,
-          /*k_anonymity_service_callback=*/base::BindLambdaForTesting(
+          /*caching_storage=*/nullptr,
+          /*k_anonymity_service_callback=*/
+          base::BindLambdaForTesting(
               []() -> KAnonymityServiceDelegate* { return nullptr; })));
   RemoveInterestGroupObserver(this);
 }
@@ -69,7 +73,7 @@ TestInterestGroupManagerImpl::~TestInterestGroupManagerImpl() {
 void TestInterestGroupManagerImpl::EnqueueReports(
     ReportType report_type,
     std::vector<GURL> report_urls,
-    int frame_tree_node_id,
+    FrameTreeNodeId frame_tree_node_id,
     const url::Origin& frame_origin,
     const network::mojom::ClientSecurityState& client_security_state,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory) {
@@ -85,6 +89,26 @@ void TestInterestGroupManagerImpl::EnqueueReports(
     for (auto& report_url : report_urls) {
       reports_.push_back(Report{report_type, std::move(report_url)});
     }
+  }
+}
+
+void TestInterestGroupManagerImpl::EnqueueRealTimeReports(
+    std::map<url::Origin, RealTimeReportingContributions> contributions,
+    AdAuctionPageDataCallback ad_auction_page_data_callback,
+    FrameTreeNodeId frame_tree_node_id,
+    const url::Origin& frame_origin,
+    const network::mojom::ClientSecurityState& client_security_state,
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory) {
+  EXPECT_EQ(expected_frame_origin_, frame_origin);
+  EXPECT_EQ(*expected_client_security_state_, client_security_state);
+  EXPECT_EQ(expected_url_loader_factory_.get(), url_loader_factory.get());
+  if (use_real_enqueue_reports_) {
+    InterestGroupManagerImpl::EnqueueRealTimeReports(
+        std::move(contributions), std::move(ad_auction_page_data_callback),
+        frame_tree_node_id, frame_origin, client_security_state,
+        url_loader_factory);
+  } else {
+    real_time_contributions_ = std::move(contributions);
   }
 }
 
@@ -156,6 +180,12 @@ std::vector<GURL> TestInterestGroupManagerImpl::TakeReportUrlsOfType(
     ++it;
   }
   return out;
+}
+
+std::map<url::Origin,
+         TestInterestGroupManagerImpl::RealTimeReportingContributions>
+TestInterestGroupManagerImpl::TakeRealTimeContributions() {
+  return std::move(real_time_contributions_);
 }
 
 std::vector<blink::InterestGroupKey>

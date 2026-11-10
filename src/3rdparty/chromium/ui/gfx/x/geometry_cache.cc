@@ -34,29 +34,57 @@ GeometryCache::GeometryCache(Connection* connection,
 GeometryCache::~GeometryCache() = default;
 
 gfx::Rect GeometryCache::GetBoundsPx() {
-  if (!have_parent_) {
-    parent_future_.DispatchNow();
-  }
-  CHECK(have_parent_);
-  if (!have_geometry_) {
-    geometry_future_.DispatchNow();
-  }
-  CHECK(have_geometry_);
-
-  if (!parent_) {
+  auto get_local_geometry = [this]() {
+    if (have_geometry_) {
+      return geometry_;
+    }
+    if (auto response = geometry_future_.Peek()) {
+      return response ? gfx::Rect(response->x, response->y, response->width,
+                                  response->height)
+                      : gfx::Rect();
+    }
     return geometry_;
+  };
+
+  if (!have_parent_) {
+    auto response = parent_future_.Peek();
+    if (!response) {
+      return get_local_geometry();
+    }
+    Window parent_window = response ? response->parent : Window::None;
+    if (parent_window == Window::None) {
+      parent_.reset();
+      return get_local_geometry();
+    }
+    if (!parent_ || parent_->window_ != parent_window) {
+      parent_ = std::make_unique<GeometryCache>(
+          connection_, parent_window,
+          base::BindRepeating(&GeometryCache::OnParentGeometryChanged,
+                              weak_ptr_factory_.GetWeakPtr()));
+    }
+  }
+
+  gfx::Rect geometry = get_local_geometry();
+  if (!parent_) {
+    return geometry;
   }
   auto parent_bounds = parent_->GetBoundsPx();
   gfx::Vector2d offset(parent_bounds.x(), parent_bounds.y());
-  return geometry_ + offset;
+  return geometry + offset;
 }
 
 void GeometryCache::OnQueryTreeResponse(QueryTreeResponse response) {
+  if (have_parent_) {
+    return;
+  }
   OnParentChanged(response ? response->parent : Window::None,
                   geometry_.origin());
 }
 
 void GeometryCache::OnGetGeometryResponse(GetGeometryResponse response) {
+  if (have_geometry_) {
+    return;
+  }
   OnGeometryChanged(response ? gfx::Rect(response->x, response->y,
                                          response->width, response->height)
                              : gfx::Rect());
@@ -85,12 +113,17 @@ void GeometryCache::OnGeometryChanged(const gfx::Rect& geometry) {
   NotifyGeometryChanged();
 }
 
+void GeometryCache::OnPositionChanged(const gfx::Point& origin) {
+  geometry_.set_origin(origin);
+  NotifyGeometryChanged();
+}
+
 bool GeometryCache::Ready() const {
   return have_geometry_ && have_parent_ && (!parent_ || parent_->Ready());
 }
 
 void GeometryCache::OnParentGeometryChanged(
-    const absl::optional<gfx::Rect>& old_parent_bounds,
+    const std::optional<gfx::Rect>& old_parent_bounds,
     const gfx::Rect& new_parent_bounds) {
   NotifyGeometryChanged();
 }
@@ -124,6 +157,10 @@ void GeometryCache::OnEvent(const Event& xevent) {
   } else if (auto* reparent = xevent.As<ReparentNotifyEvent>()) {
     if (reparent->window == window_) {
       OnParentChanged(reparent->parent, gfx::Point(reparent->x, reparent->y));
+    }
+  } else if (auto* gravity = xevent.As<GravityNotifyEvent>()) {
+    if (gravity->window == window_) {
+      OnPositionChanged(gfx::Point(gravity->x, gravity->y));
     }
   }
 }

@@ -7,13 +7,12 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/test/values_test_util.h"
 #include "content/browser/direct_sockets/direct_sockets_service_impl.h"
 #include "content/browser/direct_sockets/direct_sockets_test_utils.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/content_client.h"
-#include "content/public/common/content_features.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
@@ -31,6 +30,7 @@
 #include "services/network/test/test_udp_socket.h"
 #include "services/network/test/udp_socket_test_util.h"
 #include "testing/gmock/include/gmock/gmock-matchers.h"
+#include "third_party/blink/public/common/features_generated.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -50,8 +50,6 @@ constexpr char kLocalhostAddress[] = "127.0.0.1";
 
 class DirectSocketsUdpBrowserTest : public ContentBrowserTest {
  public:
-  ~DirectSocketsUdpBrowserTest() override = default;
-
   GURL GetTestPageURL() {
     return embedded_test_server()->GetURL("/direct_sockets/udp.html");
   }
@@ -72,8 +70,8 @@ class DirectSocketsUdpBrowserTest : public ContentBrowserTest {
         )",
         kLocalhostAddress, port);
 
-    ASSERT_TRUE(
-        EvalJs(shell(), content::test::WrapAsync(open_socket)).value.is_none());
+    ASSERT_EQ(EvalJs(shell(), content::test::WrapAsync(open_socket)),
+              base::Value());
   }
 
  protected:
@@ -123,7 +121,6 @@ class DirectSocketsUdpBrowserTest : public ContentBrowserTest {
     return shell()->web_contents()->GetBrowserContext();
   }
 
-  base::test::ScopedFeatureList feature_list_{features::kIsolatedWebApps};
   mojo::Remote<network::mojom::UDPSocket> server_socket_;
 
   std::unique_ptr<test::IsolatedWebAppContentBrowserClient> client_;
@@ -219,7 +216,8 @@ IN_PROC_BROWSER_TEST_F(DirectSocketsUdpBrowserTest, ReadWriteUdpOnSendError) {
   ConnectJsSocket();
 
   const std::string async_read = "readWriteUdpOnError(socket);";
-  auto future = GetAsyncJsRunner()->RunScript(async_read);
+  base::test::TestFuture<std::string> future =
+      GetAsyncJsRunner()->RunScript(async_read);
 
   // Next attempt to write to the socket will result in ERR_UNEXPECTED and close
   // the writable stream.
@@ -235,7 +233,7 @@ IN_PROC_BROWSER_TEST_F(DirectSocketsUdpBrowserTest, ReadWriteUdpOnSendError) {
           },
           &mock_network_context));
 
-  EXPECT_THAT(future->Get(),
+  EXPECT_THAT(future.Get(),
               ::testing::HasSubstr("readWriteUdpOnError succeeded"));
 }
 
@@ -259,9 +257,10 @@ IN_PROC_BROWSER_TEST_F(DirectSocketsUdpBrowserTest, ReadWriteUdpOnSocketError) {
           &mock_network_context));
 
   const std::string script = "readWriteUdpOnError(socket)";
-  auto future = GetAsyncJsRunner()->RunScript(script);
+  base::test::TestFuture<std::string> future =
+      GetAsyncJsRunner()->RunScript(script);
 
-  EXPECT_THAT(future->Get(),
+  EXPECT_THAT(future.Get(),
               ::testing::HasSubstr("readWriteUdpOnError succeeded"));
 }
 
@@ -325,8 +324,8 @@ IN_PROC_BROWSER_TEST_F(DirectSocketsBoundUdpBrowserTest, HasFirewallHole) {
       std::make_unique<DelegateImpl>(local_port, run_loop.QuitClosure());
   client->AttachDelegate(delegate.get());
 
-  EXPECT_TRUE(EvalJs(shell(), content::test::WrapAsync("socket.close()"))
-                  .error.empty());
+  EXPECT_TRUE(
+      EvalJs(shell(), content::test::WrapAsync("socket.close()")).is_ok());
   run_loop.Run();
 }
 

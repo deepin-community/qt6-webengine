@@ -49,7 +49,7 @@ struct AvailableIds {
   int64_t ver_id;
 
   AvailableIds() : reg_id(-1), res_id(-1), ver_id(-1) {}
-  ~AvailableIds() {}
+  ~AvailableIds() = default;
 };
 
 GURL URL(const GURL& origin, const std::string& path) {
@@ -66,7 +66,7 @@ ResourceRecordPtr CreateResource(int64_t resource_id,
   EXPECT_TRUE(url.is_valid());
   return mojom::ServiceWorkerResourceRecord::New(
       resource_id, url, size_bytes,
-      /*sha256_checksum=*/absl::nullopt);
+      /*sha256_checksum=*/std::nullopt);
 }
 
 ServiceWorkerDatabase* CreateDatabase(const base::FilePath& path) {
@@ -3090,7 +3090,7 @@ TEST(ServiceWorkerDatabaseTest, InvalidWebFeature) {
       static_cast<uint32_t>(blink::mojom::WebFeature::kBackgroundSync));
   // Add an out of range feature.
   data.add_used_features(
-      static_cast<uint32_t>(blink::mojom::WebFeature::kNumberOfFeatures) + 11);
+      static_cast<uint32_t>(blink::mojom::WebFeature::kMaxValue) + 12);
   data.add_used_features(
       static_cast<uint32_t>(blink::mojom::WebFeature::kNetInfoType));
 
@@ -3246,11 +3246,12 @@ const network::mojom::WebSandboxFlags kWebSandboxFlags[] = {
     network::mojom::WebSandboxFlags::kDownloads,
     network::mojom::WebSandboxFlags::kStorageAccessByUserActivation,
     network::mojom::WebSandboxFlags::kTopNavigationToCustomProtocols,
+    network::mojom::WebSandboxFlags::kAllowSameSiteNoneCookies,
     network::mojom::WebSandboxFlags::kAll,
 };
 
 static_assert(
-    network::mojom::WebSandboxFlags::kTopNavigationToCustomProtocols ==
+    network::mojom::WebSandboxFlags::kAllowSameSiteNoneCookies ==
         network::mojom::WebSandboxFlags::kMaxValue,
     "The array should contain all the flags");
 
@@ -3346,8 +3347,8 @@ TEST(ServiceWorkerDatabaseTest, PolicyContainerPoliciesStoreRestore) {
     auto policies = blink::mojom::PolicyContainerPolicies::New();
 
     for (auto ip_address_space : {
+             network::mojom::IPAddressSpace::kLoopback,
              network::mojom::IPAddressSpace::kLocal,
-             network::mojom::IPAddressSpace::kPrivate,
              network::mojom::IPAddressSpace::kPublic,
              network::mojom::IPAddressSpace::kUnknown,
          }) {
@@ -3620,7 +3621,7 @@ TEST(ServiceWorkerDatabaseTest, RouterRulesStoreRestore) {
         blink::ServiceWorkerRouterCondition::WithUrlPattern(url_pattern);
 
     blink::ServiceWorkerRouterSource source;
-    source.type = blink::ServiceWorkerRouterSource::Type::kNetwork;
+    source.type = network::mojom::ServiceWorkerRouterSourceType::kNetwork;
     source.network_source = blink::ServiceWorkerRouterNetworkSource{};
     rule.sources.emplace_back(source);
     router_rules.rules.emplace_back(rule);
@@ -3641,7 +3642,29 @@ TEST(ServiceWorkerDatabaseTest, RouterRulesStoreRestore) {
         blink::ServiceWorkerRouterCondition::WithOrCondition(or_condition);
 
     blink::ServiceWorkerRouterSource source;
-    source.type = blink::ServiceWorkerRouterSource::Type::kNetwork;
+    source.type = network::mojom::ServiceWorkerRouterSourceType::kNetwork;
+    source.network_source = blink::ServiceWorkerRouterNetworkSource{};
+    rule.sources.emplace_back(source);
+    router_rules.rules.emplace_back(rule);
+
+    store_and_restore(router_rules);
+  }
+
+  // `not` condition
+  {
+    blink::ServiceWorkerRouterRules router_rules;
+    blink::ServiceWorkerRouterRule rule;
+    blink::ServiceWorkerRouterNotCondition not_condition;
+    {
+      not_condition.condition =
+          std::make_unique<blink::ServiceWorkerRouterCondition>(
+              blink::ServiceWorkerRouterCondition::WithRequest({}));
+    }
+    rule.condition =
+        blink::ServiceWorkerRouterCondition::WithNotCondition(not_condition);
+
+    blink::ServiceWorkerRouterSource source;
+    source.type = network::mojom::ServiceWorkerRouterSourceType::kNetwork;
     source.network_source = blink::ServiceWorkerRouterNetworkSource{};
     rule.sources.emplace_back(source);
     router_rules.rules.emplace_back(rule);
@@ -3659,7 +3682,7 @@ TEST(ServiceWorkerDatabaseTest, RouterRulesStoreRestore) {
     }
 
     blink::ServiceWorkerRouterSource source;
-    source.type = blink::ServiceWorkerRouterSource::Type::kNetwork;
+    source.type = network::mojom::ServiceWorkerRouterSourceType::kNetwork;
     source.network_source = blink::ServiceWorkerRouterNetworkSource{};
     rule.sources.emplace_back(source);
     router_rules.rules.emplace_back(rule);
@@ -3711,11 +3734,12 @@ TEST(ServiceWorkerDatabaseTest, RouterRulesStoreRestore) {
             blink::ServiceWorkerRouterRunningStatusCondition::
                 RunningStatusEnum::kRunning;
       }
-      rule.condition = {url_pattern, request, running_status, absl::nullopt};
+      rule.condition = {url_pattern, request, running_status, std::nullopt,
+                        std::nullopt};
     }
 
     blink::ServiceWorkerRouterSource source;
-    source.type = blink::ServiceWorkerRouterSource::Type::kNetwork;
+    source.type = network::mojom::ServiceWorkerRouterSourceType::kNetwork;
     source.network_source = blink::ServiceWorkerRouterNetworkSource{};
     rule.sources.emplace_back(source);
     router_rules.rules.emplace_back(rule);
@@ -3744,7 +3768,7 @@ TEST(ServiceWorkerDatabaseTest, RouterRulesStoreRestore) {
         blink::ServiceWorkerRouterCondition::WithUrlPattern(url_pattern);
 
     blink::ServiceWorkerRouterSource source;
-    source.type = blink::ServiceWorkerRouterSource::Type::kNetwork;
+    source.type = network::mojom::ServiceWorkerRouterSourceType::kNetwork;
     source.network_source = blink::ServiceWorkerRouterNetworkSource{};
     rule.sources.emplace_back(source);
     router_rules.rules.emplace_back(rule);
@@ -3773,7 +3797,7 @@ TEST(ServiceWorkerDatabaseTest, RouterRulesStoreRestore) {
         blink::ServiceWorkerRouterCondition::WithUrlPattern(url_pattern);
 
     blink::ServiceWorkerRouterSource source;
-    source.type = blink::ServiceWorkerRouterSource::Type::kNetwork;
+    source.type = network::mojom::ServiceWorkerRouterSourceType::kNetwork;
     source.network_source = blink::ServiceWorkerRouterNetworkSource{};
     rule.sources.emplace_back(source);
     router_rules.rules.emplace_back(rule);
@@ -3797,34 +3821,60 @@ TEST(ServiceWorkerDatabaseTest, RouterRulesStoreRestore) {
 
     {
       blink::ServiceWorkerRouterSource source;
-      source.type = blink::ServiceWorkerRouterSource::Type::kNetwork;
+      source.type = network::mojom::ServiceWorkerRouterSourceType::kNetwork;
       source.network_source.emplace();
       rule.sources.push_back(source);
     }
     {
       blink::ServiceWorkerRouterSource source;
-      source.type = blink::ServiceWorkerRouterSource::Type::kRace;
-      source.race_source.emplace();
+      source.type = network::mojom::ServiceWorkerRouterSourceType::
+          kRaceNetworkAndFetchEvent;
+      source.race_network_and_fetch_event_source.emplace();
       rule.sources.push_back(source);
     }
     {
       blink::ServiceWorkerRouterSource source;
-      source.type = blink::ServiceWorkerRouterSource::Type::kFetchEvent;
+      source.type = network::mojom::ServiceWorkerRouterSourceType::kFetchEvent;
       source.fetch_event_source.emplace();
       rule.sources.push_back(source);
     }
     {  // cache source without cache_name.
       blink::ServiceWorkerRouterSource source;
-      source.type = blink::ServiceWorkerRouterSource::Type::kCache;
+      source.type = network::mojom::ServiceWorkerRouterSourceType::kCache;
       source.cache_source.emplace();
       rule.sources.push_back(source);
     }
     {  // cache source with cache_name.
       blink::ServiceWorkerRouterSource source;
-      source.type = blink::ServiceWorkerRouterSource::Type::kCache;
+      source.type = network::mojom::ServiceWorkerRouterSourceType::kCache;
       blink::ServiceWorkerRouterCacheSource cache_source;
       cache_source.cache_name = "example_cache_name";
       source.cache_source = cache_source;
+      rule.sources.push_back(source);
+    }
+    {
+      // Race network and cache without cache_name.
+      blink::ServiceWorkerRouterSource source;
+      source.type =
+          network::mojom::ServiceWorkerRouterSourceType::kRaceNetworkAndCache;
+      source.race_network_and_cache_source.emplace();
+
+      blink::ServiceWorkerRouterCacheSource cache_source;
+      source.race_network_and_cache_source->cache_source = cache_source;
+
+      rule.sources.push_back(source);
+    }
+    {
+      // Race network and cache with cache_name.
+      blink::ServiceWorkerRouterSource source;
+      source.type =
+          network::mojom::ServiceWorkerRouterSourceType::kRaceNetworkAndCache;
+      source.race_network_and_cache_source.emplace();
+
+      blink::ServiceWorkerRouterCacheSource cache_source;
+      cache_source.cache_name = "example_cache_name";
+      source.race_network_and_cache_source->cache_source = cache_source;
+
       rule.sources.push_back(source);
     }
     router_rules.rules.emplace_back(rule);
@@ -3844,7 +3894,7 @@ TEST(ServiceWorkerDatabaseTest, RouterRulesStoreRestore) {
         blink::ServiceWorkerRouterCondition::WithUrlPattern(url_pattern);
 
     blink::ServiceWorkerRouterSource source;
-    source.type = blink::ServiceWorkerRouterSource::Type::kNetwork;
+    source.type = network::mojom::ServiceWorkerRouterSourceType::kNetwork;
     source.network_source = blink::ServiceWorkerRouterNetworkSource{};
     rule.sources.emplace_back(source);
     router_rules.rules.push_back(rule);
@@ -3923,7 +3973,7 @@ TEST(ServiceWorkerDatabaseTest, RouterRulesLegacyPathname) {
     }
 
     const auto& registered_url_pattern =
-        std::get<absl::optional<blink::SafeUrlPattern>&>(
+        std::get<std::optional<blink::SafeUrlPattern>&>(
             registration->router_rules->rules[0].condition.get());
     EXPECT_EQ(url_pattern, registered_url_pattern);
   }

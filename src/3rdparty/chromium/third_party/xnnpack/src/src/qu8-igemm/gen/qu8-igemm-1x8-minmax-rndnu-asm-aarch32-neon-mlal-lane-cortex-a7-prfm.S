@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-igemm/1x8-aarch32-neon-mlal-lane-cortex-a7.S.in
 //   Generator: tools/xngen
@@ -8,7 +9,7 @@
 // LICENSE file in the root directory of this source tree.
 
 
-#include <xnnpack/assembly.h>
+#include "src/xnnpack/assembly.h"
 
 .syntax unified
 
@@ -63,7 +64,8 @@ BEGIN_FUNCTION xnn_qu8_igemm_minmax_rndnu_ukernel_1x8__asm_aarch32_neon_mlal_lan
         MOV         r14, r3                 // p = ks
 
         # Load params values
-        VLD1.32     {d14[]}, [r5]!          // QU8 kernel_zero_point
+        VLD1.8      {d14[]}, [r5]           // QU8 kernel_zero_point
+        ADD         r5, r5, 4               // Skip padding
         VLDM        r5, {d12-d13}           // RNDNU params
 
         PLD         [r9,  64]               // Prefetch B

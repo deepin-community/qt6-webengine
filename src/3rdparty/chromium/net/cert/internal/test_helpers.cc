@@ -5,6 +5,8 @@
 #include "net/cert/internal/test_helpers.h"
 
 #include "base/base_paths.h"
+#include "base/containers/span.h"
+#include "base/containers/to_vector.h"
 #include "base/files/file_util.h"
 #include "base/path_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -16,15 +18,13 @@ namespace net {
 
 ::testing::AssertionResult ReadTestDataFromPemFile(
     const std::string& file_path_ascii,
-    const PemBlockMapping* mappings,
-    size_t mappings_length) {
+    base::span<const PemBlockMapping> mappings) {
   std::string file_data = ReadTestFileToString(file_path_ascii);
 
   // mappings_copy is used to keep track of which mappings have already been
   // satisfied (by nulling the |value| field). This is used to track when
   // blocks are multiply defined.
-  std::vector<PemBlockMapping> mappings_copy(mappings,
-                                             mappings + mappings_length);
+  std::vector<PemBlockMapping> mappings_copy = base::ToVector(mappings);
 
   // Build the |pem_headers| vector needed for PEMTokenzier.
   std::vector<std::string> pem_headers;

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "content/web_test/renderer/event_sender.h"
 
 #include <stddef.h>
@@ -10,9 +15,13 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <variant>
+#include <vector>
 
 #include "base/check_op.h"
 #include "base/command_line.h"
+#include "base/containers/auto_spanification_helper.h"
+#include "base/containers/span.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -28,11 +37,10 @@
 #include "content/web_test/renderer/test_runner.h"
 #include "content/web_test/renderer/web_frame_test_proxy.h"
 #include "content/web_test/renderer/web_test_spell_checker.h"
-#include "gin/handle.h"
 #include "gin/object_template_builder.h"
+#include "gin/public/wrappable_pointer_tags.h"
 #include "gin/wrappable.h"
 #include "net/base/filename_util.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 #include "third_party/blink/public/common/context_menu_data/context_menu_data.h"
 #include "third_party/blink/public/common/input/web_coalesced_input_event.h"
 #include "third_party/blink/public/common/input/web_gesture_event.h"
@@ -45,7 +53,6 @@
 #include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
 #include "third_party/blink/public/platform/url_conversion.h"
 #include "third_party/blink/public/platform/web_string.h"
-#include "third_party/blink/public/platform/web_vector.h"
 #include "third_party/blink/public/web/blink.h"
 #include "third_party/blink/public/web/web_frame_widget.h"
 #include "third_party/blink/public/web/web_local_frame.h"
@@ -56,6 +63,9 @@
 #include "ui/events/keycodes/dom/keycode_converter.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/geometry/point_conversions.h"
+#include "v8/include/cppgc/allocation.h"
+#include "v8/include/cppgc/prefinalizer.h"
+#include "v8/include/v8-cppgc.h"
 #include "v8/include/v8.h"
 
 #if BUILDFLAG(IS_WIN)
@@ -80,7 +90,6 @@ using blink::WebString;
 using blink::WebTouchEvent;
 using blink::WebTouchPoint;
 using blink::WebURL;
-using blink::WebVector;
 using blink::WebView;
 
 namespace content {
@@ -143,7 +152,6 @@ WebInputEvent::Type PointerEventTypeForTouchPointState(
     case WebTouchPoint::State::kStateStationary:
     default:
       NOTREACHED();
-      return WebInputEvent::Type::kUndefined;
   }
 }
 
@@ -212,7 +220,6 @@ WebMouseEvent::Button GetButtonTypeFromButtonNumber(int button_code) {
       return WebMouseEvent::Button::kForward;
   }
   NOTREACHED();
-  return WebMouseEvent::Button::kNoButton;
 }
 
 int GetWebMouseEventModifierForButton(WebMouseEvent::Button button) {
@@ -233,7 +240,6 @@ int GetWebMouseEventModifierForButton(WebMouseEvent::Button button) {
       return 0;  // Not implemented yet
   }
   NOTREACHED();
-  return 0;
 }
 
 const int kButtonsInModifiers =
@@ -410,7 +416,7 @@ bool OutsideRadius(const gfx::PointF& a, const gfx::PointF& b, float radius) {
           (a.y() - b.y()) * (a.y() - b.y())) > radius * radius;
 }
 
-void PopulateCustomItems(const WebVector<MenuItemInfo>& customItems,
+void PopulateCustomItems(const std::vector<MenuItemInfo>& customItems,
                          const std::string& prefix,
                          std::vector<std::string>* strings) {
   for (size_t i = 0; i < customItems.size(); ++i) {
@@ -470,17 +476,19 @@ std::vector<std::string> MakeMenuItemStringsFor(ContextMenuData* context_menu) {
   PopulateCustomItems(context_menu->custom_items, "", &strings);
 
   if (context_menu->is_editable) {
-    for (const char** item = kEditableMenuStrings; *item; ++item) {
-      strings.push_back(*item);
+    for (base::span<const char*> item = kEditableMenuStrings; item[0];
+         base::PreIncrementSpan(item)) {
+      strings.push_back(item[0]);
     }
-    WebVector<WebString> suggestions;
+    std::vector<WebString> suggestions;
     WebTestSpellChecker::FillSuggestionList(
         WebString::FromUTF16(context_menu->misspelled_word), &suggestions);
     for (const WebString& suggestion : suggestions)
       strings.push_back(suggestion.Utf8());
   } else {
-    for (const char** item = kNonEditableMenuStrings; *item; ++item) {
-      strings.push_back(*item);
+    for (base::span<const char*> item = kNonEditableMenuStrings; item[0];
+         base::PreIncrementSpan(item)) {
+      strings.push_back(item[0]);
     }
   }
 
@@ -545,15 +553,26 @@ const char* kSourceDeviceStringTouchscreen = "touchscreen";
 
 }  // namespace
 
-class EventSenderBindings : public gin::Wrappable<EventSenderBindings> {
+class EventSenderBindings final : public gin::Wrappable<EventSenderBindings> {
+  CPPGC_USING_PRE_FINALIZER(EventSenderBindings, Dispose);
+
  public:
-  static gin::WrapperInfo kWrapperInfo;
+  static constexpr gin::WrapperInfo kWrapperInfo = {{gin::kEmbedderNativeGin},
+                                                    gin::kEventSenderBindings};
+
+  const gin::WrapperInfo* wrapper_info() const override {
+    return &kWrapperInfo;
+  }
 
   EventSenderBindings(const EventSenderBindings&) = delete;
   EventSenderBindings& operator=(const EventSenderBindings&) = delete;
 
+  explicit EventSenderBindings(base::WeakPtr<EventSender> sender,
+                               WebFrameTestProxy* frame);
   static void Install(base::WeakPtr<EventSender> sender,
                       WebFrameTestProxy* frame);
+
+  void Dispose() { frame_observer_.Dispose(); }
 
  private:
   // Watches for the RenderFrame that the EventSenderBindings is attached to
@@ -568,12 +587,8 @@ class EventSenderBindings : public gin::Wrappable<EventSenderBindings> {
     void OnDestruct() override { bindings_->OnFrameDestroyed(); }
 
    private:
-    const raw_ptr<EventSenderBindings, ExperimentalRenderer> bindings_;
+    const raw_ptr<EventSenderBindings> bindings_;
   };
-
-  explicit EventSenderBindings(base::WeakPtr<EventSender> sender,
-                               WebFrameTestProxy* frame);
-  ~EventSenderBindings() override;
 
   // gin::Wrappable:
   gin::ObjectTemplateBuilder GetObjectTemplateBuilder(
@@ -626,9 +641,9 @@ class EventSenderBindings : public gin::Wrappable<EventSenderBindings> {
   void KeyDownOnly(gin::Arguments* args);
   void KeyUp(gin::Arguments* args);
 
-  void KeyEvent(EventSender::KeyEventType event_type, gin::Arguments* args);
-  void KeyEventAsync(EventSender::KeyEventType event_type,
-                     gin::Arguments* args);
+  void KeyEvent(EventSender::KeyEventType event_type,
+                gin::Arguments* args,
+                bool async);
 
   // Binding properties:
   bool ForceLayoutOnEvents() const;
@@ -669,18 +684,14 @@ class EventSenderBindings : public gin::Wrappable<EventSenderBindings> {
   EventSenderBindingsRenderFrameObserver frame_observer_;
 
   base::WeakPtr<EventSender> sender_;
-  const raw_ptr<blink::WebLocalFrame, ExperimentalRenderer> frame_;
+  const raw_ptr<blink::WebLocalFrame> frame_;
 };
-
-gin::WrapperInfo EventSenderBindings::kWrapperInfo = {gin::kEmbedderNativeGin};
 
 EventSenderBindings::EventSenderBindings(base::WeakPtr<EventSender> sender,
                                          WebFrameTestProxy* frame)
     : frame_observer_(this, frame),
       sender_(sender),
       frame_(frame->GetWebFrame()) {}
-
-EventSenderBindings::~EventSenderBindings() = default;
 
 // static
 void EventSenderBindings::Install(base::WeakPtr<EventSender> sender,
@@ -695,12 +706,14 @@ void EventSenderBindings::Install(base::WeakPtr<EventSender> sender,
 
   v8::Context::Scope context_scope(context);
 
-  gin::Handle<EventSenderBindings> bindings =
-      gin::CreateHandle(isolate, new EventSenderBindings(sender, frame));
-  if (bindings.IsEmpty())
+  auto* bindings = cppgc::MakeGarbageCollected<EventSenderBindings>(
+      isolate->GetCppHeap()->GetAllocationHandle(), sender, frame);
+  v8::Local<v8::Object> wrapper;
+  if (!bindings->GetWrapper(isolate).ToLocal(&wrapper)) {
     return;
+  }
   v8::Local<v8::Object> global = context->Global();
-  global->Set(context, gin::StringToV8(isolate, "eventSender"), bindings.ToV8())
+  global->Set(context, gin::StringToV8(isolate, "eventSender"), wrapper)
       .Check();
 }
 
@@ -1087,40 +1100,28 @@ void EventSenderBindings::SetMouseButtonState(gin::Arguments* args) {
 // `KeyDown` sends both `KeyDown` and `KeyUp` events. It's similar to `KeyPress`
 // in other APIs.
 void EventSenderBindings::KeyDown(gin::Arguments* args) {
-  KeyEvent(EventSender::kKeyPress, args);
+  KeyEvent(EventSender::kKeyPress, args, /*async=*/false);
 }
 
 // `KeyDownAsync` sends both `KeyDown` and `KeyUp` events. It's similar to
 // `KeyPress` in other APIs. It sends those events asynchronously, outside of a
 // JS task.
 void EventSenderBindings::KeyDownAsync(gin::Arguments* args) {
-  KeyEventAsync(EventSender::kKeyPress, args);
+  KeyEvent(EventSender::kKeyPress, args, /*async=*/true);
 }
 
 // `KeyDownOnly` sends `KeyDown` without `KeyUp`.
 void EventSenderBindings::KeyDownOnly(gin::Arguments* args) {
-  KeyEvent(EventSender::kKeyDown, args);
+  KeyEvent(EventSender::kKeyDown, args, /*async=*/false);
 }
 
 void EventSenderBindings::KeyUp(gin::Arguments* args) {
-  KeyEvent(EventSender::kKeyUp, args);
-}
-
-void EventSenderBindings::KeyEventAsync(EventSender::KeyEventType event_type,
-                                        gin::Arguments* args) {
-  std::string code_str;
-  int modifiers = 0;
-  int location = DOMKeyLocationStandard;
-  args->GetNext(&code_str);
-  frame_->GetTaskRunner(blink::TaskType::kInternalTest)
-      ->PostTask(
-          FROM_HERE,
-          base::BindOnce(&EventSender::KeyEvent, sender_, event_type, code_str,
-                         modifiers, static_cast<KeyLocationCode>(location)));
+  KeyEvent(EventSender::kKeyUp, args, /*async=*/false);
 }
 
 void EventSenderBindings::KeyEvent(EventSender::KeyEventType event_type,
-                                   gin::Arguments* args) {
+                                   gin::Arguments* args,
+                                   bool async) {
   if (!sender_)
     return;
 
@@ -1136,7 +1137,7 @@ void EventSenderBindings::KeyEvent(EventSender::KeyEventType event_type,
       args->GetNext(&location);
   }
   sender_->KeyEvent(event_type, code_str, modifiers,
-                    static_cast<KeyLocationCode>(location));
+                    static_cast<KeyLocationCode>(location), async);
 }
 
 bool EventSenderBindings::ForceLayoutOnEvents() const {
@@ -1460,13 +1461,15 @@ void EventSender::SetMouseButtonState(int button_number, int modifiers) {
 void EventSender::KeyDown(const std::string& code_str,
                           int modifiers,
                           KeyLocationCode location) {
-  KeyEvent(KeyEventType::kKeyPress, code_str, modifiers, location);
+  KeyEvent(KeyEventType::kKeyPress, code_str, modifiers, location,
+           /*async=*/false);
 }
 
 void EventSender::KeyEvent(KeyEventType event_type,
                            const std::string& code_str,
                            int modifiers,
-                           KeyLocationCode location) {
+                           KeyLocationCode location,
+                           bool async) {
   // FIXME: I'm not exactly sure how we should convert the string to a key
   // event. This seems to work in the cases I tested.
   // FIXME: Should we also generate a KEY_UP?
@@ -1726,7 +1729,7 @@ void EventSender::KeyEvent(KeyEventType event_type,
           WebString::FromLatin1(edit_command), "");
     }
 
-    HandleInputEventOnViewOrPopup(event_down);
+    HandleInputEventOnViewOrPopup(event_down, async);
 
     if (code == ui::VKEY_ESCAPE && current_drag_data_) {
       WebMouseEvent event(WebInputEvent::Type::kMouseDown,
@@ -1747,10 +1750,10 @@ void EventSender::KeyEvent(KeyEventType event_type,
     if (generate_char) {
       WebKeyboardEvent event_char = event_up;
       event_char.SetType(WebInputEvent::Type::kChar);
-      HandleInputEventOnViewOrPopup(event_char);
+      HandleInputEventOnViewOrPopup(event_char, async);
     }
 
-    HandleInputEventOnViewOrPopup(event_up);
+    HandleInputEventOnViewOrPopup(event_up, async);
   }
 }
 
@@ -1883,10 +1886,10 @@ void EventSender::DumpFilenameBeingDragged(blink::WebLocalFrame* frame) {
 
   auto* frame_proxy =
       static_cast<WebFrameTestProxy*>(RenderFrame::FromWebFrame(frame));
-  WebVector<WebDragData::Item> items = current_drag_data_->Items();
+  std::vector<WebDragData::Item> items = current_drag_data_->Items();
   for (const auto& item : items) {
     if (const auto* binary_data_item =
-            absl::get_if<WebDragData::BinaryDataItem>(&item)) {
+            std::get_if<WebDragData::BinaryDataItem>(&item)) {
       WebURL url = binary_data_item->source_url;
       WebString filename_extension = binary_data_item->filename_extension;
       WebString content_disposition = binary_data_item->content_disposition;
@@ -1948,7 +1951,7 @@ void EventSender::LeapForward(int milliseconds) {
 
 void EventSender::BeginDragWithItems(
     blink::WebLocalFrame* frame,
-    const WebVector<WebDragData::Item>& items) {
+    const std::vector<WebDragData::Item>& items) {
   if (current_drag_data_) {
     // Nested dragging not supported, fuzzer code a likely culprit.
     // Cancel the current drag operation and throw an error.
@@ -1966,7 +1969,7 @@ void EventSender::BeginDragWithItems(
   for (const WebDragData::Item& item : items) {
     current_drag_data_->AddItem(item);
     if (const auto* filename_item =
-            absl::get_if<WebDragData::FilenameItem>(&item)) {
+            std::get_if<WebDragData::FilenameItem>(&item)) {
       file_paths.push_back(blink::WebStringToFilePath(filename_item->filename));
     }
   }
@@ -1999,7 +2002,7 @@ void EventSender::BeginDragWithItems(
 
 void EventSender::BeginDragWithFiles(blink::WebLocalFrame* frame,
                                      const std::vector<std::string>& files) {
-  WebVector<WebDragData::Item> items;
+  std::vector<WebDragData::Item> items;
 
   for (const std::string& file_path : files) {
     WebDragData::FilenameItem item = {
@@ -2014,7 +2017,7 @@ void EventSender::BeginDragWithFiles(blink::WebLocalFrame* frame,
 void EventSender::BeginDragWithStringData(blink::WebLocalFrame* frame,
                                           const std::string& data,
                                           const std::string& mime_type) {
-  WebVector<WebDragData::Item> items;
+  std::vector<WebDragData::Item> items;
   WebDragData::StringItem item = {
       .type = WebString::FromUTF8(mime_type),
       .data = WebString::FromUTF8(data),
@@ -2392,7 +2395,6 @@ void EventSender::GestureEvent(WebInputEvent::Type type,
     case WebInputEvent::Type::kGestureFlingCancel:
       // Flings are no longer handled on the main thread.
       NOTREACHED();
-      return;
     case WebInputEvent::Type::kGestureTap: {
       float tap_count = 1;
       float width = 30;
@@ -2529,7 +2531,10 @@ void EventSender::GestureEvent(WebInputEvent::Type type,
   if (force_layout_on_events_)
     UpdateLifecycleToPrePaint();
 
-  WebInputEventResult result = HandleInputEventOnViewOrPopup(event);
+  std::optional<WebInputEventResult> result =
+      HandleInputEventOnViewOrPopup(event);
+  // Async gestures are not currently supported.
+  CHECK(result);
 
   // Long press might start a drag drop session. Complete it if so.
   if (type == WebInputEvent::Type::kGestureLongPress && current_drag_data_) {
@@ -2543,7 +2548,7 @@ void EventSender::GestureEvent(WebInputEvent::Type type,
 
     FinishDragAndDrop(mouse_event, ui::mojom::DragOperation::kNone, false);
   }
-  args->Return(result != WebInputEventResult::kNotHandled);
+  args->Return(*result != WebInputEventResult::kNotHandled);
 }
 
 void EventSender::UpdateClickCountForButton(WebMouseEvent::Button button_type) {
@@ -2808,18 +2813,25 @@ void EventSender::ReplaySavedEvents() {
 
   replaying_saved_events_ = false;
 }
-
-WebInputEventResult EventSender::HandleInputEventOnViewOrPopup(
-    const WebInputEvent& event) {
+std::optional<blink::WebInputEventResult>
+EventSender::HandleInputEventOnViewOrPopup(const WebInputEvent& event,
+                                           bool async) {
   last_event_timestamp_ = event.TimeStamp();
 
-  WebPagePopup* popup = view()->GetPagePopup();
-  if (popup && !WebInputEvent::IsKeyboardEventType(event.GetType()))
-    return popup->HandleInputEvent(
+  blink::WebWidget* target =
+      view()->GetPagePopup() &&
+              !WebInputEvent::IsKeyboardEventType(event.GetType())
+          ? view()->GetPagePopup()
+          : widget();
+  if (async) {
+    target->DispatchNonBlockingEventForTesting(
+        std::make_unique<blink::WebCoalescedInputEvent>(event,
+                                                        ui::LatencyInfo()));
+    return std::nullopt;
+  } else {
+    return target->HandleInputEvent(
         blink::WebCoalescedInputEvent(event, ui::LatencyInfo()));
-
-  return widget()->HandleInputEvent(
-      blink::WebCoalescedInputEvent(event, ui::LatencyInfo()));
+  }
 }
 
 const blink::WebView* EventSender::view() const {

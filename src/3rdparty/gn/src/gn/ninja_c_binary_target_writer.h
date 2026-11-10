@@ -39,7 +39,7 @@ class NinjaCBinaryTargetWriter : public NinjaBinaryTargetWriter {
   // non-object files (for instance, .gch files from a GCC toolchain, are
   // appended to |other_files|).
   //
-  // input_deps is the stamp file collecting the dependencies required before
+  // input_deps is the phony target collecting the dependencies required before
   // compiling this target. It will be empty if there are no input deps.
   void WritePCHCommands(const std::vector<OutputFile>& input_deps,
                         const std::vector<OutputFile>& order_only_deps,
@@ -102,6 +102,13 @@ class NinjaCBinaryTargetWriter : public NinjaBinaryTargetWriter {
   // argument, plus the data file dependencies in the target.
   void WriteOrderOnlyDependencies(
       const UniqueVector<const Target*>& non_linkable_deps);
+
+  // Writes the validations for the link or stamp line. This is
+  // the "|@" and everything following it on the ninja line.
+  //
+  // The validations are the non-linkable deps passed in as an argument, plus
+  // the data file dependencies in the target.
+  void WriteValidations(const UniqueVector<const Target*>& non_linkable_deps);
 
   // Checks for duplicates in the given list of output files. If any duplicates
   // are found, throws an error and return false.

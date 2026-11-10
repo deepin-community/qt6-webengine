@@ -14,7 +14,6 @@
 #include "third_party/blink/public/common/loader/referrer_utils.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
 #include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
-#include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
 #include "third_party/blink/public/platform/web_prescient_networking.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/core/frame/csp/content_security_policy.h"
@@ -39,6 +38,7 @@
 #include "third_party/blink/renderer/platform/scheduler/public/main_thread_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
 #include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
+#include "third_party/blink/renderer/platform/testing/task_environment.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support.h"
 #include "third_party/blink/renderer/platform/testing/url_loader_mock_factory.h"
 #include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
@@ -142,6 +142,8 @@ class LinkLoaderPreloadTestBase : public testing::Test,
       ASSERT_EQ(0, fetcher->CountPreloads());
     }
   }
+
+  test::TaskEnvironment task_environment_;
   std::unique_ptr<DummyPageHolder> dummy_page_holder_;
 };
 
@@ -439,7 +441,7 @@ TEST_P(LinkLoaderPreloadImageSrcsetTest, Preload) {
   const auto& test_case = GetParam();
   dummy_page_holder_->GetDocument().SetBaseURLOverride(
       KURL("http://example.test/"));
-  dummy_page_holder_->GetDocument().GetFrame()->SetPageZoomFactor(
+  dummy_page_holder_->GetDocument().GetFrame()->SetLayoutZoomFactor(
       test_case.scale_factor);
   LinkLoadParameters params(
       LinkRelAttribute("preload"), kCrossOriginAttributeNotSet, "image/gif",
@@ -486,7 +488,10 @@ constexpr ModulePreloadTestParams kModulePreloadTestParams[] = {
 
 class LinkLoaderModulePreloadTest
     : public testing::TestWithParam<ModulePreloadTestParams>,
-      private ScopedMockOverlayScrollbars {};
+      private ScopedMockOverlayScrollbars {
+ private:
+  test::TaskEnvironment task_environment_;
+};
 
 class ModulePreloadTestModulator final : public DummyModulator {
  public:
@@ -545,77 +550,10 @@ INSTANTIATE_TEST_SUITE_P(LinkLoaderModulePreloadTest,
                          LinkLoaderModulePreloadTest,
                          testing::ValuesIn(kModulePreloadTestParams));
 
-class LinkLoaderTestPrefetchPrivacyChanges
-    : public testing::Test,
-      public testing::WithParamInterface<bool>,
-      private ScopedMockOverlayScrollbars {
- public:
-  LinkLoaderTestPrefetchPrivacyChanges()
-      : privacy_changes_enabled_(GetParam()) {}
-  void SetUp() override {
-    std::vector<base::test::FeatureRef> enable_features;
-    std::vector<base::test::FeatureRef> disabled_features;
-    if (GetParam()) {
-      enable_features.push_back(features::kPrefetchPrivacyChanges);
-    } else {
-      disabled_features.push_back(features::kPrefetchPrivacyChanges);
-    }
-    feature_list_.InitWithFeatures(enable_features, disabled_features);
-  }
-
- protected:
-  const bool privacy_changes_enabled_;
-  ScopedTestingPlatformSupport<TestingPlatformSupport> platform_;
-
- private:
-  base::test::ScopedFeatureList feature_list_;
-};
-
-INSTANTIATE_TEST_SUITE_P(LinkLoaderTestPrefetchPrivacyChanges,
-                         LinkLoaderTestPrefetchPrivacyChanges,
-                         testing::Values(false, true));
-
-TEST_P(LinkLoaderTestPrefetchPrivacyChanges, PrefetchPrivacyChanges) {
-  auto dummy_page_holder =
-      std::make_unique<DummyPageHolder>(gfx::Size(500, 500));
-  dummy_page_holder->GetFrame().GetSettings()->SetScriptEnabled(true);
-  Persistent<MockLinkLoaderClient> loader_client =
-      MakeGarbageCollected<MockLinkLoaderClient>(true);
-  auto* loader = MakeGarbageCollected<LinkLoader>(loader_client.Get());
-  KURL href_url = KURL(NullURL(), "http://example.test/cat.jpg");
-  // TODO(crbug.com/751425): We should use the mock functionality
-  // via |dummy_page_holder|.
-  url_test_helpers::RegisterMockedErrorURLLoad(href_url);
-  LinkLoadParameters params(
-      LinkRelAttribute("prefetch"), kCrossOriginAttributeNotSet, "image/jpg",
-      "", "", "", "", String(), network::mojom::ReferrerPolicy::kDefault,
-      href_url, String() /* image_srcset */, String() /* image_sizes */,
-      String() /* blocking */);
-  loader->LoadLink(params, dummy_page_holder->GetDocument());
-  ASSERT_TRUE(dummy_page_holder->GetDocument().Fetcher());
-  Resource* resource = loader->GetResourceForTesting();
-  EXPECT_TRUE(resource);
-
-  if (privacy_changes_enabled_) {
-    EXPECT_EQ(resource->GetResourceRequest().GetRedirectMode(),
-              network::mojom::RedirectMode::kError);
-    EXPECT_EQ(resource->GetResourceRequest().GetReferrerPolicy(),
-              network::mojom::ReferrerPolicy::kNever);
-  } else {
-    EXPECT_EQ(resource->GetResourceRequest().GetRedirectMode(),
-              network::mojom::RedirectMode::kFollow);
-    EXPECT_EQ(resource->GetResourceRequest().GetReferrerPolicy(),
-              ReferrerUtils::MojoReferrerPolicyResolveDefault(
-                  network::mojom::ReferrerPolicy::kDefault));
-  }
-
-  URLLoaderMockFactory::GetSingletonInstance()
-      ->UnregisterAllURLsAndClearMemoryCache();
-}
-
 class LinkLoaderTest : public testing::Test,
                        private ScopedMockOverlayScrollbars {
  protected:
+  test::TaskEnvironment task_environment_;
   ScopedTestingPlatformSupport<TestingPlatformSupport> platform_;
 };
 
@@ -809,6 +747,7 @@ class DictionaryLinkTest : public testing::Test,
   }
 
  protected:
+  test::TaskEnvironment task_environment_;
   ScopedTestingPlatformSupport<TestingPlatformSupport> platform_;
   scoped_refptr<base::TestMockTimeTaskRunner> test_task_runner_;
 
@@ -837,7 +776,7 @@ TEST_P(DictionaryLinkTest, LoadDictionaryFromLink) {
   // via |dummy_page_holder|.
   url_test_helpers::RegisterMockedErrorURLLoad(href_url);
   LinkLoadParameters params(
-      LinkRelAttribute("dictionary"), kCrossOriginAttributeNotSet,
+      LinkRelAttribute("compression-dictionary"), kCrossOriginAttributeNotSet,
       String() /* type */, String() /* as */, String() /* media */,
       String() /* nonce */, String() /* integrity */,
       String() /* fetch_priority_hint */,
@@ -870,7 +809,8 @@ class DictionaryLoadFromHeaderTest : public SimTest,
     SimTest::SetUp();
 
     SimRequestBase::Params params;
-    String link_header = String("<") + dict_href_ + ">; rel=\"dictionary\"";
+    String link_header =
+        String("<") + dict_href_ + ">; rel=\"compression-dictionary\"";
     params.response_http_headers.Set(http_names::kLink, link_header);
     main_resource_ =
         std::make_unique<SimRequest>(page_href_, "text/html", params);

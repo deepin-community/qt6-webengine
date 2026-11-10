@@ -9,8 +9,8 @@ Update manually maintained dependencies from Chromium.
 
 import argparse
 import enum
+import json
 import os
-import shutil
 import subprocess
 import sys
 
@@ -19,11 +19,12 @@ def node_path(options):
     try:
         old_sys_path = sys.path[:]
         sys.path.append(
-            os.path.join(options.chromium_dir, 'third_party', 'node'))
+            os.path.join(options.devtools_dir, 'third_party', 'node'))
         import node
     finally:
         sys.path = old_sys_path
     return node.GetBinaryPath()
+
 
 # Files whose location within devtools-frontend matches the upstream location.
 FILES = [
@@ -59,7 +60,8 @@ class ReferenceMode(enum.Enum):
 
 
 def parse_options(cli_args):
-    parser = argparse.ArgumentParser(description='Roll dependencies from Chromium.')
+    parser = argparse.ArgumentParser(
+        description='Roll dependencies from Chromium.')
     parser.add_argument(
         '--ref',
         type=ReferenceMode,
@@ -72,10 +74,16 @@ def parse_options(cli_args):
                         action="store_true",
                         default=False,
                         help='If set it syncs nodejs.')
+    parser.add_argument(
+        '--output',
+        default=None,
+        help=
+        'If set it outputs information about the roll in the specified file.')
     parser.add_argument('chromium_dir', help='path to chromium/src directory')
     parser.add_argument('devtools_dir',
                         help='path to devtools/devtools-frontend directory')
     return parser.parse_args(cli_args)
+
 
 def update(options):
     subprocess.check_call(['git', 'fetch', 'origin'], cwd=options.chromium_dir)
@@ -84,41 +92,39 @@ def update(options):
     subprocess.check_call(['gclient', 'sync'], cwd=options.chromium_dir)
 
 
-def get_hook_action(options, hook_name):
-    """Parses Chromium DEPS file and returns the action for the given hook.
-    """
-    sys.path.append(
-        os.path.join(options.chromium_dir, 'third_party', 'depot_tools'))
-    import gclient_eval
-
-    filepath = os.path.join(options.chromium_dir, 'DEPS')
-    with open(filepath) as deps_file:
-        deps = gclient_eval.Parse(deps_file.read(), filepath)
-    for hook in deps['hooks']:
-        if hook['name'] == hook_name:
-            return hook['action']
-    raise RuntimeError(f'{hook_name} hook not found in DEPS')
-
-
 def sync_node(options):
-    """Executes the nodejs sync hook from Chromium DEPS file."""
-    action = get_hook_action(options, 'node_linux64')
-    gclient_context = os.path.join(options.chromium_dir, '..')
-    subprocess.check_call(action, cwd=gclient_context)
+    """Node is managed as a standard GCS deps so we run gclient sync but without hooks"""
+    subprocess.check_call(['gclient', 'sync', '--nohooks'],
+                          cwd=options.devtools_dir)
+
 
 def copy_files(options):
     for from_path, to_path in FILE_MAPPINGS.items():
-        from_path = os.path.normpath(from_path)
-        to_path = os.path.normpath(to_path)
-        print('%s => %s' % (from_path, to_path))
-        shutil.copy(os.path.join(options.chromium_dir, from_path),
-                    os.path.join(options.devtools_dir, to_path))
+        from_path_full = os.path.join(options.chromium_dir,
+                                      os.path.normpath(from_path))
+        to_path_full = os.path.join(options.devtools_dir,
+                                    os.path.normpath(to_path))
+        print(f'{os.path.normpath(from_path)} => {os.path.normpath(to_path)}')
+
+        # Create destination directory if it doesn't exist
+        os.makedirs(os.path.dirname(to_path_full), exist_ok=True)
+
+        with open(from_path_full, 'r', encoding='utf-8') as infile:
+            content = infile.read()
+
+        # Replace IFTTT tags with skipped versions.
+        # Escape "L" as "\x4C" to avoid presubmit failures.
+        content = content.replace('\x4CINT.IfChange', '\x4CINT_SKIP.IfChange')
+        content = content.replace('\x4CINT.ThenChange',
+                                  '\x4CINT_SKIP.ThenChange')
+
+        with open(to_path_full, 'w', encoding='utf-8') as outfile:
+            outfile.write(content)
 
 
 def generate_signatures(options):
-    print(
-        'generating JavaScript native functions signatures from .idl and typescript definitions'
-    )
+    print('generating JavaScript native functions signatures from .idl '
+          'and typescript definitions')
     subprocess.check_call([
         node_path(options),
         os.path.join(options.devtools_dir, 'scripts', 'javascript_natives',
@@ -126,21 +132,111 @@ def generate_signatures(options):
     ])
 
 
-def generate_dom_pinned_properties(options):
-    print('generating DOM pinned properties dataset from .idl definitions')
+def generate_protocol_resources(options):
+    print('generating protocol resources')
     subprocess.check_call([
-        node_path(options),
-        os.path.join(options.devtools_dir, 'scripts', 'webidl-properties',
-                     'index.js'), options.devtools_dir
-    ])
+        os.path.join(options.devtools_dir, 'scripts', 'deps',
+                     'generate_protocol_resources.py'), '--node-path',
+        node_path(options)
+    ],
+                          cwd=options.devtools_dir)
+
+
+def run_git_cl_format(options):
+    print('running `git cl format` to format generated TS files')
+    subprocess.check_call(['git', 'cl', 'format', '--js', '--full'],
+                          cwd=options.devtools_dir)
+
+
+def run_eslint(options):
+    print('running eslint with --fix for generated files')
+    result = subprocess.check_output(
+        ['git', 'diff', '--diff-filter=d', '--name-only'],
+        cwd=options.devtools_dir).strip()
+    generated_source_files = []
+    for line in result.split(b'\n'):
+        if line.endswith(b'.js') or line.endswith(b'.ts'):
+            generated_source_files.append(line)
+    subprocess.check_call([
+        node_path(options), "--experimental-strip-types",
+        "--no-warnings=ExperimentalWarning",
+        os.path.join(options.devtools_dir, 'scripts', 'test',
+                     'run_lint_check.mjs')
+    ] + generated_source_files,
+                          cwd=options.devtools_dir)
+
+
+def files_changed(options):
+    return subprocess.check_output(['git', 'diff', '--name-only'],
+                                   cwd=options.devtools_dir,
+                                   text=True).strip()
+
+
+def update_deps_revision(options):
+    print('updating DEPS revision')
+    old_revision = subprocess.check_output(
+        ['gclient', 'getdep', '--var=chromium_browser_protocol_revision'],
+        cwd=options.devtools_dir,
+        text=True).strip()
+    new_revision = subprocess.check_output(
+        ['git', 'log', '-1', '--pretty=format:%H'],
+        cwd=options.chromium_dir,
+        text=True).strip()
+    subprocess.check_call(
+        [
+            'gclient', 'setdep',
+            f'--var=chromium_browser_protocol_revision={new_revision}'
+        ],
+        cwd=options.devtools_dir,
+    )
+    if options.output:
+        with open(options.output, 'w', encoding='utf-8') as f:
+            json.dump(
+                {
+                    'old_revision': old_revision,
+                    'new_revision': new_revision
+                }, f)
+
+
+def update_readme_revision(options):
+    print('updating README.chromium revision')
+    readme_path = os.path.join(options.devtools_dir, 'front_end',
+                               'third_party', 'chromium', 'README.chromium')
+
+    old_content = ""
+    with open(readme_path, 'r', encoding='utf-8') as f:
+        old_content = f.read()
+
+    old_revision = ""
+    for line in old_content.splitlines():
+        if line.startswith('Revision:'):
+            old_revision = line.split(':', 1)[1].strip()
+            break
+
+    new_revision = subprocess.check_output(
+        ['git', 'log', '-1', '--pretty=format:%H'],
+        cwd=options.chromium_dir,
+        text=True).strip()
+
+    # Replace the old revision with the new revision.
+    print(f'-> from {old_revision} to {new_revision}')
+    patched_content = old_content.replace(f'Revision: {old_revision}',
+                                          f'Revision: {new_revision}')
+    with open(readme_path, 'w', encoding='utf-8') as f:
+        f.write(patched_content)
 
 
 if __name__ == '__main__':
     OPTIONS = parse_options(sys.argv[1:])
     if OPTIONS.ref == ReferenceMode.Tot:
         update(OPTIONS)
-    if OPTIONS.update_node:
+    elif OPTIONS.update_node:
         sync_node(OPTIONS)
     copy_files(OPTIONS)
     generate_signatures(OPTIONS)
-    generate_dom_pinned_properties(OPTIONS)
+    generate_protocol_resources(OPTIONS)
+    if files_changed(OPTIONS):
+        run_git_cl_format(OPTIONS)
+        run_eslint(OPTIONS)
+        update_deps_revision(OPTIONS)
+        update_readme_revision(OPTIONS)

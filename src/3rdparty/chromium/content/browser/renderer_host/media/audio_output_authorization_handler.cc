@@ -48,7 +48,7 @@ void GotSaltAndOrigin(
 
   std::move(cb).Run(salt_and_origin,
                     MediaDevicesPermissionChecker().CheckPermissionOnUIThread(
-                        MediaDeviceType::kMediaAudioOuput, render_process_id,
+                        MediaDeviceType::kMediaAudioOutput, render_process_id,
                         render_frame_id));
 }
 
@@ -221,6 +221,7 @@ void AudioOutputAuthorizationHandler::OverridePermissionsForTesting(
 
 void AudioOutputAuthorizationHandler::
     SetAuthorizedDeviceIdForGlobalMediaControls(std::string hashed_device_id) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
   hashed_device_id_for_global_media_controls_ = std::move(hashed_device_id);
 }
 
@@ -272,7 +273,7 @@ void AudioOutputAuthorizationHandler::AccessChecked(
   }
 
   MediaDevicesManager::BoolDeviceTypes devices_to_enumerate;
-  devices_to_enumerate[static_cast<size_t>(MediaDeviceType::kMediaAudioOuput)] =
+  devices_to_enumerate[static_cast<size_t>(MediaDeviceType::kMediaAudioOutput)] =
       true;
   media_stream_manager_->media_devices_manager()->EnumerateDevices(
       devices_to_enumerate,
@@ -291,7 +292,7 @@ void AudioOutputAuthorizationHandler::TranslateDeviceID(
   DCHECK(!media::AudioDeviceDescription::IsDefaultDevice(device_id));
 
   for (const blink::WebMediaDeviceInfo& device_info :
-       enumeration[static_cast<size_t>(MediaDeviceType::kMediaAudioOuput)]) {
+       enumeration[static_cast<size_t>(MediaDeviceType::kMediaAudioOutput)]) {
     if (DoesRawMediaDeviceIDMatchHMAC(salt_and_origin, device_id,
                                       device_info.device_id)) {
       GetDeviceParameters(std::move(trace_scope), std::move(cb),

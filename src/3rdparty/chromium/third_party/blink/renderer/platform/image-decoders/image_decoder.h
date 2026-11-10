@@ -27,16 +27,18 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_IMAGE_DECODERS_IMAGE_DECODER_H_
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_IMAGE_DECODERS_IMAGE_DECODER_H_
 
+#include <array>
 #include <memory>
+#include <optional>
 
 #include "base/check_op.h"
+#include "base/containers/heap_array.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/numerics/checked_math.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
 #include "base/time/time.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/platform/graphics/color_behavior.h"
 #include "third_party/blink/renderer/platform/graphics/image_orientation_enum.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_image.h"
@@ -52,14 +54,13 @@
 #include "third_party/skia/modules/skcms/skcms.h"
 
 class SkColorSpace;
+class SkData;
 
 namespace gfx {
 struct HDRMetadata;
 }  // namespace gfx
 
 namespace blink {
-
-struct DecodedImageMetaData;
 
 #if SK_B32_SHIFT
 inline skcms_PixelFormat XformColorFormat() {
@@ -86,8 +87,8 @@ class PLATFORM_EXPORT ImagePlanes final {
   //
   // TODO(crbug/910276): To support YUVA, ImagePlanes needs to support a
   // variable number of planes.
-  ImagePlanes(void* planes[cc::kNumYUVPlanes],
-              const wtf_size_t row_bytes[cc::kNumYUVPlanes],
+  ImagePlanes(base::span<void*, cc::kNumYUVPlanes> planes,
+              base::span<const wtf_size_t, cc::kNumYUVPlanes> row_bytes,
               SkColorType color_type);
 
   void* Plane(cc::YUVIndex);
@@ -97,9 +98,9 @@ class PLATFORM_EXPORT ImagePlanes final {
   bool HasCompleteScan() const { return has_complete_scan_; }
 
  private:
-  void* planes_[cc::kNumYUVPlanes];
-  wtf_size_t row_bytes_[cc::kNumYUVPlanes];
-  SkColorType color_type_;
+  std::array<void*, cc::kNumYUVPlanes> planes_;
+  std::array<wtf_size_t, cc::kNumYUVPlanes> row_bytes_;
+  SkColorType color_type_ = kUnknown_SkColorType;
   bool has_complete_scan_ = false;
 };
 
@@ -107,17 +108,18 @@ class PLATFORM_EXPORT ColorProfile final {
   USING_FAST_MALLOC(ColorProfile);
 
  public:
-  ColorProfile(const skcms_ICCProfile&, std::unique_ptr<uint8_t[]> = nullptr);
+  ColorProfile(const skcms_ICCProfile&,
+               base::HeapArray<uint8_t> = base::HeapArray<uint8_t>());
   ColorProfile(const ColorProfile&) = delete;
   ColorProfile& operator=(const ColorProfile&) = delete;
-  static std::unique_ptr<ColorProfile> Create(const void* buffer, size_t size);
+  static std::unique_ptr<ColorProfile> Create(base::span<const uint8_t> buffer);
   ~ColorProfile();
 
   const skcms_ICCProfile* GetProfile() const { return &profile_; }
 
  private:
   skcms_ICCProfile profile_;
-  std::unique_ptr<uint8_t[]> buffer_;
+  base::HeapArray<uint8_t> buffer_;
 };
 
 class PLATFORM_EXPORT ColorProfileTransform final {
@@ -196,6 +198,7 @@ class PLATFORM_EXPORT ImageDecoder {
       AlphaOption,
       HighBitDepthDecodingOption,
       ColorBehavior,
+      cc::AuxImage aux_image,
       const size_t platform_max_decoded_bytes,
       const SkISize& desired_size = SkISize::MakeEmpty(),
       AnimationOption animation_option = AnimationOption::kUnspecified);
@@ -205,13 +208,14 @@ class PLATFORM_EXPORT ImageDecoder {
       AlphaOption alpha_option,
       HighBitDepthDecodingOption high_bit_depth_decoding_option,
       ColorBehavior color_behavior,
+      cc::AuxImage aux_image,
       size_t platform_max_decoded_bytes,
       const SkISize& desired_size = SkISize::MakeEmpty(),
       AnimationOption animation_option = AnimationOption::kUnspecified) {
     return Create(SegmentReader::CreateFromSharedBuffer(std::move(data)),
                   data_complete, alpha_option, high_bit_depth_decoding_option,
-                  color_behavior, platform_max_decoded_bytes, desired_size,
-                  animation_option);
+                  color_behavior, aux_image, platform_max_decoded_bytes,
+                  desired_size, animation_option);
   }
 
   // Similar to above, but does not allow mime sniffing. Creates explicitly
@@ -223,6 +227,7 @@ class PLATFORM_EXPORT ImageDecoder {
       AlphaOption alpha_option,
       HighBitDepthDecodingOption high_bit_depth_decoding_option,
       ColorBehavior color_behavior,
+      cc::AuxImage aux_image,
       size_t platform_max_decoded_bytes,
       const SkISize& desired_size = SkISize::MakeEmpty(),
       AnimationOption animation_option = AnimationOption::kUnspecified);
@@ -314,7 +319,10 @@ class PLATFORM_EXPORT ImageDecoder {
   virtual uint8_t GetYUVBitDepth() const;
 
   // Image decoders that support HDR metadata can override this.
-  virtual absl::optional<gfx::HDRMetadata> GetHDRMetadata() const;
+  virtual std::optional<gfx::HDRMetadata> GetHDRMetadata() const;
+
+  // Image decoders that support C2PA manifest embedding can override this.
+  virtual bool HasC2PAManifest() const;
 
   // Returns the information required to decide whether or not hardware
   // acceleration can be used to decode this image. Callers of this function
@@ -358,7 +366,7 @@ class PLATFORM_EXPORT ImageDecoder {
 
   // Timestamp for displaying a frame. This method is only used by animated
   // images. Only formats with timestamps (like AVIF) should implement this.
-  virtual absl::optional<base::TimeDelta> FrameTimestampAtIndex(
+  virtual std::optional<base::TimeDelta> FrameTimestampAtIndex(
       wtf_size_t) const;
 
   // Duration for displaying a frame. This method is only used by animated
@@ -373,9 +381,10 @@ class PLATFORM_EXPORT ImageDecoder {
   ImageOrientationEnum Orientation() const { return orientation_; }
   gfx::Size DensityCorrectedSize() const { return density_corrected_size_; }
 
-  // Updates orientation, pixel density etc based on |metadata|.
-  void ApplyMetadata(const DecodedImageMetaData& metadata,
-                     const gfx::Size& physical_size);
+  // Updates orientation, pixel density etc based on the Exif metadata stored in
+  // |exif_data|.
+  void ApplyExifMetadata(const SkData* exif_data,
+                         const gfx::Size& physical_size);
 
   bool IgnoresColorSpace() const {
     return color_behavior_ == ColorBehavior::kIgnore;
@@ -401,6 +410,8 @@ class PLATFORM_EXPORT ImageDecoder {
     return premultiply_alpha_ ? kAlphaPremultiplied : kAlphaNotPremultiplied;
   }
 
+  cc::AuxImage GetAuxImage() const { return aux_image_; }
+
   wtf_size_t GetMaxDecodedBytes() const { return max_decoded_bytes_; }
 
   // Sets the "decode failure" flag.  For caller convenience (since so
@@ -414,7 +425,7 @@ class PLATFORM_EXPORT ImageDecoder {
   // Clears decoded pixel data from all frames except the provided frame. If
   // subsequent frames depend on this frame's required previous frame, then that
   // frame is also kept in cache to prevent re-decoding from the beginning.
-  // Callers may pass WTF::kNotFound to clear all frames.
+  // Callers may pass kNotFound to clear all frames.
   // Note: If |frame_buffer_cache_| contains only one frame, it won't be
   // cleared. Returns the number of bytes of frame data actually cleared.
   virtual wtf_size_t ClearCacheExceptFrame(wtf_size_t);
@@ -443,13 +454,14 @@ class PLATFORM_EXPORT ImageDecoder {
   ImageDecoder(AlphaOption alpha_option,
                HighBitDepthDecodingOption high_bit_depth_decoding_option,
                ColorBehavior color_behavior,
+               cc::AuxImage aux_image,
                wtf_size_t max_decoded_bytes);
 
   // Calculates the most recent frame whose image data may be needed in
   // order to decode frame |frame_index|, based on frame disposal methods
   // and |frame_rect_is_opaque|, where |frame_rect_is_opaque| signifies whether
   // the rectangle of frame at |frame_index| is known to be opaque.
-  // If no previous frame's data is required, returns WTF::kNotFound.
+  // If no previous frame's data is required, returns kNotFound.
   //
   // This function requires that the previous frame's
   // |required_previous_frame_index_| member has been set correctly. The
@@ -534,6 +546,7 @@ class PLATFORM_EXPORT ImageDecoder {
   const bool premultiply_alpha_;
   const HighBitDepthDecodingOption high_bit_depth_decoding_option_;
   const ColorBehavior color_behavior_;
+  const cc::AuxImage aux_image_;
   ImageOrientationEnum orientation_ = ImageOrientationEnum::kDefault;
   gfx::Size density_corrected_size_;
 
@@ -642,7 +655,7 @@ void ImageDecoder::UpdateBppHistogram(gfx::Size size, size_t image_size_bytes) {
   DEFINE_BPP_HISTOGRAM(density_point_7_mp_histogram, "0.7MP");
   DEFINE_BPP_HISTOGRAM(density_point_8_mp_histogram, "0.8MP");
   DEFINE_BPP_HISTOGRAM(density_point_9_mp_histogram, "0.9MP");
-  static CustomCountHistogram* const density_histogram_small[9] = {
+  static std::array<CustomCountHistogram* const, 9> density_histogram_small = {
       &density_point_1_mp_histogram, &density_point_2_mp_histogram,
       &density_point_3_mp_histogram, &density_point_4_mp_histogram,
       &density_point_5_mp_histogram, &density_point_6_mp_histogram,
@@ -662,7 +675,7 @@ void ImageDecoder::UpdateBppHistogram(gfx::Size size, size_t image_size_bytes) {
   DEFINE_BPP_HISTOGRAM(density_11_mp_histogram, "11MP");
   DEFINE_BPP_HISTOGRAM(density_12_mp_histogram, "12MP");
   DEFINE_BPP_HISTOGRAM(density_13_mp_histogram, "13MP");
-  static CustomCountHistogram* const density_histogram_big[13] = {
+  static std::array<CustomCountHistogram* const, 13> density_histogram_big = {
       &density_1_mp_histogram,  &density_2_mp_histogram,
       &density_3_mp_histogram,  &density_4_mp_histogram,
       &density_5_mp_histogram,  &density_6_mp_histogram,
@@ -698,7 +711,7 @@ void ImageDecoder::UpdateBppHistogram(gfx::Size size, size_t image_size_bytes) {
     density_histogram = &density_14plus_mp_histogram;
   }
 
-  density_histogram->Count(base::saturated_cast<base::Histogram::Sample>(
+  density_histogram->Count(base::saturated_cast<base::Histogram::Sample32>(
       density_centi_bpp.ValueOrDie()));
 }
 

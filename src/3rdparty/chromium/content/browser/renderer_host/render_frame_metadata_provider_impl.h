@@ -55,7 +55,7 @@ class CONTENT_EXPORT RenderFrameMetadataProviderImpl
 
   const cc::RenderFrameMetadata& LastRenderFrameMetadata() override;
 
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   // Notifies the renderer of the changes in the notification frequency of the
   // root scroll updates, which is needed for accessibility and
   // GestureListenerManager on Android.
@@ -66,6 +66,10 @@ class CONTENT_EXPORT RenderFrameMetadataProviderImpl
   // Notifies the renderer to begin sending a notification on all frame
   // submissions.
   void ReportAllFrameSubmissionsForTesting(bool enabled);
+
+  // Set |last_render_frame_metadata_| to the given |metadata| for testing
+  // purpose.
+  void SetLastRenderFrameMetadataForTest(cc::RenderFrameMetadata metadata);
 
  private:
   friend class FakeRenderWidgetHostViewAura;
@@ -81,21 +85,17 @@ class CONTENT_EXPORT RenderFrameMetadataProviderImpl
       base::TimeTicks activation_time);
   void OnFrameTokenFrameSubmissionForTesting(base::TimeTicks activation_time);
 
-  // Set |last_render_frame_metadata_| to the given |metadata| for testing
-  // purpose.
-  void SetLastRenderFrameMetadataForTest(cc::RenderFrameMetadata metadata);
-
   // cc::mojom::RenderFrameMetadataObserverClient:
   void OnRenderFrameMetadataChanged(
       uint32_t frame_token,
       const cc::RenderFrameMetadata& metadata) override;
   void OnFrameSubmissionForTesting(uint32_t frame_token) override;
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   void OnRootScrollOffsetChanged(
       const gfx::PointF& root_scroll_offset) override;
 #endif
 
-  base::ObserverList<Observer>::Unchecked observers_;
+  base::ObserverList<Observer>::UncheckedAndDanglingUntriaged observers_;
 
   cc::RenderFrameMetadata last_render_frame_metadata_;
 
@@ -111,7 +111,7 @@ class CONTENT_EXPORT RenderFrameMetadataProviderImpl
   mojo::Remote<cc::mojom::RenderFrameMetadataObserver>
       render_frame_metadata_observer_remote_;
 
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   std::optional<cc::mojom::RootScrollOffsetUpdateFrequency>
       pending_root_scroll_offset_update_frequency_;
 #endif

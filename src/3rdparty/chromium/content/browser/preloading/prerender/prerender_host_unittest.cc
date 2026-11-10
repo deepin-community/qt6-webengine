@@ -3,21 +3,23 @@
 // found in the LICENSE file.
 
 #include "content/browser/preloading/prerender/prerender_host.h"
+
 #include <memory>
 
 #include "base/functional/bind.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/gmock_expected_support.h"
-#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "components/ukm/test_ukm_recorder.h"
+#include "content/browser/preloading/preload_pipeline_info_impl.h"
 #include "content/browser/preloading/preloading.h"
 #include "content/browser/preloading/prerender/prerender_attributes.h"
 #include "content/browser/preloading/prerender/prerender_final_status.h"
 #include "content/browser/preloading/prerender/prerender_host.h"
 #include "content/browser/preloading/prerender/prerender_host_registry.h"
 #include "content/browser/preloading/prerender/prerender_metrics.h"
+#include "content/public/browser/preload_pipeline_info.h"
 #include "content/public/browser/preloading.h"
 #include "content/public/browser/preloading_data.h"
 #include "content/public/test/mock_web_contents_observer.h"
@@ -43,11 +45,13 @@ TEST(IsActivationHeaderMatchTest, OrderInsensitive) {
   PrerenderCancellationReason reason = PrerenderCancellationReason(
       PrerenderFinalStatus::kActivationNavigationParameterMismatch);
   net::HttpRequestHeaders prerender_headers;
-  prerender_headers.AddHeadersFromString(
-      "name1: value1 \r\n name2: value2 \r\n name3: value3");
+  prerender_headers.SetHeader("name1", "value1");
+  prerender_headers.SetHeader("name2", "value2");
+  prerender_headers.SetHeader("name3", "value3");
   net::HttpRequestHeaders potential_activation_headers;
-  potential_activation_headers.AddHeadersFromString(
-      "name2: value2 \r\n name3:value3  \r\n name1: value1 ");
+  potential_activation_headers.SetHeader("name2", "value2");
+  potential_activation_headers.SetHeader("name3", "value3");
+  potential_activation_headers.SetHeader("name1", "value1");
   EXPECT_TRUE(PrerenderHost::IsActivationHeaderMatch(
       potential_activation_headers, prerender_headers, reason));
 }
@@ -56,11 +60,13 @@ TEST(IsActivationHeaderMatchTest, KeyCaseInsensitive) {
   PrerenderCancellationReason reason = PrerenderCancellationReason(
       PrerenderFinalStatus::kActivationNavigationParameterMismatch);
   net::HttpRequestHeaders prerender_headers;
-  prerender_headers.AddHeadersFromString(
-      "NAME1: value1 \r\n name2: value2 \r\n name3: value3");
+  prerender_headers.SetHeader("NAME1", "value1");
+  prerender_headers.SetHeader("name2", "value2");
+  prerender_headers.SetHeader("name3", "value3");
   net::HttpRequestHeaders potential_activation_headers;
-  potential_activation_headers.AddHeadersFromString(
-      "name1: value1 \r\n name2: value2  \r\n name3: value3 ");
+  potential_activation_headers.SetHeader("name1", "value1");
+  potential_activation_headers.SetHeader("name2", "value2");
+  potential_activation_headers.SetHeader("name3", "value3");
   EXPECT_TRUE(PrerenderHost::IsActivationHeaderMatch(
       potential_activation_headers, prerender_headers, reason));
 }
@@ -69,11 +75,13 @@ TEST(IsActivationHeaderMatchTest, ValueCaseInsensitive) {
   PrerenderCancellationReason reason = PrerenderCancellationReason(
       PrerenderFinalStatus::kActivationNavigationParameterMismatch);
   net::HttpRequestHeaders prerender_headers;
-  prerender_headers.AddHeadersFromString(
-      "name1: value1 \r\n name2: value2 \r\n name3: value3");
+  prerender_headers.SetHeader("name1", "value1");
+  prerender_headers.SetHeader("name2", "value2");
+  prerender_headers.SetHeader("name3", "value3");
   net::HttpRequestHeaders potential_activation_headers;
-  potential_activation_headers.AddHeadersFromString(
-      "name1: value1 \r\n name2: VALUE2  \r\n name3: value3 ");
+  potential_activation_headers.SetHeader("name1", "value1");
+  potential_activation_headers.SetHeader("name2", "VALUE2");
+  potential_activation_headers.SetHeader("name3", "value3");
   EXPECT_TRUE(PrerenderHost::IsActivationHeaderMatch(
       potential_activation_headers, prerender_headers, reason));
 }
@@ -89,11 +97,13 @@ TEST(IsActivationHeaderMatchTest, CalculateMismatchedHeaders) {
     PrerenderCancellationReason reason = PrerenderCancellationReason(
         PrerenderFinalStatus::kActivationNavigationParameterMismatch);
     net::HttpRequestHeaders prerender_headers;
-    prerender_headers.AddHeadersFromString(
-        "name1: value1 \r\n name2: value2 \r\n name3: value3");
+    prerender_headers.SetHeader("name1", "value1");
+    prerender_headers.SetHeader("name2", "value2");
+    prerender_headers.SetHeader("name3", "value3");
     net::HttpRequestHeaders potential_headers;
-    potential_headers.AddHeadersFromString(
-        "name1: value1 \r\n name2: value2 \r\n name3: value3");
+    potential_headers.SetHeader("name1", "value1");
+    potential_headers.SetHeader("name2", "value2");
+    potential_headers.SetHeader("name3", "value3");
     EXPECT_TRUE(PrerenderHost::IsActivationHeaderMatch(
         potential_headers, prerender_headers, reason));
     EXPECT_FALSE(reason.GetPrerenderMismatchedHeaders());
@@ -102,9 +112,7 @@ TEST(IsActivationHeaderMatchTest, CalculateMismatchedHeaders) {
     PrerenderCancellationReason reason = PrerenderCancellationReason(
         PrerenderFinalStatus::kActivationNavigationParameterMismatch);
     net::HttpRequestHeaders prerender_headers;
-    prerender_headers.AddHeadersFromString("");
     net::HttpRequestHeaders potential_headers;
-    potential_headers.AddHeadersFromString("");
     EXPECT_TRUE(PrerenderHost::IsActivationHeaderMatch(
         potential_headers, prerender_headers, reason));
     EXPECT_FALSE(reason.GetPrerenderMismatchedHeaders());
@@ -113,13 +121,15 @@ TEST(IsActivationHeaderMatchTest, CalculateMismatchedHeaders) {
     PrerenderCancellationReason reason = PrerenderCancellationReason(
         PrerenderFinalStatus::kActivationNavigationParameterMismatch);
     net::HttpRequestHeaders prerender_headers;
-    prerender_headers.AddHeadersFromString(
-        "name1: value1 \r\n name2: value2 \r\n name3: value3 \r\n name5: "
-        "value3");
+    prerender_headers.SetHeader("name1", "value1");
+    prerender_headers.SetHeader("name2", "value2");
+    prerender_headers.SetHeader("name3", "value3");
+    prerender_headers.SetHeader("name5", "value3");
     net::HttpRequestHeaders potential_headers;
-    potential_headers.AddHeadersFromString(
-        "name1: value1 \r\n name3: value2 \r\n name4: value4 \r\n name5: "
-        "value3");
+    potential_headers.SetHeader("name1", "value1");
+    potential_headers.SetHeader("name3", "value2");
+    potential_headers.SetHeader("name4", "value4");
+    potential_headers.SetHeader("name5", "value3");
     EXPECT_FALSE(PrerenderHost::IsActivationHeaderMatch(
         potential_headers, prerender_headers, reason));
     std::vector<PrerenderMismatchedHeaders> mismatched_headers_expected;
@@ -136,10 +146,11 @@ TEST(IsActivationHeaderMatchTest, CalculateMismatchedHeaders) {
     PrerenderCancellationReason reason = PrerenderCancellationReason(
         PrerenderFinalStatus::kActivationNavigationParameterMismatch);
     net::HttpRequestHeaders prerender_headers;
-    prerender_headers.AddHeadersFromString(
-        "name5: value1 \r\n name6: value2 \r\n name7: value3");
+    prerender_headers.SetHeader("name5", "value1");
+    prerender_headers.SetHeader("name6", "value2");
+    prerender_headers.SetHeader("name7", "value3");
     net::HttpRequestHeaders potential_headers;
-    potential_headers.AddHeadersFromString("name2: value1");
+    potential_headers.SetHeader("name2", "value1");
     EXPECT_FALSE(PrerenderHost::IsActivationHeaderMatch(
         potential_headers, prerender_headers, reason));
     std::vector<PrerenderMismatchedHeaders> mismatched_headers_expected;
@@ -157,11 +168,13 @@ TEST(IsActivationHeaderMatchTest, CalculateMismatchedHeaders) {
     PrerenderCancellationReason reason = PrerenderCancellationReason(
         PrerenderFinalStatus::kActivationNavigationParameterMismatch);
     net::HttpRequestHeaders prerender_headers;
-    prerender_headers.AddHeadersFromString("name5: value1 \r\n name6: value2");
+    prerender_headers.SetHeader("name5", "value1");
+    prerender_headers.SetHeader("name6", "value2");
     net::HttpRequestHeaders potential_headers;
-    potential_headers.AddHeadersFromString(
-        "name2: value1 \r\n name6: value2 \r\n name7: value3 \r\n name8: "
-        "value3");
+    potential_headers.SetHeader("name2", "value1");
+    potential_headers.SetHeader("name6", "value2");
+    potential_headers.SetHeader("name7", "value3");
+    potential_headers.SetHeader("name8", "value3");
     EXPECT_FALSE(PrerenderHost::IsActivationHeaderMatch(
         potential_headers, prerender_headers, reason));
     std::vector<PrerenderMismatchedHeaders> mismatched_headers_expected;
@@ -179,10 +192,10 @@ TEST(IsActivationHeaderMatchTest, CalculateMismatchedHeaders) {
     PrerenderCancellationReason reason = PrerenderCancellationReason(
         PrerenderFinalStatus::kActivationNavigationParameterMismatch);
     net::HttpRequestHeaders prerender_headers;
-    prerender_headers.AddHeadersFromString("");
     net::HttpRequestHeaders potential_headers;
-    potential_headers.AddHeadersFromString(
-        "name1: value1 \r\n name2: value2 \r\n name3: value3");
+    potential_headers.SetHeader("name1", "value1");
+    potential_headers.SetHeader("name2", "value2");
+    potential_headers.SetHeader("name3", "value3");
     EXPECT_FALSE(PrerenderHost::IsActivationHeaderMatch(
         potential_headers, prerender_headers, reason));
     std::vector<PrerenderMismatchedHeaders> mismatched_headers_expected;
@@ -199,10 +212,10 @@ TEST(IsActivationHeaderMatchTest, CalculateMismatchedHeaders) {
     PrerenderCancellationReason reason = PrerenderCancellationReason(
         PrerenderFinalStatus::kActivationNavigationParameterMismatch);
     net::HttpRequestHeaders prerender_headers;
-    prerender_headers.AddHeadersFromString(
-        "name1: value1 \r\n name2: value2 \r\n name3: value3");
+    prerender_headers.SetHeader("name1", "value1");
+    prerender_headers.SetHeader("name2", "value2");
+    prerender_headers.SetHeader("name3", "value3");
     net::HttpRequestHeaders potential_headers;
-    potential_headers.AddHeadersFromString("");
     EXPECT_FALSE(PrerenderHost::IsActivationHeaderMatch(
         potential_headers, prerender_headers, reason));
     std::vector<PrerenderMismatchedHeaders> mismatched_headers_expected;
@@ -225,7 +238,8 @@ using ExpectedReadyForActivationState =
 void CommitPrerenderNavigation(
     PrerenderHost& host,
     ExpectedReadyForActivationState ready_for_activation =
-        ExpectedReadyForActivationState(true)) {
+        ExpectedReadyForActivationState(true),
+    scoped_refptr<net::HttpResponseHeaders> headers = nullptr) {
   // Normally we could use EmbeddedTestServer to provide a response, but these
   // tests use RenderViewHostImplTestHarness so the load goes through a
   // TestNavigationURLLoader which we don't have access to in order to
@@ -233,6 +247,7 @@ void CommitPrerenderNavigation(
   FrameTreeNode* ftn = FrameTreeNode::From(host.GetPrerenderedMainFrameHost());
   std::unique_ptr<NavigationSimulator> sim =
       NavigationSimulatorImpl::CreateFromPendingInFrame(ftn);
+  sim->SetResponseHeaders(headers);
   sim->Commit();
   EXPECT_EQ(host.is_ready_for_activation(), ready_for_activation.value());
 }
@@ -251,11 +266,6 @@ std::unique_ptr<NavigationSimulatorImpl> CreateActivation(
 
 class PrerenderHostTest : public RenderViewHostImplTestHarness {
  public:
-  PrerenderHostTest() {
-    scoped_feature_list_.InitAndEnableFeature(
-        blink::features::kPrerender2MainFrameNavigation);
-  }
-
   ~PrerenderHostTest() override = default;
 
   void SetUp() override {
@@ -266,25 +276,29 @@ class PrerenderHostTest : public RenderViewHostImplTestHarness {
   }
 
   PrerenderAttributes GeneratePrerenderAttributes(const GURL& url) {
-    return GeneratePrerenderAttributesWithPredicate(
-        url, /*url_match_predicate=*/std::nullopt);
+    return GeneratePrerenderAttributesWithPredicate(url,
+                                                    /*url_match_predicate=*/{});
   }
 
   PrerenderAttributes GeneratePrerenderAttributesWithPredicate(
       const GURL& url,
-      std::optional<base::RepeatingCallback<bool(const GURL&)>>
+      base::RepeatingCallback<bool(const GURL&,
+                                   const std::optional<content::UrlMatchType>&)>
           url_match_predicate) {
     RenderFrameHostImpl* rfh = contents()->GetPrimaryMainFrame();
     return PrerenderAttributes(
         url, PreloadingTriggerType::kSpeculationRule,
-        /*embedder_histogram_suffix=*/"",
-        blink::mojom::SpeculationTargetHint::kNoHint, Referrer(),
-        blink::mojom::SpeculationEagerness::kEager,
-        rfh->GetLastCommittedOrigin(), rfh->GetProcess()->GetID(),
-        contents()->GetWeakPtr(), rfh->GetFrameToken(),
-        rfh->GetFrameTreeNodeId(), rfh->GetPageUkmSourceId(),
-        ui::PAGE_TRANSITION_LINK, std::move(url_match_predicate),
-        /*prerender_navigation_handle_callback=*/std::nullopt);
+        /*embedder_histogram_suffix=*/"", SpeculationRulesParams(), Referrer(),
+        /*no_vary_search_hint=*/std::nullopt, rfh, contents()->GetWeakPtr(),
+        ui::PAGE_TRANSITION_LINK,
+        /*should_warm_up_compositor=*/false,
+        /*should_prepare_paint_tree=*/false,
+        /*should_pause_javascript_execution=*/false,
+        std::move(url_match_predicate),
+        /*prerender_navigation_handle_callback=*/{},
+        PreloadPipelineInfoImpl::Create(
+            /*planned_max_preloading_type=*/PreloadingType::kPrerender),
+        /*allow_reuse=*/false);
   }
 
   void ExpectFinalStatus(PrerenderFinalStatus status) {
@@ -321,13 +335,28 @@ class PrerenderHostTest : public RenderViewHostImplTestHarness {
       web_contents_delegate_;
   base::HistogramTester histogram_tester_;
   ukm::TestAutoSetUkmRecorder ukm_recorder_;
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
+
+TEST_F(PrerenderHostTest, IsNoVarySearchHeaderSet) {
+  // Start prerendering a page.
+  const GURL kPrerenderingUrl("https://example.com/next");
+  FrameTreeNodeId prerender_frame_tree_node_id =
+      contents()->AddPrerender(kPrerenderingUrl);
+  PrerenderHost* prerender_host =
+      registry().FindNonReservedHostById(prerender_frame_tree_node_id);
+  CommitPrerenderNavigation(
+      *prerender_host, ExpectedReadyForActivationState(true),
+      net::HttpResponseHeaders::Builder(net::HttpVersion(1, 1), "200 OK")
+          .AddHeader("No-Vary-Search", "params=(\"a\")")
+          .Build());
+  EXPECT_TRUE(prerender_host->no_vary_search().has_value());
+}
 
 TEST_F(PrerenderHostTest, Activate) {
   // Start prerendering a page.
   const GURL kPrerenderingUrl("https://example.com/next");
-  int prerender_frame_tree_node_id = contents()->AddPrerender(kPrerenderingUrl);
+  FrameTreeNodeId prerender_frame_tree_node_id =
+      contents()->AddPrerender(kPrerenderingUrl);
   PrerenderHost* prerender_host =
       registry().FindNonReservedHostById(prerender_frame_tree_node_id);
   CommitPrerenderNavigation(*prerender_host);
@@ -341,7 +370,7 @@ TEST_F(PrerenderHostTest, Activate) {
 TEST_F(PrerenderHostTest, DontActivate) {
   // Start the prerendering navigation, but don't activate it.
   const GURL kPrerenderingUrl("https://example.com/next");
-  const int prerender_frame_tree_node_id =
+  const FrameTreeNodeId prerender_frame_tree_node_id =
       contents()->AddPrerender(kPrerenderingUrl);
   registry().CancelHost(prerender_frame_tree_node_id,
                         PrerenderFinalStatus::kDestroyed);
@@ -420,8 +449,9 @@ TEST_F(PrerenderHostTest, MainFrameNavigationForReservedHost) {
 TEST_F(PrerenderHostTest, ActivationAfterPageStateUpdate) {
   // Start prerendering a page.
   const GURL kPrerenderingUrl("https://example.com/next");
-  const int prerender_frame_tree_node_id = registry().CreateAndStartHost(
-      GeneratePrerenderAttributes(kPrerenderingUrl));
+  const FrameTreeNodeId prerender_frame_tree_node_id =
+      registry().CreateAndStartHost(
+          GeneratePrerenderAttributes(kPrerenderingUrl));
   PrerenderHost* prerender_host =
       registry().FindNonReservedHostById(prerender_frame_tree_node_id);
   CommitPrerenderNavigation(*prerender_host);
@@ -518,8 +548,9 @@ TEST_F(PrerenderHostTest, LoadProgressChangedInvokedOnActivation) {
 
 TEST_F(PrerenderHostTest, DontCancelPrerenderWhenTriggerGetsHidden) {
   const GURL kPrerenderingUrl = GURL("https://example.com/empty.html");
-  const int prerender_frame_tree_node_id = registry().CreateAndStartHost(
-      GeneratePrerenderAttributes(kPrerenderingUrl));
+  const FrameTreeNodeId prerender_frame_tree_node_id =
+      registry().CreateAndStartHost(
+          GeneratePrerenderAttributes(kPrerenderingUrl));
   PrerenderHost* prerender_host =
       registry().FindNonReservedHostById(prerender_frame_tree_node_id);
   ASSERT_NE(prerender_host, nullptr);
@@ -536,8 +567,9 @@ TEST_F(PrerenderHostTest, DontCancelPrerenderWhenTriggerGetsHidden) {
 
 TEST_F(PrerenderHostTest, CancelActivationFromHiddenPage) {
   const GURL kPrerenderingUrl = GURL("https://example.com/empty.html");
-  const int prerender_frame_tree_node_id = registry().CreateAndStartHost(
-      GeneratePrerenderAttributes(kPrerenderingUrl));
+  const FrameTreeNodeId prerender_frame_tree_node_id =
+      registry().CreateAndStartHost(
+          GeneratePrerenderAttributes(kPrerenderingUrl));
   PrerenderHost* prerender_host =
       registry().FindNonReservedHostById(prerender_frame_tree_node_id);
   ASSERT_NE(prerender_host, nullptr);
@@ -564,8 +596,9 @@ TEST_F(PrerenderHostTest, CancelActivationFromHiddenPage) {
 
 TEST_F(PrerenderHostTest, DontCancelPrerenderWhenTriggerGetsVisible) {
   const GURL kPrerenderingUrl = GURL("https://example.com/empty.html");
-  const int prerender_frame_tree_node_id = registry().CreateAndStartHost(
-      GeneratePrerenderAttributes(kPrerenderingUrl));
+  const FrameTreeNodeId prerender_frame_tree_node_id =
+      registry().CreateAndStartHost(
+          GeneratePrerenderAttributes(kPrerenderingUrl));
   PrerenderHost* prerender_host =
       registry().FindNonReservedHostById(prerender_frame_tree_node_id);
   ASSERT_NE(prerender_host, nullptr);
@@ -581,8 +614,9 @@ TEST_F(PrerenderHostTest, DontCancelPrerenderWhenTriggerGetsVisible) {
 #if !BUILDFLAG(IS_ANDROID)
 TEST_F(PrerenderHostTest, DontCancelPrerenderWhenTriggerGetsOcculded) {
   const GURL kPrerenderingUrl = GURL("https://example.com/empty.html");
-  const int prerender_frame_tree_node_id = registry().CreateAndStartHost(
-      GeneratePrerenderAttributes(kPrerenderingUrl));
+  const FrameTreeNodeId prerender_frame_tree_node_id =
+      registry().CreateAndStartHost(
+          GeneratePrerenderAttributes(kPrerenderingUrl));
   PrerenderHost* prerender_host =
       registry().FindNonReservedHostById(prerender_frame_tree_node_id);
   ASSERT_NE(prerender_host, nullptr);
@@ -597,10 +631,13 @@ TEST_F(PrerenderHostTest, DontCancelPrerenderWhenTriggerGetsOcculded) {
 
 TEST_F(PrerenderHostTest, UrlMatchPredicate) {
   const GURL kPrerenderingUrl = GURL("https://example.com/empty.html");
-  base::RepeatingCallback callback =
-      base::BindRepeating([](const GURL&) { return true; });
-  const int prerender_frame_tree_node_id = registry().CreateAndStartHost(
-      GeneratePrerenderAttributesWithPredicate(kPrerenderingUrl, callback));
+  base::RepeatingCallback callback = base::BindRepeating(
+      [](const GURL&, const std::optional<content::UrlMatchType>&) {
+        return true;
+      });
+  const FrameTreeNodeId prerender_frame_tree_node_id =
+      registry().CreateAndStartHost(
+          GeneratePrerenderAttributesWithPredicate(kPrerenderingUrl, callback));
   PrerenderHost* prerender_host =
       registry().FindNonReservedHostById(prerender_frame_tree_node_id);
   ASSERT_NE(prerender_host, nullptr);
@@ -629,8 +666,9 @@ TEST_F(PrerenderHostTest, CanceledPrerenderCannotBeReadyForActivation) {
       PreloadingType::kPrerender, std::move(same_url_matcher),
       contents()->GetPrimaryMainFrame()->GetPageUkmSourceId());
 
-  const int prerender_frame_tree_node_id = registry().CreateAndStartHost(
-      GeneratePrerenderAttributes(kPrerenderingUrl), preloading_attempt);
+  const FrameTreeNodeId prerender_frame_tree_node_id =
+      registry().CreateAndStartHost(
+          GeneratePrerenderAttributes(kPrerenderingUrl), preloading_attempt);
   PrerenderHost* prerender_host =
       registry().FindNonReservedHostById(prerender_frame_tree_node_id);
   ASSERT_NE(prerender_host, nullptr);
@@ -677,9 +715,38 @@ TEST(AreHttpRequestHeadersCompatible, IgnoreRTT) {
   const std::string prerender_headers = "rtt: 1 \r\n downlink: 3";
   const std::string potential_activation_headers = "rtt: 2 \r\n downlink: 4";
   EXPECT_TRUE(PrerenderHost::AreHttpRequestHeadersCompatible(
-      potential_activation_headers, prerender_headers,
-      PreloadingTriggerType::kSpeculationRule,
-      /*embedder_histogram_suffix=*/"", reason));
+      potential_activation_headers,
+#if BUILDFLAG(IS_ANDROID)
+      /*potential_activation_additional_headers=*/"",
+#endif  // BUILDFLAG(IS_ANDROID)
+      prerender_headers, PreloadingTriggerType::kSpeculationRule,
+      /*embedder_histogram_suffix=*/"", /*allow_x_header_mismatch=*/false,
+      reason));
+}
+
+TEST(AreHttpRequestHeadersCompatible, XHeaders) {
+  PrerenderCancellationReason reason = PrerenderCancellationReason(
+      PrerenderFinalStatus::kActivationNavigationParameterMismatch);
+  const std::string prerender_headers = "x-hello: 1";
+  const std::string potential_activation_headers = "X-world: 2";
+
+  EXPECT_FALSE(PrerenderHost::AreHttpRequestHeadersCompatible(
+      potential_activation_headers,
+#if BUILDFLAG(IS_ANDROID)
+      /*potential_activation_additional_headers=*/"",
+#endif  // BUILDFLAG(IS_ANDROID)
+      prerender_headers, PreloadingTriggerType::kSpeculationRule,
+      /*embedder_histogram_suffix=*/"", /*allow_x_header_mismatch=*/false,
+      reason));
+
+  EXPECT_TRUE(PrerenderHost::AreHttpRequestHeadersCompatible(
+      potential_activation_headers,
+#if BUILDFLAG(IS_ANDROID)
+      /*potential_activation_additional_headers=*/"",
+#endif  // BUILDFLAG(IS_ANDROID)
+      prerender_headers, PreloadingTriggerType::kSpeculationRule,
+      /*embedder_histogram_suffix=*/"", /*allow_x_header_mismatch=*/true,
+      reason));
 }
 
 }  // namespace

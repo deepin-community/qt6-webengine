@@ -11,24 +11,23 @@
 
 #include <memory>
 
-#include "core/fxcrt/observed_ptr.h"
 #include "core/fxcrt/retain_ptr.h"
-#include "third_party/base/containers/span.h"
+#include "core/fxcrt/span.h"
 
-class CPDF_Stream;
+class CPDF_StreamAcc;
 
 namespace fxcodec {
 class IccTransform;
 }  // namespace fxcodec
 
-class CPDF_IccProfile final : public Retainable, public Observable {
+class CPDF_IccProfile final : public Retainable {
  public:
   CONSTRUCT_VIA_MAKE_RETAIN;
 
   bool IsValid() const { return IsSRGB() || IsSupported(); }
-  bool IsSRGB() const { return m_bsRGB; }
-  bool IsSupported() const { return !!m_Transform; }
-  uint32_t GetComponents() const { return m_nSrcComponents; }
+  bool IsSRGB() const { return is_srgb_; }
+  bool IsSupported() const { return !!transform_; }
+  uint32_t GetComponents() const { return src_components_; }
 
   bool IsNormal() const;
   void Translate(pdfium::span<const float> pSrcValues,
@@ -37,17 +36,20 @@ class CPDF_IccProfile final : public Retainable, public Observable {
                          pdfium::span<const uint8_t> pSrc,
                          int pixels);
 
+  RetainPtr<const CPDF_StreamAcc> GetStreamAcc() const;
+
  private:
-  // Keeps stream alive for the duration of the CPDF_IccProfile.
-  CPDF_IccProfile(RetainPtr<const CPDF_Stream> pStream,
-                  pdfium::span<const uint8_t> span,
+  CPDF_IccProfile(RetainPtr<const CPDF_StreamAcc> stream_acc,
                   uint32_t expected_components);
   ~CPDF_IccProfile() override;
 
-  const bool m_bsRGB;
-  uint32_t m_nSrcComponents = 0;
-  RetainPtr<const CPDF_Stream> const m_pStream;  // Used by `m_Transform`.
-  std::unique_ptr<fxcodec::IccTransform> m_Transform;
+  // Keeps stream alive for the lifetime of this object, so `transform_` can
+  // safely access the stream data.
+  RetainPtr<const CPDF_StreamAcc> const stream_acc_;
+  // Uses data from `stream_acc_`.
+  std::unique_ptr<fxcodec::IccTransform> transform_;
+  const bool is_srgb_;
+  uint32_t src_components_ = 0;
 };
 
 #endif  // CORE_FPDFAPI_PAGE_CPDF_ICCPROFILE_H_

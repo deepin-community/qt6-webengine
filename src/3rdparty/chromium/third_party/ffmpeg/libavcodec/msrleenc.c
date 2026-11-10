@@ -252,7 +252,7 @@ static int msrle_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
 
     if ((ret = ff_alloc_packet(avctx, pkt, (
                 avctx->width*2 /* worst case = rle every pixel */ + 2 /*end of line */
-            ) * avctx->height + 2 /* end of bitmap */ + AV_INPUT_BUFFER_MIN_SIZE)))
+            ) * avctx->height + 2 /* end of bitmap */ + FF_INPUT_BUFFER_MIN_SIZE)))
         return ret;
 
     if (pict->data[1]) {
@@ -293,8 +293,6 @@ const FFCodec ff_msrle_encoder = {
     .init           = msrle_encode_init,
     FF_CODEC_ENCODE_CB(msrle_encode_frame),
     .close          = msrle_encode_close,
-    .p.pix_fmts     = (const enum AVPixelFormat[]){
-        AV_PIX_FMT_PAL8, AV_PIX_FMT_NONE
-    },
+    CODEC_PIXFMTS(AV_PIX_FMT_PAL8),
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
 };

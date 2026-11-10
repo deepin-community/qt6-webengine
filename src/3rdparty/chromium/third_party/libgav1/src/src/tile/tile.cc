@@ -18,9 +18,11 @@
 #include <array>
 #include <cassert>
 #include <climits>
+#include <condition_variable>  // NOLINT (unapproved c++11 header)
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <mutex>  // NOLINT (unapproved c++11 header)
 #include <new>
 #include <numeric>
 #include <type_traits>
@@ -425,7 +427,7 @@ Tile::Tile(int tile_number, const uint8_t* const data, size_t size,
            PostFilter* const post_filter, const dsp::Dsp* const dsp,
            ThreadPool* const thread_pool,
            BlockingCounterWithStatus* const pending_tiles, bool frame_parallel,
-           bool use_intra_prediction_buffer)
+           bool use_intra_prediction_buffer, bool parse_only)
     : number_(tile_number),
       row_(number_ / frame_header.tile_info.tile_columns),
       column_(number_ % frame_header.tile_info.tile_columns),
@@ -475,7 +477,8 @@ Tile::Tile(int tile_number, const uint8_t* const data, size_t size,
       intra_prediction_buffer_(
           use_intra_prediction_buffer_
               ? &frame_scratch_buffer->intra_prediction_buffers.get()[row_]
-              : nullptr) {
+              : nullptr),
+      parse_only_(parse_only) {
   row4x4_start_ = frame_header.tile_info.tile_row_start[row_];
   row4x4_end_ = frame_header.tile_info.tile_row_start[row_ + 1];
   column4x4_start_ = frame_header.tile_info.tile_column_start[column_];
@@ -489,14 +492,15 @@ Tile::Tile(int tile_number, const uint8_t* const data, size_t size,
       block_width4x4_log2;
   // If |split_parse_and_decode_| is true, we do the necessary setup for
   // splitting the parsing and the decoding steps. This is done in the following
-  // two cases:
+  // three cases:
   //  1) If there is multi-threading within a tile (this is done if
   //     |thread_pool_| is not nullptr and if there are at least as many
   //     superblock columns as |intra_block_copy_lag_|).
   //  2) If |frame_parallel| is true.
+  //  3) If |parse_only_| is true.
   split_parse_and_decode_ = (thread_pool_ != nullptr &&
                              superblock_columns_ > intra_block_copy_lag_) ||
-                            frame_parallel;
+                            frame_parallel || parse_only_;
   if (frame_parallel_) {
     reference_frame_progress_cache_.fill(INT_MIN);
   }
@@ -1066,18 +1070,29 @@ void Tile::ReadTransformType(const Block& block, int x4, int y4,
           break;
       }
     } else {
-      const PredictionMode intra_direction =
+      // Backup the current set of warnings and disable -Warray-bounds for this
+      // block as the compiler cannot, in all cases, determine whether
+      // |intra_mode| is within [0, kIntraPredictionModesY).
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
+      const PredictionMode intra_mode =
           block.bp->prediction_parameters->use_filter_intra
               ? kFilterIntraModeToIntraPredictor[block.bp->prediction_parameters
                                                      ->filter_intra_mode]
               : bp.y_mode;
-      cdf =
-          symbol_decoder_context_
-              .intra_tx_type_cdf[cdf_index][cdf_tx_size_index][intra_direction];
+      assert(intra_mode < kIntraPredictionModesY);
+      cdf = symbol_decoder_context_
+                .intra_tx_type_cdf[cdf_index][cdf_tx_size_index][intra_mode];
       assert(tx_set == kTransformSetIntra1 || tx_set == kTransformSetIntra2);
       tx_type = static_cast<TransformType>((tx_set == kTransformSetIntra1)
                                                ? reader_.ReadSymbol<7>(cdf)
                                                : reader_.ReadSymbol<5>(cdf));
+      // Restore the previous set of compiler warnings.
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
     }
 
     // This array does not contain an entry for kTransformSetDctOnly, so the
@@ -2183,9 +2198,11 @@ bool Tile::ProcessBlock(int row4x4, int column4x4, BlockSize block_size,
     // to decode the blocks in the correct order.
     const int sb_row_index = SuperBlockRowIndex(row4x4);
     const int sb_column_index = SuperBlockColumnIndex(column4x4);
-    residual_buffer_threaded_[sb_row_index][sb_column_index]
-        ->partition_tree_order()
-        ->Push(PartitionTreeNode(row4x4, column4x4, block_size));
+    if (!parse_only_) {
+      residual_buffer_threaded_[sb_row_index][sb_column_index]
+          ->partition_tree_order()
+          ->Push(PartitionTreeNode(row4x4, column4x4, block_size));
+    }
   }
 
   BlockParameters* bp_ptr =
@@ -2203,6 +2220,11 @@ bool Tile::ProcessBlock(int row4x4, int column4x4, BlockSize block_size,
                               : std::move(prediction_parameters_);
   if (bp.prediction_parameters == nullptr) return false;
   if (!DecodeModeInfo(block)) return false;
+  if (parse_only_) {
+    const int block_weight = kBlockWeight[block_size];
+    weighted_cumulative_block_qp_ += current_quantizer_index_ * block_weight;
+    cumulative_block_weights_ += block_weight;
+  }
   PopulateDeblockFilterLevel(block);
   if (!ReadPaletteTokens(block)) return false;
   DecodeTransformSize(block);
@@ -2521,6 +2543,10 @@ bool Tile::ProcessSuperBlock(int row4x4, int column4x4,
       LIBGAV1_DLOG(ERROR, "Error parsing partition row: %d column: %d", row4x4,
                    column4x4);
       return false;
+    }
+    if (parse_only_) {
+      residual_buffer_pool_->Release(
+          std::move(residual_buffer_threaded_[sb_row_index][sb_column_index]));
     }
   } else {
     if (!DecodeSuperBlock(sb_row_index, sb_column_index, scratch_buffer)) {

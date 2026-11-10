@@ -32,7 +32,6 @@
 #include "third_party/blink/renderer/core/html/forms/slider_thumb_element.h"
 
 #include "third_party/blink/renderer/core/dom/events/event.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/events/mouse_event.h"
 #include "third_party/blink/renderer/core/events/touch_event.h"
@@ -44,7 +43,8 @@
 #include "third_party/blink/renderer/core/html/shadow/shadow_element_names.h"
 #include "third_party/blink/renderer/core/input/event_handler.h"
 #include "third_party/blink/renderer/core/layout/flex/layout_flexible_box.h"
-#include "third_party/blink/renderer/core/layout/layout_ng_block_flow.h"
+#include "third_party/blink/renderer/core/layout/layout_block_flow.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/layout_theme.h"
 #include "ui/base/ui_base_features.h"
 
@@ -53,7 +53,6 @@ namespace blink {
 SliderThumbElement::SliderThumbElement(Document& document)
     : HTMLDivElement(document), in_drag_mode_(false) {
   SetHasCustomStyleCallbacks();
-  setAttribute(html_names::kIdAttr, shadow_element_names::kIdSliderThumb);
 }
 
 void SliderThumbElement::SetPositionFromValue() {
@@ -73,7 +72,7 @@ void SliderThumbElement::SetPositionFromValue() {
 
 LayoutObject* SliderThumbElement::CreateLayoutObject(
     const ComputedStyle& style) {
-  return MakeGarbageCollected<LayoutNGBlockFlow>(this);
+  return MakeGarbageCollected<LayoutBlockFlow>(this);
 }
 
 bool SliderThumbElement::IsDisabledFormControl() const {
@@ -105,9 +104,8 @@ void SliderThumbElement::SetPositionFromPoint(const PhysicalOffset& point) {
     return;
 
   PhysicalOffset point_in_track = track_box->AbsoluteToLocalPoint(point);
-  const bool is_vertical = !thumb_box->StyleRef().IsHorizontalWritingMode();
-  bool is_left_to_right_direction =
-      thumb_box->StyleRef().IsLeftToRightDirection();
+  auto writing_direction = thumb_box->StyleRef().GetWritingDirection();
+  bool is_flipped = writing_direction.IsFlippedInlines();
   LayoutUnit track_size;
   LayoutUnit position;
   LayoutUnit current_position;
@@ -115,35 +113,21 @@ void SliderThumbElement::SetPositionFromPoint(const PhysicalOffset& point) {
   PhysicalOffset thumb_offset =
       thumb_box->LocalToAncestorPoint(PhysicalOffset(), input_box) -
       track_box->LocalToAncestorPoint(PhysicalOffset(), input_box);
-  if (is_vertical) {
+  if (!writing_direction.IsHorizontal()) {
     track_size = track_box->ContentHeight() - thumb_box->Size().height;
     position = point_in_track.top - thumb_box->Size().height / 2;
-    if (is_left_to_right_direction &&
-        !RuntimeEnabledFeatures::
-            FormControlsVerticalWritingModeDirectionSupportEnabled()) {
-      position -= thumb_box->MarginBottom();
-    } else {
-      position -= is_left_to_right_direction ? thumb_box->MarginTop()
-                                             : thumb_box->MarginBottom();
-    }
+    position -= is_flipped ? thumb_box->MarginBottom() : thumb_box->MarginTop();
     current_position = thumb_offset.top;
   } else {
     track_size = track_box->ContentWidth() - thumb_box->Size().width;
     position = point_in_track.left - thumb_box->Size().width / 2;
-    position -= is_left_to_right_direction ? thumb_box->MarginLeft()
-                                           : thumb_box->MarginRight();
+    position -= is_flipped ? thumb_box->MarginRight() : thumb_box->MarginLeft();
     current_position = thumb_offset.left;
   }
   position = std::min(position, track_size).ClampNegativeToZero();
   const Decimal ratio =
       Decimal::FromDouble(static_cast<double>(position) / track_size);
-  const Decimal fraction =
-      (is_vertical && is_left_to_right_direction &&
-       !RuntimeEnabledFeatures::
-           FormControlsVerticalWritingModeDirectionSupportEnabled()) ||
-              !is_left_to_right_direction
-          ? Decimal(1) - ratio
-          : ratio;
+  const Decimal fraction = is_flipped ? Decimal(1) - ratio : ratio;
   StepRange step_range(input->CreateStepRange(kRejectAny));
   Decimal value =
       step_range.ClampValue(step_range.ValueFromProportion(fraction));
@@ -153,12 +137,7 @@ void SliderThumbElement::SetPositionFromPoint(const PhysicalOffset& point) {
     double closest_fraction =
         step_range.ProportionFromValue(closest).ToDouble();
     double closest_ratio =
-        (is_vertical && is_left_to_right_direction &&
-         !RuntimeEnabledFeatures::
-             FormControlsVerticalWritingModeDirectionSupportEnabled()) ||
-                !is_left_to_right_direction
-            ? 1.0 - closest_fraction
-            : closest_fraction;
+        is_flipped ? 1.0 - closest_fraction : closest_fraction;
     LayoutUnit closest_position(track_size * closest_ratio);
     const LayoutUnit snapping_threshold(5);
     if ((closest_position - position).Abs() <= snapping_threshold)
@@ -186,7 +165,7 @@ void SliderThumbElement::StartDragging() {
   }
 }
 
-void SliderThumbElement::StopDragging() {
+void SliderThumbElement::StopDragging(EventDispatch event_dispatch) {
   if (!in_drag_mode_)
     return;
 
@@ -199,8 +178,9 @@ void SliderThumbElement::StopDragging() {
     GetLayoutObject()->SetNeedsLayoutAndFullPaintInvalidation(
         layout_invalidation_reason::kSliderValueChanged);
   }
-  if (HostInput())
+  if (HostInput() && event_dispatch == kEventDispatchAllowed) {
     HostInput()->DispatchFormControlChangeEvent();
+  }
 }
 
 void SliderThumbElement::DefaultEventHandler(Event& event) {
@@ -292,10 +272,10 @@ const AtomicString& SliderThumbElement::ShadowPseudoId() const {
 
   const ComputedStyle& slider_style = input->GetLayoutObject()->StyleRef();
   switch (slider_style.EffectiveAppearance()) {
-    case kMediaSliderPart:
-    case kMediaSliderThumbPart:
-    case kMediaVolumeSliderPart:
-    case kMediaVolumeSliderThumbPart:
+    case AppearanceValue::kMediaSlider:
+    case AppearanceValue::kMediaSliderThumb:
+    case AppearanceValue::kMediaVolumeSlider:
+    case AppearanceValue::kMediaVolumeSliderThumb:
       return shadow_element_names::kPseudoMediaSliderThumb;
     default:
       return shadow_element_names::kPseudoSliderThumb;
@@ -307,16 +287,19 @@ void SliderThumbElement::AdjustStyle(ComputedStyleBuilder& builder) {
   DCHECK(host);
   const ComputedStyle& host_style = host->ComputedStyleRef();
 
-  if (host_style.EffectiveAppearance() == kSliderVerticalPart &&
+  if (host_style.EffectiveAppearance() == AppearanceValue::kSliderVertical &&
       RuntimeEnabledFeatures::
           NonStandardAppearanceValueSliderVerticalEnabled()) {
-    builder.SetEffectiveAppearance(kSliderThumbVerticalPart);
-  } else if (host_style.EffectiveAppearance() == kSliderHorizontalPart) {
-    builder.SetEffectiveAppearance(kSliderThumbHorizontalPart);
-  } else if (host_style.EffectiveAppearance() == kMediaSliderPart) {
-    builder.SetEffectiveAppearance(kMediaSliderThumbPart);
-  } else if (host_style.EffectiveAppearance() == kMediaVolumeSliderPart) {
-    builder.SetEffectiveAppearance(kMediaVolumeSliderThumbPart);
+    builder.SetEffectiveAppearance(AppearanceValue::kSliderThumbVertical);
+  } else if (host_style.EffectiveAppearance() ==
+             AppearanceValue::kSliderHorizontal) {
+    builder.SetEffectiveAppearance(AppearanceValue::kSliderThumbHorizontal);
+  } else if (host_style.EffectiveAppearance() ==
+             AppearanceValue::kMediaSlider) {
+    builder.SetEffectiveAppearance(AppearanceValue::kMediaSliderThumb);
+  } else if (host_style.EffectiveAppearance() ==
+             AppearanceValue::kMediaVolumeSlider) {
+    builder.SetEffectiveAppearance(AppearanceValue::kMediaVolumeSliderThumb);
   }
   if (builder.HasEffectiveAppearance())
     LayoutTheme::GetTheme().AdjustSliderThumbSize(builder);
@@ -439,10 +422,10 @@ const AtomicString& SliderContainerElement::ShadowPseudoId() const {
   const ComputedStyle& slider_style =
       OwnerShadowHost()->GetLayoutObject()->StyleRef();
   switch (slider_style.EffectiveAppearance()) {
-    case kMediaSliderPart:
-    case kMediaSliderThumbPart:
-    case kMediaVolumeSliderPart:
-    case kMediaVolumeSliderThumbPart:
+    case AppearanceValue::kMediaSlider:
+    case AppearanceValue::kMediaSliderThumb:
+    case AppearanceValue::kMediaVolumeSlider:
+    case AppearanceValue::kMediaVolumeSliderThumb:
       return shadow_element_names::kPseudoMediaSliderContainer;
     default:
       return shadow_element_names::kPseudoSliderContainer;

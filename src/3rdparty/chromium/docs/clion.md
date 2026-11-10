@@ -93,7 +93,7 @@ the Run/Debug configuration.
        `src/out/Default/chrome`
 1. Click `Ok` to close the dialog.
 
-### Configure `~/.gbinit`
+### Configure `~/.gdbinit`
 
 Before being able to debug, you need to configure `~/.gdbinit`. Open it with a
 text editor and enter:
@@ -258,7 +258,6 @@ all the folders to exclude, right-clicking on them, selecting
       <file path="$PROJECT_DIR$/src/url" />
       <file path="$PROJECT_DIR$/src/v8" />
       <file path="$PROJECT_DIR$/src/venv" />
-      <file path="$PROJECT_DIR$/src/weblayer" />
     </excludeRoots>
   </component>
 ```

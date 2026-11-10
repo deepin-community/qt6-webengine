@@ -5,6 +5,7 @@
 #ifndef EXTENSIONS_COMMON_MANIFEST_HANDLERS_CSP_INFO_H_
 #define EXTENSIONS_COMMON_MANIFEST_HANDLERS_CSP_INFO_H_
 
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -37,14 +38,19 @@ struct CSPInfo : public Extension::ManifestData {
   static const std::string& GetExtensionPagesCSP(const Extension* extension);
 
   // Returns the minimum CSP (if any) to append for the `extension`'s resource
-  // at the given `relative_path`.
+  // at the given `relative_path`. `is_service_worker` should be true if the
+  // resource is being loaded as a service worker.
   static const std::string* GetMinimumCSPToAppend(
       const Extension& extension,
-      const std::string& relative_path);
+      const std::string& relative_path,
+      bool is_service_worker);
 
   // Returns the Content Security Policy to be used for extension isolated
-  // worlds or null if there is no defined CSP.
-  static const std::string* GetIsolatedWorldCSP(const Extension& extension);
+  // worlds or nullopt if there is no defined CSP.
+  // Note that a non-nullopt, empty string is different from a nullopt result,
+  // since an empty CSP permits everything.
+  static std::optional<std::string> GetIsolatedWorldCSP(
+      const Extension& extension);
 
   // Returns the extension's Content Security Policy for the sandboxed pages.
   static const std::string& GetSandboxContentSecurityPolicy(

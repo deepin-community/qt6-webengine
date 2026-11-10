@@ -7,9 +7,12 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <string_view>
 
+#include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/metrics/metrics_hashes.h"
+#include "base/notreached.h"
 #include "base/strings/stringprintf.h"
 #include "components/segmentation_platform/internal/database/ukm_types.h"
 #include "components/segmentation_platform/internal/metadata/metadata_writer.h"
@@ -59,7 +62,7 @@ void AddCustomEvent(const CustomEvent& custom_event, MetadataWriter& writer) {
   std::vector<UkmMetricHash> metrics;
   for (unsigned j = 0; j < custom_event.metric_names_size; ++j) {
     metrics.emplace_back(
-        base::HashMetricName(custom_event.metric_names.get()[j]));
+        base::HashMetricName(UNSAFE_TODO(custom_event.metric_names.get()[j])));
   }
   MetadataWriter::SqlFeature::EventAndMetrics event{
       .event_hash = UkmEventHash(base::HashMetricName(custom_event.event_name)),
@@ -129,7 +132,7 @@ void DatabaseApiClients::AddSumGroupQuery(
 
 // static
 void DatabaseApiClients::AddSumQuery(MetadataWriter& writer,
-                                     base::StringPiece metric_name,
+                                     std::string_view metric_name,
                                      int days) {
   std::string query = base::StringPrintf(
       "SELECT SUM(metric_value) FROM metrics WHERE metric_hash = '%" PRIX64
@@ -168,7 +171,7 @@ void DatabaseApiClients::ExecuteModelWithInput(
     const ModelProvider::Request& inputs,
     ExecutionCallback callback) {
   // This model should not be executed, only used for tracking custom metrics.
-  CHECK(0);
+  NOTREACHED();
 }
 
 }  // namespace segmentation_platform

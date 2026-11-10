@@ -13,10 +13,11 @@
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
-#include "components/safe_browsing/core/common/features.h"
 #include "net/base/url_util.h"
 #include "url/gurl.h"
 #include "url/url_canon.h"
+
+using enum safe_browsing::ExtendedReportingLevel;
 
 namespace {
 
@@ -53,8 +54,9 @@ void RecordExtendedReportingPrefChanged(
 // and path from a URL. Equivalent to clearing any username, password, query,
 // and ref. Return empty URL if |url| is not valid.
 GURL GetSimplifiedURL(const GURL& url) {
-  if (!url.is_valid() || !url.IsStandard())
+  if (!url.is_valid() || !url.IsStandard()) {
     return GURL();
+  }
 
   GURL::Replacements replacements;
   replacements.ClearUsername();
@@ -79,14 +81,29 @@ SafeBrowsingState GetSafeBrowsingState(const PrefService& prefs) {
   }
 }
 
+void EnableSafeBrowsingSettingSetLocallyPref(PrefService* prefs) {
+  // Explicitly set the kSafeBrowsingSyncedEnhancedProtectionSetLocally to true
+  // after the user manually sets the safe browsing state using the settings UI.
+  // Setting this value in this API makes sure we do not show multiple Synced
+  // Enhanced Protection notifications or show it on the device where the user
+  // modified the setting.
+  if (base::FeatureList::IsEnabled(safe_browsing::kEsbAsASyncedSetting)) {
+    prefs->SetBoolean(prefs::kSafeBrowsingSyncedEnhancedProtectionSetLocally,
+                      true);
+    // Update the pref value whenever the Safe Browsing setting is changed.
+    prefs->SetTime(prefs::kSafeBrowsingSyncedEnhancedProtectionUpdateTimestamp,
+                   base::Time());
+  }
+}
+
 void SetSafeBrowsingState(PrefService* prefs,
                           SafeBrowsingState state,
-                          bool is_esb_enabled_in_sync) {
+                          bool is_esb_enabled_by_account_integration) {
   if (state == SafeBrowsingState::ENHANCED_PROTECTION) {
     SetEnhancedProtectionPref(prefs, true);
     SetStandardProtectionPref(prefs, true);
     prefs->SetBoolean(prefs::kEnhancedProtectionEnabledViaTailoredSecurity,
-                      is_esb_enabled_in_sync);
+                      is_esb_enabled_by_account_integration);
   } else if (state == SafeBrowsingState::STANDARD_PROTECTION) {
     SetEnhancedProtectionPref(prefs, false);
     SetStandardProtectionPref(prefs, true);
@@ -107,25 +124,42 @@ bool IsEnhancedProtectionEnabled(const PrefService& prefs) {
          IsSafeBrowsingEnabled(prefs);
 }
 
-bool ExtendedReportingPrefExists(const PrefService& prefs) {
-  return prefs.HasPrefPath(prefs::kSafeBrowsingScoutReportingEnabled);
-}
-
 ExtendedReportingLevel GetExtendedReportingLevel(const PrefService& prefs) {
+  if (base::FeatureList::IsEnabled(kExtendedReportingRemovePrefDependency)) {
+    // If it is enabled and the currently the deprecation flag is on,
+    // it means this is an ESB user.
+    return IsEnhancedProtectionEnabled(prefs) ? SBER_LEVEL_ENHANCED_PROTECTION
+                                              : SBER_LEVEL_OFF;
+  }
   return IsExtendedReportingEnabled(prefs) ? SBER_LEVEL_SCOUT : SBER_LEVEL_OFF;
 }
 
 bool IsExtendedReportingOptInAllowed(const PrefService& prefs) {
+  if (base::FeatureList::IsEnabled(kExtendedReportingRemovePrefDependency)) {
+    return false;
+  }
   return prefs.GetBoolean(prefs::kSafeBrowsingExtendedReportingOptInAllowed);
 }
 
 bool IsExtendedReportingEnabled(const PrefService& prefs) {
+  if (base::FeatureList::IsEnabled(kExtendedReportingRemovePrefDependency)) {
+    return IsEnhancedProtectionEnabled(prefs);
+  }
+  return (IsSafeBrowsingEnabled(prefs) &&
+          prefs.GetBoolean(prefs::kSafeBrowsingScoutReportingEnabled)) ||
+         IsEnhancedProtectionEnabled(prefs);
+}
+
+bool IsExtendedReportingEnabledBypassDeprecationFlag(const PrefService& prefs) {
   return (IsSafeBrowsingEnabled(prefs) &&
           prefs.GetBoolean(prefs::kSafeBrowsingScoutReportingEnabled)) ||
          IsEnhancedProtectionEnabled(prefs);
 }
 
 bool IsExtendedReportingPolicyManaged(const PrefService& prefs) {
+  if (base::FeatureList::IsEnabled(kExtendedReportingRemovePrefDependency)) {
+    return false;
+  }
   return prefs.IsManagedPreference(prefs::kSafeBrowsingScoutReportingEnabled);
 }
 
@@ -138,7 +172,7 @@ bool IsSafeBrowsingExtensionControlled(const PrefService& prefs) {
   // Checking only kSafeBrowsingEnabled since there is no extension API
   // that can control the kSafeBrowsingEnhanced protection pref.
   return prefs.FindPreference(prefs::kSafeBrowsingEnabled)
-             ->IsExtensionControlled();
+      ->IsExtensionControlled();
 }
 
 bool AreHashPrefixRealTimeLookupsAllowedByPolicy(const PrefService& prefs) {
@@ -157,15 +191,24 @@ bool IsSafeBrowsingProceedAnywayDisabled(const PrefService& prefs) {
   return prefs.GetBoolean(prefs::kSafeBrowsingProceedAnywayDisabled);
 }
 
+// TODO(crbug.com/349632699): Remove the metric, SafeBrowsing.Pref.Extended, and
+// its related code.
 void RecordExtendedReportingMetrics(const PrefService& prefs) {
   // This metric tracks the extended browsing opt-in based on whichever setting
   // the user is currently seeing. It tells us whether extended reporting is
   // happening for this user.
+  if (base::FeatureList::IsEnabled(kExtendedReportingRemovePrefDependency)) {
+    return;
+  }
   UMA_HISTOGRAM_BOOLEAN("SafeBrowsing.Pref.Extended",
                         IsExtendedReportingEnabled(prefs));
 }
 
 void RegisterProfilePrefs(PrefRegistrySimple* registry) {
+  // TODO(crbug.com/422747384): Implement correct logic to set bundle level
+  // based on user's safe browsing status.
+  registry->RegisterIntegerPref(prefs::kSecuritySettingsBundle,
+                                SecuritySettingsBundleLevel::STANDARD);
   registry->RegisterListPref(prefs::kSafeBrowsingCsdPingTimestamps);
   registry->RegisterBooleanPref(prefs::kSafeBrowsingScoutReportingEnabled,
                                 false);
@@ -180,9 +223,21 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
   registry->RegisterBooleanPref(
       prefs::kSafeBrowsingEnabled, true,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterBooleanPref(prefs::kSafeBrowsingEnhanced, false);
+  if (base::FeatureList::IsEnabled(kEsbAsASyncedSetting)) {
+    registry->RegisterBooleanPref(
+        prefs::kSafeBrowsingEnhanced, false,
+        user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  } else {
+    registry->RegisterBooleanPref(prefs::kSafeBrowsingEnhanced, false);
+  }
   registry->RegisterBooleanPref(prefs::kSafeBrowsingProceedAnywayDisabled,
                                 false);
+  registry->RegisterIntegerPref(
+      prefs::kSafeBrowsingSyncedEnhancedProtectionRetryState,
+      TailoredSecurityRetryState::UNSET);
+  registry->RegisterTimePref(
+      prefs::kSafeBrowsingSyncedEnhancedProtectionNextRetryTimestamp,
+      base::Time());
   registry->RegisterDictionaryPref(prefs::kSafeBrowsingIncidentsSent);
   registry->RegisterDictionaryPref(
       prefs::kSafeBrowsingUnhandledGaiaPasswordReuses);
@@ -196,11 +251,6 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
                                 PASSWORD_PROTECTION_OFF);
   registry->RegisterInt64Pref(prefs::kAdvancedProtectionLastRefreshInUs, 0);
   registry->RegisterBooleanPref(prefs::kAdvancedProtectionAllowed, true);
-  registry->RegisterIntegerPref(
-      prefs::kSafeBrowsingEnterpriseRealTimeUrlCheckMode,
-      REAL_TIME_CHECK_DISABLED);
-  registry->RegisterIntegerPref(
-      prefs::kSafeBrowsingEnterpriseRealTimeUrlCheckScope, 0);
   registry->RegisterInt64Pref(prefs::kSafeBrowsingMetricsLastLogTime, 0);
   registry->RegisterDictionaryPref(prefs::kSafeBrowsingEventTimestamps);
   registry->RegisterTimePref(
@@ -213,11 +263,16 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
       prefs::kAccountTailoredSecurityShownNotification, false);
   registry->RegisterBooleanPref(
       prefs::kEnhancedProtectionEnabledViaTailoredSecurity, false);
+  registry->RegisterBooleanPref(
+      prefs::kSafeBrowsingSyncedEnhancedProtectionSetLocally, false);
+  registry->RegisterTimePref(
+      prefs::kSafeBrowsingSyncedEnhancedProtectionUpdateTimestamp,
+      base::Time());
   registry->RegisterTimePref(prefs::kTailoredSecuritySyncFlowLastRunTime,
                              base::Time());
   registry->RegisterTimePref(prefs::kTailoredSecurityNextSyncFlowTimestamp,
                              base::Time());
-  // TODO(crbug.com/1469133): remove sync flow last user interaction pref.
+  // TODO(crbug.com/40925236): remove sync flow last user interaction pref.
   registry->RegisterIntegerPref(
       prefs::kTailoredSecuritySyncFlowLastUserInteractionState,
       TailoredSecurityRetryState::UNSET);
@@ -235,9 +290,9 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
                                 true);
   registry->RegisterBooleanPref(prefs::kSafeBrowsingSurveysEnabled, true);
   registry->RegisterBooleanPref(prefs::kSafeBrowsingDeepScanningEnabled, true);
-  registry->RegisterBooleanPref(prefs::kSafeBrowsingDeepScanPromptSeen, false);
-  registry->RegisterTimePref(prefs::kSafeBrowsingEsbEnabledTimestamp,
-                             base::Time());
+  registry->RegisterBooleanPref(
+      prefs::kSafeBrowsingScoutReportingEnabledWhenDeprecated, false);
+  registry->RegisterDictionaryPref(prefs::kExternalAppRedirectTimestamps);
 }
 
 const base::Value::Dict& GetExtensionTelemetryConfig(const PrefService& prefs) {
@@ -271,6 +326,9 @@ void SetExtendedReportingPrefAndMetric(
     PrefService* prefs,
     bool value,
     ExtendedReportingOptInLocation location) {
+  // TODO(crbug.com/336547987): Re-enable this DCHECK after the stage 2 is
+  // rolloed out. During stage 1, we still allow users to opt-in and opt-out.
+  // DCHECK(!base::FeatureList::IsEnabled(kExtendedReportingRemovePrefDependency));
   prefs->SetBoolean(prefs::kSafeBrowsingScoutReportingEnabled, value);
   RecordExtendedReportingPrefChanged(*prefs, location);
 }
@@ -370,19 +428,22 @@ void CanonicalizeDomainList(
     url::CanonHostInfo host_info;
     std::string canonical_host =
         net::CanonicalizeHost(value.GetString(), &host_info);
-    if (!canonical_host.empty())
+    if (!canonical_host.empty()) {
       out_canonicalized_domain_list->push_back(canonical_host);
+    }
   }
 }
 
 bool IsURLAllowlistedByPolicy(const GURL& url, const PrefService& pref) {
-  if (!pref.HasPrefPath(prefs::kSafeBrowsingAllowlistDomains))
+  if (!pref.HasPrefPath(prefs::kSafeBrowsingAllowlistDomains)) {
     return false;
+  }
   const base::Value::List& allowlist =
       pref.GetList(prefs::kSafeBrowsingAllowlistDomains);
   for (const base::Value& value : allowlist) {
-    if (url.DomainIs(value.GetString()))
+    if (url.DomainIs(value.GetString())) {
       return true;
+    }
   }
   return false;
 }
@@ -400,8 +461,9 @@ std::vector<std::string> GetURLAllowlistByPolicy(PrefService* pref_service) {
 bool MatchesEnterpriseAllowlist(const PrefService& pref,
                                 const std::vector<GURL>& url_chain) {
   for (const GURL& url : url_chain) {
-    if (IsURLAllowlistedByPolicy(url, pref))
+    if (IsURLAllowlistedByPolicy(url, pref)) {
       return true;
+    }
   }
   return false;
 }
@@ -411,30 +473,45 @@ void GetPasswordProtectionLoginURLsPref(const PrefService& prefs,
   const base::Value::List& pref_value =
       prefs.GetList(prefs::kPasswordProtectionLoginURLs);
   out_login_url_list->clear();
+#if BUILDFLAG(IS_CHROMEOS)
+  // Include known authn URL by default.
+  out_login_url_list->push_back(GURL("chrome://os-settings"));
+#endif
   for (const base::Value& value : pref_value) {
     GURL login_url(value.GetString());
-    // Skip invalid or none-http/https login URLs.
-    if (login_url.is_valid() && login_url.SchemeIsHTTPOrHTTPS())
+    // Skip invalid or none-http/https/chrome login URLs.
+    if (login_url.is_valid() &&
+        (login_url.SchemeIsHTTPOrHTTPS() || login_url.SchemeIs("chrome"))) {
       out_login_url_list->push_back(login_url);
+    }
   }
 }
 
 bool MatchesPasswordProtectionLoginURL(const GURL& url,
                                        const PrefService& prefs) {
-  if (!url.is_valid())
+  if (!url.is_valid()) {
     return false;
+  }
 
   std::vector<GURL> login_urls;
   GetPasswordProtectionLoginURLsPref(prefs, &login_urls);
   return MatchesURLList(url, login_urls);
 }
 
-bool MatchesURLList(const GURL& target_url, const std::vector<GURL> url_list) {
-  if (url_list.empty() || !target_url.is_valid())
+bool MatchesURLList(const GURL& target_url, const std::vector<GURL>& url_list) {
+  if (url_list.empty() || !target_url.is_valid()) {
     return false;
+  }
   GURL simple_target_url = GetSimplifiedURL(target_url);
   for (const GURL& url : url_list) {
-    if (GetSimplifiedURL(url) == simple_target_url) {
+    GURL simple_url = GetSimplifiedURL(url);
+    if (simple_url == simple_target_url) {
+      return true;
+    }
+    // Append trailing slash in case the policy specifies a URL with a path
+    // that does not append a slash. Simplified URLs will not match if the
+    // sole difference is a missing trailing slash.
+    if (simple_url.spec() + "/" == simple_target_url.spec()) {
       return true;
     }
   }
@@ -442,8 +519,9 @@ bool MatchesURLList(const GURL& target_url, const std::vector<GURL> url_list) {
 }
 
 GURL GetPasswordProtectionChangePasswordURLPref(const PrefService& prefs) {
-  if (!prefs.HasPrefPath(prefs::kPasswordProtectionChangePasswordURL))
+  if (!prefs.HasPrefPath(prefs::kPasswordProtectionChangePasswordURL)) {
     return GURL();
+  }
   GURL change_password_url_from_pref(
       prefs.GetString(prefs::kPasswordProtectionChangePasswordURL));
   // Skip invalid or non-http/https URL.
@@ -457,12 +535,14 @@ GURL GetPasswordProtectionChangePasswordURLPref(const PrefService& prefs) {
 
 bool MatchesPasswordProtectionChangePasswordURL(const GURL& url,
                                                 const PrefService& prefs) {
-  if (!url.is_valid())
+  if (!url.is_valid()) {
     return false;
+  }
 
   GURL change_password_url = GetPasswordProtectionChangePasswordURLPref(prefs);
-  if (change_password_url.is_empty())
+  if (change_password_url.is_empty()) {
     return false;
+  }
 
   return GetSimplifiedURL(change_password_url) == GetSimplifiedURL(url);
 }

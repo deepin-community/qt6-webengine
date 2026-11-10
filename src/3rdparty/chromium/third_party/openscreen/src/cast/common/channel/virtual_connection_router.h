@@ -49,7 +49,7 @@ class VirtualConnectionRouter final : public CastSocket::Client {
   class SocketErrorHandler {
    public:
     virtual void OnClose(CastSocket* socket) = 0;
-    virtual void OnError(CastSocket* socket, Error error) = 0;
+    virtual void OnError(CastSocket* socket, const Error& error) = 0;
 
    protected:
     virtual ~SocketErrorHandler();
@@ -64,48 +64,46 @@ class VirtualConnectionRouter final : public CastSocket::Client {
                      VirtualConnection::AssociatedData associated_data);
 
   // Removes a VirtualConnection and returns true if a connection matching
-  // |virtual_connection| was found and removed.
+  // `virtual_connection` was found and removed.
   bool RemoveConnection(const VirtualConnection& virtual_connection,
                         VirtualConnection::CloseReason reason);
 
   // Removes all VirtualConnections whose local endpoint matches the given
-  // |local_id|.
+  // `local_id`.
   void RemoveConnectionsByLocalId(const std::string& local_id);
 
   // Removes all VirtualConnections whose traffic passes over the socket
-  // referenced by |socket_id|.
+  // referenced by `socket_id`.
   void RemoveConnectionsBySocketId(int socket_id);
 
-  // Returns the AssociatedData for a |virtual_connection| if a connection
+  // Returns the AssociatedData for a `virtual_connection` if a connection
   // exists, nullopt otherwise. The pointer isn't stable in the long term; so,
   // if it actually needs to be stored for later, the caller should make a copy.
   std::optional<const VirtualConnection::AssociatedData*> GetConnectionData(
       const VirtualConnection& virtual_connection) const;
 
   // Adds/Removes a CastMessageHandler for all messages destined for the given
-  // |endpoint| referred to by |local_id|, and returns whether the given
-  // |local_id| was successfully added/removed.
+  // `endpoint` referred to by `local_id`, and returns whether the given
+  // `local_id` was successfully added/removed.
   //
   // Note: Clients will need to separately call AddConnection(), and
   // RemoveConnection() or RemoveConnectionsByLocalId().
   bool AddHandlerForLocalId(std::string local_id, CastMessageHandler* endpoint);
   bool RemoveHandlerForLocalId(const std::string& local_id);
 
-  // |error_handler| must live until either its OnError or OnClose is called.
+  // `error_handler` must live until either its OnError or OnClose is called.
   void TakeSocket(SocketErrorHandler* error_handler,
                   std::unique_ptr<CastSocket> socket);
   void CloseSocket(int id);
 
-  Error Send(VirtualConnection virtual_conn,
-             ::cast::channel::CastMessage message);
+  Error Send(VirtualConnection virtual_conn, proto::CastMessage message);
 
   Error BroadcastFromLocalPeer(std::string local_id,
-                               ::cast::channel::CastMessage message);
+                               proto::CastMessage message);
 
   // CastSocket::Client overrides.
-  void OnError(CastSocket* socket, Error error) override;
-  void OnMessage(CastSocket* socket,
-                 ::cast::channel::CastMessage message) override;
+  void OnError(CastSocket* socket, const Error& error) override;
+  void OnMessage(CastSocket* socket, proto::CastMessage message) override;
 
  protected:
   friend class ConnectionNamespaceHandler;
@@ -117,7 +115,7 @@ class VirtualConnectionRouter final : public CastSocket::Client {
  private:
   // This struct simply stores the remainder of the data {VirtualConnection,
   // VirtualConnection::AssociatedData} that is not broken up into map keys for
-  // |connections_|.
+  // `connections_`.
   struct VCTail {
     std::string peer_id;
     VirtualConnection::AssociatedData data;

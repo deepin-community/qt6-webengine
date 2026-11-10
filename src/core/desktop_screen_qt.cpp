@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "desktop_screen_qt.h"
 #include "ui/base/ozone_buildflags.h"
@@ -130,7 +131,7 @@ public:
     }
 };
 #endif
-#if BUILDFLAG(IS_CHROMEOS_LACROS) || BUILDFLAG(IS_LINUX)
+#if BUILDFLAG(IS_LINUX)
 std::unique_ptr<display::Screen::ScreenSaverSuspender> DesktopScreenQt::SuspendScreenSaver()
 {
 #if defined(USE_XSCREENSAVER)

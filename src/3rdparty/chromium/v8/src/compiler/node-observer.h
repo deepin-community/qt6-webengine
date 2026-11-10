@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef V8_COMPILER_NODE_OBSERVER_H_
+#define V8_COMPILER_NODE_OBSERVER_H_
+
 // This file declares the implementation of a new intrinsic %ObserveNode(expr),
 // which has noop semantics but triggers the invocation of callbacks on a
 // NodeObserver object. The NodeObserver is set on the OptimizedCompilationInfo
@@ -13,9 +16,6 @@
 //
 // This provides the infrastructure to write unit tests that check for the
 // construction of or the lowering to specific nodes in the TurboFan graphs.
-
-#ifndef V8_COMPILER_NODE_OBSERVER_H_
-#define V8_COMPILER_NODE_OBSERVER_H_
 
 #include "src/compiler/node.h"
 #include "src/compiler/operator.h"
@@ -35,12 +35,12 @@ class ObservableNodeState {
   uint32_t id() const { return id_; }
   const Operator* op() const { return op_; }
   int16_t opcode() const { return op_->opcode(); }
-  Type type() const { return type_; }
+  compiler::Type type() const { return type_; }
 
  private:
   uint32_t id_;
   const Operator* op_;
-  Type type_;
+  compiler::Type type_;
 };
 
 inline bool operator==(const ObservableNodeState& lhs,

@@ -64,11 +64,11 @@ class CXFA_LocaleValue {
                            const WideString& wsFormat,
                            GCedLocaleIface* pLocale);
 
-  bool IsValid() const { return m_bValid; }
-  const WideString& GetValue() const { return m_wsValue; }
-  ValueType GetType() const { return m_eType; }
+  bool IsValid() const { return valid_; }
+  const WideString& GetValue() const { return value_; }
+  ValueType GetType() const { return type_; }
   double GetDoubleNum() const;
-  bool SetDate(const CFX_DateTime& d);
+  void SetDate(const CFX_DateTime& d);
   CFX_DateTime GetDate() const;
   CFX_DateTime GetTime() const;
 
@@ -81,17 +81,17 @@ class CXFA_LocaleValue {
   bool ValidateCanonicalDate(const WideString& wsDate, CFX_DateTime* unDate);
   bool ValidateCanonicalTime(const WideString& wsTime);
 
-  bool SetTime(const CFX_DateTime& t);
-  bool SetDateTime(const CFX_DateTime& dt);
+  void SetTime(const CFX_DateTime& t);
+  void SetDateTime(const CFX_DateTime& dt);
 
   bool ParsePatternValue(const WideString& wsValue,
                          const WideString& wsPattern,
                          GCedLocaleIface* pLocale);
 
-  UnownedPtr<CXFA_LocaleMgr> m_pLocaleMgr;  // Ok, stack-only.
-  WideString m_wsValue;
-  ValueType m_eType = ValueType::kNull;
-  bool m_bValid = true;
+  UnownedPtr<CXFA_LocaleMgr> locale_mgr_;  // Ok, stack-only.
+  WideString value_;
+  ValueType type_ = ValueType::kNull;
+  bool valid_ = true;
 };
 
 #endif  // XFA_FXFA_PARSER_CXFA_LOCALEVALUE_H_

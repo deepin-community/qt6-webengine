@@ -1,10 +1,13 @@
-load("//bazel:skia_rules.bzl", "exports_files_legacy", "skia_filegroup")
+load("//bazel:skia_rules.bzl", "skia_filegroup")
+
+package(
+    default_applicable_licenses = ["//:license"],
+)
 
 licenses(["notice"])
 
-exports_files_legacy()
-
-# Group is exported to //gn/gpu.gni:skia_shared_vk_sources.
+# This is a separate gropu to make it easier to enforce that Graphite does not
+# include Ganesh-specific Vulkan headers.
 skia_filegroup(
     name = "shared_public_hdrs",
     srcs = [
@@ -12,19 +15,11 @@ skia_filegroup(
         "VulkanExtensions.h",
         "VulkanMemoryAllocator.h",
         "VulkanMutableTextureState.h",
+        "VulkanPreferredFeatures.h",
         "VulkanTypes.h",
     ],
-)
-
-# Group is exported to //gn/gpu.gni:skia_gpu_vk_public.
-skia_filegroup(
-    name = "public_hdrs",
-    srcs = [
-        "GrVkBackendContext.h",
-        "GrVkExtensions.h",
-        "GrVkMemoryAllocator.h",
-        "GrVkTypes.h",
-        ":shared_public_hdrs",
+    visibility = [
+        "//src/gpu/ganesh/vk:__pkg__",
+        "//src/gpu/vk:__pkg__",
     ],
-    visibility = ["//include/gpu:__pkg__"],
 )

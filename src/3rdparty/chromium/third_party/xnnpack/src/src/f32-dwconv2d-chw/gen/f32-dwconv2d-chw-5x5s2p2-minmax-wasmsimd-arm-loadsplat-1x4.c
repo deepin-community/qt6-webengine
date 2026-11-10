@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-dwconv2d-chw/5x5s2p2-wasmsimd-loadsplat.c.in
 //   Generator: tools/xngen
@@ -11,8 +12,9 @@
 
 #include <wasm_simd128.h>
 
-#include <xnnpack/dwconv.h>
-#include <xnnpack/math.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/dwconv.h"
+#include "src/xnnpack/math.h"
 
 
 
@@ -25,7 +27,7 @@ void xnn_f32_dwconv2d_chw_ukernel_5x5s2p2__wasmsimd_arm_loadsplat_1x4(
     const float* zero,
     float* output,
     uint32_t padding_top,
-    const union xnn_f32_chw_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f32_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(input_height != 0);
   assert(input_width != 0);
@@ -33,10 +35,14 @@ void xnn_f32_dwconv2d_chw_ukernel_5x5s2p2__wasmsimd_arm_loadsplat_1x4(
   assert(padding_top >= 1);
   assert(padding_top <= 2);
 
-  const v128_t vmask_even = wasm_v128_load(params->wasmsimd_stride2.mask_even);
-  const v128_t vmask_odd  = wasm_v128_load(params->wasmsimd_stride2.mask_odd);
-  const v128_t vmax = wasm_v128_load64_splat(params->wasmsimd_stride2.max);
-  const v128_t vmin = wasm_v128_load64_splat(params->wasmsimd_stride2.min);
+  const v128_t vmax = wasm_v128_load32_splat(&params->scalar.max);
+  const v128_t vmin = wasm_v128_load32_splat(&params->scalar.min);
+  XNN_FORCE_REALIZATION(vmax);
+  XNN_FORCE_REALIZATION(vmin);
+
+  static const int32_t mask_table[8] = {-1, -1, -1, -1, 0, 0, 0, 0};
+  const v128_t vmask_even = wasm_v128_load(&mask_table[3 - (((input_width - 4) & 31) >> 3)]);
+  const v128_t vmask_odd = wasm_v128_load(&mask_table[4 - ((((input_width - 4) & 31) + 4) >> 3)]);
 
   const v128_t vbias = wasm_v128_load32_splat(weights);
   const v128_t vk00 = wasm_v128_load32_splat(weights + 1);

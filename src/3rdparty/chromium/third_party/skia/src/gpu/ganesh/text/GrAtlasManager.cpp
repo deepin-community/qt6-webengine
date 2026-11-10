@@ -7,6 +7,7 @@
 
 #include "src/gpu/ganesh/text/GrAtlasManager.h"
 
+#include "include/core/SkColorType.h"
 #include "include/core/SkSize.h"
 #include "include/core/SkSpan.h"
 #include "include/private/base/SkMalloc.h"
@@ -26,8 +27,6 @@
 
 #include <cstring>
 #include <tuple>
-
-enum SkColorType : int;
 
 using Glyph = sktext::gpu::Glyph;
 using MaskFormat = skgpu::MaskFormat;
@@ -130,17 +129,28 @@ static void get_packed_glyph_image(
         };
         constexpr int a565Bpp = MaskFormatBytesPerPixel(MaskFormat::kA565);
         constexpr int argbBpp = MaskFormatBytesPerPixel(MaskFormat::kARGB);
+        constexpr bool kBGRAIsNative = kN32_SkColorType == kBGRA_8888_SkColorType;
         char* dstRow = (char*)dst;
         for (int y = 0; y < height; y++) {
             dst = dstRow;
             for (int x = 0; x < width; x++) {
                 uint16_t color565 = 0;
                 memcpy(&color565, src, a565Bpp);
-                uint32_t colorRGBA = GrColorPackRGBA(masks.getRed(color565),
-                                                     masks.getGreen(color565),
-                                                     masks.getBlue(color565),
-                                                     0xFF);
-                memcpy(dst, &colorRGBA, argbBpp);
+                uint32_t color8888;
+                // On Windows (and possibly others), font data is stored as BGR.
+                // So we need to swizzle the data to reflect that.
+                if (kBGRAIsNative) {
+                    color8888 = GrColorPackRGBA(masks.getBlue(color565),
+                                                masks.getGreen(color565),
+                                                masks.getRed(color565),
+                                                0xFF);
+                } else {
+                    color8888 = GrColorPackRGBA(masks.getRed(color565),
+                                                masks.getGreen(color565),
+                                                masks.getBlue(color565),
+                                                0xFF);
+                }
+                memcpy(dst, &color8888, argbBpp);
                 src = (const char*)src + a565Bpp;
                 dst = (char*)dst + argbBpp;
             }
@@ -168,8 +178,7 @@ GrDrawOpAtlas::ErrorCode GrAtlasManager::addGlyphToAtlas(const SkGlyph& skGlyph,
     }
     SkASSERT(glyph != nullptr);
 
-    MaskFormat glyphFormat = Glyph::FormatFromSkGlyph(skGlyph.maskFormat());
-    MaskFormat expectedMaskFormat = this->resolveMaskFormat(glyphFormat);
+    MaskFormat expectedMaskFormat = this->resolveMaskFormat(glyph->fGlyphEntryKey.fFormat);
     int bytesPerPixel = MaskFormatBytesPerPixel(expectedMaskFormat);
 
     int padding;
@@ -203,6 +212,14 @@ GrDrawOpAtlas::ErrorCode GrAtlasManager::addGlyphToAtlas(const SkGlyph& skGlyph,
 
     const int width = skGlyph.width() + 2*padding;
     const int height = skGlyph.height() + 2*padding;
+
+    // Verify that the glyph data (received from potentially untrusted source) actually has room
+    // for the padding. Under normal flow, this should always be the case, but if a glyph was
+    // corrupted or manipulated it has no bearing on the code that *should* have produced the glyph.
+    // It's strict comparison since equality would imply the original glyph was empty, which should
+    // have been dropped.
+    SkASSERT_RELEASE(width > 2*srcPadding && height > 2*srcPadding);
+
     int rowBytes = width * bytesPerPixel;
     size_t size = height * rowBytes;
 
@@ -289,7 +306,7 @@ std::tuple<bool, int> GlyphVector::regenerateAtlasForGanesh(
 
     uint64_t currentAtlasGen = atlasManager->atlasGeneration(maskFormat);
 
-    this->packedGlyphIDToGlyph(target->strikeCache());
+    this->packedGlyphIDToGlyph(target->strikeCache(), maskFormat);
 
     if (fAtlasGeneration != currentAtlasGen) {
         // Calculate the texture coordinates for the vertexes during first use (fAtlasGeneration
@@ -306,9 +323,10 @@ std::tuple<bool, int> GlyphVector::regenerateAtlasForGanesh(
         for (const Variant& variant : glyphs) {
             Glyph* gpuGlyph = variant.glyph;
             SkASSERT(gpuGlyph != nullptr);
-
+            SkASSERT(gpuGlyph->fGlyphEntryKey.fFormat == maskFormat);
             if (!atlasManager->hasGlyph(maskFormat, gpuGlyph)) {
-                const SkGlyph& skGlyph = *metricsAndImages.glyph(gpuGlyph->fPackedID);
+                const SkGlyph& skGlyph =
+                    *metricsAndImages.glyph(gpuGlyph->fGlyphEntryKey.fPackedID);
                 auto code = atlasManager->addGlyphToAtlas(
                         skGlyph, gpuGlyph, srcPadding, target->resourceProvider(), uploadTarget);
                 if (code != GrDrawOpAtlas::ErrorCode::kSucceeded) {

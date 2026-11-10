@@ -4,22 +4,23 @@
 
 #include "content/browser/xr/service/vr_service_impl.h"
 
-#include <optional>
+#include <algorithm>
 #include <utility>
 #include <vector>
 
 #include "base/containers/contains.h"
-#include "base/containers/cxx20_erase.h"
+#include "base/containers/to_vector.h"
 #include "base/dcheck_is_on.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/ranges/algorithm.h"
 #include "base/stl_util.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "base/trace_event/common/trace_event_common.h"
 #include "build/build_config.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
+#include "content/browser/permissions/permission_util.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/browser/xr/metrics/session_metrics_helper.h"
 #include "content/browser/xr/service/browser_xr_runtime_impl.h"
@@ -29,6 +30,7 @@
 #include "content/browser/xr/webxr_internals/webxr_internals_handler_impl.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/permission_controller.h"
+#include "content/public/browser/permission_descriptor_util.h"
 #include "content/public/browser/permission_request_description.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -36,6 +38,7 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/origin_util.h"
+#include "content/public/common/page_visibility_state.h"
 #include "device/vr/buildflags/buildflags.h"
 #include "device/vr/public/cpp/features.h"
 #include "device/vr/public/cpp/session_mode.h"
@@ -102,7 +105,7 @@ std::vector<blink::PermissionType> GetRequiredPermissionsForFeatures(
   return permissions;
 }
 
-// TODO(https://crbug.com/1480022): Replace with base::ranges::set_difference
+// TODO(crbug.com/40930146): Replace with std::ranges::set_difference
 std::unordered_set<device::mojom::XRSessionFeature> GetMissingRequiredFeatures(
     const std::unordered_set<device::mojom::XRSessionFeature>& enabled_features,
     const std::unordered_set<device::mojom::XRSessionFeature>&
@@ -146,9 +149,12 @@ void RejectSession(device::mojom::VRService::RequestSessionCallback callback,
         rejected_features->begin(), rejected_features->end());
   }
 
-  content::XRRuntimeManagerImpl::GetOrCreateInstance()
-      ->GetLoggerManager()
-      .RecordSessionRejected(std::move(session_rejected_record));
+  auto* runtime_manager_impl = static_cast<content::XRRuntimeManagerImpl*>(
+      content::XRRuntimeManager::GetInstanceIfCreated());
+  if (runtime_manager_impl) {
+    runtime_manager_impl->GetLoggerManager().RecordSessionRejected(
+        std::move(session_rejected_record));
+  }
 
   std::move(callback).Run(
       device::mojom::RequestSessionResult::NewFailureReason(error));
@@ -208,7 +214,8 @@ VRServiceImpl::VRServiceImpl(content::RenderFrameHost* render_frame_host)
   DCHECK(render_frame_host_);
   DVLOG(2) << __func__;
 
-  runtime_manager_ = XRRuntimeManagerImpl::GetOrCreateInstance();
+  runtime_manager_ =
+      XRRuntimeManagerImpl::GetOrCreateInstance(*GetWebContents());
   runtime_manager_->AddService(this);
 
   magic_window_controllers_.set_disconnect_handler(base::BindRepeating(
@@ -221,7 +228,7 @@ VRServiceImpl::VRServiceImpl(content::RenderFrameHost* render_frame_host)
 VRServiceImpl::VRServiceImpl(base::PassKey<XRRuntimeManagerTest>)
     : render_frame_host_(nullptr) {
   DVLOG(2) << __func__;
-  runtime_manager_ = XRRuntimeManagerImpl::GetOrCreateInstance();
+  runtime_manager_ = XRRuntimeManagerImpl::GetOrCreateInstanceForTesting();
   runtime_manager_->AddService(this);
 }
 
@@ -234,6 +241,11 @@ VRServiceImpl::~VRServiceImpl() {
        it != magic_window_controllers_.end(); ++it) {
     OnInlineSessionDisconnected(it.id());
   }
+
+  if (on_exit_present_) {
+    std::move(on_exit_present_).Run();
+  }
+
   runtime_manager_->RemoveService(this);
 }
 
@@ -367,8 +379,10 @@ void VRServiceImpl::OnInlineSessionCreated(
       session_metrics_recorder = GetSessionMetricsHelper()->StartInlineSession(
           *(request.options), enabled_features, id.GetUnsafeValue());
 
-  OnSessionCreated(std::move(request), std::move(session_result->session),
-                   std::move(session_metrics_recorder));
+  OnSessionCreated(
+      std::move(request), std::move(session_result->session),
+      std::move(session_metrics_recorder),
+      mojo::PendingRemote<device::mojom::WebXrInternalsRendererListener>());
 }
 
 void VRServiceImpl::OnImmersiveSessionCreated(
@@ -414,6 +428,8 @@ void VRServiceImpl::OnImmersiveSessionCreated(
           GetSessionMetricsHelper()->StartImmersiveSession(
               request.runtime_id, *(request.options), enabled_features);
 
+  render_frame_host_->GetProcess()->OnImmersiveXrSessionStarted();
+
   // If the session specified a FrameSinkId that means that it is handling its
   // own compositing in a way that we should notify the WebContents about.
   if (session_result->frame_sink_id) {
@@ -426,7 +442,8 @@ void VRServiceImpl::OnImmersiveSessionCreated(
   }
 
   OnSessionCreated(std::move(request), std::move(session_result->session),
-                   std::move(session_metrics_recorder));
+                   std::move(session_metrics_recorder),
+                   runtime_manager_->GetLoggerManager().BindRenderListener());
 }
 
 void VRServiceImpl::OnInlineSessionDisconnected(
@@ -455,7 +472,9 @@ void VRServiceImpl::OnSessionCreated(
     SessionRequestData request,
     device::mojom::XRSessionPtr session,
     mojo::PendingRemote<device::mojom::XRSessionMetricsRecorder>
-        session_metrics_recorder) {
+        session_metrics_recorder,
+    mojo::PendingRemote<device::mojom::WebXrInternalsRendererListener>
+        xr_internals_listener) {
   DVLOG(2) << __func__ << ": session_runtime_id=" << request.runtime_id;
 
   // Not checking for validity of |session|, since that's done by
@@ -475,6 +494,8 @@ void VRServiceImpl::OnSessionCreated(
   auto success = device::mojom::RequestSessionSuccess::New();
   success->session = std::move(session);
   success->metrics_recorder = std::move(session_metrics_recorder);
+  success->trace_id = request.options->trace_id;
+  success->xr_internals_listener = std::move(xr_internals_listener);
 
   std::move(request.callback)
       .Run(device::mojom::RequestSessionResult::NewSuccess(std::move(success)));
@@ -536,11 +557,22 @@ void VRServiceImpl::RequestSession(
     return;
   }
 
+  if (render_frame_host_->GetVisibilityState() !=
+      content::PageVisibilityState::kVisible) {
+    // Page visibility is verified blink-side, so this should never fail unless
+    // the requesting client is misbehaving or compromised. Treat non-visible
+    // page as unknown failure:
+    RejectSession(std::move(callback), options->trace_id,
+                  device::mojom::RequestSessionError::UNKNOWN_FAILURE,
+                  "Page is not visible.");
+    return;
+  }
+
   // The consent flow cannot differentiate between optional and required
   // features, but we don't need to block creation if an optional feature is
   // not supported. Remove all unsupported optional features from the
   // optional_features collection before handing it off.
-  base::EraseIf(options->optional_features, [runtime](auto& feature) {
+  std::erase_if(options->optional_features, [runtime](auto& feature) {
     return !runtime->SupportsFeature(feature);
   });
 
@@ -548,6 +580,61 @@ void VRServiceImpl::RequestSession(
                              runtime->GetId());
 
   GetPermissionStatus(std::move(request), runtime);
+}
+
+void VRServiceImpl::DoRequestPermissions(
+    const std::vector<blink::PermissionType> request_permissions,
+    base::OnceCallback<void(const std::vector<blink::mojom::PermissionStatus>&,
+                            bool)> result_callback) {
+  PermissionController* permission_controller =
+      GetWebContents()->GetBrowserContext()->GetPermissionController();
+  CHECK(permission_controller);
+
+  std::vector<blink::mojom::PermissionStatus> current_statuses;
+  current_statuses.reserve(request_permissions.size());
+  for (auto permission_type : request_permissions) {
+    auto descriptor =
+        PermissionDescriptorUtil::CreatePermissionDescriptorForPermissionType(
+            permission_type);
+
+    blink::mojom::PermissionStatus status;
+    if (PermissionUtil::IsDevicePermission(descriptor)) {
+      status = permission_controller->GetCombinedPermissionAndDeviceStatus(
+          std::move(descriptor), render_frame_host_);
+    } else {
+      status = permission_controller->GetPermissionStatusForCurrentDocument(
+          std::move(descriptor), render_frame_host_);
+    }
+    current_statuses.push_back(status);
+  }
+
+  bool needs_prompt =
+      std::ranges::any_of(current_statuses, [](const auto& status) {
+        return status == blink::mojom::PermissionStatus::ASK;
+      });
+
+  // If we don't need to prompt the user, just return the results now.
+  if (!needs_prompt) {
+    std::move(result_callback).Run(current_statuses, /*needs_prompt=*/false);
+    return;
+  }
+
+  permission_controller->RequestPermissionsFromCurrentDocument(
+      render_frame_host_,
+      PermissionRequestDescription(
+          PermissionDescriptorUtil::
+              CreatePermissionDescriptorForPermissionTypes(request_permissions),
+          /*user_gesture=*/true),
+      base::BindOnce(
+          [](base::OnceCallback<void(
+                 const std::vector<blink::mojom::PermissionStatus>&, bool)>
+                 callback,
+             bool needs_prompt, const std::vector<PermissionResult>& results) {
+            std::move(callback).Run(
+                base::ToVector(results, &PermissionResult::status),
+                needs_prompt);
+          },
+          std::move(result_callback), needs_prompt));
 }
 
 void VRServiceImpl::GetPermissionStatus(SessionRequestData request,
@@ -560,25 +647,17 @@ void VRServiceImpl::GetPermissionStatus(SessionRequestData request,
 #if BUILDFLAG(ENABLE_OPENXR)
   if (request.options->mode == device::mojom::XRSessionMode::kImmersiveAr &&
       runtime->GetId() == device::mojom::XRDeviceId::OPENXR_DEVICE_ID) {
-    DCHECK(
-        base::FeatureList::IsEnabled(
-            device::features::kOpenXrExtendedFeatureSupport));
+    DCHECK(device::features::IsOpenXrArEnabled());
   }
 #endif
-
-  PermissionController* permission_controller =
-      GetWebContents()->GetBrowserContext()->GetPermissionController();
-  DCHECK(permission_controller);
 
   // Need to calculate the permissions before the call below, as otherwise
   // std::move nulls options out before `GetRequiredPermissions()` runs.
   const std::vector<blink::PermissionType> permissions_for_mode =
       GetRequiredPermissionsForMode(request.options->mode);
 
-  permission_controller->RequestPermissionsFromCurrentDocument(
-      render_frame_host_,
-      PermissionRequestDescription(permissions_for_mode,
-                                   /*user_gesture=*/true),
+  DoRequestPermissions(
+      permissions_for_mode,
       base::BindOnce(&VRServiceImpl::OnPermissionResultsForMode,
                      weak_ptr_factory_.GetWeakPtr(), std::move(request),
                      permissions_for_mode));
@@ -587,21 +666,27 @@ void VRServiceImpl::GetPermissionStatus(SessionRequestData request,
 void VRServiceImpl::OnPermissionResultsForMode(
     SessionRequestData request,
     const std::vector<blink::PermissionType>& permissions,
-    const std::vector<blink::mojom::PermissionStatus>& permission_statuses) {
+    const std::vector<blink::mojom::PermissionStatus>& results,
+    bool needs_prompt) {
   DVLOG(2) << __func__ << ": permissions.size()=" << permissions.size();
   DCHECK_EQ(permissions.size(), permission_statuses.size());
 
-  // Prolong the user activation since the user may have taken long enough to
-  // answer the permission prompts that the transient user activation expired.
-  // This is fine to do here, since we enforce that the activation existed prior
-  // to requesting permissions.
-  DVLOG(3) << __func__ << ": prolonging user activation, current status="
-           << render_frame_host_->HasTransientUserActivation();
-  render_frame_host_->NotifyUserActivation(
-      blink::mojom::UserActivationNotificationType::kInteraction);
+  if (needs_prompt) {
+    // Prolong the user activation since the user may have taken long enough to
+    // answer the permission prompts that the transient user activation expired.
+    // This is fine to do here, since we enforce that the activation existed
+    // prior to requesting permissions.
+    DVLOG(3) << __func__ << ": prolonging user activation, current status="
+             << render_frame_host_->HasTransientUserActivation();
+    render_frame_host_->NotifyUserActivation(
+        blink::mojom::UserActivationNotificationType::kInteraction);
+  } else {
+    DVLOG(3) << __func__
+             << ": NOT prolonging user activation (no prompt shown)";
+  }
 
   const XrPermissionResults permission_results(permissions,
-                                               permission_statuses);
+                                               results);
 
   bool is_consent_granted =
       permission_results.HasPermissionsFor(request.options->mode);
@@ -614,29 +699,43 @@ void VRServiceImpl::OnPermissionResultsForMode(
     return;
   }
 
-  PermissionController* permission_controller =
-      GetWebContents()->GetBrowserContext()->GetPermissionController();
-  DCHECK(permission_controller);
-
   const std::vector<blink::PermissionType> permissions_for_features =
       GetRequiredPermissionsForFeatures(request.required_features,
                                         request.optional_features);
 
-  permission_controller->RequestPermissionsFromCurrentDocument(
-      render_frame_host_,
-      PermissionRequestDescription(permissions_for_features,
-                                   /* user_gesture = */ true),
+  auto result_callback =
       base::BindOnce(&VRServiceImpl::OnPermissionResultsForFeatures,
                      weak_ptr_factory_.GetWeakPtr(), std::move(request),
-                     permissions_for_features));
+                     permissions_for_features);
+  if (permissions_for_features.empty()) {
+    std::move(result_callback).Run({}, /*needs_prompt=*/false);
+    return;
+  }
+
+  DoRequestPermissions(permissions_for_features, std::move(result_callback));
 }
 
 void VRServiceImpl::OnPermissionResultsForFeatures(
     SessionRequestData request,
     const std::vector<blink::PermissionType>& permissions,
-    const std::vector<blink::mojom::PermissionStatus>& permission_statuses) {
+    const std::vector<blink::mojom::PermissionStatus>& results,
+    bool needs_prompt) {
+  if (needs_prompt) {
+    // Prolong the user activation since the user may have taken long enough to
+    // answer the permission prompts that the transient user activation expired.
+    // This is fine to do here, since we enforce that the activation existed
+    // prior to requesting permissions.
+    DVLOG(3) << __func__ << ": prolonging user activation, current status="
+             << render_frame_host_->HasTransientUserActivation();
+    render_frame_host_->NotifyUserActivation(
+        blink::mojom::UserActivationNotificationType::kInteraction);
+  } else {
+    DVLOG(3) << __func__
+             << ": NOT prolonging user activation (no prompt shown)";
+  }
+
   const XrPermissionResults permission_results(permissions,
-                                               permission_statuses);
+                                               results);
 
   std::unordered_set<device::mojom::XRSessionFeature> rejected_features;
   for (auto& required_feature : request.required_features) {
@@ -707,31 +806,36 @@ void VRServiceImpl::EnsureRuntimeInstalled(SessionRequestData request,
   }
 
   runtime->EnsureInstalled(
-      render_frame_host_->GetProcess()->GetID(),
+      render_frame_host_->GetProcess()->GetDeprecatedID(),
       render_frame_host_->GetRoutingID(),
       base::BindOnce(&VRServiceImpl::OnInstallResult,
                      weak_ptr_factory_.GetWeakPtr(), std::move(request)));
 }
 
 void VRServiceImpl::OnInstallResult(SessionRequestData request,
-                                    bool install_succeeded) {
-  DVLOG(2) << __func__ << ": install_succeeded=" << install_succeeded;
+                                    XrInstallResult result) {
+  DVLOG(2) << __func__ << ": result=" << std::to_underlying(result);
 
-  if (!install_succeeded) {
+  if (result == XrInstallResult::kFailed) {
     RejectSession(std::move(request.callback), request.options->trace_id,
                   device::mojom::RequestSessionError::RUNTIME_INSTALL_FAILURE,
                   "Runtime installation failed.");
     return;
   }
 
-  // Prolong the user activation since the user may have taken long enough to
-  // install the runtime that the transient user activation expired. This is
-  // fine to do here, since we enforce that the activation existed prior to
-  // kicking off installation.
-  DVLOG(3) << __func__ << ": prolonging user activation, current status="
-           << render_frame_host_->HasTransientUserActivation();
-  render_frame_host_->NotifyUserActivation(
-      blink::mojom::UserActivationNotificationType::kInteraction);
+  if (result == XrInstallResult::kSuccessInstalled) {
+    // Prolong the user activation since the user may have taken long enough to
+    // install the runtime that the transient user activation expired. This is
+    // fine to do here, since we enforce that the activation existed prior to
+    // kicking off installation.
+    DVLOG(3) << __func__ << ": prolonging user activation, current status="
+             << render_frame_host_->HasTransientUserActivation();
+    render_frame_host_->NotifyUserActivation(
+        blink::mojom::UserActivationNotificationType::kInteraction);
+  } else {
+    DVLOG(3) << __func__
+             << ": NOT prolonging user activation (no install UI shown)";
+  }
 
   DoRequestSession(std::move(request));
 }
@@ -783,7 +887,7 @@ void VRServiceImpl::DoRequestSession(SessionRequestData request) {
 #endif
     if (send_renderer_information) {
       runtime_options->render_process_id =
-          render_frame_host_->GetProcess()->GetID();
+          render_frame_host_->GetProcess()->GetDeprecatedID();
       runtime_options->render_frame_id = render_frame_host_->GetRoutingID();
     }
   }
@@ -850,7 +954,8 @@ void VRServiceImpl::ExitPresent(ExitPresentCallback on_exited) {
       runtime_manager_->GetCurrentlyPresentingImmersiveRuntime();
   DVLOG(2) << __func__ << ": !!immersive_runtime=" << !!immersive_runtime;
   if (immersive_runtime) {
-    immersive_runtime->ExitPresent(this, std::move(on_exited));
+    on_exit_present_ = std::move(on_exited);
+    immersive_runtime->ExitPresent(this);
   } else {
     std::move(on_exited).Run();
   }
@@ -900,7 +1005,12 @@ void VRServiceImpl::OnExitPresent() {
   static_cast<WebContentsImpl*>(GetWebContents())
       ->OnXrHasRenderTarget(default_frame_sink_id);
 
+  render_frame_host_->GetProcess()->OnImmersiveXrSessionStopped();
   GetSessionMetricsHelper()->StopAndRecordImmersiveSession();
+
+  if (on_exit_present_) {
+    std::move(on_exit_present_).Run();
+  }
 
   for (auto& client : session_clients_) {
     // https://crbug.com/1160940 has a fairly generic callstack, in mojom

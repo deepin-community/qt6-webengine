@@ -1,6 +1,3 @@
-# fixed in 6.9.0 (maybe)
-arm64_xnnpack.diff
-
 # time_t 64 fix for zlib
 time-bits.diff
 
@@ -20,6 +17,9 @@ compressing_files.patch
 # disable check for 32bit Node.js
 disable_32bit_node_check.patch
 
+# disable musttail in skcms on 32-bit ARM
+disable_musttail.diff
+
 # enable support for i386
 support-i386.patch
 
@@ -28,9 +28,3 @@ hunspell-bdic.patch
 
 # fix build with ccache
 ccache.diff
-
-# Hack to remove -Werror flags
-remove-werror.patch
-
-# fix libyuv build error on loong64
-libyuv-adapt-to-loong64.patch

@@ -12,18 +12,15 @@
 
 namespace openscreen::osp {
 
-FakeQuicStream::FakeQuicStream(Delegate* delegate, uint64_t id)
-    : QuicStream(delegate, id) {}
+FakeQuicStream::FakeQuicStream(Delegate& delegate, uint64_t id)
+    : QuicStream(delegate), stream_id_(id) {}
 
 FakeQuicStream::~FakeQuicStream() = default;
 
-void FakeQuicStream::ReceiveData(const uint8_t* data, size_t size) {
-  OSP_DCHECK(!read_end_closed_);
-  read_buffer_.insert(read_buffer_.end(), data, data + size);
-}
-
-void FakeQuicStream::CloseReadEnd() {
-  read_end_closed_ = true;
+void FakeQuicStream::ReceiveData(ByteView bytes) {
+  OSP_CHECK(!is_closed_);
+  read_buffer_.insert(read_buffer_.end(), bytes.data(),
+                      bytes.data() + bytes.size());
 }
 
 std::vector<uint8_t> FakeQuicStream::TakeReceivedData() {
@@ -34,58 +31,56 @@ std::vector<uint8_t> FakeQuicStream::TakeWrittenData() {
   return std::move(write_buffer_);
 }
 
-void FakeQuicStream::Write(const uint8_t* data, size_t size) {
-  OSP_DCHECK(!write_end_closed_);
-  write_buffer_.insert(write_buffer_.end(), data, data + size);
+void FakeQuicStream::Write(ByteView bytes) {
+  OSP_CHECK(!is_closed_);
+  write_buffer_.insert(write_buffer_.end(), bytes.data(),
+                       bytes.data() + bytes.size());
 }
 
-void FakeQuicStream::CloseWriteEnd() {
-  write_end_closed_ = true;
+void FakeQuicStream::Close() {
+  is_closed_ = true;
+  delegate_.OnClose(stream_id_);
 }
 
 FakeQuicConnection::FakeQuicConnection(
-    FakeQuicConnectionFactoryBridge* parent_factory,
-    uint64_t connection_id,
-    Delegate* delegate)
-    : QuicConnection(delegate),
-      parent_factory_(parent_factory),
-      connection_id_(connection_id) {}
+    std::string_view instance_name,
+    FakeQuicConnectionFactoryBridge& parent_factory,
+    Delegate& delegate)
+    : QuicConnection(instance_name, delegate),
+      parent_factory_(parent_factory) {}
 
 FakeQuicConnection::~FakeQuicConnection() = default;
 
-std::unique_ptr<FakeQuicStream> FakeQuicConnection::MakeIncomingStream() {
+void FakeQuicConnection::OnCryptoHandshakeComplete() {
+  instance_id_ = delegate_.OnCryptoHandshakeComplete(instance_name_);
+}
+
+FakeQuicStream* FakeQuicConnection::MakeIncomingStream() {
   uint64_t stream_id = next_stream_id_++;
   auto result = std::make_unique<FakeQuicStream>(
-      delegate()->NextStreamDelegate(id(), stream_id), stream_id);
-  streams_.emplace(result->id(), result.get());
-  return result;
+      delegate().GetStreamDelegate(instance_id_), stream_id);
+  auto* stream_ptr = result.get();
+  streams_.emplace(result->GetStreamId(), std::move(result));
+  return stream_ptr;
 }
 
-void FakeQuicConnection::OnRead(UdpSocket* socket, ErrorOr<UdpPacket> data) {
+void FakeQuicConnection::OnPacketReceived(const UdpPacket& packet) {
   OSP_NOTREACHED();
 }
 
-void FakeQuicConnection::OnSendError(UdpSocket* socket, Error error) {
-  OSP_NOTREACHED();
-}
-
-void FakeQuicConnection::OnError(UdpSocket* socket,
-                                 Error error){OSP_NOTREACHED()}
-
-std::unique_ptr<QuicStream> FakeQuicConnection::MakeOutgoingStream(
-    QuicStream::Delegate* delegate) {
+QuicStream* FakeQuicConnection::MakeOutgoingStream(
+    QuicStream::Delegate& delegate) {
   auto result = std::make_unique<FakeQuicStream>(delegate, next_stream_id_++);
-  streams_.emplace(result->id(), result.get());
-  parent_factory_->OnOutgoingStream(this, result.get());
-  return result;
+  auto* stream_ptr = result.get();
+  streams_.emplace(result->GetStreamId(), std::move(result));
+  parent_factory_.OnOutgoingStream(this, stream_ptr);
+  return stream_ptr;
 }
 
 void FakeQuicConnection::Close() {
-  parent_factory_->OnConnectionClosed(this);
-  delegate()->OnConnectionClosed(connection_id_);
+  delegate().OnConnectionClosed(instance_name_);
   for (auto& stream : streams_) {
-    stream.second->delegate()->OnClose(stream.first);
-    stream.second->delegate()->OnReceived(stream.second, nullptr, 0);
+    stream.second->Close();
   }
 }
 

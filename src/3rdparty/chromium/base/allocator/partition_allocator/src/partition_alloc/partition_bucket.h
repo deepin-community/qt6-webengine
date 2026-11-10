@@ -2,8 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_BUCKET_H_
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_BUCKET_H_
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+#ifndef PARTITION_ALLOC_PARTITION_BUCKET_H_
+#define PARTITION_ALLOC_PARTITION_BUCKET_H_
 
 #include <cstddef>
 #include <cstdint>
@@ -27,7 +31,7 @@ uint8_t ComputeSystemPagesPerSlotSpan(size_t slot_size,
 
 // Visible for testing.
 PA_COMPONENT_EXPORT(PARTITION_ALLOC)
-bool CompareSlotSpans(SlotSpanMetadata* a, SlotSpanMetadata* b);
+bool CompareSlotSpans(const SlotSpanMetadata* a, const SlotSpanMetadata* b);
 
 struct PartitionBucket {
   // Accessed most in hot path => goes first. Only nullptr for invalid buckets,
@@ -47,22 +51,26 @@ struct PartitionBucket {
   // integer division (or modulo) operation with a pair of multiplication and a
   // bit shift, i.e. `value / size` becomes `(value * size_reciprocal) >> M`.
   uint64_t slot_size_reciprocal;
+  bool can_store_raw_size;
 
   // This is `M` from the formula above. For accurate results, both `value` and
-  // `size`, which are bound by `kMaxBucketed` for our purposes, must be less
-  // than `2 ** (M / 2)`. On the other hand, the result of the expression
-  // `3 * M / 2` must be less than 64, otherwise integer overflow can occur.
+  // `size`, which are bound by `BucketIndexLookup::kMaxBucketSize` for our
+  // purposes, must be less than `2 ** (M / 2)`. On the other hand, the result
+  // of the expression `3 * M / 2` must be less than 64, otherwise integer
+  // overflow can occur.
   static constexpr uint64_t kReciprocalShift = 42;
   static constexpr uint64_t kReciprocalMask = (1ull << kReciprocalShift) - 1;
-  static_assert(
-      kMaxBucketed < (1 << (kReciprocalShift / 2)),
-      "GetSlotOffset may produce an incorrect result when kMaxBucketed is too "
-      "large.");
+  static_assert(BucketIndexLookup::kMaxBucketSize <
+                    (1 << (kReciprocalShift / 2)),
+                "GetSlotOffset may produce an incorrect result when "
+                "BucketIndexLookup::kMaxBucketSize is too "
+                "large.");
 
   static constexpr size_t kMaxSlotSpansToSort = 200;
 
   // Public API.
-  PA_COMPONENT_EXPORT(PARTITION_ALLOC) void Init(uint32_t new_slot_size);
+  PA_COMPONENT_EXPORT(PARTITION_ALLOC)
+  void Init(uint32_t new_slot_size);
 
   // Sets |is_already_zeroed| to true if the allocation was satisfied by
   // requesting (a) new page(s) from the operating system, or false otherwise.
@@ -81,21 +89,7 @@ struct PartitionBucket {
                     bool* is_already_zeroed)
           PA_EXCLUSIVE_LOCKS_REQUIRED(PartitionRootLock(root));
 
-  PA_ALWAYS_INLINE bool CanStoreRawSize() const {
-    // For direct-map as well as single-slot slot spans (recognized by checking
-    // against |MaxRegularSlotSpanSize()|), we have some spare metadata space in
-    // subsequent PartitionPage to store the raw size. It isn't only metadata
-    // space though, slot spans that have more than one slot can't have raw size
-    // stored, because we wouldn't know which slot it applies to.
-    if (PA_LIKELY(slot_size <= MaxRegularSlotSpanSize())) {
-      return false;
-    }
-
-    PA_DCHECK((slot_size % SystemPageSize()) == 0);
-    PA_DCHECK(is_direct_mapped() || get_slots_per_span() == 1);
-
-    return true;
-  }
+  PA_ALWAYS_INLINE bool CanStoreRawSize() const { return can_store_raw_size; }
 
   // Some buckets are pseudo-buckets, which are disabled because they would
   // otherwise not fulfill alignment constraints.
@@ -147,8 +141,15 @@ struct PartitionBucket {
   // Returns a slot number starting from the beginning of the slot span.
   PA_ALWAYS_INLINE size_t GetSlotNumber(size_t offset_in_slot_span) const {
     // See the static assertion for `kReciprocalShift` above.
-    PA_DCHECK(offset_in_slot_span <= kMaxBucketed);
-    PA_DCHECK(slot_size <= kMaxBucketed);
+    // TODO(casey.smalley@arm.com): triggers on Aarch64/Linux
+    // systems with 64k system pages. Constants need to be
+    // adjusted to prevent different parts of the allocator
+    // from overlapping. For now this will allow 64k pages
+    // to function on Aarch64/Linux systems, albeit not
+    // very efficiently.
+    PA_DCHECK(internal::SystemPageSize() == (size_t{1} << 16) ||
+              offset_in_slot_span <= BucketIndexLookup::kMaxBucketSize);
+    PA_DCHECK(slot_size <= BucketIndexLookup::kMaxBucketSize);
 
     const size_t offset_in_slot =
         ((offset_in_slot_span * slot_size_reciprocal) >> kReciprocalShift);
@@ -158,7 +159,7 @@ struct PartitionBucket {
   }
 
   // Sort the freelists of all slot spans.
-  void SortSmallerSlotSpanFreeLists();
+  void SortSmallerSlotSpanFreeLists([[maybe_unused]] const PartitionRoot* root);
   // Sort the active slot span list in ascending freelist length.
   PA_COMPONENT_EXPORT(PARTITION_ALLOC) void SortActiveSlotSpans();
 
@@ -171,7 +172,12 @@ struct PartitionBucket {
       PA_EXCLUSIVE_LOCKS_REQUIRED(PartitionRootLock(root));
   void InitializeSlotSpanForGwpAsan(SlotSpanMetadata* slot_span);
 
+  size_t SlotSpanCommittedSize(PartitionRoot* root) const;
+
  private:
+  // Sets `this->can_store_raw_size`.
+  void InitCanStoreRawSize();
+
   // Allocates several consecutive super pages. Returns the address of the first
   // super page.
   PA_ALWAYS_INLINE uintptr_t AllocNewSuperPageSpan(PartitionRoot* root,
@@ -225,4 +231,4 @@ struct PartitionBucket {
 
 }  // namespace partition_alloc::internal
 
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_BUCKET_H_
+#endif  // PARTITION_ALLOC_PARTITION_BUCKET_H_

@@ -2,8 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_POINTERS_RAW_PTR_COUNTING_IMPL_FOR_TEST_H_
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_POINTERS_RAW_PTR_COUNTING_IMPL_FOR_TEST_H_
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
+#ifndef PARTITION_ALLOC_POINTERS_RAW_PTR_COUNTING_IMPL_FOR_TEST_H_
+#define PARTITION_ALLOC_POINTERS_RAW_PTR_COUNTING_IMPL_FOR_TEST_H_
 
 #include <climits>
 
@@ -102,18 +107,18 @@ struct RawPtrCountingImplForTest : public base::internal::RawPtrNoOpImpl {
     get_for_duplication_cnt = 0;
   }
 
-  static inline int wrap_raw_ptr_cnt = INT_MIN;
-  static inline int release_wrapped_ptr_cnt = INT_MIN;
-  static inline int get_for_dereference_cnt = INT_MIN;
-  static inline int get_for_extraction_cnt = INT_MIN;
-  static inline int get_for_comparison_cnt = INT_MIN;
-  static inline int wrapped_ptr_swap_cnt = INT_MIN;
-  static inline int wrapped_ptr_less_cnt = INT_MIN;
-  static inline int pointer_to_member_operator_cnt = INT_MIN;
-  static inline int wrap_raw_ptr_for_dup_cnt = INT_MIN;
-  static inline int get_for_duplication_cnt = INT_MIN;
+  static int wrap_raw_ptr_cnt;
+  static int release_wrapped_ptr_cnt;
+  static int get_for_dereference_cnt;
+  static int get_for_extraction_cnt;
+  static int get_for_comparison_cnt;
+  static int wrapped_ptr_swap_cnt;
+  static int wrapped_ptr_less_cnt;
+  static int pointer_to_member_operator_cnt;
+  static int wrap_raw_ptr_for_dup_cnt;
+  static int get_for_duplication_cnt;
 };
 
 }  // namespace base::test
 
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_POINTERS_RAW_PTR_COUNTING_IMPL_FOR_TEST_H_
+#endif  // PARTITION_ALLOC_POINTERS_RAW_PTR_COUNTING_IMPL_FOR_TEST_H_

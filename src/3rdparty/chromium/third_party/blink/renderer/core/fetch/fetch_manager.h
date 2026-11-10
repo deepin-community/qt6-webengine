@@ -6,11 +6,11 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_FETCH_FETCH_MANAGER_H_
 
 #include <memory>
+#include <optional>
 
 #include "base/memory/scoped_refptr.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/tick_clock.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/mojom/permissions/permission.mojom-blink.h"
 #include "third_party/blink/public/mojom/permissions/permission_status.mojom-blink.h"
 #include "third_party/blink/public/platform/child_url_loader_factory_bundle.h"
@@ -27,6 +27,7 @@
 #include "third_party/blink/renderer/platform/loader/fetch/resource_loader_options.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_receiver.h"
+#include "third_party/blink/renderer/platform/weborigin/kurl.h"
 
 namespace network {
 
@@ -40,6 +41,7 @@ class AbortSignal;
 class ExceptionState;
 class ExecutionContext;
 class FetchRequestData;
+class Response;
 class ScriptState;
 class FetchLaterResult;
 
@@ -49,10 +51,10 @@ class CORE_EXPORT FetchManager final
  public:
   explicit FetchManager(ExecutionContext*);
 
-  ScriptPromise Fetch(ScriptState*,
-                      FetchRequestData*,
-                      AbortSignal*,
-                      ExceptionState&);
+  ScriptPromise<Response> Fetch(ScriptState*,
+                                FetchRequestData*,
+                                AbortSignal*,
+                                ExceptionState&);
 
   // ExecutionContextLifecycleObserver overrides:
   void ContextDestroyed() override;
@@ -78,8 +80,21 @@ class CORE_EXPORT FetchLaterManager final
   FetchLaterResult* FetchLater(ScriptState*,
                                FetchRequestData*,
                                AbortSignal*,
-                               absl::optional<DOMHighResTimeStamp>,
+                               std::optional<DOMHighResTimeStamp>,
                                ExceptionState&);
+
+  // Updates two types of quotas using the Step 9 of the following algorithm:
+  // https://whatpr.org/fetch/1647.html#available-deferred-fetch-quota
+  // 9. For each deferred fetch record deferredRecord of controlDocument's
+  // fetch group’s deferred fetch records ...
+  //
+  // Specifically, the quotas are updated according to all the queued FetchLater
+  // requests from `deferred_loaders_`.
+  // Unlike spec, neither `quota_for_url_origin` nor `total_quota` can be
+  // negative. They will be set to zero if they would have become negative.
+  void UpdateDeferredBytesQuota(const KURL& url,
+                                uint64_t& quota_for_url_origin,
+                                uint64_t& total_quota) const;
 
   // ExecutionContextLifecycleObserver overrides:
   void ContextDestroyed() override;
@@ -91,8 +106,6 @@ class CORE_EXPORT FetchLaterManager final
   size_t NumLoadersForTesting() const;
   void RecreateTimerForTesting(scoped_refptr<base::SingleThreadTaskRunner>,
                                const base::TickClock*);
-  static ResourceLoadPriority ComputeLoadPriorityForTesting(
-      const FetchParameters& params);
 
  private:
   class DeferredLoader;

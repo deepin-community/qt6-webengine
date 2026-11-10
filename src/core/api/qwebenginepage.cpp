@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "qwebenginepage.h"
 #include "authenticator_request_dialog_controller.h"
@@ -51,12 +52,14 @@
 #include <QMimeData>
 #include <QtCore/QPointer>
 #include <QRect>
+#include <QThread>
 #include <QTimer>
 #include <QUrl>
 #include <QVariant>
 
 QT_BEGIN_NAMESPACE
 
+using namespace Qt::StringLiterals;
 using namespace QtWebEngineCore;
 
 static QWebEnginePage::WebWindowType toWindowType(WebContentsAdapterClient::WindowOpenDisposition disposition)
@@ -129,6 +132,10 @@ QWebEnginePagePrivate::~QWebEnginePagePrivate()
 {
     delete history;
     delete settings;
+#if QT_CONFIG(webengine_printing_and_pdf)
+    if (printerThread)
+        printerThread->requestInterruption();
+#endif
     profile->d_ptr->removeWebContentsAdapterClient(this);
 }
 
@@ -281,12 +288,12 @@ void QWebEnginePagePrivate::printToPdf(const QString &filePath, const QPageLayou
     adapter->printToPDF(layout, ranges, filePath, frameId);
 }
 
-void QWebEnginePagePrivate::printToPdf(std::function<void(QSharedPointer<QByteArray>)> &&callback,
+void QWebEnginePagePrivate::printToPdf(QtPrivate::SlotObjUniquePtr callback,
                                        const QPageLayout &layout, const QPageRanges &ranges,
                                        quint64 frameId)
 {
     adapter->printToPDFCallbackResult(std::move(callback), layout, ranges, /*colorMode*/ true,
-                                      /*useCustomMargins*/ true, frameId);
+                                      frameId);
 }
 
 void QWebEnginePagePrivate::didPrintPageToPdf(const QString &filePath, bool success)
@@ -511,15 +518,18 @@ void QWebEnginePagePrivate::windowCloseRejected()
 }
 
 void QWebEnginePagePrivate::runJavaScript(const QString &script, quint32 worldId, quint64 frameId,
-                                          const std::function<void(const QVariant &)> &callback)
+                                          QtPrivate::SlotObjUniquePtr callback)
 {
     ensureInitialized();
     if (adapter->lifecycleState() == WebContentsAdapter::LifecycleState::Discarded) {
         qWarning("runJavaScript: disabled in Discarded state");
-        if (callback)
-            callback(QVariant());
+        if (callback) {
+            QVariant var;
+            void* argv[] = { nullptr, &var };
+            callback->call(nullptr, argv);
+        }
     } else
-        adapter->runJavaScript(script, worldId, frameId, callback);
+        adapter->runJavaScript(script, worldId, frameId, std::move(callback));
 }
 
 void QWebEnginePagePrivate::didFetchDocumentMarkup(quint64 requestId, const QString& result)
@@ -534,13 +544,15 @@ void QWebEnginePagePrivate::didFetchDocumentInnerText(quint64 requestId, const Q
         callback(result);
 }
 
-void QWebEnginePagePrivate::didPrintPage(QSharedPointer<QByteArray> result)
+void QWebEnginePagePrivate::didPrintPage(std::shared_ptr<QByteArray> result)
 {
 #if QT_CONFIG(webengine_printing_and_pdf)
+    Q_Q(QWebEnginePage);
     Q_ASSERT(currentPrinter);
-    if (view)
-        view->didPrintPage(currentPrinter, result);
-    else
+    if (view) {
+        printerThread = view->didPrintPage(currentPrinter, result);
+        QObject::connect(printerThread, &QThread::finished, q, [this]() { printerThread = nullptr; });
+    } else
         currentPrinter = nullptr;
 #else
     // should not get here
@@ -571,7 +583,8 @@ void QWebEnginePagePrivate::authenticationRequired(QSharedPointer<Authentication
         return;
     }
 
-    controller->accept(networkAuth.user(), networkAuth.password());
+    controller->credentials(networkAuth.user(), networkAuth.password());
+    controller->accept();
 }
 
 void QWebEnginePagePrivate::releaseProfile()
@@ -585,49 +598,6 @@ void QWebEnginePagePrivate::showColorDialog(QSharedPointer<ColorChooserControlle
 {
     if (view)
         view->showColorDialog(controller);
-}
-
-void QWebEnginePagePrivate::runMediaAccessPermissionRequest(const QUrl &securityOrigin, WebContentsAdapterClient::MediaRequestFlags requestFlags)
-{
-    Q_Q(QWebEnginePage);
-    QWebEnginePermission::PermissionType permissionType;
-
-    if (requestFlags.testFlag(WebContentsAdapterClient::MediaAudioCapture)
-            && requestFlags.testFlag(WebContentsAdapterClient::MediaVideoCapture))
-        permissionType = QWebEnginePermission::PermissionType::MediaAudioVideoCapture;
-    else if (requestFlags.testFlag(WebContentsAdapterClient::MediaAudioCapture))
-        permissionType = QWebEnginePermission::PermissionType::MediaAudioCapture;
-    else if (requestFlags.testFlag(WebContentsAdapterClient::MediaVideoCapture))
-        permissionType = QWebEnginePermission::PermissionType::MediaVideoCapture;
-    else if (requestFlags.testFlag(WebContentsAdapterClient::MediaDesktopAudioCapture)
-            && requestFlags.testFlag(WebContentsAdapterClient::MediaDesktopVideoCapture))
-        permissionType = QWebEnginePermission::PermissionType::DesktopAudioVideoCapture;
-    else // if (requestFlags.testFlag(WebContentsAdapterClient::MediaDesktopVideoCapture))
-        permissionType = QWebEnginePermission::PermissionType::DesktopVideoCapture;
-
-    Q_EMIT q->permissionRequested(createFeaturePermissionObject(securityOrigin, permissionType));
-
-#if QT_DEPRECATED_SINCE(6, 8)
-    QT_WARNING_PUSH
-    QT_WARNING_DISABLE_DEPRECATED
-    QWebEnginePage::Feature deprecatedFeature;
-
-    if (requestFlags.testFlag(WebContentsAdapterClient::MediaAudioCapture)
-            && requestFlags.testFlag(WebContentsAdapterClient::MediaVideoCapture))
-        deprecatedFeature = QWebEnginePage::MediaAudioVideoCapture;
-    else if (requestFlags.testFlag(WebContentsAdapterClient::MediaAudioCapture))
-        deprecatedFeature = QWebEnginePage::MediaAudioCapture;
-    else if (requestFlags.testFlag(WebContentsAdapterClient::MediaVideoCapture))
-        deprecatedFeature = QWebEnginePage::MediaVideoCapture;
-    else if (requestFlags.testFlag(WebContentsAdapterClient::MediaDesktopAudioCapture)
-            && requestFlags.testFlag(WebContentsAdapterClient::MediaDesktopVideoCapture))
-        deprecatedFeature = QWebEnginePage::DesktopAudioVideoCapture;
-    else // if (requestFlags.testFlag(WebContentsAdapterClient::MediaDesktopVideoCapture))
-        deprecatedFeature = QWebEnginePage::DesktopVideoCapture;
-
-    Q_EMIT q->featurePermissionRequested(securityOrigin, deprecatedFeature);
-    QT_WARNING_POP
-#endif // QT_DEPRECATED_SINCE(6, 8)
 }
 
 #if QT_DEPRECATED_SINCE(6, 8)
@@ -660,39 +630,24 @@ static QWebEnginePage::Feature toDeprecatedFeature(QWebEnginePermission::Permiss
         break;
     }
 
-    Q_UNREACHABLE();
-    return QWebEnginePage::Feature(-1);
+    Q_UNREACHABLE_RETURN(QWebEnginePage::Feature(-1));
 }
 QT_WARNING_POP
 #endif // QT_DEPRECATED_SINCE(6, 8)
 
-void QWebEnginePagePrivate::runFeaturePermissionRequest(QWebEnginePermission::PermissionType permissionType, const QUrl &securityOrigin)
+void QWebEnginePagePrivate::runFeaturePermissionRequest(
+        QWebEnginePermission::PermissionType permissionType,
+        const QUrl &securityOrigin,
+        int childId, const std::string &serializedToken)
 {
     Q_Q(QWebEnginePage);
 
-    if (QWebEnginePermission::isPersistent(permissionType)) {
-        Q_EMIT q->permissionRequested(createFeaturePermissionObject(securityOrigin, permissionType));
-#if QT_DEPRECATED_SINCE(6, 8)
-        QT_WARNING_PUSH
-        QT_WARNING_DISABLE_DEPRECATED
-        Q_EMIT q->featurePermissionRequested(securityOrigin, toDeprecatedFeature(permissionType));
-        QT_WARNING_POP
-#endif // QT_DEPRECATED_SINCE(6, 8)
-        return;
-    }
-
-    Q_UNREACHABLE();
-}
-
-void QWebEnginePagePrivate::runMouseLockPermissionRequest(const QUrl &securityOrigin)
-{
-    Q_Q(QWebEnginePage);
-    Q_EMIT q->permissionRequested(createFeaturePermissionObject(securityOrigin, QWebEnginePermission::PermissionType::MouseLock));
-
+    Q_EMIT q->permissionRequested(QWebEnginePermission(
+        new QWebEnginePermissionPrivate(securityOrigin, permissionType, profileAdapter(), childId, serializedToken)));
 #if QT_DEPRECATED_SINCE(6, 8)
     QT_WARNING_PUSH
     QT_WARNING_DISABLE_DEPRECATED
-    Q_EMIT q->featurePermissionRequested(securityOrigin, QWebEnginePage::MouseLock);
+    Q_EMIT q->featurePermissionRequested(securityOrigin, toDeprecatedFeature(permissionType));
     QT_WARNING_POP
 #endif // QT_DEPRECATED_SINCE(6, 8)
 }
@@ -883,12 +838,6 @@ void QWebEnginePagePrivate::showWebAuthDialog(QWebEngineWebAuthUxRequest *reques
     Q_EMIT q->webAuthUxRequested(request);
 }
 
-QWebEnginePermission QWebEnginePagePrivate::createFeaturePermissionObject(const QUrl &securityOrigin, QWebEnginePermission::PermissionType feature)
-{
-    auto *returnPrivate = new QWebEnginePermissionPrivate(securityOrigin, feature, adapter, profileAdapter());
-    return QWebEnginePermission(returnPrivate);
-}
-
 QWebEnginePage::QWebEnginePage(QObject* parent)
     : QObject(parent)
     , d_ptr(new QWebEnginePagePrivate())
@@ -984,7 +933,10 @@ QWebEnginePage::QWebEnginePage(QObject* parent)
     \property QWebEnginePage::contentsSize
     \since 5.7
 
-    \brief The size of the page contents.
+    The size of the full page contents, measured in logical pixels. On devices with a
+    scale factor other than 100%, this will not correspond to the on-screen size; instead,
+    it will be the size before scaling is applied. In such cases, the size may contain
+    fractional values.
 */
 
 /*!
@@ -999,10 +951,26 @@ QWebEnginePage::QWebEnginePage(QObject* parent)
     \fn void QWebEnginePage::recentlyAudibleChanged(bool recentlyAudible);
     \since 5.7
 
-    This signal is emitted when the page's audible state, \a recentlyAudible, changes, because
-    the audio is played or stopped.
+    This signal is emitted when the page's audible state, \a recentlyAudible, changes due to
+    audio being played or stopped.
 
-    \note The signal is also emitted when calling the setAudioMuted() method.
+    \note The signal is also emitted when the \l audioMuted property changes.
+    Also, if the audio is paused, this signal is emitted with an approximate \b{two-second
+    delay} from the moment the audio is paused.
+
+    If a web page contains two videos that are started in sequence, this signal
+    gets emitted only once for the first video to generate sound. After both
+    videos are stopped, the signal is emitted upon the last sound generated.
+    This means that the signal is emitted both when any kind of sound is
+    generated and when everything is completely silent within a web page,
+    regardless of the number of audio streams.
+
+    Spurious signal emissions might also happen. For example, when sound is
+    stopped, this signal gets emitted first with a value of \c true, and then
+    with a value of \c false. Further, when audio starts playing, the signal is
+    emitted twice with a value of \c true.
+
+    \sa recentlyAudible
 */
 
 /*!
@@ -1335,16 +1303,16 @@ void QWebEnginePage::triggerAction(WebAction action, bool)
         break;
     case CopyLinkToClipboard:
         if (d->view && d->view->lastContextMenuRequest() && !d->view->lastContextMenuRequest()->linkUrl().isEmpty()) {
-            QString urlString = d->view->lastContextMenuRequest()->linkUrl().toString(
-                    QUrl::FullyEncoded);
-            QString linkText = d->view->lastContextMenuRequest()->linkText().toHtmlEscaped();
+            const QString urlString =
+                    d->view->lastContextMenuRequest()->linkUrl().toString(QUrl::FullyEncoded);
+            const QString linkText = d->view->lastContextMenuRequest()->linkText().toHtmlEscaped();
             QString title = d->view->lastContextMenuRequest()->titleText();
             if (!title.isEmpty())
-                title = QStringLiteral(" title=\"%1\"").arg(title.toHtmlEscaped());
+                title = " title=\""_L1 + title.toHtmlEscaped() + u'"';
             QMimeData *data = new QMimeData();
             data->setText(urlString);
-            QString html = QStringLiteral("<a href=\"") + urlString + QStringLiteral("\"") + title + QStringLiteral(">")
-                         + linkText + QStringLiteral("</a>");
+            const QString html =
+                    "<a href=\""_L1 + urlString + u'"' + title + u'>' + linkText + "</a>"_L1;
             data->setHtml(html);
             data->setUrls(QList<QUrl>() << d->view->lastContextMenuRequest()->linkUrl());
             QGuiApplication::clipboard()->setMimeData(data);
@@ -1371,17 +1339,17 @@ void QWebEnginePage::triggerAction(WebAction action, bool)
         if (d->view && d->view->lastContextMenuRequest() && d->view->lastContextMenuRequest()->mediaUrl().isValid()
             && d->view->lastContextMenuRequest()->mediaType()
                     == QWebEngineContextMenuRequest::MediaTypeImage) {
-            QString urlString =
+            const QString urlString =
                     d->view->lastContextMenuRequest()->mediaUrl().toString(QUrl::FullyEncoded);
             QString alt = d->view->lastContextMenuRequest()->altText();
             if (!alt.isEmpty())
-                alt = QStringLiteral(" alt=\"%1\"").arg(alt.toHtmlEscaped());
+                alt = " alt=\""_L1 + alt.toHtmlEscaped() + u'"';
             QString title = d->view->lastContextMenuRequest()->titleText();
             if (!title.isEmpty())
-                title = QStringLiteral(" title=\"%1\"").arg(title.toHtmlEscaped());
+                title = " title=\""_L1 + title.toHtmlEscaped() + u'"';
             QMimeData *data = new QMimeData();
             data->setText(urlString);
-            QString html = QStringLiteral("<img src=\"") + urlString + QStringLiteral("\"") + title + alt + QStringLiteral("></img>");
+            const QString html = "<img src=\""_L1 + urlString + u'"' + title + alt + "></img>"_L1;
             data->setHtml(html);
             data->setUrls(QList<QUrl>() << d->view->lastContextMenuRequest()->mediaUrl());
             QGuiApplication::clipboard()->setMimeData(data);
@@ -1401,20 +1369,19 @@ void QWebEnginePage::triggerAction(WebAction action, bool)
                         == QWebEngineContextMenuRequest::MediaTypeAudio
                 || d->view->lastContextMenuRequest()->mediaType()
                         == QWebEngineContextMenuRequest::MediaTypeVideo)) {
-            QString urlString =
+            const QString urlString =
                     d->view->lastContextMenuRequest()->mediaUrl().toString(QUrl::FullyEncoded);
             QString title = d->view->lastContextMenuRequest()->titleText();
             if (!title.isEmpty())
-                title = QStringLiteral(" title=\"%1\"").arg(title.toHtmlEscaped());
+                title = " title=\""_L1 + title.toHtmlEscaped() + u'"';
             QMimeData *data = new QMimeData();
             data->setText(urlString);
-            if (d->view->lastContextMenuRequest()->mediaType()
-                == QWebEngineContextMenuRequest::MediaTypeAudio)
-                data->setHtml(QStringLiteral("<audio src=\"") + urlString + QStringLiteral("\"") + title +
-                              QStringLiteral("></audio>"));
-            else
-                data->setHtml(QStringLiteral("<video src=\"") + urlString + QStringLiteral("\"") + title +
-                              QStringLiteral("></video>"));
+            const bool isAudio = d->view->lastContextMenuRequest()->mediaType()
+                    == QWebEngineContextMenuRequest::MediaTypeAudio;
+            const auto avTagName = isAudio ? "audio"_L1 : "video"_L1;
+            const QString html = u'<' + avTagName + "src=\""_L1 + urlString + u'"' + title
+                    + "></"_L1 + avTagName + u'>';
+            data->setHtml(html);
             data->setUrls(QList<QUrl>() << d->view->lastContextMenuRequest()->mediaUrl());
             QGuiApplication::clipboard()->setMimeData(data);
         }
@@ -1490,40 +1457,47 @@ void QWebEnginePage::triggerAction(WebAction action, bool)
         QTimer::singleShot(0, this, [d](){ d->adapter->viewSource(); });
         break;
     case ToggleBold:
-        runJavaScript(QStringLiteral("document.execCommand('bold');"), QWebEngineScript::ApplicationWorld);
+        runJavaScript(u"document.execCommand('bold');"_s, QWebEngineScript::ApplicationWorld);
         break;
     case ToggleItalic:
-        runJavaScript(QStringLiteral("document.execCommand('italic');"), QWebEngineScript::ApplicationWorld);
+        runJavaScript(u"document.execCommand('italic');"_s, QWebEngineScript::ApplicationWorld);
         break;
     case ToggleUnderline:
-        runJavaScript(QStringLiteral("document.execCommand('underline');"), QWebEngineScript::ApplicationWorld);
+        runJavaScript(u"document.execCommand('underline');"_s, QWebEngineScript::ApplicationWorld);
         break;
     case ToggleStrikethrough:
-        runJavaScript(QStringLiteral("document.execCommand('strikethrough');"), QWebEngineScript::ApplicationWorld);
+        runJavaScript(u"document.execCommand('strikethrough');"_s,
+                      QWebEngineScript::ApplicationWorld);
         break;
     case AlignLeft:
-        runJavaScript(QStringLiteral("document.execCommand('justifyLeft');"), QWebEngineScript::ApplicationWorld);
+        runJavaScript(u"document.execCommand('justifyLeft');"_s,
+                      QWebEngineScript::ApplicationWorld);
         break;
     case AlignCenter:
-        runJavaScript(QStringLiteral("document.execCommand('justifyCenter');"), QWebEngineScript::ApplicationWorld);
+        runJavaScript(u"document.execCommand('justifyCenter');"_s,
+                      QWebEngineScript::ApplicationWorld);
         break;
     case AlignRight:
-        runJavaScript(QStringLiteral("document.execCommand('justifyRight');"), QWebEngineScript::ApplicationWorld);
+        runJavaScript(u"document.execCommand('justifyRight');"_s,
+                      QWebEngineScript::ApplicationWorld);
         break;
     case AlignJustified:
-        runJavaScript(QStringLiteral("document.execCommand('justifyFull');"), QWebEngineScript::ApplicationWorld);
+        runJavaScript(u"document.execCommand('justifyFull');"_s,
+                      QWebEngineScript::ApplicationWorld);
         break;
     case Indent:
-        runJavaScript(QStringLiteral("document.execCommand('indent');"), QWebEngineScript::ApplicationWorld);
+        runJavaScript(u"document.execCommand('indent');"_s, QWebEngineScript::ApplicationWorld);
         break;
     case Outdent:
-        runJavaScript(QStringLiteral("document.execCommand('outdent');"), QWebEngineScript::ApplicationWorld);
+        runJavaScript(u"document.execCommand('outdent');"_s, QWebEngineScript::ApplicationWorld);
         break;
     case InsertOrderedList:
-        runJavaScript(QStringLiteral("document.execCommand('insertOrderedList');"), QWebEngineScript::ApplicationWorld);
+        runJavaScript(u"document.execCommand('insertOrderedList');"_s,
+                      QWebEngineScript::ApplicationWorld);
         break;
     case InsertUnorderedList:
-        runJavaScript(QStringLiteral("document.execCommand('insertUnorderedList');"), QWebEngineScript::ApplicationWorld);
+        runJavaScript(u"document.execCommand('insertUnorderedList');"_s,
+                      QWebEngineScript::ApplicationWorld);
         break;
     case ChangeTextDirectionLTR:
         d->adapter->changeTextDirection(true /*left to right*/);
@@ -1574,6 +1548,17 @@ bool QWebEnginePage::event(QEvent *e)
     return QObject::event(e);
 }
 
+/*!
+    \fn QWebEnginePage::desktopMediaRequested(const QWebEngineDesktopMediaRequest &request)
+    \since 6.7
+
+    This signal is emitted when a web application requests access to the contents of a display.
+
+    The \a request argument holds references to data models for windows and screens available
+    for capturing. To accept the request, the signal handler can call either
+    QWebEngineDesktopMediaRequest::selectScreen() or QWebEngineDesktopMediaRequest::selectWindow().
+*/
+
 void QWebEnginePagePrivate::desktopMediaRequested(
         QtWebEngineCore::DesktopMediaController *controller)
 {
@@ -1599,13 +1584,18 @@ void QWebEnginePagePrivate::contextMenuRequested(QWebEngineContextMenuRequest *d
     \sa acceptNavigationRequest()
 */
 
-void QWebEnginePagePrivate::navigationRequested(int navigationType, const QUrl &url, bool &accepted, bool isMainFrame, bool hasFormData)
+void QWebEnginePagePrivate::navigationRequested(int navigationType, const QUrl &url, bool &accepted,
+                                                bool isMainFrame, bool hasFormData,
+                                                bool userInitiated)
 {
     Q_Q(QWebEnginePage);
 
-    accepted = q->acceptNavigationRequest(url, static_cast<QWebEnginePage::NavigationType>(navigationType), isMainFrame);
+    accepted = q->acceptNavigationRequest(
+            url, static_cast<QWebEnginePage::NavigationType>(navigationType), isMainFrame);
     if (accepted) {
-        QWebEngineNavigationRequest navigationRequest(url, static_cast<QWebEngineNavigationRequest::NavigationType>(navigationType), isMainFrame, hasFormData);
+        QWebEngineNavigationRequest navigationRequest(
+                url, static_cast<QWebEngineNavigationRequest::NavigationType>(navigationType),
+                isMainFrame, hasFormData, userInitiated);
         Q_EMIT q->navigationRequested(navigationRequest);
         accepted = navigationRequest.isAccepted();
     }
@@ -1736,7 +1726,7 @@ void QWebEnginePagePrivate::setToolTip(const QString &toolTipText)
     \since 5.12
 
     This signal is emitted when the JavaScript \c{window.print()} method is called on the main
-    frame, or the user pressed the print button of PDF viewer plugin.
+    frame, or the user pressed the print button of the PDF viewer plugin.
     Typically, the signal handler can simply call printToPdf().
 
     Since 6.8, this signal is only emitted for the main frame, instead of being emitted for any
@@ -1899,7 +1889,7 @@ void QWebEnginePage::setFeaturePermission(const QUrl &securityOrigin, QWebEngine
         Q_UNREACHABLE();
     }
 
-    d->adapter->setPermission(securityOrigin, f, s);
+    d->adapter->setPermission(securityOrigin, f, s, {});
 }
 QT_WARNING_POP
 #endif // QT_DEPRECATED_SINCE(6, 8)
@@ -2003,7 +1993,7 @@ void QWebEnginePage::toPlainText(const std::function<void(const QString &)> &res
 
 void QWebEnginePage::setHtml(const QString &html, const QUrl &baseUrl)
 {
-    setContent(html.toUtf8(), QStringLiteral("text/html;charset=UTF-8"), baseUrl);
+    setContent(html.toUtf8(), u"text/html;charset=UTF-8"_s, baseUrl);
 }
 
 void QWebEnginePage::setContent(const QByteArray &data, const QString &mimeType, const QUrl &baseUrl)
@@ -2061,7 +2051,7 @@ QUrl QWebEnginePage::iconUrl() const
 
     By default, this property contains a null icon. If touch icons are disabled
     (see \c QWebEngineSettings::TouchIconsEnabled), the favicon is provided in two sizes
-    (16x16 and 32x32 pixels) encapsulated in \c{QIcon}. Otherwise, single icon is provided
+    (16x16 and 32x32 pixels) encapsulated in \c{QIcon}. Otherwise, a single icon is provided
     with the largest available size.
 
     \sa iconChanged(), iconUrl(), iconUrlChanged(), QWebEngineSettings::TouchIconsEnabled
@@ -2096,15 +2086,11 @@ void QWebEnginePage::setZoomFactor(qreal factor)
     }
 }
 
-void QWebEnginePage::runJavaScript(const QString& scriptSource, const std::function<void(const QVariant &)> &resultCallback)
-{
-    runJavaScript(scriptSource, QWebEngineScript::MainWorld, resultCallback);
-}
-
-void QWebEnginePage::runJavaScript(const QString& scriptSource, quint32 worldId, const std::function<void(const QVariant &)> &resultCallback)
+void QWebEnginePage::runJavaScriptImpl(const QString& scriptSource, quint32 worldId, QtPrivate::QSlotObjectBase *callback)
 {
     Q_D(QWebEnginePage);
-    d->runJavaScript(scriptSource, worldId, WebContentsAdapter::kUseMainFrameId, resultCallback);
+    QtPrivate::SlotObjUniquePtr callbackUniquePtr(callback);
+    d->runJavaScript(scriptSource, worldId, WebContentsAdapter::kUseMainFrameId, std::move(callbackUniquePtr));
 }
 
 /*!
@@ -2223,7 +2209,7 @@ void QWebEnginePage::setDevToolsPage(QWebEnginePage *devToolsPage)
 
     If remote debugging is enabled (see \l{Qt WebEngine Developer Tools}), the id can be used to
    build the URL to connect to the developer tool websocket:
-   \c{ws://localhost:<debugggin-port>/devtools/page/<id>)}. The websocket can be used to to interact
+   \c{ws://localhost:<debugging-port>/devtools/page/<id>)}. The websocket can be used to to interact
    with the page using the \l{https://chromedevtools.github.io/devtools-protocol/}{DevTools
    Protocol}.
 */
@@ -2272,7 +2258,7 @@ bool QWebEnginePage::javaScriptPrompt(const QUrl &securityOrigin, const QString 
 void QWebEnginePage::javaScriptConsoleMessage(JavaScriptConsoleMessageLevel level, const QString &message, int lineNumber, const QString &sourceID)
 {
     static QLoggingCategory loggingCategory("js", QtWarningMsg);
-    static QByteArray file = sourceID.toUtf8();
+    const QByteArray file = sourceID.toUtf8();
     QMessageLogger logger(file.constData(), lineNumber, nullptr, loggingCategory.categoryName());
 
     switch (level) {
@@ -2318,7 +2304,7 @@ QSizeF QWebEnginePage::contentsSize() const
     This signal is emitted when \a request is issued to load a page in a separate
     web engine window. This can either be because the current page requested it explicitly
     through a JavaScript call to \c window.open, or because the user clicked on a link
-    while holding Shift, Ctrl, or a built-in combination that triggers the page to open
+    while holding Shift, Cmd/Ctrl, or a built-in combination that triggers the page to open
     in a new window.
 
     The signal is handled by calling openIn() with the new page on the request.
@@ -2373,6 +2359,10 @@ void QWebEnginePage::printToPdf(const QString &filePath, const QPageLayout &layo
 }
 
 /*!
+    \fn template<typename Functor, QtWebEnginePrivate::if_callback_with_arg_t<Functor, const QByteArray &> = true> void QWebEnginePage::printToPdf(
+                    Functor &&resultCallback,
+                    const QPageLayout &layout = QPageLayout(QPageSize(QPageSize::A4), QPageLayout::Portrait, QMarginsF()),
+                    const QPageRanges &ranges = {})
     Renders the current content of the page into a PDF document and returns a byte array containing the PDF data
     as parameter to \a resultCallback.
     The page size and orientation of the produced PDF document are taken from the values specified in \a layout,
@@ -2383,25 +2373,27 @@ void QWebEnginePage::printToPdf(const QString &filePath, const QPageLayout &layo
 
     \note The \l QWebEnginePage::Stop web action can be used to interrupt this operation.
 
+    \note Before Qt 6.12 \a resultCallback had to be copyable.
+
     \warning We guarantee that the callback (\a resultCallback) is always called, but it might be done
     during page destruction. When QWebEnginePage is deleted, the callback is triggered with an invalid
     value and it is not safe to use the corresponding QWebEnginePage or QWebEngineView instance inside it.
 */
-void QWebEnginePage::printToPdf(const std::function<void(const QByteArray&)> &resultCallback, const QPageLayout &layout, const QPageRanges &ranges)
+void QWebEnginePage::printToPdfImpl(QtPrivate::QSlotObjectBase *resultCallback, const QPageLayout &layout, const QPageRanges &ranges)
 {
 #if QT_CONFIG(webengine_printing_and_pdf)
     Q_D(QWebEnginePage);
     d->ensureInitialized();
-    std::function wrappedCallback = [resultCallback](QSharedPointer<QByteArray> result) {
-        if (resultCallback && result)
-            resultCallback(*result);
-    };
-    d->printToPdf(std::move(wrappedCallback), layout, ranges, WebContentsAdapter::kUseMainFrameId);
+    QtPrivate::SlotObjUniquePtr callback(resultCallback);
+    d->printToPdf(std::move(callback), layout, ranges, WebContentsAdapter::kUseMainFrameId);
 #else
     Q_UNUSED(layout);
     Q_UNUSED(ranges);
-    if (resultCallback)
-        resultCallback(QByteArray());
+    if (resultCallback) {
+        QByteArray res;
+        void *args[] = { nullptr, &res };
+        resultCallback->call(nullptr, args);
+    }
 #endif
 }
 
@@ -2491,7 +2483,7 @@ void QWebEnginePage::setLifecycleState(LifecycleState state)
   Setting the lifecycle state to a lower resource usage state than the
   recommended state may cause side-effects such as stopping background audio
   playback or loss of HTML form input. Setting the lifecycle state to a higher
-  resource state is however completely safe.
+  resource state is, however, completely safe.
 
   \sa lifecycleState, {Page Lifecycle API}, {WebEngine Lifecycle Example}
 */
@@ -2513,8 +2505,8 @@ QWebEnginePage::LifecycleState QWebEnginePage::recommendedState() const
   to voluntarily reduce their resource usage if they are not visible to the
   user.
 
-  If the page is connected to a \e {view} then this property will be managed
-  automatically by the view according to it's own visibility.
+  If the page is connected to a \e {view}, then this property will be managed
+  automatically by the view according to its own visibility.
 
   \sa lifecycleState
 */

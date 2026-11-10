@@ -8,6 +8,7 @@
 
 #include "base/debug/alias.h"
 #include "base/functional/bind.h"
+#include "base/notreached.h"
 #include "content/renderer/accessibility/render_accessibility_impl.h"
 #include "content/renderer/render_frame_impl.h"
 #include "third_party/blink/public/common/features.h"
@@ -23,7 +24,7 @@ RenderAccessibilityManager::~RenderAccessibilityManager() = default;
 void RenderAccessibilityManager::BindReceiver(
     mojo::PendingAssociatedReceiver<blink::mojom::RenderAccessibility>
         receiver) {
-  // TODO(https://crbug.com/1329532): re-add   DCHECK(!receiver_.is_bound()),
+  // TODO(crbug.com/40842669): re-add   DCHECK(!receiver_.is_bound()),
   // once underlying issue is resolved.
   if (receiver_.is_bound())
     receiver_.reset();
@@ -71,19 +72,21 @@ void RenderAccessibilityManager::SetMode(const ui::AXMode& new_mode,
   if (render_accessibility_) {
     CHECK(reset_token);
     render_accessibility_->set_reset_token(reset_token);
+    render_accessibility_->NotifyAccessibilityModeChange(new_mode);
   }
 
   // Notify the RenderFrame when the accessibility mode is changes to ensure it
   // notifies the relevant observers (subclasses of RenderFrameObserver). This
-  // includes the RenderAccessibilityImpl instance owned by |this|, which will
-  // make update Blink and emit the relevant events back to the browser process
-  // according to change in the accessibility mode being made.
+  // does not include the RenderAccessibilityImpl instance owned by |this| which
+  // already received the mode change above. It must go first because it sets up
+  // or tears down Blink accessibility ensuring subsequent observers can reason
+  // accurately about accessibility.
   render_frame_->NotifyAccessibilityModeChange(new_mode);
 }
 
 void RenderAccessibilityManager::FatalError() {
   NO_CODE_FOLDING();
-  CHECK(false) << "Invalid accessibility tree.";
+  NOTREACHED() << "Invalid accessibility tree.";
 }
 
 void RenderAccessibilityManager::HitTest(
@@ -106,19 +109,21 @@ void RenderAccessibilityManager::Reset(uint32_t reset_token) {
   render_accessibility_->Reset(reset_token);
 }
 
-void RenderAccessibilityManager::HandleAccessibilityEvents(
-    blink::mojom::AXUpdatesAndEventsPtr updates_and_events,
+void RenderAccessibilityManager::HandleAXEvents(
+    ui::AXUpdatesAndEvents& updates_and_events,
+    ui::AXLocationAndScrollUpdates& location_and_scroll_updates,
     uint32_t reset_token,
     blink::mojom::RenderAccessibilityHost::HandleAXEventsCallback callback) {
   CHECK(reset_token);
   GetOrCreateRemoteRenderAccessibilityHost()->HandleAXEvents(
-      std::move(updates_and_events), reset_token, std::move(callback));
+      updates_and_events, location_and_scroll_updates, reset_token,
+      std::move(callback));
 }
 
 mojo::Remote<blink::mojom::RenderAccessibilityHost>&
 RenderAccessibilityManager::GetOrCreateRemoteRenderAccessibilityHost() {
   if (!render_accessibility_host_) {
-    render_frame_->GetBrowserInterfaceBroker()->GetInterface(
+    render_frame_->GetBrowserInterfaceBroker().GetInterface(
         render_accessibility_host_.BindNewPipeAndPassReceiver());
   }
   return render_accessibility_host_;

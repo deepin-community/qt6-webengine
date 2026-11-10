@@ -99,7 +99,17 @@ class TestAuditNonBlinkUsageTest(unittest.TestCase):
             {
                 'type': 'isolate->GetContinuationPreservedEmbedderData',
                 'allowed': True,
-                'path': 'third_party/blink/renderer/modules/scheduler/'
+                'path': 'third_party/blink/renderer/core/scheduler/'
+            },
+            {
+                'type': 'WTF::BindOnce',
+                'allowed': False,
+                'path': 'third_party/blink/renderer/'
+            },
+            {
+                'type': 'WTF::Vector',
+                'allowed': True,
+                'path': 'third_party/blink/renderer/platform/wtf/'
             },
         ]
         for item in check_list:

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
 
 #include <stdint.h>
@@ -613,7 +618,6 @@ class GLES3DecoderTest2 : public GLES2DecoderTest2 {
   void SetUp() override {
     InitState init;
     init.gl_version = "OpenGL ES 3.0";
-    init.bind_generates_resource = true;
     init.context_type = CONTEXT_TYPE_OPENGLES3;
     InitDecoder(init);
   }

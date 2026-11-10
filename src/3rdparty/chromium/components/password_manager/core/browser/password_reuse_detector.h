@@ -36,16 +36,28 @@ struct ReverseStringLess {
 // Container for the signon_realm and username that a compromised saved password
 // is saved on/with.
 struct MatchingReusedCredential {
+  MatchingReusedCredential(
+      std::string signon_realm,
+      GURL url,
+      std::u16string username,
+      PasswordForm::Store in_store = PasswordForm::Store::kNotSet);
+  explicit MatchingReusedCredential(const PasswordForm& form);
+  MatchingReusedCredential(const MatchingReusedCredential& other);
+  MatchingReusedCredential(MatchingReusedCredential&& other);
+  ~MatchingReusedCredential();
+
   friend auto operator<=>(const MatchingReusedCredential&,
                           const MatchingReusedCredential&) = default;
   friend bool operator==(const MatchingReusedCredential&,
                          const MatchingReusedCredential&) = default;
+  MatchingReusedCredential& operator=(const MatchingReusedCredential& other);
+  MatchingReusedCredential& operator=(MatchingReusedCredential&&);
 
   std::string signon_realm;
+  GURL url;
   std::u16string username;
   // The store in which those credentials are stored.
-  PasswordForm::Store in_store = PasswordForm::Store::kNotSet;
-
+  PasswordForm::Store in_store;
 };
 
 // Per-profile class responsible for detection of password reuse, i.e. that the
@@ -68,6 +80,7 @@ class PasswordReuseDetector {
       const password_manager::PasswordStoreChangeList& changes) = 0;
 
   virtual void OnLoginsRetained(
+      PasswordForm::Store password_store_type,
       const std::vector<PasswordForm>& retained_passwords) = 0;
 
   // Clears all the cached passwords which are stored on the account store.

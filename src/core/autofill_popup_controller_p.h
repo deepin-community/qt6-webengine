@@ -1,5 +1,6 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef AUTOFILL_POPUP_CONTROLLER_P_H
 #define AUTOFILL_POPUP_CONTROLLER_P_H
@@ -18,10 +19,10 @@
 #include <vector>
 
 #include "base/memory/weak_ptr.h"
-#include "components/autofill/core/browser/ui/suggestion.h"
+#include "components/autofill/core/browser/suggestions/suggestion.h"
 
 namespace autofill {
-class AutofillPopupDelegate;
+class AutofillSuggestionDelegate;
 }
 
 namespace QtWebEngineCore {
@@ -31,7 +32,7 @@ class AutofillPopupControllerPrivate
 public:
     AutofillPopupControllerPrivate() = default;
 
-    base::WeakPtr<autofill::AutofillPopupDelegate> delegate = nullptr;
+    base::WeakPtr<autofill::AutofillSuggestionDelegate> delegate = nullptr;
     std::vector<autofill::Suggestion> suggestions;
 };
 

@@ -110,14 +110,16 @@ IN_PROC_BROWSER_TEST_F(MemoryInstrumentationTest,
 
   int64_t before_kb = GetPrivateFootprintKb();
 
-  std::unique_ptr<char[]> buffer = std::make_unique<char[]>(kAllocSize);
-  memset(buffer.get(), 1, kAllocSize);
-  volatile char* x = static_cast<volatile char*>(buffer.get());
-  EXPECT_EQ(x[0] + x[kAllocSize - 1], 2);
+  std::vector<char> buffer(kAllocSize, 1);
+  // Read from the buffer to ensure it's committed.
+  volatile char first = buffer.front();
+  volatile char last = buffer.back();
+  EXPECT_EQ(first + last, 2);
 
   int64_t during_kb = GetPrivateFootprintKb();
 
-  buffer.reset();
+  buffer.clear();
+  buffer.shrink_to_fit();
 
 #if BUILDFLAG(IS_ANDROID)
   if (mallopt)

@@ -7,30 +7,44 @@
 #include <algorithm>
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "base/functional/bind.h"
 #include "base/scoped_observation.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "components/browsing_data/core/pref_names.h"
+#include "components/password_manager/core/browser/features/password_features.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
 #include "components/password_manager/core/browser/password_store/password_store_change.h"
 #include "components/password_manager/core/browser/password_store/password_store_interface.h"
 #include "components/password_manager/core/browser/password_sync_util.h"
+#include "components/sync/base/user_selectable_type.h"
 #include "components/sync/service/sync_service.h"
+#include "components/sync/service/sync_user_settings.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "url/gurl.h"
+
+#if BUILDFLAG(IS_ANDROID)
+#include "components/password_manager/core/browser/split_stores_and_local_upm.h"
+#endif  // BUILDFLAG(IS_ANDROID)
 
 namespace browsing_data {
 namespace {
 
-// This predicate is only about profile (non-account) passwords, so it is only
-// concerned about whether sync-the-feature is on or off. Account passwords are
-// counted separately.
-bool IsProfilePasswordSyncEnabled(const syncer::SyncService* sync_service) {
-  // TODO(crbug.com/1464264): Migrate away from `ConsentLevel::kSync` on desktop
-  // platforms, including APIs that depend on sync-the-feature.
-  return password_manager::sync_util::IsSyncFeatureActiveIncludingPasswords(
+// This predicate is only about passwords in the profile store.
+bool IsProfilePasswordSyncEnabled(PrefService* pref_service,
+                                  const syncer::SyncService* sync_service) {
+#if BUILDFLAG(IS_ANDROID)
+  // After login db deprecation there won't be any more users syncing passwords
+  // from the profile store. All users will have split stores.
+  return false;
+#else
+  // TODO(crbug.com/40067058): Clean this up once Sync-the-feature is gone on
+  // all platforms.
+  return password_manager::sync_util::IsSyncFeatureEnabledIncludingPasswords(
       sync_service);
+#endif
 }
 
 }  // namespace
@@ -127,7 +141,7 @@ void PasswordStoreFetcher::OnGetPasswordStoreResults(
     std::vector<std::unique_ptr<password_manager::PasswordForm>> results) {
   domain_examples_.clear();
 
-  base::EraseIf(
+  std::erase_if(
       results,
       [this](const std::unique_ptr<password_manager::PasswordForm>& form) {
         return (form->date_created < start_ || form->date_created >= end_);
@@ -188,16 +202,16 @@ PasswordsCounter::PasswordsResult::~PasswordsResult() = default;
 PasswordsCounter::PasswordsCounter(
     scoped_refptr<password_manager::PasswordStoreInterface> profile_store,
     scoped_refptr<password_manager::PasswordStoreInterface> account_store,
+    PrefService* pref_service,
     syncer::SyncService* sync_service)
-    : sync_tracker_(this, sync_service) {
+    : sync_tracker_(this, sync_service), pref_service_(pref_service) {
   profile_store_fetcher_ = std::make_unique<PasswordStoreFetcher>(
       profile_store,
       base::BindRepeating(&PasswordsCounter::Restart, base::Unretained(this))),
   account_store_fetcher_ = std::make_unique<PasswordStoreFetcher>(
       account_store,
       base::BindRepeating(&PasswordsCounter::Restart, base::Unretained(this)));
-  DCHECK(profile_store);
-  // |account_store| may be null.
+  // |profile_store| and |account_store| may be null.
 }
 
 PasswordsCounter::~PasswordsCounter() = default;
@@ -219,7 +233,7 @@ const std::vector<std::string>& PasswordsCounter::account_domain_examples() {
 
 void PasswordsCounter::OnInitialized() {
   sync_tracker_.OnInitialized(
-      base::BindRepeating(&IsProfilePasswordSyncEnabled));
+      base::BindRepeating(&IsProfilePasswordSyncEnabled, pref_service_));
 }
 
 const char* PasswordsCounter::GetPrefName() const {

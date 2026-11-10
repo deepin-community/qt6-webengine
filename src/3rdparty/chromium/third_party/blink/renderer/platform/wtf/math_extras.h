@@ -48,6 +48,8 @@
 #include <sys/types.h>
 #endif
 
+namespace blink {
+
 constexpr double kPiDouble = M_PI;
 constexpr float kPiFloat = static_cast<float>(M_PI);
 
@@ -328,8 +330,9 @@ constexpr LimitType ClampToWithNaNTo0(
     LimitType min = DefaultMinimumForClamp<LimitType>(),
     LimitType max = DefaultMaximumForClamp<LimitType>()) {
   static_assert(std::numeric_limits<ValueType>::has_quiet_NaN);
-  if (UNLIKELY(std::isnan(value)))
+  if (std::isnan(value)) [[unlikely]] {
     return 0;
+  }
   return ClampTo<LimitType, ValueType>(value);
 }
 
@@ -345,5 +348,7 @@ static constexpr size_t GreatestCommonDivisor(size_t a, size_t b) {
 constexpr size_t LowestCommonMultiple(size_t a, size_t b) {
   return a && b ? a / GreatestCommonDivisor(a, b) * b : 0;
 }
+
+}  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_MATH_EXTRAS_H_

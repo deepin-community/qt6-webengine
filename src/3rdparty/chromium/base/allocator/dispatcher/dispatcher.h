@@ -2,13 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef BASE_ALLOCATOR_DISPATCHER_DISPATCHER_H_
 #define BASE_ALLOCATOR_DISPATCHER_DISPATCHER_H_
 
+#include <memory>
+
 #include "base/allocator/dispatcher/internal/dispatcher_internal.h"
 #include "base/base_export.h"
-
-#include <memory>
 
 namespace base::allocator::dispatcher {
 

@@ -8,6 +8,7 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/dom_high_res_time_stamp.h"
 #include "third_party/blink/renderer/platform/geometry/length.h"
+#include "third_party/blink/renderer/platform/graphics/dom_node_id.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 #include "ui/gfx/geometry/transform.h"
@@ -46,12 +47,16 @@ class CORE_EXPORT IntersectionGeometry {
     // instead of BorderBoundingBox().
     kUseOverflowClipEdge = 1 << 5,
     kRespectFilters = 1 << 6,
+    kScrollAndVisibilityOnly = 1 << 7,
 
     // These flags will be computed
-    kShouldUseCachedRects = 1 << 7,
-    kRootIsImplicit = 1 << 8,
-    kDidComputeGeometry = 1 << 9,
-    kIsVisible = 1 << 10
+    kShouldUseCachedRects = 1 << 8,
+    kRootIsImplicit = 1 << 9,
+    kDidComputeGeometry = 1 << 10,
+    kIsVisible = 1 << 11,
+
+    // These flags to expose extra information of occluded state
+    kShouldExposeOccluderNodeId = 1 << 12,
   };
 
   struct RootGeometry {
@@ -63,8 +68,11 @@ class CORE_EXPORT IntersectionGeometry {
 
     float zoom = 1.0f;
     // The root object's content rect in the root object's own coordinate system
+    gfx::RectF pre_margin_local_root_rect;
     gfx::RectF local_root_rect;
     gfx::Transform root_to_view_transform;
+
+    void UpdateMargin(const Vector<Length>& margin);
   };
 
   struct CachedRects {
@@ -103,7 +111,7 @@ class CORE_EXPORT IntersectionGeometry {
                        const Vector<Length>& target_margin,
                        const Vector<Length>& scroll_margin,
                        unsigned flags,
-                       absl::optional<RootGeometry>& root_geometry,
+                       std::optional<RootGeometry>& root_geometry,
                        CachedRects* cached_rects = nullptr);
 
   IntersectionGeometry(const IntersectionGeometry&) = default;
@@ -134,6 +142,7 @@ class CORE_EXPORT IntersectionGeometry {
   bool DidComputeGeometry() const { return flags_ & kDidComputeGeometry; }
   bool IsIntersecting() const { return threshold_index_ > 0; }
   bool IsVisible() const { return flags_ & kIsVisible; }
+  DOMNodeId occluder_node_id() const { return occluder_node_id_; }
 
   bool CanUseCachedRectsForTesting() const { return ShouldUseCachedRects(); }
 
@@ -208,6 +217,7 @@ class CORE_EXPORT IntersectionGeometry {
                   const Vector<Length>& scroll_margin,
                   CachedRects* cached_rects);
   bool ApplyClip(const LayoutObject* target,
+                 const LayoutBox* local_ancestor,
                  const LayoutObject* root,
                  const gfx::RectF& root_rect,
                  gfx::RectF& unclipped_intersection_rect,
@@ -234,6 +244,7 @@ class CORE_EXPORT IntersectionGeometry {
   unsigned flags_;
   double intersection_ratio_ = 0;
   wtf_size_t threshold_index_ = 0;
+  DOMNodeId occluder_node_id_ = kInvalidDOMNodeId;
 };
 
 }  // namespace blink

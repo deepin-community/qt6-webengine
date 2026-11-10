@@ -14,37 +14,47 @@
  * limitations under the License.
  */
 
-#include <algorithm>
+#include <cstdint>
 #include <cstdio>
-#include <map>
-#include <optional>
+#include <cstring>
+#include <memory>
 #include <random>
 #include <string>
+#include <utility>
+#include <vector>
 
+#include "perfetto/base/build_config.h"
 #include "perfetto/base/logging.h"
+#include "perfetto/base/status.h"
 #include "perfetto/ext/base/scoped_file.h"
 #include "perfetto/ext/base/string_utils.h"
 #include "perfetto/trace_processor/basic_types.h"
+#include "perfetto/trace_processor/iterator.h"
+#include "perfetto/trace_processor/status.h"
+#include "perfetto/trace_processor/trace_blob.h"
+#include "perfetto/trace_processor/trace_blob_view.h"
 #include "perfetto/trace_processor/trace_processor.h"
 #include "protos/perfetto/common/descriptor.pbzero.h"
 #include "protos/perfetto/trace_processor/trace_processor.pbzero.h"
 
+#include "src/base/test/status_matchers.h"
 #include "src/base/test/utils.h"
 #include "test/gtest_and_gmock.h"
 
-namespace perfetto {
-namespace trace_processor {
+namespace perfetto::trace_processor {
 namespace {
 
-constexpr size_t kMaxChunkSize = 4 * 1024 * 1024;
+using testing::HasSubstr;
+
+constexpr size_t kMaxChunkSize = 4ul * 1024 * 1024;
 
 TEST(TraceProcessorCustomConfigTest, SkipInternalMetricsMatchingMountPath) {
   auto config = Config();
   config.skip_builtin_metric_paths = {"android/"};
   auto processor = TraceProcessor::CreateInstance(config);
-  processor->NotifyEndOfFile();
+  ASSERT_OK(processor->NotifyEndOfFile());
 
-  // Check that andorid metrics have not been loaded.
+  // Check that android metrics have not been loaded.
   auto it = processor->ExecuteQuery(
       "select count(*) from trace_metrics "
       "where name = 'android_cpu';");
@@ -65,7 +75,7 @@ TEST(TraceProcessorCustomConfigTest, EmptyStringSkipsAllMetrics) {
   auto config = Config();
   config.skip_builtin_metric_paths = {""};
   auto processor = TraceProcessor::CreateInstance(config);
-  processor->NotifyEndOfFile();
+  ASSERT_OK(processor->NotifyEndOfFile());
 
   // Check that other metrics have been loaded.
   auto it = processor->ExecuteQuery(
@@ -80,9 +90,9 @@ TEST(TraceProcessorCustomConfigTest, HandlesMalformedMountPath) {
   auto config = Config();
   config.skip_builtin_metric_paths = {"androi"};
   auto processor = TraceProcessor::CreateInstance(config);
-  processor->NotifyEndOfFile();
+  ASSERT_OK(processor->NotifyEndOfFile());
 
-  // Check that andorid metrics have been loaded.
+  // Check that android metrics have been loaded.
   auto it = processor->ExecuteQuery(
       "select count(*) from trace_metrics "
       "where name = 'android_cpu';");
@@ -97,12 +107,13 @@ class TraceProcessorIntegrationTest : public ::testing::Test {
       : processor_(TraceProcessor::CreateInstance(Config())) {}
 
  protected:
-  util::Status LoadTrace(const char* name,
+  base::Status LoadTrace(const char* name,
                          size_t min_chunk_size = 512,
                          size_t max_chunk_size = kMaxChunkSize) {
     EXPECT_LE(min_chunk_size, max_chunk_size);
-    base::ScopedFstream f(fopen(
-        base::GetTestDataPath(std::string("test/data/") + name).c_str(), "rb"));
+    base::ScopedFstream f(
+        fopen(base::GetTestDataPath(std::string("test/data/") + name).c_str(),
+              "rbe"));
     std::minstd_rand0 rnd_engine(0);
     std::uniform_int_distribution<size_t> dist(min_chunk_size, max_chunk_size);
     while (!feof(*f)) {
@@ -113,12 +124,12 @@ class TraceProcessorIntegrationTest : public ::testing::Test {
       if (!status.ok())
         return status;
     }
-    processor_->NotifyEndOfFile();
-    return util::OkStatus();
+    return NotifyEndOfFile();
   }
+  base::Status NotifyEndOfFile() { return processor_->NotifyEndOfFile(); }
 
   Iterator Query(const std::string& query) {
-    return processor_->ExecuteQuery(query.c_str());
+    return processor_->ExecuteQuery(query);
   }
 
   TraceProcessor* Processor() { return processor_.get(); }
@@ -279,8 +290,10 @@ TEST_F(TraceProcessorIntegrationTest, SerializeMetricDescriptors) {
 }
 
 TEST_F(TraceProcessorIntegrationTest, ComputeMetricsFormattedExtension) {
+  ASSERT_OK(NotifyEndOfFile());
+
   std::string metric_output;
-  util::Status status = Processor()->ComputeMetricText(
+  base::Status status = Processor()->ComputeMetricText(
       std::vector<std::string>{"test_chrome_metric"},
       TraceProcessor::MetricResultFormat::kProtoText, &metric_output);
   ASSERT_TRUE(status.ok());
@@ -292,11 +305,12 @@ TEST_F(TraceProcessorIntegrationTest, ComputeMetricsFormattedExtension) {
 }
 
 TEST_F(TraceProcessorIntegrationTest, ComputeMetricsFormattedNoExtension) {
+  ASSERT_OK(NotifyEndOfFile());
+
   std::string metric_output;
-  util::Status status = Processor()->ComputeMetricText(
+  ASSERT_OK(Processor()->ComputeMetricText(
       std::vector<std::string>{"trace_metadata"},
-      TraceProcessor::MetricResultFormat::kProtoText, &metric_output);
-  ASSERT_TRUE(status.ok());
+      TraceProcessor::MetricResultFormat::kProtoText, &metric_output));
   // Check that metric result starts with trace_metadata field. Since this is
   // not an extension field, the field name is not fully qualified.
   ASSERT_TRUE(metric_output.rfind("trace_metadata {") == 0);
@@ -321,21 +335,21 @@ TEST_F(TraceProcessorIntegrationTest, Clusterfuzz14753) {
 }
 
 TEST_F(TraceProcessorIntegrationTest, Clusterfuzz14762) {
-  ASSERT_TRUE(LoadTrace("clusterfuzz_14762", 4096 * 1024).ok());
+  ASSERT_TRUE(LoadTrace("clusterfuzz_14762", 4096ul * 1024).ok());
   auto it = Query("select sum(value) from stats where severity = 'error';");
   ASSERT_TRUE(it.Next());
   ASSERT_GT(it.Get(0).long_value, 0);
 }
 
 TEST_F(TraceProcessorIntegrationTest, Clusterfuzz14767) {
-  ASSERT_TRUE(LoadTrace("clusterfuzz_14767", 4096 * 1024).ok());
+  ASSERT_TRUE(LoadTrace("clusterfuzz_14767", 4096ul * 1024).ok());
   auto it = Query("select sum(value) from stats where severity = 'error';");
   ASSERT_TRUE(it.Next());
   ASSERT_GT(it.Get(0).long_value, 0);
 }
 
 TEST_F(TraceProcessorIntegrationTest, Clusterfuzz14799) {
-  ASSERT_TRUE(LoadTrace("clusterfuzz_14799", 4096 * 1024).ok());
+  ASSERT_TRUE(LoadTrace("clusterfuzz_14799", 4096ul * 1024).ok());
   auto it = Query("select sum(value) from stats where severity = 'error';");
   ASSERT_TRUE(it.Next());
   ASSERT_GT(it.Get(0).long_value, 0);
@@ -400,13 +414,13 @@ TEST_F(TraceProcessorIntegrationTest, MAYBE_Clusterfuzz28766) {
 }
 
 TEST_F(TraceProcessorIntegrationTest, RestoreInitialTablesInvariant) {
-  Processor()->NotifyEndOfFile();
+  ASSERT_OK(NotifyEndOfFile());
   uint64_t first_restore = RestoreInitialTables();
   ASSERT_EQ(RestoreInitialTables(), first_restore);
 }
 
 TEST_F(TraceProcessorIntegrationTest, RestoreInitialTablesPerfettoSql) {
-  Processor()->NotifyEndOfFile();
+  ASSERT_OK(NotifyEndOfFile());
   RestoreInitialTables();
 
   for (int repeat = 0; repeat < 3; repeat++) {
@@ -455,7 +469,7 @@ TEST_F(TraceProcessorIntegrationTest, RestoreInitialTablesPerfettoSql) {
 }
 
 TEST_F(TraceProcessorIntegrationTest, RestoreInitialTablesStandardSqlite) {
-  Processor()->NotifyEndOfFile();
+  ASSERT_OK(NotifyEndOfFile());
   RestoreInitialTables();
 
   for (int repeat = 0; repeat < 3; repeat++) {
@@ -481,13 +495,13 @@ TEST_F(TraceProcessorIntegrationTest, RestoreInitialTablesStandardSqlite) {
 }
 
 TEST_F(TraceProcessorIntegrationTest, RestoreInitialTablesModules) {
-  Processor()->NotifyEndOfFile();
+  ASSERT_OK(NotifyEndOfFile());
   RestoreInitialTables();
 
   for (int repeat = 0; repeat < 3; repeat++) {
     ASSERT_EQ(RestoreInitialTables(), 0u);
     {
-      auto it = Query("INCLUDE PERFETTO MODULE common.timestamps;");
+      auto it = Query("INCLUDE PERFETTO MODULE time.conversion;");
       it.Next();
       ASSERT_TRUE(it.Status().ok());
     }
@@ -501,7 +515,7 @@ TEST_F(TraceProcessorIntegrationTest, RestoreInitialTablesModules) {
 }
 
 TEST_F(TraceProcessorIntegrationTest, RestoreInitialTablesSpanJoin) {
-  Processor()->NotifyEndOfFile();
+  ASSERT_OK(NotifyEndOfFile());
   RestoreInitialTables();
 
   for (int repeat = 0; repeat < 3; repeat++) {
@@ -540,7 +554,7 @@ TEST_F(TraceProcessorIntegrationTest, RestoreInitialTablesSpanJoin) {
 }
 
 TEST_F(TraceProcessorIntegrationTest, RestoreInitialTablesWithClause) {
-  Processor()->NotifyEndOfFile();
+  ASSERT_OK(NotifyEndOfFile());
   RestoreInitialTables();
 
   for (int repeat = 0; repeat < 3; repeat++) {
@@ -557,7 +571,7 @@ TEST_F(TraceProcessorIntegrationTest, RestoreInitialTablesWithClause) {
 }
 
 TEST_F(TraceProcessorIntegrationTest, RestoreInitialTablesIndex) {
-  Processor()->NotifyEndOfFile();
+  ASSERT_OK(NotifyEndOfFile());
   RestoreInitialTables();
 
   for (int repeat = 0; repeat < 3; repeat++) {
@@ -595,7 +609,7 @@ TEST_F(TraceProcessorIntegrationTest, RestoreInitialTablesTraceBounds) {
 }
 
 TEST_F(TraceProcessorIntegrationTest, RestoreInitialTablesDependents) {
-  Processor()->NotifyEndOfFile();
+  ASSERT_OK(NotifyEndOfFile());
   {
     auto it = Query("create perfetto table foo as select 1 as x");
     ASSERT_FALSE(it.Next());
@@ -615,7 +629,7 @@ TEST_F(TraceProcessorIntegrationTest, RestoreInitialTablesDependents) {
 }
 
 TEST_F(TraceProcessorIntegrationTest, RestoreDependentFunction) {
-  Processor()->NotifyEndOfFile();
+  ASSERT_OK(NotifyEndOfFile());
   {
     auto it =
         Query("create perfetto function foo0() returns INT as select 1 as x");
@@ -635,7 +649,7 @@ TEST_F(TraceProcessorIntegrationTest, RestoreDependentFunction) {
 }
 
 TEST_F(TraceProcessorIntegrationTest, RestoreDependentTableFunction) {
-  Processor()->NotifyEndOfFile();
+  ASSERT_OK(NotifyEndOfFile());
   {
     auto it = Query(
         "create perfetto function foo0() returns TABLE(x INT) "
@@ -706,7 +720,7 @@ TEST_F(TraceProcessorIntegrationTest, TraceWithoutUuidReadInOneChunk) {
  * This trace does not have a uuid. The uuid will be generated from the first
  * 4096 bytes, which will be read in multiple chunks.
  */
-TEST_F(TraceProcessorIntegrationTest, TraceWithoutUuidReadInMultipleChuncks) {
+TEST_F(TraceProcessorIntegrationTest, TraceWithoutUuidReadInMultipleChunks) {
   ASSERT_TRUE(LoadTrace("example_android_trace_30s.pb", 512, 2048).ok());
   auto it = Query("select str_value from metadata where name = 'trace_uuid'");
   ASSERT_TRUE(it.Next());
@@ -714,8 +728,8 @@ TEST_F(TraceProcessorIntegrationTest, TraceWithoutUuidReadInMultipleChuncks) {
 }
 
 /*
- * This trace has a uuid. It will not be overriden by the hash of the first 4096
- * bytes.
+ * This trace has a uuid. It will not be overridden by the hash of the first
+ * 4096 bytes.
  */
 TEST_F(TraceProcessorIntegrationTest, TraceWithUuidReadInParts) {
   ASSERT_TRUE(LoadTrace("trace_with_uuid.pftrace", 512, 2048).ok());
@@ -725,6 +739,7 @@ TEST_F(TraceProcessorIntegrationTest, TraceWithUuidReadInParts) {
 }
 
 TEST_F(TraceProcessorIntegrationTest, ErrorMessageExecuteQuery) {
+  ASSERT_OK(NotifyEndOfFile());
   auto it = Query("select t from slice");
   ASSERT_FALSE(it.Next());
   ASSERT_FALSE(it.Status().ok());
@@ -738,6 +753,7 @@ no such column: t)"));
 }
 
 TEST_F(TraceProcessorIntegrationTest, ErrorMessageMetricFile) {
+  ASSERT_OK(NotifyEndOfFile());
   ASSERT_TRUE(
       Processor()->RegisterMetric("foo/bar.sql", "select t from slice").ok());
 
@@ -757,11 +773,12 @@ no such column: t)");
 }
 
 TEST_F(TraceProcessorIntegrationTest, ErrorMessageModule) {
-  SqlModule module;
+  ASSERT_OK(NotifyEndOfFile());
+  SqlPackage module;
   module.name = "foo";
-  module.files.push_back(std::make_pair("foo.bar", "select t from slice"));
+  module.modules.push_back(std::make_pair("foo.bar", "select t from slice"));
 
-  ASSERT_TRUE(Processor()->RegisterSqlModule(module).ok());
+  ASSERT_TRUE(Processor()->RegisterSqlPackage(module).ok());
 
   auto it = Query("include perfetto module foo.bar;");
   ASSERT_FALSE(it.Next());
@@ -793,6 +810,32 @@ TEST_F(TraceProcessorIntegrationTest, FunctionRegistrationError) {
   ASSERT_TRUE(it.Status().ok());
 }
 
+TEST_F(TraceProcessorIntegrationTest, CreateTableDuplicateNames) {
+  auto it = Query(
+      "create perfetto table foo select 1 as duplicate_a, 2 as duplicate_a, 3 "
+      "as duplicate_b, 4 as duplicate_b");
+  ASSERT_FALSE(it.Next());
+  ASSERT_FALSE(it.Status().ok());
+  ASSERT_THAT(it.Status().message(), HasSubstr("duplicate_a"));
+  ASSERT_THAT(it.Status().message(), HasSubstr("duplicate_b"));
+}
+
+TEST_F(TraceProcessorIntegrationTest, InvalidTrace) {
+  constexpr char kBadData[] = "\0\0\0\0";
+  EXPECT_FALSE(Processor()
+                   ->Parse(TraceBlobView(
+                       TraceBlob::CopyFrom(kBadData, sizeof(kBadData))))
+                   .ok());
+  NotifyEndOfFile();
+}
+
+TEST_F(TraceProcessorIntegrationTest, NoNotifyEndOfFileCalled) {
+  constexpr char kProtoData[] = "\x0a";
+  EXPECT_TRUE(Processor()
+                  ->Parse(TraceBlobView(
+                      TraceBlob::CopyFrom(kProtoData, sizeof(kProtoData))))
+                  .ok());
+}
+
 }  // namespace
-}  // namespace trace_processor
-}  // namespace perfetto
+}  // namespace perfetto::trace_processor

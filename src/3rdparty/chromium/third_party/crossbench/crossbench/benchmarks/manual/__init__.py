@@ -4,4 +4,6 @@
 
 from __future__ import annotations
 
-from .manual_benchmark import ManualBenchmark
+from crossbench.benchmarks.manual.manual_benchmark import ManualBenchmark
+
+__all__ = ["ManualBenchmark"]

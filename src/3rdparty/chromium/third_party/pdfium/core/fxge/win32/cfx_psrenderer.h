@@ -11,20 +11,19 @@
 #include <stdint.h>
 
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <vector>
 
 #include "core/fxcrt/bytestring.h"
 #include "core/fxcrt/data_vector.h"
 #include "core/fxcrt/fx_coordinates.h"
-#include "core/fxcrt/fx_memory_wrappers.h"
 #include "core/fxcrt/fx_stream.h"
 #include "core/fxcrt/fx_string_wrappers.h"
 #include "core/fxcrt/retain_ptr.h"
+#include "core/fxcrt/span.h"
 #include "core/fxcrt/unowned_ptr.h"
 #include "core/fxge/cfx_graphstatedata.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-#include "third_party/base/containers/span.h"
 
 class CFX_DIBBase;
 class CFX_Font;
@@ -70,14 +69,14 @@ class CFX_PSRenderer {
   void SetClip_PathStroke(const CFX_Path& path,
                           const CFX_Matrix* pObject2Device,
                           const CFX_GraphStateData* pGraphState);
-  FX_RECT GetClipBox() { return m_ClipBox; }
+  FX_RECT GetClipBox() const { return clip_box_; }
   bool DrawPath(const CFX_Path& path,
                 const CFX_Matrix* pObject2Device,
                 const CFX_GraphStateData* pGraphState,
                 uint32_t fill_color,
                 uint32_t stroke_color,
                 const CFX_FillRenderOptions& fill_options);
-  bool SetDIBits(const RetainPtr<const CFX_DIBBase>& pBitmap,
+  bool SetDIBits(RetainPtr<const CFX_DIBBase> bitmap,
                  uint32_t color,
                  int dest_left,
                  int dest_top);
@@ -94,12 +93,12 @@ class CFX_PSRenderer {
                   const FXDIB_ResampleOptions& options);
   bool DrawText(int nChars,
                 const TextCharPos* pCharPos,
-                CFX_Font* pFont,
+                CFX_Font* font,
                 const CFX_Matrix& mtObject2Device,
                 float font_size,
                 uint32_t color);
 
-  static absl::optional<ByteString> GenerateType42SfntDataForTesting(
+  static std::optional<ByteString> GenerateType42SfntDataForTesting(
       const ByteString& psname,
       pdfium::span<const uint8_t> font_data);
 
@@ -142,7 +141,7 @@ class CFX_PSRenderer {
   void SetGraphState(const CFX_GraphStateData* pGraphState);
   void SetColor(uint32_t color);
   void FindPSFontGlyph(CFX_GlyphCache* pGlyphCache,
-                       CFX_Font* pFont,
+                       CFX_Font* font,
                        const TextCharPos& charpos,
                        int* ps_fontnum,
                        int* ps_glyphindex);
@@ -157,27 +156,27 @@ class CFX_PSRenderer {
                             float font_size,
                             fxcrt::ostringstream& buf);
   FaxCompressResult FaxCompressData(RetainPtr<const CFX_DIBBase> src) const;
-  absl::optional<PSCompressResult> PSCompressData(
+  std::optional<PSCompressResult> PSCompressData(
       pdfium::span<const uint8_t> src_span) const;
   void WritePreambleString(ByteStringView str);
   void WritePSBinary(pdfium::span<const uint8_t> data);
   void WriteStream(fxcrt::ostringstream& stream);
   void WriteString(ByteStringView str);
 
-  bool m_bInited = false;
-  bool m_bGraphStateSet = false;
-  bool m_bColorSet = false;
-  absl::optional<RenderingLevel> m_Level;
-  uint32_t m_LastColor = 0;
-  FX_RECT m_ClipBox;
-  CFX_GraphStateData m_CurGraphState;
-  UnownedPtr<CFX_PSFontTracker> const m_pFontTracker;
-  UnownedPtr<const EncoderIface> const m_pEncoderIface;
-  RetainPtr<IFX_RetainableWriteStream> m_pStream;
-  std::vector<std::unique_ptr<Glyph>> m_PSFontList;
-  fxcrt::ostringstream m_PreambleOutput;
-  fxcrt::ostringstream m_Output;
-  std::vector<FX_RECT> m_ClipBoxStack;
+  bool inited_ = false;
+  bool graph_state_set_ = false;
+  bool color_set_ = false;
+  std::optional<RenderingLevel> level_;
+  uint32_t last_color_ = 0;
+  FX_RECT clip_box_;
+  CFX_GraphStateData cur_graph_state_;
+  UnownedPtr<CFX_PSFontTracker> const font_tracker_;
+  UnownedPtr<const EncoderIface> const encoder_iface_;
+  RetainPtr<IFX_RetainableWriteStream> stream_;
+  std::vector<std::unique_ptr<Glyph>> psfont_list_;
+  fxcrt::ostringstream preamble_output_;
+  fxcrt::ostringstream output_;
+  std::vector<FX_RECT> clip_box_stack_;
 };
 
 #endif  // CORE_FXGE_WIN32_CFX_PSRENDERER_H_

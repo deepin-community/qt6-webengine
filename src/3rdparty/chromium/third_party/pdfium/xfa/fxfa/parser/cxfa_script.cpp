@@ -55,14 +55,17 @@ CXFA_Script::CXFA_Script(CXFA_Document* doc, XFA_PacketType packet)
 CXFA_Script::~CXFA_Script() = default;
 
 CXFA_Script::Type CXFA_Script::GetContentType() {
-  absl::optional<WideString> cData =
+  std::optional<WideString> cData =
       JSObject()->TryCData(XFA_Attribute::ContentType, false);
-  if (!cData.has_value())
+  if (!cData.has_value()) {
     return Type::Formcalc;
-  if (cData.value().EqualsASCII("application/x-formcalc"))
+  }
+  if (cData.value().EqualsASCII("application/x-formcalc")) {
     return Type::Formcalc;
-  if (cData.value().EqualsASCII("application/x-javascript"))
+  }
+  if (cData.value().EqualsASCII("application/x-javascript")) {
     return Type::Javascript;
+  }
   return Type::Unknown;
 }
 

@@ -13,6 +13,7 @@
 #include "base/feature_list.h"
 #include "base/values.h"
 #include "components/prefs/pref_member.h"
+#include "components/safe_browsing/core/common/features.h"
 
 class PrefRegistrySimple;
 class PrefService;
@@ -36,17 +37,6 @@ inline constexpr char kSafeBrowsingEnabled[] = "safebrowsing.enabled";
 
 // Boolean that is true when Safe Browsing Enhanced Protection is enabled.
 inline constexpr char kSafeBrowsingEnhanced[] = "safebrowsing.enhanced";
-
-// Integer indicating the state of real time URL check. This is managed
-// by enterprise policy and has no effect on users who are not managed by
-// enterprise policy.
-inline constexpr char kSafeBrowsingEnterpriseRealTimeUrlCheckMode[] =
-    "safebrowsing.enterprise_real_time_url_check_mode";
-
-// Integer indicating the scope at which the
-// kSafeBrowsingEnterpriseRealTimeUrlCheckMode pref is set.
-inline constexpr char kSafeBrowsingEnterpriseRealTimeUrlCheckScope[] =
-    "safebrowsing.enterprise_real_time_url_check_scope";
 
 // Timestamp indicating the last time a protego ping with a token was sent.
 // This is only set if the user has enhanced protection enabled and is signed
@@ -86,6 +76,11 @@ inline constexpr char kSafeBrowsingSawInterstitialScoutReporting[] =
 // collects data for malware detection.
 inline constexpr char kSafeBrowsingScoutReportingEnabled[] =
     "safebrowsing.scout_reporting_enabled";
+
+// Boolean indicating whether Safe Browsing Scout reporting was enabled at the
+// time that extended reporting was deprecated.
+inline constexpr char kSafeBrowsingScoutReportingEnabledWhenDeprecated[] =
+    "safebrowsing.scout_reporting_enabled_when_deprecated";
 
 // Dictionary containing safe browsing triggers and the list of times they have
 // fired recently. The keys are TriggerTypes (4-byte ints) and the values are
@@ -164,7 +159,8 @@ inline constexpr char kSafeBrowsingSurveysEnabled[] =
     "safebrowsing.surveys_enabled";
 
 // A timestamp indicating the last time the account tailored security boolean
-// was updated.
+// was updated. The value is owned by the Account and is updated by the sync
+// system.
 inline constexpr char kAccountTailoredSecurityUpdateTimestamp[] =
     "safebrowsing.aesb_update_time_windows_epoch_micros";
 
@@ -179,7 +175,7 @@ inline constexpr char kTailoredSecuritySyncFlowLastRunTime[] =
 
 // Integer that maps to TailoredSecurityUserInteractionState. Indicates the
 // last known state of the tailored security sync flow.
-// TODO(crbug.com/1469133): remove this preference value.
+// TODO(crbug.com/40925236): remove this preference value.
 inline constexpr char kTailoredSecuritySyncFlowLastUserInteractionState[] =
     "safebrowsing.aesb_sync_flow_last_user_interaction_state";
 
@@ -208,6 +204,37 @@ inline constexpr char kAccountTailoredSecurityShownNotification[] =
 inline constexpr char kEnhancedProtectionEnabledViaTailoredSecurity[] =
     "safebrowsing.esb_enabled_via_tailored_security";
 
+// Safe Browsing Synced Enhanced Protection preferences
+// Indicates the last known state of the Safe Browsing Synced Enhanced
+// Protection retry mechanism. Integer that maps to
+// MessageRetryHandler::RetryState. This value is managed by the
+// SafeBrowsingPrefChangeHandler.
+inline constexpr char kSafeBrowsingSyncedEnhancedProtectionRetryState[] =
+    "safebrowsing.esb_as_a_synced_setting_retry_state";
+
+// Timestamp indicating when the next time the retry can happen is.
+// Value maps to MessageRetryHandler::next_retry_timestamp_pref.
+// This value is managed by the SafeBrowsingPrefChangeHandler.
+inline constexpr char
+    kSafeBrowsingSyncedEnhancedProtectionNextRetryTimestamp[] =
+        "safebrowsing.esb_as_a_synced_setting_next_retry_timestamp";
+
+// A boolean indicating if Enhanced Protection setting was changed on the
+// current device through the settings UI page.
+// This function distinguishes between the cases:
+//  * The user has changed the Enhanced Protection setting on this device, which
+//    implicitly dismisses the notification. We set the value to True.
+//  * The user's Enhanced Protection setting was synced automatically. We set
+//  this value to False.
+inline constexpr char kSafeBrowsingSyncedEnhancedProtectionSetLocally[] =
+    "safebrowsing.esb_as_a_synced_setting_enhanced_protection_set_locally";
+
+// A timestamp indicating the last time the safe browsing pref handler boolean
+// was updated.
+inline constexpr char kSafeBrowsingSyncedEnhancedProtectionUpdateTimestamp[] =
+    "safebrowsing.esb_as_a_synced_setting_enhanced_protection_update_epoch_"
+    "micros";
+
 // The last time the Extension Telemetry Service successfully
 // uploaded its data.
 inline constexpr char kExtensionTelemetryLastUploadTime[] =
@@ -230,28 +257,32 @@ inline constexpr char kExtensionTelemetryFileData[] =
 inline constexpr char kHashPrefixRealTimeChecksAllowedByPolicy[] =
     "safebrowsing.hash_prefix_real_time_checks_allowed_by_policy";
 
-// A boolean indicating if the user has previously seen a deep
-// scanning prompt.
-inline constexpr char kSafeBrowsingDeepScanPromptSeen[] =
-    "safebrowsing.deep_scan_prompt_seen";
+// Records a mapping from app names to most recent redirect to that
+// app. This is used to avoid sending reports of external app redirects
+// for common apps.
+inline constexpr char kExternalAppRedirectTimestamps[] =
+    "safe_browsing.external_app_redirect_timestamps";
 
-// A timestamp indicating when the user most recently enrolled in
-// Enhanced Safe Browsing. For users who enrolled in Enhanced Safe
-// Browsing before this pref was added, the timestamp is the first
-// Chrome startup with the pref, so the timestamp should be considered
-// a lower bound on the amount of time a user has been
-// enrolled. Contains a null time for users not enrolled in Enhanced
-// Safe Browsing.
-inline constexpr char kSafeBrowsingEsbEnabledTimestamp[] =
-    "safebrowsing.esb_enabled_timestamp";
+// Integer that maps to SecuritySettingsBundleLevel. Indicates what bundle
+// the user is in.
+inline constexpr char kSecuritySettingsBundle[] = "safebrowsing.bundle";
 
 }  // namespace prefs
 
 namespace safe_browsing {
 
+// Enumerates the possible bundle options for bundled security settings found
+// chrome://settings/security.
+enum SecuritySettingsBundleLevel {
+  // Standard bundle with default settings.
+  STANDARD = 0,
+  // Enhanced bundle with most secure settings selected.
+  ENHANCED = 1,
+};
+
 // Enumerates the level of Safe Browsing Extended Reporting that is currently
 // available.
-enum ExtendedReportingLevel {
+enum class ExtendedReportingLevel {
   // Extended reporting is off.
   SBER_LEVEL_OFF = 0,
   // The Legacy level of extended reporting is available, reporting happens in
@@ -260,6 +291,9 @@ enum ExtendedReportingLevel {
   // The Scout level of extended reporting is available, some data can be
   // collected to actively detect dangerous apps and sites.
   SBER_LEVEL_SCOUT = 2,
+  // The Scout level of extended reporting is deprecated, however, the user has
+  // the ESB setting on.
+  SBER_LEVEL_ENHANCED_PROTECTION = 3,
 };
 
 // Enumerates the states used for determining whether the Tailored Security flow
@@ -327,28 +361,19 @@ enum class SafeBrowsingState {
   kMaxValue = ENHANCED_PROTECTION,
 };
 
-enum EnterpriseRealTimeUrlCheckMode {
-  REAL_TIME_CHECK_DISABLED = 0,
-  REAL_TIME_CHECK_FOR_MAINFRAME_ENABLED = 1,
-};
-
 SafeBrowsingState GetSafeBrowsingState(const PrefService& prefs);
 
-// Set the SafeBrowsing prefs. Also records if ESB was enabled in sync with
-// Account-ESB via Tailored Security.
+// Set the SafeBrowsing prefs.  Records whether ESB was enabled by Tailored
+// Security (through account integration).
 void SetSafeBrowsingState(PrefService* prefs,
                           SafeBrowsingState state,
-                          bool is_esb_enabled_in_sync = false);
+                          bool is_esb_enabled_by_account_integration = false);
 
 // Returns whether Safe Browsing is enabled for the user.
 bool IsSafeBrowsingEnabled(const PrefService& prefs);
 
 // Returns whether Safe Browsing enhanced protection is enabled for the user.
 bool IsEnhancedProtectionEnabled(const PrefService& prefs);
-
-// Returns whether the currently active Safe Browsing Extended Reporting
-// preference exists (eg: has been set before).
-bool ExtendedReportingPrefExists(const PrefService& prefs);
 
 // Returns the level of reporting available for the current user.
 ExtendedReportingLevel GetExtendedReportingLevel(const PrefService& prefs);
@@ -361,6 +386,14 @@ bool IsExtendedReportingOptInAllowed(const PrefService& prefs);
 // This should be used to decide if any of the reporting preferences are set,
 // regardless of which specific one is set.
 bool IsExtendedReportingEnabled(const PrefService& prefs);
+
+// Returns whether Safe Browsing Extended Reporting is currently enabled.
+// This function does not check the Safe Browsing Extended Reporting deprecation
+// flag, kExtendedReportingRemovePrefDependency, so that the ping manager will
+// keep sending CSBRR pings.
+// TODO(crbug.com/336547987): Remove this temporary function when the mitigation
+// is implemented and the deprecation flag is removed.
+bool IsExtendedReportingEnabledBypassDeprecationFlag(const PrefService& prefs);
 
 // Returns whether the active Extended Reporting pref is currently managed by
 // enterprise policy, meaning the user can't change it.
@@ -395,6 +428,10 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry);
 
 // Registers local state prefs related to Safe Browsing.
 void RegisterLocalStatePrefs(PrefRegistrySimple* registry);
+
+// Records whether the user has changed the Safe Browsing setting on this
+// device.
+void EnableSafeBrowsingSettingSetLocallyPref(PrefService* prefs);
 
 // Sets the currently active Safe Browsing Extended Reporting preference to the
 // specified value. The |location| indicates the UI where the change was
@@ -495,7 +532,7 @@ bool MatchesPasswordProtectionChangePasswordURL(const GURL& url,
                                                 const PrefService& prefs);
 
 // Helper function to match a |target_url| against |url_list|.
-bool MatchesURLList(const GURL& target_url, const std::vector<GURL> url_list);
+bool MatchesURLList(const GURL& target_url, const std::vector<GURL>& url_list);
 
 }  // namespace safe_browsing
 

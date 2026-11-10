@@ -10,7 +10,9 @@ buildscript {
         jcenter()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:3.2.0'
+        // Note that this is a version number for the Android Gradle plugin described in
+        // https://developer.android.com/build/releases/gradle-plugin, not Gradle itself.
+        classpath 'com.android.tools.build:gradle:8.9.0'
 
         // NOTE: Do not place your application dependencies here; they belong
         // in the individual module build.gradle files
@@ -47,8 +49,7 @@ def setupSkiaLibraryBuild(project, appVariants, appName) {
 
         TaskCollection<Task> compileTask = project.tasks.matching {
             //  println(it.name)
-            it.name.toLowerCase().contains("compile" + variant.name.toLowerCase()) &&
-                    it.name.toLowerCase().endsWith("ndk")
+            it.name.toLowerCase().contains("merge" + variant.name.toLowerCase())
         }
         compileTask.findAll()*.dependsOn copyNativeLib
         copyNativeLib.dependsOn buildNativeLib

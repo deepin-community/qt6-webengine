@@ -11,9 +11,18 @@
 #ifndef MODULES_VIDEO_CAPTURE_LINUX_VIDEO_CAPTURE_PIPEWIRE_H_
 #define MODULES_VIDEO_CAPTURE_LINUX_VIDEO_CAPTURE_PIPEWIRE_H_
 
+#include <pipewire/pipewire.h>
+#include <spa/pod/pod.h>
+#include <spa/utils/hook.h>
+
+#include <cstdint>
+
+#include "api/scoped_refptr.h"
+#include "common_video/libyuv/include/webrtc_libyuv.h"
 #include "modules/video_capture/linux/pipewire_session.h"
 #include "modules/video_capture/video_capture_defines.h"
 #include "modules/video_capture/video_capture_impl.h"
+#include "rtc_base/thread_annotations.h"
 
 namespace webrtc {
 namespace videocapturemodule {
@@ -28,6 +37,7 @@ class VideoCaptureModulePipeWire : public VideoCaptureImpl {
   int32_t CaptureSettings(VideoCaptureCapability& settings) override;
 
   static VideoType PipeWireRawFormatToVideoType(uint32_t format);
+  static uint32_t VideoTypeToPipeWireRawFormat(VideoType type);
 
  private:
   static void OnStreamParamChanged(void* data,
@@ -43,17 +53,16 @@ class VideoCaptureModulePipeWire : public VideoCaptureImpl {
   void OnFormatChanged(const struct spa_pod* format);
   void ProcessBuffers();
 
-  rtc::RaceChecker pipewire_checker_;
-
-  const rtc::scoped_refptr<PipeWireSession> session_
-      RTC_GUARDED_BY(capture_checker_);
+  const webrtc::scoped_refptr<PipeWireSession> session_
+      RTC_GUARDED_BY(api_checker_);
+  bool initialized_ RTC_GUARDED_BY(api_checker_);
+  bool started_ RTC_GUARDED_BY(api_lock_);
   int node_id_ RTC_GUARDED_BY(capture_checker_);
   VideoCaptureCapability configured_capability_
-      RTC_GUARDED_BY(pipewire_checker_);
-  bool started_ RTC_GUARDED_BY(api_lock_);
+      RTC_GUARDED_BY(capture_checker_);
 
-  struct pw_stream* stream_ RTC_GUARDED_BY(pipewire_checker_) = nullptr;
-  struct spa_hook stream_listener_ RTC_GUARDED_BY(pipewire_checker_);
+  struct pw_stream* stream_ RTC_GUARDED_BY(capture_checker_) = nullptr;
+  struct spa_hook stream_listener_ RTC_GUARDED_BY(capture_checker_);
 };
 }  // namespace videocapturemodule
 }  // namespace webrtc

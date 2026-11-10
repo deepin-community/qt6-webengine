@@ -8,21 +8,22 @@
 #include "build/build_config.h"
 #include "media/media_buildflags.h"
 
-#if BUILDFLAG(IS_MAC)
-#include "base/mac/mac_util.h"
-#endif
-
 namespace features {
 
-// If enabled, base::DumpWithoutCrashing is called whenever an audio service
-// hang is detected.
-BASE_FEATURE(kDumpOnAudioServiceHang,
-             "DumpOnAudioServiceHang",
+#if BUILDFLAG(IS_WIN)
+// Enables application audio capture for getDisplayMedia (gDM) window capture in
+// Windows.
+BASE_FEATURE(kApplicationAudioCaptureWin,
+             "ApplicationAudioCaptureWin",
              base::FEATURE_DISABLED_BY_DEFAULT);
+#endif
 
 #if BUILDFLAG(IS_ANDROID)
 // Enables loading and using AAudio instead of OpenSLES on compatible devices,
-// for audio output streams.
+// for audio output streams. This feature is disabled on ATV HDMI dongle devices
+// as OpenSLES provides more accurate output latency on those devices.
+//
+// TODO(crbug.com/401365323): Remove this feature in the future.
 BASE_FEATURE(kUseAAudioDriver,
              "UseAAudioDriver",
              base::FEATURE_ENABLED_BY_DEFAULT);
@@ -31,29 +32,44 @@ BASE_FEATURE(kUseAAudioDriver,
 // for audio input streams.
 BASE_FEATURE(kUseAAudioInput,
              "UseAAudioInput",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Enables selection of audio devices for each individual AAudio stream instead
+// of using communication streams and managing the system-wide communication
+// route. This is not fully reliable on all Android devices.
+//
+// Requires `UseAAudioDriver`, `UseAAudioInput`, and an Android API level >=
+// `AAUDIO_MIN_API`, otherwise it will have no effect.
+BASE_FEATURE(kAAudioPerStreamDeviceSelection,
+             "AAudioPerStreamDeviceSelection",
              base::FEATURE_DISABLED_BY_DEFAULT);
 #endif
 
-#if BUILDFLAG(IS_WIN)
-BASE_FEATURE(kAllowIAudioClient3,
-             "AllowIAudioClient3",
+// This feature flag controls whether the WebAudio destination resampler is
+// bypassed. When enabled, if the WebAudio context's sample rate differs from
+// the hardware's sample rate, the resampling step that normally occurs within
+// the WebAudio destination node is skipped. This allows the AudioService to
+// handle any necessary resampling, potentially reducing latency and overhead.
+#if BUILDFLAG(IS_ANDROID)
+BASE_FEATURE(kWebAudioRemoveAudioDestinationResampler,
+             "WebAudioRemoveAudioDestinationResampler",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#else
+BASE_FEATURE(kWebAudioRemoveAudioDestinationResampler,
+             "WebAudioRemoveAudioDestinationResampler",
              base::FEATURE_ENABLED_BY_DEFAULT);
-#endif
+#endif  // BUILDFLAG(IS_ANDROID)
+
 }  // namespace features
 
 namespace media {
 
-bool IsSystemLoopbackCaptureSupported() {
-#if BUILDFLAG(IS_WIN) || defined(USE_CRAS)
-  return true;
-#elif BUILDFLAG(IS_MAC)
-  // Only supported on macOS 13.0+.
-  return base::mac::MacOSVersion() >= 13'00'00;
-#elif BUILDFLAG(IS_LINUX) && defined(USE_PULSEAUDIO)
-  return true;
+bool IsApplicationAudioCaptureSupported() {
+#if BUILDFLAG(IS_WIN)
+  return base::FeatureList::IsEnabled(features::kApplicationAudioCaptureWin);
 #else
   return false;
-#endif  // BUILDFLAG(IS_WIN) || defined(USE_CRAS)
+#endif  // BUILDFLAG(IS_WIN)
 }
 
 }  // namespace media

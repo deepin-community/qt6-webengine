@@ -66,7 +66,24 @@ tools/xngen src/f32-spmm/neon-pipelined.c.in -D MR=8  -D NR=1 -D FMA=1 -o src/f3
 tools/xngen src/f32-spmm/neon-pipelined.c.in -D MR=16 -D NR=1 -D FMA=1 -o src/f32-spmm/gen/f32-spmm-16x1-minmax-neonfma-pipelined.c &
 tools/xngen src/f32-spmm/neon-pipelined.c.in -D MR=32 -D NR=1 -D FMA=1 -o src/f32-spmm/gen/f32-spmm-32x1-minmax-neonfma-pipelined.c &
 
-################################### x86 SSE ###################################
+################################# RISC-V Vector #################################
+### Microkernels without unrolling
+tools/xngen src/f32-spmm/rvv.c.in -D MR=m1 -D NR=1 -D UNROLL=1 -o src/f32-spmm/gen/f32-spmm-1vx1-minmax-rvv.c &
+tools/xngen src/f32-spmm/rvv.c.in -D MR=m2 -D NR=1 -D UNROLL=1 -o src/f32-spmm/gen/f32-spmm-2vx1-minmax-rvv.c &
+tools/xngen src/f32-spmm/rvv.c.in -D MR=m4 -D NR=1 -D UNROLL=1 -o src/f32-spmm/gen/f32-spmm-4vx1-minmax-rvv.c &
+tools/xngen src/f32-spmm/rvv.c.in -D MR=m8 -D NR=1 -D UNROLL=1 -o src/f32-spmm/gen/f32-spmm-8vx1-minmax-rvv.c &
+
+tools/xngen src/f32-spmm/rvv.c.in -D MR=m1 -D NR=2 -D UNROLL=1 -o src/f32-spmm/gen/f32-spmm-1vx2-minmax-rvv.c &
+tools/xngen src/f32-spmm/rvv.c.in -D MR=m2 -D NR=2 -D UNROLL=1 -o src/f32-spmm/gen/f32-spmm-2vx2-minmax-rvv.c &
+tools/xngen src/f32-spmm/rvv.c.in -D MR=m4 -D NR=2 -D UNROLL=1 -o src/f32-spmm/gen/f32-spmm-4vx2-minmax-rvv.c &
+tools/xngen src/f32-spmm/rvv.c.in -D MR=m8 -D NR=2 -D UNROLL=1 -o src/f32-spmm/gen/f32-spmm-8vx2-minmax-rvv.c &
+
+tools/xngen src/f32-spmm/rvv.c.in -D MR=m1 -D NR=4 -D UNROLL=1 -o src/f32-spmm/gen/f32-spmm-1vx4-minmax-rvv.c &
+tools/xngen src/f32-spmm/rvv.c.in -D MR=m2 -D NR=4 -D UNROLL=1 -o src/f32-spmm/gen/f32-spmm-2vx4-minmax-rvv.c &
+tools/xngen src/f32-spmm/rvv.c.in -D MR=m4 -D NR=4 -D UNROLL=1 -o src/f32-spmm/gen/f32-spmm-4vx4-minmax-rvv.c &
+tools/xngen src/f32-spmm/rvv.c.in -D MR=m8 -D NR=4 -D UNROLL=1 -o src/f32-spmm/gen/f32-spmm-8vx4-minmax-rvv.c &
+
+#################################### x86 SSE ####################################
 ### Microkernels without unrolling
 tools/xngen src/f32-spmm/sse.c.in -D MR=4 -D NR=1 -D UNROLL=1 -o src/f32-spmm/gen/f32-spmm-4x1-minmax-sse.c &
 tools/xngen src/f32-spmm/sse.c.in -D MR=8  -D NR=1 -D UNROLL=1 -o src/f32-spmm/gen/f32-spmm-8x1-minmax-sse.c &
@@ -75,53 +92,127 @@ tools/xngen src/f32-spmm/sse.c.in -D MR=32 -D NR=1 -D UNROLL=1 -o src/f32-spmm/g
 
 ################################### WASM SIMD ###################################
 ### Microkernels without unrolling.
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=4  -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmsimd-arm.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=8  -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmsimd-arm.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=16 -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmsimd-arm.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=32 -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmsimd-arm.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=4  -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmsimd-x86.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=8  -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmsimd-x86.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=16 -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmsimd-x86.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=32 -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmsimd-x86.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=4  -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -D ARCH=        -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmsimd-arm.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=8  -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -D ARCH=        -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmsimd-arm.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=16 -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -D ARCH=        -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmsimd-arm.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=32 -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -D ARCH=        -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmsimd-arm.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=4  -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -D ARCH=        -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmsimd-x86.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=8  -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -D ARCH=        -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmsimd-x86.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=16 -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -D ARCH=        -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmsimd-x86.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=32 -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -D ARCH=        -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmsimd-x86.c &
+
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=4  -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmrelaxedsimd-arm.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=8  -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmrelaxedsimd-arm.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=16 -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmrelaxedsimd-arm.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=32 -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmrelaxedsimd-arm.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=4  -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmrelaxedsimd-x86.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=8  -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmrelaxedsimd-x86.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=16 -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmrelaxedsimd-x86.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=32 -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmrelaxedsimd-x86.c &
 
 ### Microkernels with 2X unrolling
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=4  -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmsimd-arm-x2.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=8  -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmsimd-arm-x2.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=16 -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmsimd-arm-x2.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=32 -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmsimd-arm-x2.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=4  -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmsimd-x86-x2.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=8  -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmsimd-x86-x2.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=16 -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmsimd-x86-x2.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=32 -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmsimd-x86-x2.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=4  -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -D ARCH=        -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmsimd-arm-x2.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=8  -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -D ARCH=        -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmsimd-arm-x2.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=16 -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -D ARCH=        -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmsimd-arm-x2.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=32 -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -D ARCH=        -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmsimd-arm-x2.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=4  -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -D ARCH=        -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmsimd-x86-x2.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=8  -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -D ARCH=        -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmsimd-x86-x2.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=16 -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -D ARCH=        -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmsimd-x86-x2.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=32 -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -D ARCH=        -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmsimd-x86-x2.c &
+
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=4  -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmrelaxedsimd-arm-x2.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=8  -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmrelaxedsimd-arm-x2.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=16 -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmrelaxedsimd-arm-x2.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=32 -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmrelaxedsimd-arm-x2.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=4  -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmrelaxedsimd-x86-x2.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=8  -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmrelaxedsimd-x86-x2.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=16 -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmrelaxedsimd-x86-x2.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=32 -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmrelaxedsimd-x86-x2.c &
 
 ### Microkernels with 4X unrolling
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=4  -D NR=1 -D UNROLL=4 -D MINMAX=MINMAX  -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmsimd-arm-x4.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=8  -D NR=1 -D UNROLL=4 -D MINMAX=MINMAX  -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmsimd-arm-x4.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=16 -D NR=1 -D UNROLL=4 -D MINMAX=MINMAX  -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmsimd-arm-x4.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=32 -D NR=1 -D UNROLL=4 -D MINMAX=MINMAX  -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmsimd-arm-x4.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=4  -D NR=1 -D UNROLL=4 -D MINMAX=PMINMAX -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmsimd-x86-x4.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=8  -D NR=1 -D UNROLL=4 -D MINMAX=PMINMAX -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmsimd-x86-x4.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=16 -D NR=1 -D UNROLL=4 -D MINMAX=PMINMAX -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmsimd-x86-x4.c &
-tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=32 -D NR=1 -D UNROLL=4 -D MINMAX=PMINMAX -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmsimd-x86-x4.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=4  -D NR=1 -D UNROLL=4 -D MINMAX=MINMAX  -D ARCH=        -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmsimd-arm-x4.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=8  -D NR=1 -D UNROLL=4 -D MINMAX=MINMAX  -D ARCH=        -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmsimd-arm-x4.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=16 -D NR=1 -D UNROLL=4 -D MINMAX=MINMAX  -D ARCH=        -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmsimd-arm-x4.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=32 -D NR=1 -D UNROLL=4 -D MINMAX=MINMAX  -D ARCH=        -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmsimd-arm-x4.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=4  -D NR=1 -D UNROLL=4 -D MINMAX=PMINMAX -D ARCH=        -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmsimd-x86-x4.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=8  -D NR=1 -D UNROLL=4 -D MINMAX=PMINMAX -D ARCH=        -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmsimd-x86-x4.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=16 -D NR=1 -D UNROLL=4 -D MINMAX=PMINMAX -D ARCH=        -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmsimd-x86-x4.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=32 -D NR=1 -D UNROLL=4 -D MINMAX=PMINMAX -D ARCH=        -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmsimd-x86-x4.c &
+
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=4  -D NR=1 -D UNROLL=4 -D MINMAX=MINMAX  -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmrelaxedsimd-arm-x4.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=8  -D NR=1 -D UNROLL=4 -D MINMAX=MINMAX  -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmrelaxedsimd-arm-x4.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=16 -D NR=1 -D UNROLL=4 -D MINMAX=MINMAX  -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmrelaxedsimd-arm-x4.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=32 -D NR=1 -D UNROLL=4 -D MINMAX=MINMAX  -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmrelaxedsimd-arm-x4.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=4  -D NR=1 -D UNROLL=4 -D MINMAX=PMINMAX -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmrelaxedsimd-x86-x4.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=8  -D NR=1 -D UNROLL=4 -D MINMAX=PMINMAX -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmrelaxedsimd-x86-x4.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=16 -D NR=1 -D UNROLL=4 -D MINMAX=PMINMAX -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmrelaxedsimd-x86-x4.c &
+tools/xngen src/f32-spmm/wasmsimd.c.in -D MR=32 -D NR=1 -D UNROLL=4 -D MINMAX=PMINMAX -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmrelaxedsimd-x86-x4.c &
 
 ### Microkernels with software pipelining
-tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=4  -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmsimd-arm-pipelined.c &
-tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=8  -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmsimd-arm-pipelined.c &
-tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=16 -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmsimd-arm-pipelined.c &
-tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=32 -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmsimd-arm-pipelined.c &
-tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=4  -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmsimd-x86-pipelined.c &
-tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=8  -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmsimd-x86-pipelined.c &
-tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=16 -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmsimd-x86-pipelined.c &
-tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=32 -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmsimd-x86-pipelined.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=4  -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -D ARCH=        -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmsimd-arm-pipelined.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=8  -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -D ARCH=        -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmsimd-arm-pipelined.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=16 -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -D ARCH=        -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmsimd-arm-pipelined.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=32 -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -D ARCH=        -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmsimd-arm-pipelined.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=4  -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -D ARCH=        -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmsimd-x86-pipelined.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=8  -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -D ARCH=        -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmsimd-x86-pipelined.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=16 -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -D ARCH=        -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmsimd-x86-pipelined.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=32 -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -D ARCH=        -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmsimd-x86-pipelined.c &
+
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=4  -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmrelaxedsimd-arm-pipelined.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=8  -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmrelaxedsimd-arm-pipelined.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=16 -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmrelaxedsimd-arm-pipelined.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=32 -D NR=1 -D UNROLL=1 -D MINMAX=MINMAX  -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmrelaxedsimd-arm-pipelined.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=4  -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmrelaxedsimd-x86-pipelined.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=8  -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmrelaxedsimd-x86-pipelined.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=16 -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmrelaxedsimd-x86-pipelined.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=32 -D NR=1 -D UNROLL=1 -D MINMAX=PMINMAX -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmrelaxedsimd-x86-pipelined.c &
 
 ### Microkernels with software pipelining and 2X unrolling
-tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=4  -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmsimd-arm-pipelined-x2.c &
-tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=8  -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmsimd-arm-pipelined-x2.c &
-tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=16 -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmsimd-arm-pipelined-x2.c &
-tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=32 -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmsimd-arm-pipelined-x2.c &
-tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=4  -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmsimd-x86-pipelined-x2.c &
-tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=8  -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmsimd-x86-pipelined-x2.c &
-tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=16 -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmsimd-x86-pipelined-x2.c &
-tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=32 -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmsimd-x86-pipelined-x2.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=4  -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -D ARCH=        -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmsimd-arm-pipelined-x2.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=8  -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -D ARCH=        -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmsimd-arm-pipelined-x2.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=16 -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -D ARCH=        -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmsimd-arm-pipelined-x2.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=32 -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -D ARCH=        -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmsimd-arm-pipelined-x2.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=4  -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -D ARCH=        -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmsimd-x86-pipelined-x2.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=8  -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -D ARCH=        -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmsimd-x86-pipelined-x2.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=16 -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -D ARCH=        -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmsimd-x86-pipelined-x2.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=32 -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -D ARCH=        -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmsimd-x86-pipelined-x2.c &
+
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=4  -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmrelaxedsimd-arm-pipelined-x2.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=8  -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmrelaxedsimd-arm-pipelined-x2.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=16 -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmrelaxedsimd-arm-pipelined-x2.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=32 -D NR=1 -D UNROLL=2 -D MINMAX=MINMAX  -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmrelaxedsimd-arm-pipelined-x2.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=4  -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-4x1-minmax-wasmrelaxedsimd-x86-pipelined-x2.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=8  -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-8x1-minmax-wasmrelaxedsimd-x86-pipelined-x2.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=16 -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-16x1-minmax-wasmrelaxedsimd-x86-pipelined-x2.c &
+tools/xngen src/f32-spmm/wasmsimd-pipelined.c.in -D MR=32 -D NR=1 -D UNROLL=2 -D MINMAX=PMINMAX -D ARCH=RELAXED -o src/f32-spmm/gen/f32-spmm-32x1-minmax-wasmrelaxedsimd-x86-pipelined-x2.c &
+
+################################### Hexagon HVX ##################################
+### Microkernels without unrolling
+tools/xngen src/f32-spmm/hvx.c.in -D MR=32   -D NR=1 -D UNROLL=1 -o src/f32-spmm/gen/f32-spmm-32x1-minmax-hvx.c &
+tools/xngen src/f32-spmm/hvx.c.in -D MR=64   -D NR=1 -D UNROLL=1 -o src/f32-spmm/gen/f32-spmm-64x1-minmax-hvx.c &
+tools/xngen src/f32-spmm/hvx.c.in -D MR=128  -D NR=1 -D UNROLL=1 -o src/f32-spmm/gen/f32-spmm-128x1-minmax-hvx.c &
+
+### Microkernels with 2X unrolling
+tools/xngen src/f32-spmm/hvx.c.in -D MR=32   -D NR=1 -D UNROLL=2 -o src/f32-spmm/gen/f32-spmm-32x1-minmax-hvx-x2.c &
+tools/xngen src/f32-spmm/hvx.c.in -D MR=64   -D NR=1 -D UNROLL=2 -o src/f32-spmm/gen/f32-spmm-64x1-minmax-hvx-x2.c &
+tools/xngen src/f32-spmm/hvx.c.in -D MR=128  -D NR=1 -D UNROLL=2 -o src/f32-spmm/gen/f32-spmm-128x1-minmax-hvx-x2.c &
+
+### Microkernels with 4X unrolling
+tools/xngen src/f32-spmm/hvx.c.in -D MR=32   -D NR=1 -D UNROLL=4 -o src/f32-spmm/gen/f32-spmm-32x1-minmax-hvx-x4.c &
+tools/xngen src/f32-spmm/hvx.c.in -D MR=64   -D NR=1 -D UNROLL=4 -o src/f32-spmm/gen/f32-spmm-64x1-minmax-hvx-x4.c &
+tools/xngen src/f32-spmm/hvx.c.in -D MR=128  -D NR=1 -D UNROLL=4 -o src/f32-spmm/gen/f32-spmm-128x1-minmax-hvx-x4.c &
+
+### Microkernels with software pipelining
+tools/xngen src/f32-spmm/hvx-pipelined.c.in -D MR=32  -D NR=1 -D UNROLL=1 -o src/f32-spmm/gen/f32-spmm-32x1-minmax-hvx-pipelined.c &
+tools/xngen src/f32-spmm/hvx-pipelined.c.in -D MR=64  -D NR=1 -D UNROLL=1 -o src/f32-spmm/gen/f32-spmm-64x1-minmax-hvx-pipelined.c &
+tools/xngen src/f32-spmm/hvx-pipelined.c.in -D MR=128 -D NR=1 -D UNROLL=1 -o src/f32-spmm/gen/f32-spmm-128x1-minmax-hvx-pipelined.c &
+
+tools/xngen src/f32-spmm/hvx-pipelined.c.in -D MR=32  -D NR=1 -D UNROLL=2 -o src/f32-spmm/gen/f32-spmm-32x1-minmax-hvx-pipelined-x2.c &
+tools/xngen src/f32-spmm/hvx-pipelined.c.in -D MR=64  -D NR=1 -D UNROLL=2 -o src/f32-spmm/gen/f32-spmm-64x1-minmax-hvx-pipelined-x2.c &
+tools/xngen src/f32-spmm/hvx-pipelined.c.in -D MR=128 -D NR=1 -D UNROLL=2 -o src/f32-spmm/gen/f32-spmm-128x1-minmax-hvx-pipelined-x2.c &
+
+tools/xngen src/f32-spmm/hvx-pipelined.c.in -D MR=32  -D NR=1 -D UNROLL=4 -o src/f32-spmm/gen/f32-spmm-32x1-minmax-hvx-pipelined-x4.c &
+tools/xngen src/f32-spmm/hvx-pipelined.c.in -D MR=64  -D NR=1 -D UNROLL=4 -o src/f32-spmm/gen/f32-spmm-64x1-minmax-hvx-pipelined-x4.c &
+tools/xngen src/f32-spmm/hvx-pipelined.c.in -D MR=128 -D NR=1 -D UNROLL=4 -o src/f32-spmm/gen/f32-spmm-128x1-minmax-hvx-pipelined-x4.c &
 
 wait

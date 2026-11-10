@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/containers/flat_set.h"
+#include "base/memory/raw_ptr.h"
 #include "build/build_config.h"
 #include "content/browser/devtools/devtools_agent_host_impl.h"
 #include "content/common/content_export.h"
@@ -40,7 +41,7 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
       private RenderProcessHostObserver {
  public:
   // Returns true when DevTools was ever attached to any RenderFrameHost.
-  // TODO(https://crbug.com/1434900): Remove this method after the experiment
+  // TODO(crbug.com/40264958): Remove this method after the experiment
   // associated with the bug entry.
   static bool WasEverAttachedToAnyFrame();
 
@@ -51,11 +52,18 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
   // Returns appropriate agent host for given frame tree node, traversing
   // up to local root as needed.
   static DevToolsAgentHostImpl* GetFor(FrameTreeNode* frame_tree_node);
+
   // Returns appropriate agent host for given RenderFrameHost, traversing
   // up to local root as needed. This will have an effect different from
   // calling the above overload as GetFor(rfh->frame_tree_node()) when
   // given RFH is a pending local root.
   static DevToolsAgentHostImpl* GetFor(RenderFrameHostImpl* rfh);
+
+  // Returns appropriate agent host for given frame tree node, traversing
+  // up to local root as needed. If no agent host exists for the local root,
+  // use the (potentially cross-process) root of the FTNs parent.
+  static DevToolsAgentHostImpl* GetForWithAncestorFallback(
+      FrameTreeNode* frame_tree_node);
 
   // Similar to GetFor(), but creates a host if it doesn't exist yet.
   static scoped_refptr<DevToolsAgentHost> GetOrCreateFor(
@@ -66,8 +74,8 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
   // whether DevToolsAgentHost has actually been created.
   static bool ShouldCreateDevToolsForHost(RenderFrameHostImpl* rfh);
 
-  // This method is called when new frame is created for an emebedded page
-  // (portal or fenced frame) or local root navigation.
+  // This method is called when new frame is created for an embedded page
+  // (fenced frame) or local root navigation.
   static scoped_refptr<RenderFrameDevToolsAgentHost>
   CreateForLocalRootOrEmbeddedPageNavigation(NavigationRequest* request);
   static scoped_refptr<RenderFrameDevToolsAgentHost> FindForDangling(
@@ -85,7 +93,6 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
 
   void OnNavigationRequestWillBeSent(
       const NavigationRequest& navigation_request);
-  void UpdatePortals();
   void DidCreateFencedFrame(FencedFrame* fenced_frame);
 
   // DevToolsAgentHost overrides.
@@ -129,17 +136,17 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
   friend class DevToolsAgentHost;
   friend class RenderFrameDevToolsAgentHostFencedFrameBrowserTest;
 
-  static void UpdateRawHeadersAccess(RenderFrameHostImpl* rfh);
+  static void UpdateRawHeadersAccess(
+      RenderFrameHostImpl* rfh,
+      RenderFrameDevToolsAgentHost* force_include_host);
 
   RenderFrameDevToolsAgentHost(FrameTreeNode*, RenderFrameHostImpl*);
   ~RenderFrameDevToolsAgentHost() override;
 
   // DevToolsAgentHostImpl overrides.
-  bool AttachSession(DevToolsSession* session, bool acquire_wake_lock) override;
+  bool AttachSession(DevToolsSession* session) override;
   void DetachSession(DevToolsSession* session) override;
   void InspectElement(RenderFrameHost* frame_host, int x, int y) override;
-  void GetUniqueFormControlId(int node_id,
-                              GetUniqueFormControlIdCallback callback) override;
   void UpdateRendererChannel(bool force) override;
   protocol::TargetAutoAttacher* auto_attacher() override;
   std::string GetSubtype() override;
@@ -153,7 +160,7 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
   void DidFinishNavigation(NavigationHandle* navigation_handle) override;
   void RenderFrameHostChanged(RenderFrameHost* old_host,
                               RenderFrameHost* new_host) override;
-  void FrameDeleted(int frame_tree_node_id) override;
+  void FrameDeleted(FrameTreeNodeId frame_tree_node_id) override;
   void RenderFrameDeleted(RenderFrameHost* rfh) override;
   void OnVisibilityChanged(content::Visibility visibility) override;
 
@@ -180,18 +187,19 @@ class CONTENT_EXPORT RenderFrameDevToolsAgentHost
 
   std::unique_ptr<FrameAutoAttacher> auto_attacher_;
   // The active host we are talking to.
-  RenderFrameHostImpl* frame_host_ = nullptr;
-  base::flat_set<NavigationRequest*> navigation_requests_;
+  raw_ptr<RenderFrameHostImpl> frame_host_ = nullptr;
+  base::flat_set<raw_ptr<NavigationRequest, CtnExperimental>>
+      navigation_requests_;
   bool render_frame_alive_ = false;
   bool render_frame_crashed_ = false;
 
-  // TODO(https://crbug.com/1449114): Remove these fields once we collect enough
+  // TODO(crbug.com/40269649): Remove these fields once we collect enough
   // data.
   bool is_debugger_paused_ = false;
   bool is_debugger_pause_situation_recorded_ = false;
 
   // The FrameTreeNode associated with this agent.
-  FrameTreeNode* frame_tree_node_;
+  raw_ptr<FrameTreeNode> frame_tree_node_;
 };
 
 // Returns the ancestor FrameTreeNode* for which a RenderFrameDevToolsAgentHost

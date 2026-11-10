@@ -8,10 +8,9 @@ import * as Platform from '../../core/platform/platform.js';
 import * as SDK from '../../core/sdk/sdk.js';
 import * as Protocol from '../../generated/protocol.js';
 import * as Persistence from '../../models/persistence/persistence.js';
-
-import type * as TextUtils from '../../models/text_utils/text_utils.js';
-import * as UI from '../../ui/legacy/legacy.js';
+import * as TextUtils from '../../models/text_utils/text_utils.js';
 import * as Workspace from '../../models/workspace/workspace.js';
+import * as UI from '../../ui/legacy/legacy.js';
 
 const UIStrings = {
   /**
@@ -24,7 +23,7 @@ const UIStrings = {
    *@example {example.url} PH1
    */
   linkedTo: 'Linked to {PH1}',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/snippets/ScriptSnippetFileSystem.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
@@ -40,10 +39,12 @@ export class SnippetFileSystem extends Persistence.PlatformFileSystem.PlatformFi
   private readonly lastSnippetIdentifierSetting: Common.Settings.Setting<number>;
   private readonly snippetsSetting: Common.Settings.Setting<Snippet[]>;
   constructor() {
-    super('snippet://' as Platform.DevToolsPath.UrlString, 'snippets');
+    super(
+        'snippet://' as Platform.DevToolsPath.UrlString, Persistence.PlatformFileSystem.PlatformFileSystemType.SNIPPETS,
+        false);
     this.lastSnippetIdentifierSetting =
-        Common.Settings.Settings.instance().createSetting('scriptSnippets_lastIdentifier', 0);
-    this.snippetsSetting = Common.Settings.Settings.instance().createSetting('scriptSnippets', []);
+        Common.Settings.Settings.instance().createSetting('script-snippets-last-identifier', 0);
+    this.snippetsSetting = Common.Settings.Settings.instance().createSetting('script-snippets', []);
   }
 
   override initialFilePaths(): Platform.DevToolsPath.EncodedPathString[] {
@@ -51,8 +52,9 @@ export class SnippetFileSystem extends Persistence.PlatformFileSystem.PlatformFi
     return savedSnippets.map(snippet => escapeSnippetName(snippet.name));
   }
 
-  override async createFile(_path: Platform.DevToolsPath.EncodedPathString, _name: Platform.DevToolsPath.RawPathString|null):
-      Promise<Platform.DevToolsPath.EncodedPathString|null> {
+  override async createFile(
+      _path: Platform.DevToolsPath.EncodedPathString,
+      _name: Platform.DevToolsPath.RawPathString|null): Promise<Platform.DevToolsPath.EncodedPathString|null> {
     const nextId = this.lastSnippetIdentifierSetting.get() + 1;
     this.lastSnippetIdentifierSetting.set(nextId);
 
@@ -77,20 +79,20 @@ export class SnippetFileSystem extends Persistence.PlatformFileSystem.PlatformFi
   }
 
   override async requestFileContent(path: Platform.DevToolsPath.EncodedPathString):
-      Promise<TextUtils.ContentProvider.DeferredContent> {
+      Promise<TextUtils.ContentData.ContentDataOrError> {
     const name = unescapeSnippetName(Common.ParsedURL.ParsedURL.substring(path, 1));
     const snippets: Snippet[] = this.snippetsSetting.get();
     const snippet = snippets.find(snippet => snippet.name === name);
     if (snippet) {
-      return {content: snippet.content, isEncoded: false};
+      return new TextUtils.ContentData.ContentData(snippet.content, /* isBase64 */ false, 'text/javascript');
     }
-    return {content: null, isEncoded: false, error: `A snippet with name '${name}' was not found`};
+    return {error: `A snippet with name '${name}' was not found`};
   }
 
   override async setFileContent(path: Platform.DevToolsPath.EncodedPathString, content: string, _isBase64: boolean):
       Promise<boolean> {
     const name = unescapeSnippetName(Common.ParsedURL.ParsedURL.substring(path, 1));
-    const snippets: Snippet[] = this.snippetsSetting.get();
+    const snippets = this.snippetsSetting.get();
     const snippet = snippets.find(snippet => snippet.name === name);
     if (snippet) {
       snippet.content = content;
@@ -154,7 +156,7 @@ export async function evaluateScriptSnippet(uiSourceCode: Workspace.UISourceCode
 
   const runtimeModel = executionContext.runtimeModel;
   const consoleModel = executionContext.target().model(SDK.ConsoleModel.ConsoleModel);
-  await uiSourceCode.requestContent();
+  await uiSourceCode.requestContentData();
   uiSourceCode.commitWorkingCopy();
   const expression = uiSourceCode.workingCopy();
   Common.Console.Console.instance().show();
@@ -204,7 +206,8 @@ export function isSnippetsUISourceCode(uiSourceCode: Workspace.UISourceCode.UISo
 
 export function isSnippetsProject(project: Workspace.Workspace.Project): boolean {
   return project.type() === Workspace.Workspace.projectTypes.FileSystem &&
-      Persistence.FileSystemWorkspaceBinding.FileSystemWorkspaceBinding.fileSystemType(project) === 'snippets';
+      Persistence.FileSystemWorkspaceBinding.FileSystemWorkspaceBinding.fileSystemType(project) ===
+      Persistence.PlatformFileSystem.PlatformFileSystemType.SNIPPETS;
 }
 
 export function findSnippetsProject(): Workspace.Workspace.Project {

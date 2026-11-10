@@ -26,7 +26,7 @@ set(GN_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set(GN_LINKER ${CMAKE_CXX_COMPILER})
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${WEBENGINE_ROOT_SOURCE_DIR}/cmake")
 
-find_package(Python3 REQUIRED)
+find_package(Python3 3.8 REQUIRED)
 find_package(Ninja 1.7.2 REQUIRED)
 
 if(WIN32)
@@ -55,21 +55,40 @@ else()
     message(FATAL_ERROR "Unsupported gn platform !")
 endif()
 
+if(GCC_LEGACY_SUPPORT)
+    set(GN_GCC_LEGACY_SUPPORT --gcc-legacy-support)
+endif()
+
+string(REPLACE " " ";" ninja_flags "$ENV{NINJAFLAGS}")
+if(CMAKE_VERBOSE_MAKEFILE)
+    list(APPEND ninja_flags -v)
+endif()
+
+list(JOIN CMAKE_OSX_ARCHITECTURES "$<COMMA>" OSX_ARCH)
 add_custom_command(
     OUTPUT ${GN_EXECUTABLE}
     WORKING_DIRECTORY ${GN_BINARY_DIR}
     COMMAND ${Python3_EXECUTABLE} ${GN_SOURCE_DIR}/build/gen.py
         --no-last-commit-position
+        --no-static-libstdc++
         --out-path ${GN_BINARY_DIR}/$<CONFIG>
         --cc ${CMAKE_C_COMPILER}
         --cxx ${CMAKE_CXX_COMPILER}
+        $<$<NOT:$<STREQUAL:${CMAKE_CXX_COMPILER_LAUNCHER},>>:--cxx-wrapper>
+        $<$<NOT:$<STREQUAL:${CMAKE_CXX_COMPILER_LAUNCHER},>>:${CMAKE_CXX_COMPILER_LAUNCHER}>
         --ld ${GN_LINKER}
+        --allow-warnings
         --platform ${platform}
         --ar ${CMAKE_AR}
         --qt-version "${QT_REPO_MODULE_VERSION}.qtwebengine.qt.io"
-        $<$<PLATFORM_ID:Darwin>:--isysroot>
-        $<$<PLATFORM_ID:Darwin>:${CMAKE_OSX_SYSROOT}>
-    COMMAND Ninja::ninja -C ${GN_BINARY_DIR}/$<CONFIG> ${GN_EXECUTABLE}
+        $<$<AND:$<PLATFORM_ID:Darwin>,$<BOOL:${CMAKE_OSX_SYSROOT}>>:--isysroot>
+        $<$<AND:$<PLATFORM_ID:Darwin>,$<BOOL:${CMAKE_OSX_SYSROOT}>>:${CMAKE_OSX_SYSROOT}>
+        $<$<PLATFORM_ID:Darwin>:--osx-architectures>
+        $<$<PLATFORM_ID:Darwin>:${OSX_ARCH}>
+        $<$<AND:$<PLATFORM_ID:Darwin>,$<BOOL:${CMAKE_OSX_DEPLOYMENT_TARGET}>>:--osx-deployment-target>
+        $<$<AND:$<PLATFORM_ID:Darwin>,$<BOOL:${CMAKE_OSX_DEPLOYMENT_TARGET}>>:${CMAKE_OSX_DEPLOYMENT_TARGET}>
+        ${GN_GCC_LEGACY_SUPPORT}
+    COMMAND Ninja::ninja ${ninja_flags} -C ${GN_BINARY_DIR}/$<CONFIG> ${GN_EXECUTABLE}
     VERBATIM
     USES_TERMINAL
     COMMAND_EXPAND_LISTS

@@ -13,7 +13,6 @@
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/devtools/device/usb/android_rsa.h"
 #include "chrome/browser/devtools/device/usb/android_usb_device.h"
-#include "crypto/rsa_private_key.h"
 #include "net/base/completion_repeating_callback.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -90,14 +89,13 @@ void RunCommand(scoped_refptr<AndroidUsbDevice> device,
 
 }  // namespace
 
-UsbDeviceProvider::UsbDeviceProvider(Profile* profile) {
-  rsa_key_ = AndroidRSAPrivateKey(profile);
-}
+UsbDeviceProvider::UsbDeviceProvider(Profile* profile)
+    : rsa_key_(AndroidRSAPrivateKey(profile)) {}
 
 void UsbDeviceProvider::QueryDevices(SerialsCallback callback) {
   AndroidUsbDevice::Enumerate(
-      rsa_key_.get(), base::BindOnce(&UsbDeviceProvider::EnumeratedDevices,
-                                     this, std::move(callback)));
+      rsa_key_, base::BindOnce(&UsbDeviceProvider::EnumeratedDevices, this,
+                               std::move(callback)));
 }
 
 void UsbDeviceProvider::QueryDeviceInfo(const std::string& serial,
@@ -140,8 +138,7 @@ void UsbDeviceProvider::ReleaseDevice(const std::string& serial) {
   device_map_.erase(serial);
 }
 
-UsbDeviceProvider::~UsbDeviceProvider() {
-}
+UsbDeviceProvider::~UsbDeviceProvider() = default;
 
 void UsbDeviceProvider::EnumeratedDevices(SerialsCallback callback,
                                           const AndroidUsbDevices& devices) {

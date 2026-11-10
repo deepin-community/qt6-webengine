@@ -19,9 +19,9 @@
 #include "core/fpdfapi/parser/cpdf_string.h"
 #include "core/fpdfapi/parser/cpdf_test_document.h"
 #include "core/fpdfdoc/cpdf_interactiveform.h"
+#include "core/fxcrt/containers/contains.h"
 #include "core/fxcrt/fx_memory.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/base/containers/contains.h"
 
 namespace {
 
@@ -31,8 +31,8 @@ class ScopedCPDF_PageModule {
  public:
   FX_STACK_ALLOCATED();
 
-  ScopedCPDF_PageModule() { CPDF_PageModule::Create(); }
-  ~ScopedCPDF_PageModule() { CPDF_PageModule::Destroy(); }
+  ScopedCPDF_PageModule() { pdfium::InitializePageModule(); }
+  ~ScopedCPDF_PageModule() { pdfium::DestroyPageModule(); }
 };
 
 void TestMultiselectFieldDict(RetainPtr<CPDF_Array> opt_array,
@@ -46,7 +46,7 @@ void TestMultiselectFieldDict(RetainPtr<CPDF_Array> opt_array,
   form_dict->SetNewFor<CPDF_Name>("Subtype", "Widget");
   form_dict->SetNewFor<CPDF_Name>(pdfium::form_fields::kFT,
                                   pdfium::form_fields::kCh);
-  constexpr int kMuliSelectFlag = pdfium::form_flags::kChoiceMultiSelect;
+  static constexpr int kMuliSelectFlag = pdfium::form_flags::kChoiceMultiSelect;
   form_dict->SetNewFor<CPDF_Number>(pdfium::form_fields::kFf, kMuliSelectFlag);
   form_dict->SetFor("Opt", opt_array);
   form_dict->SetFor(pdfium::form_fields::kV, values);
@@ -67,7 +67,7 @@ void TestMultiselectFieldDict(RetainPtr<CPDF_Array> opt_array,
 
 }  // namespace
 
-TEST(CPDF_FormFieldTest, GetFullNameForDict) {
+TEST(CPDFFormFieldTest, GetFullNameForDict) {
   WideString name = CPDF_FormField::GetFullNameForDict(nullptr);
   EXPECT_TRUE(name.IsEmpty());
 
@@ -75,37 +75,37 @@ TEST(CPDF_FormFieldTest, GetFullNameForDict) {
   auto root = obj_holder.NewIndirect<CPDF_Dictionary>();
   root->SetNewFor<CPDF_Name>("T", "foo");
   name = CPDF_FormField::GetFullNameForDict(root.Get());
-  EXPECT_STREQ("foo", name.ToUTF8().c_str());
+  EXPECT_EQ("foo", name.ToUTF8());
 
   auto dict1 = obj_holder.NewIndirect<CPDF_Dictionary>();
   root->SetNewFor<CPDF_Reference>("Parent", &obj_holder, dict1->GetObjNum());
   dict1->SetNewFor<CPDF_Name>("T", "bar");
   name = CPDF_FormField::GetFullNameForDict(root.Get());
-  EXPECT_STREQ("bar.foo", name.ToUTF8().c_str());
+  EXPECT_EQ("bar.foo", name.ToUTF8());
 
   auto dict2 = dict1->SetNewFor<CPDF_Dictionary>("Parent");
   name = CPDF_FormField::GetFullNameForDict(root.Get());
-  EXPECT_STREQ("bar.foo", name.ToUTF8().c_str());
+  EXPECT_EQ("bar.foo", name.ToUTF8());
 
   auto dict3 = obj_holder.NewIndirect<CPDF_Dictionary>();
   dict2->SetNewFor<CPDF_Reference>("Parent", &obj_holder, dict3->GetObjNum());
 
   dict3->SetNewFor<CPDF_Name>("T", "qux");
   name = CPDF_FormField::GetFullNameForDict(root.Get());
-  EXPECT_STREQ("qux.bar.foo", name.ToUTF8().c_str());
+  EXPECT_EQ("qux.bar.foo", name.ToUTF8());
 
   dict3->SetNewFor<CPDF_Reference>("Parent", &obj_holder, root->GetObjNum());
   name = CPDF_FormField::GetFullNameForDict(root.Get());
-  EXPECT_STREQ("qux.bar.foo", name.ToUTF8().c_str());
+  EXPECT_EQ("qux.bar.foo", name.ToUTF8());
   name = CPDF_FormField::GetFullNameForDict(dict1.Get());
-  EXPECT_STREQ("foo.qux.bar", name.ToUTF8().c_str());
+  EXPECT_EQ("foo.qux.bar", name.ToUTF8());
   name = CPDF_FormField::GetFullNameForDict(dict2.Get());
-  EXPECT_STREQ("bar.foo.qux", name.ToUTF8().c_str());
+  EXPECT_EQ("bar.foo.qux", name.ToUTF8());
   name = CPDF_FormField::GetFullNameForDict(dict3.Get());
-  EXPECT_STREQ("bar.foo.qux", name.ToUTF8().c_str());
+  EXPECT_EQ("bar.foo.qux", name.ToUTF8());
 }
 
-TEST(CPDF_FormFieldTest, IsItemSelected) {
+TEST(CPDFFormFieldTest, IsItemSelected) {
   ScopedCPDF_PageModule page_module;
 
   auto opt_array = pdfium::MakeRetain<CPDF_Array>();

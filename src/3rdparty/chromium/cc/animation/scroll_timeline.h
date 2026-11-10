@@ -7,6 +7,8 @@
 
 #include <optional>
 #include <vector>
+
+#include "base/check.h"
 #include "base/time/time.h"
 #include "cc/animation/animation_export.h"
 #include "cc/animation/animation_timeline.h"
@@ -184,13 +186,13 @@ class CC_ANIMATION_EXPORT ScrollTimeline : public AnimationTimeline {
 };
 
 inline ScrollTimeline* ToScrollTimeline(AnimationTimeline* timeline) {
-  DCHECK(timeline->IsScrollTimeline());
+  CHECK(timeline->IsScrollTimeline());
   return static_cast<ScrollTimeline*>(timeline);
 }
 
 inline const ScrollTimeline* ToScrollTimeline(
     const AnimationTimeline* timeline) {
-  DCHECK(timeline->IsScrollTimeline());
+  CHECK(timeline->IsScrollTimeline());
   return static_cast<const ScrollTimeline*>(timeline);
 }
 

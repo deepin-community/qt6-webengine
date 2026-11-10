@@ -27,8 +27,11 @@
  */
 
 #include "third_party/blink/renderer/platform/audio/dynamics_compressor.h"
+
 #include <algorithm>
 #include <cmath>
+
+#include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/notreached.h"
 #include "third_party/blink/renderer/platform/audio/audio_bus.h"
@@ -138,8 +141,6 @@ void DynamicsCompressor::Process(const AudioBus* source_bus,
     default:
       // FIXME : support other number of channels.
       NOTREACHED();
-      destination_bus->Zero();
-      return;
   }
 
   for (unsigned i = 0; i < number_of_channels; ++i) {
@@ -289,8 +290,9 @@ void DynamicsCompressor::Process(const AudioBus* source_bus,
       // version.
       for (unsigned j = 0; j < number_of_channels; ++j) {
         float* const delay_buffer = pre_delay_buffers_[j]->Data();
-        const float undelayed_source = source_channels[j][frame_index];
-        delay_buffer[pre_delay_write_index] = undelayed_source;
+        const float undelayed_source =
+            UNSAFE_TODO(source_channels[j][frame_index]);
+        UNSAFE_TODO(delay_buffer[pre_delay_write_index]) = undelayed_source;
 
         const float abs_undelayed_source =
             undelayed_source > 0 ? undelayed_source : -undelayed_source;
@@ -362,8 +364,8 @@ void DynamicsCompressor::Process(const AudioBus* source_bus,
       // Apply final gain.
       for (unsigned j = 0; j < number_of_channels; ++j) {
         const float* const delay_buffer = pre_delay_buffers_[j]->Data();
-        destination_channels[j][frame_index] =
-            delay_buffer[pre_delay_read_index] * total_gain;
+        UNSAFE_TODO(destination_channels[j][frame_index]) =
+            UNSAFE_TODO(delay_buffer[pre_delay_read_index]) * total_gain;
       }
 
       frame_index++;

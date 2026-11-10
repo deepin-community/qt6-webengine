@@ -12,15 +12,34 @@
 #include "third_party/blink/renderer/core/html/html_image_element.h"
 #include "third_party/blink/renderer/core/lcp_critical_path_predictor/element_locator.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
+#include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
+#include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 
 namespace blink {
 
 namespace {
 
 size_t GetLCPPFontURLPredictorMaxUrlLength() {
-  static size_t max_length = base::checked_cast<size_t>(
-      features::kLCPPFontURLPredictorMaxUrlLength.Get());
-  return max_length;
+  return features::kLCPPFontURLPredictorMaxUrlLength.Get();
+}
+
+bool IsTimingPredictorEnabled() {
+  if (base::FeatureList::IsEnabled(
+          blink::features::kLCPTimingPredictorPrerender2)) {
+    return true;
+  }
+  if (base::FeatureList::IsEnabled(blink::features::kLCPPDeferUnusedPreload)) {
+    switch (features::kLcppDeferUnusedPreloadTiming.Get()) {
+      case features::LcppDeferUnusedPreloadTiming::kPostTask:
+        return false;
+      case features::LcppDeferUnusedPreloadTiming::kLcpTimingPredictor:
+      case features::LcppDeferUnusedPreloadTiming::
+          kLcpTimingPredictorWithPostTask:
+        return true;
+    }
+  }
+
+  return false;
 }
 
 }  // namespace
@@ -30,28 +49,23 @@ LCPCriticalPathPredictor::LCPCriticalPathPredictor(LocalFrame& frame)
       host_(frame.DomWindow()),
       task_runner_(frame.GetTaskRunner(TaskType::kInternalLoading)) {
   CHECK(LcppEnabled());
-  if (base::FeatureList::IsEnabled(features::kLCPScriptObserver)) {
-    lcp_script_observer_ = MakeGarbageCollected<LCPScriptObserver>(frame_);
-  }
 }
 
 LCPCriticalPathPredictor::~LCPCriticalPathPredictor() = default;
 
 bool LCPCriticalPathPredictor::HasAnyHintData() const {
-  return !lcp_element_locators_.empty() || !lcp_influencer_scripts_.empty();
+  return !lcp_element_locators_.empty() || !lcp_influencer_scripts_.empty() ||
+         !preconnected_origins_.empty();
 }
 
 void LCPCriticalPathPredictor::set_lcp_element_locators(
-    const std::vector<std::string>& lcp_element_locator_strings) {
+    const std::vector<std::string>& lcp_element_locator_strings,
+    const std::vector<std::string>& lcp_element_locator_all_strings) {
+  // Clear current set of locators before receiving replacements.
+  lcp_element_locators_.clear();
+  lcp_element_locator_strings_.clear();
   const wtf_size_t reserved_size =
       base::checked_cast<wtf_size_t>(lcp_element_locator_strings.size());
-  if (features::
-          kLCPCriticalPathPredictorEnableElementLocatorPerformanceImprovements
-              .Get()) {
-    // Clear current set of locators before receiving replacements.
-    lcp_element_locators_.clear();
-    lcp_element_locator_strings_.clear();
-  }
   lcp_element_locators_.reserve(reserved_size);
   lcp_element_locator_strings_.reserve(reserved_size);
   for (const std::string& serialized_locator : lcp_element_locator_strings) {
@@ -68,6 +82,21 @@ void LCPCriticalPathPredictor::set_lcp_element_locators(
     }
   }
   CHECK_EQ(lcp_element_locators_.size(), lcp_element_locator_strings_.size());
+
+  lcp_element_locator_all_strings_.clear();
+  lcp_element_locator_all_strings_.reserve(
+      base::checked_cast<wtf_size_t>(lcp_element_locator_all_strings.size()));
+  for (const std::string& serialized_locator :
+       lcp_element_locator_all_strings) {
+    bool result = ElementLocator().ParseFromString(serialized_locator);
+    if (!result) {
+      // This can happen when the host LCPP database is corrupted or we
+      // updated the ElementLocator schema in an incompatible way.
+      LOG(INFO) << "Ignoring an invalid lcp_element_locator hint.";
+    } else {
+      lcp_element_locator_all_strings_.push_back(std::move(serialized_locator));
+    }
+  }
 }
 
 void LCPCriticalPathPredictor::set_lcp_influencer_scripts(
@@ -79,33 +108,74 @@ void LCPCriticalPathPredictor::set_fetched_fonts(Vector<KURL> fonts) {
   fetched_fonts_ = std::move(fonts);
 }
 
+void LCPCriticalPathPredictor::set_preconnected_origins(
+    const Vector<url::Origin>& origins) {
+  preconnected_origins_ = std::move(origins);
+}
+
+void LCPCriticalPathPredictor::set_unused_preloads(Vector<KURL> preloads) {
+  unused_preloads_ = std::move(preloads);
+}
+
+void LCPCriticalPathPredictor::enable_testing() {
+  report_timing_predictor_for_testing_ = true;
+}
+
 void LCPCriticalPathPredictor::Reset() {
   lcp_element_locators_.clear();
   lcp_element_locator_strings_.clear();
   lcp_influencer_scripts_.clear();
   fetched_fonts_.clear();
+  preconnected_origins_.clear();
+  unused_preloads_.clear();
 
   lcp_predicted_callbacks_.clear();
-  called_predicted_callbacks_ = false;
-  is_lcp_candidate_found_ = false;
+  are_predicted_callbacks_called_ = false;
+  has_lcp_occurred_ = false;
   is_outermost_main_frame_document_loaded_ = false;
+  has_sent_unused_preloads_ = false;
+
+  report_timing_predictor_for_testing_ = false;
 }
 
 void LCPCriticalPathPredictor::AddLCPPredictedCallback(LCPCallback callback) {
+  CHECK(IsTimingPredictorEnabled());
+  if (are_predicted_callbacks_called_) {
+    std::move(callback).Run(/*lcp_element=*/nullptr);
+    return;
+  }
   lcp_predicted_callbacks_.push_back(std::move(callback));
+}
+
+void LCPCriticalPathPredictor::AddLCPPredictedCallback(
+    base::OnceClosure callback) {
+  LCPCallback lcp_callback =
+      WTF::BindOnce([](base::OnceClosure callback,
+                       const Element*) { std::move(callback).Run(); },
+                    std::move(callback));
+  AddLCPPredictedCallback(std::move(lcp_callback));
 }
 
 void LCPCriticalPathPredictor::MayRunPredictedCallbacks(
     const Element* lcp_element) {
-  if (called_predicted_callbacks_) {
+  if (are_predicted_callbacks_called_) {
     return;
   }
-  called_predicted_callbacks_ = true;
+  are_predicted_callbacks_called_ = true;
   // TODO(crbug.com/1493255): Trigger callbacks for the entire frame tree.
   Vector<LCPCallback> callbacks;
   callbacks.swap(lcp_predicted_callbacks_);
   for (auto& callback : callbacks) {
     std::move(callback).Run(lcp_element);
+  }
+
+  if (report_timing_predictor_for_testing_) {
+    const std::optional<std::string> lcp_element_locator_string =
+        lcp_element
+            ? std::optional<std::string>(
+                  element_locator::OfElement(*lcp_element).SerializeAsString())
+            : std::nullopt;
+    GetHost().OnLcpTimingPredictedForTesting(lcp_element_locator_string);
   }
 }
 
@@ -117,17 +187,20 @@ bool LCPCriticalPathPredictor::IsElementMatchingLocator(
 }
 
 void LCPCriticalPathPredictor::OnLargestContentfulPaintUpdated(
-    const Element& lcp_element) {
-  if (base::FeatureList::IsEnabled(features::kLCPCriticalPathPredictor)) {
-    std::string lcp_element_locator_string =
+    const Element& lcp_element,
+    std::optional<const KURL> maybe_image_url) {
+  if (base::FeatureList::IsEnabled(features::kLCPCriticalPathPredictor) ||
+      base::FeatureList::IsEnabled(features::kLCPPLazyLoadImagePreload) ||
+      IsTimingPredictorEnabled()) {
+    const std::string lcp_element_locator_string =
         element_locator::OfElement(lcp_element).SerializeAsString();
 
-    is_lcp_candidate_found_ = true;
+    has_lcp_occurred_ = true;
     // Regard `lcp_element` is the candidate if its locator is found in
     // set_lcp_element_locators(lcp_element_locator_strings).
     // See PredictLcpElementLocators() for the contents detail.
     const wtf_size_t predicted_lcp_index =
-        lcp_element_locator_strings_.Find(lcp_element_locator_string);
+        lcp_element_locator_all_strings_.Find(lcp_element_locator_string);
     if (predicted_lcp_index != kNotFound) {
       MayRunPredictedCallbacks(&lcp_element);
     }
@@ -137,41 +210,65 @@ void LCPCriticalPathPredictor::OnLargestContentfulPaintUpdated(
       MayRunPredictedCallbacks(nullptr);
     }
 
-    features::LcppRecordedLcpElementTypes recordable_lcp_element_type =
-        features::kLCPCriticalPathPredictorRecordedLcpElementTypes.Get();
-    bool should_record_element_locator =
-        (recordable_lcp_element_type ==
-         features::LcppRecordedLcpElementTypes::kAll) ||
-        (recordable_lcp_element_type ==
-             features::LcppRecordedLcpElementTypes::kImageOnly &&
-         IsA<HTMLImageElement>(lcp_element));
+    base::UmaHistogramCounts10000(
+        "Blink.LCPP.LCPElementLocatorSize",
+        base::checked_cast<int>(lcp_element_locator_string.size()));
+    const bool is_recordable =
+        (lcp_element_locator_string.size() <=
+         features::kLCPCriticalPathPredictorMaxElementLocatorLength.Get());
+    GetHost().OnLcpUpdated(mojom::blink::LcpElement::New(
+        is_recordable ? std::optional<std::string>(lcp_element_locator_string)
+                      : std::nullopt,
+        IsA<HTMLImageElement>(lcp_element),
+        predicted_lcp_index == kNotFound
+            ? std::nullopt
+            : std::optional<wtf_size_t>(predicted_lcp_index)));
+  }
 
-    if (should_record_element_locator) {
-      base::UmaHistogramCounts10000(
-          "Blink.LCPP.LCPElementLocatorSize",
-          base::checked_cast<int>(lcp_element_locator_string.size()));
+  if (base::FeatureList::IsEnabled(features::kLCPPAutoPreconnectLcpOrigin)) {
+    auto root_origin =
+        url::Origin::Create((GURL)lcp_element.GetDocument().Url());
+    if (maybe_image_url.has_value()) {
+      const KURL& lcp_image_url = *maybe_image_url;
+      if (!lcp_image_url.IsEmpty() && lcp_image_url.IsValid() &&
+          lcp_image_url.ProtocolIsInHTTPFamily()) {
+        auto lcp_origin = url::Origin::Create((GURL)lcp_image_url);
+        bool is_lcp_cross_origin = !lcp_origin.IsSameOriginWith(root_origin);
+        base::UmaHistogramBoolean("Blink.LCPP.CrossOriginLcpImage",
+                                  is_lcp_cross_origin);
+        if (is_lcp_cross_origin) {
+          GetHost().AddPreconnectOrigin(SecurityOrigin::Create(lcp_image_url));
+        }
 
-      if (lcp_element_locator_string.size() <=
-          base::checked_cast<size_t>(
-              features::kLCPCriticalPathPredictorMaxElementLocatorLength
-                  .Get())) {
-        GetHost().SetLcpElementLocator(
-            lcp_element_locator_string,
-            predicted_lcp_index == kNotFound
-                ? absl::nullopt
-                : absl::optional<wtf_size_t>(predicted_lcp_index));
+        // Calculate accuracy against predicted.
+        int count_prediction_matches = 0;
+        for (const auto& predicted_origin : preconnected_origins_) {
+          if (lcp_origin.IsSameOriginWith(predicted_origin)) {
+            count_prediction_matches++;
+          }
+        }
+
+        base::UmaHistogramCounts1000(
+            "Blink.LCPP.PreconnectPredictionMatchCount",
+            base::checked_cast<int>(preconnected_origins_.size()));
+        if (!preconnected_origins_.empty()) {
+          base::UmaHistogramCounts100(
+              "Blink.LCPP.PreconnectPredictionMatchPercent",
+              base::checked_cast<int>((double)count_prediction_matches /
+                                      preconnected_origins_.size() * 100));
+        }
       }
     }
   }
 
-  if (base::FeatureList::IsEnabled(features::kLCPScriptObserver)) {
+  if (blink::LcppScriptObserverEnabled()) {
     if (const HTMLImageElement* image_element =
             DynamicTo<HTMLImageElement>(lcp_element)) {
       auto& creators = image_element->creator_scripts();
-      size_t max_allowed_url_length = base::checked_cast<size_t>(
-          features::kLCPScriptObserverMaxUrlLength.Get());
-      size_t max_allowed_url_count = base::checked_cast<size_t>(
-          features::kLCPScriptObserverMaxUrlCountPerOrigin.Get());
+      size_t max_allowed_url_length =
+          features::kLCPScriptObserverMaxUrlLength.Get();
+      size_t max_allowed_url_count =
+          features::kLCPScriptObserverMaxUrlCountPerOrigin.Get();
       size_t max_url_length_encountered = 0;
       size_t prediction_match_count = 0;
 
@@ -227,12 +324,16 @@ void LCPCriticalPathPredictor::OnFontFetched(const KURL& url) {
   if (url.GetString().length() > GetLCPPFontURLPredictorMaxUrlLength()) {
     return;
   }
-  GetHost().NotifyFetchedFont(url);
+  GetHost().NotifyFetchedFont(url, fetched_fonts_.Contains(url));
 }
 
-void LCPCriticalPathPredictor::OnStartPreload(const KURL& url) {
+void LCPCriticalPathPredictor::OnStartPreload(
+    const KURL& url,
+    const ResourceType& resource_type) {
   if (!base::FeatureList::IsEnabled(
-          blink::features::kHttpDiskCachePrewarming)) {
+          blink::features::kHttpDiskCachePrewarming) &&
+      !base::FeatureList::IsEnabled(
+          blink::features::kLCPPPrefetchSubresource)) {
     return;
   }
   if (!frame_->IsOutermostMainFrame()) {
@@ -241,9 +342,8 @@ void LCPCriticalPathPredictor::OnStartPreload(const KURL& url) {
   if (!url.ProtocolIsInHTTPFamily()) {
     return;
   }
-  static size_t max_url_length = base::checked_cast<size_t>(
-      features::kHttpDiskCachePrewarmingMaxUrlLength.Get());
-  if (url.GetString().length() > max_url_length) {
+  if (url.GetString().length() >
+      features::kHttpDiskCachePrewarmingMaxUrlLength.Get()) {
     return;
   }
   Document* document = frame_->GetDocument();
@@ -254,7 +354,9 @@ void LCPCriticalPathPredictor::OnStartPreload(const KURL& url) {
       base::TimeTicks::Now() -
       document->Loader()->GetTiming().NavigationStart();
   CHECK_GE(resource_load_start, base::Seconds(0));
-  GetHost().NotifyFetchedSubresource(url, resource_load_start);
+  GetHost().NotifyFetchedSubresource(
+      url, resource_load_start,
+      ResourceFetcher::DetermineRequestDestination(resource_type));
 }
 
 mojom::blink::LCPCriticalPathPredictorHost&
@@ -272,18 +374,36 @@ bool LCPCriticalPathPredictor::IsLcpInfluencerScript(const KURL& url) {
 }
 
 void LCPCriticalPathPredictor::OnOutermostMainFrameDocumentLoad() {
+  if (!IsTimingPredictorEnabled()) {
+    return;
+  }
   is_outermost_main_frame_document_loaded_ = true;
   // Call callbacks as fallback because we can not detect
   // which is lcp in the lcps before onload.
-  if (is_lcp_candidate_found_) {
+  if (has_lcp_occurred_ || lcp_element_locator_all_strings_.empty()) {
     MayRunPredictedCallbacks(nullptr);
   }
+}
+
+void LCPCriticalPathPredictor::OnWarnedUnusedPreloads(
+    const Vector<KURL>& unused_preloads) {
+  // This should be sent in the outermost main frame. It's fine without checking
+  // |frame_->IsOutermostMainFrame()| here because the caller side
+  // LocalFrame::GetLCPP() has the outermost main frame check.
+  if (!base::FeatureList::IsEnabled(features::kLCPPDeferUnusedPreload) ||
+      has_sent_unused_preloads_) {
+    return;
+  }
+  // Limit the list of preload requests to be sent once. This function can be
+  // called after the load event, but we only take care of unused preloads
+  // dispatched before LCP.
+  has_sent_unused_preloads_ = true;
+  GetHost().SetUnusedPreloads(unused_preloads);
 }
 
 void LCPCriticalPathPredictor::Trace(Visitor* visitor) const {
   visitor->Trace(frame_);
   visitor->Trace(host_);
-  visitor->Trace(lcp_script_observer_);
 }
 
 }  // namespace blink

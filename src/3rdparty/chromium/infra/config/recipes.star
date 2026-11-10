@@ -2,8 +2,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-load("//lib/bootstrap.star", "POLYMORPHIC", "register_recipe_bootstrappability")
-load("//lib/recipe_experiments.star", "register_recipe_experiments")
+load("@chromium-luci//bootstrap.star", "POLYMORPHIC", "register_recipe_bootstrappability")
+load("@chromium-luci//recipe_experiments.star", "register_recipe_experiments")
 
 _RECIPE_NAME_PREFIX = "recipe:"
 
@@ -120,15 +120,27 @@ build_recipe(
 )
 
 build_recipe(
+    name = "recipe:compile_size_trybot",
+)
+
+build_recipe(
     name = "recipe:chrome_build/build_perf",
+    bootstrappable = True,
 )
 
 build_recipe(
     name = "recipe:chrome_build/build_perf_siso",
+    bootstrappable = True,
 )
 
 build_recipe(
     name = "recipe:chrome_build/build_perf_developer",
+    bootstrappable = True,
+)
+
+build_recipe(
+    name = "recipe:chrome_build/build_perf_without_rbe",
+    bootstrappable = True,
 )
 
 build_recipe(
@@ -146,6 +158,11 @@ build_recipe(
 
 build_recipe(
     name = "recipe:chromium/autosharder",
+    bootstrappable = True,
+)
+
+build_recipe(
+    name = "recipe:chromium/autosharder_test",
     bootstrappable = True,
 )
 
@@ -177,11 +194,16 @@ build_recipe(
 )
 
 build_recipe(
-    name = "recipe:chromium_licenses/scan",
+    name = "recipe:chromium_polymorphic/launcher",
 )
 
 build_recipe(
-    name = "recipe:chromium_polymorphic/launcher",
+    name = "recipe:chromium_rr/orchestrator",
+)
+
+build_recipe(
+    name = "recipe:chromium_rr/test_launcher",
+    bootstrappable = POLYMORPHIC,
 )
 
 build_recipe(
@@ -190,10 +212,15 @@ build_recipe(
 
 build_recipe(
     name = "recipe:chromium/fuzz",
+    bootstrappable = True,
 )
 
 build_recipe(
     name = "recipe:chromium/mega_cq_launcher",
+)
+
+build_recipe(
+    name = "recipe:chromium/universal_test_runner_test",
 )
 
 build_recipe(
@@ -202,6 +229,14 @@ build_recipe(
 
 build_recipe(
     name = "recipe:chromium_fuzz_coverage",
+)
+
+build_recipe(
+    name = "recipe:chrome_codeql_database_builder",
+)
+
+build_recipe(
+    name = "recipe:chrome_codeql_query_runner",
 )
 
 build_recipe(
@@ -236,10 +271,6 @@ build_recipe(
 
 build_recipe(
     name = "recipe:chromium_toolchain/package_rust",
-)
-
-build_recipe(
-    name = "recipe:cronet",
 )
 
 build_recipe(
@@ -295,10 +326,6 @@ build_recipe(
 
 build_recipe(
     name = "recipe:tricium_oilpan",
-)
-
-build_recipe(
-    name = "recipe:tricium_simple",
 )
 
 build_recipe(

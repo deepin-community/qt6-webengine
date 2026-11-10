@@ -2,13 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "partition_alloc/partition_alloc_base/strings/cstring_builder.h"
 
-#include "build/build_config.h"
-#include "partition_alloc/partition_alloc_base/debug/debugging_buildflags.h"
+#include "partition_alloc/build_config.h"
+#include "partition_alloc/buildflags.h"
 #include "partition_alloc/partition_alloc_base/strings/safe_sprintf.h"
 
-#if !BUILDFLAG(IS_WIN)
+#if !PA_BUILDFLAG(IS_WIN)
 #include <unistd.h>
 #endif
 
@@ -16,7 +21,7 @@
 #include <cstring>
 #include <limits>
 
-#if BUILDFLAG(PA_DCHECK_IS_ON)
+#if PA_BUILDFLAG(DCHECKS_ARE_ON)
 #include "partition_alloc/partition_alloc_base/check.h"
 #define PA_RAW_DCHECK PA_RAW_CHECK
 #else

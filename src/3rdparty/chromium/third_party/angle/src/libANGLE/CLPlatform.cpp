@@ -5,8 +5,12 @@
 //
 // CLPlatform.cpp: Implements the cl::Platform class.
 
+#include "libANGLE/Context.h"
+#include "libANGLE/capture/FrameCapture.h"
+
 #include "libANGLE/CLPlatform.h"
 
+#include "entry_points_utils.h"
 #include "libANGLE/CLContext.h"
 #include "libANGLE/CLDevice.h"
 #include "libANGLE/cl_utils.h"
@@ -24,7 +28,8 @@ bool IsDeviceTypeMatch(DeviceType select, DeviceType type)
     // The type 'DeviceType' is a bitfield, so it matches if any selected bit is set.
     // A custom device is an exception, which only matches if it was explicitely selected, see:
     // https://www.khronos.org/registry/OpenCL/specs/3.0-unified/html/OpenCL_API.html#clGetDeviceIDs
-    return type == CL_DEVICE_TYPE_CUSTOM ? select == CL_DEVICE_TYPE_CUSTOM : type.isSet(select);
+    return type == CL_DEVICE_TYPE_CUSTOM ? select == CL_DEVICE_TYPE_CUSTOM
+                                         : type.intersects(select);
 }
 
 Context::PropArray ParseContextProperties(const cl_context_properties *properties,
@@ -52,10 +57,6 @@ Context::PropArray ParseContextProperties(const cl_context_properties *propertie
         propArray.reserve(propIt - properties);
         propArray.insert(propArray.cend(), properties, propIt);
     }
-    if (platform == nullptr)
-    {
-        platform = Platform::GetDefault();
-    }
     return propArray;
 }
 
@@ -77,12 +78,16 @@ void Platform::Initialize(const cl_icd_dispatch &dispatch,
     while (!createFuncs.empty())
     {
         platforms.emplace_back(new Platform(createFuncs.front()));
+
         // Release initialization reference, lifetime controlled by RefPointer.
         platforms.back()->release();
+
+        // Remove platform on any errors
         if (!platforms.back()->mInfo.isValid() || platforms.back()->mDevices.empty())
         {
             platforms.pop_back();
         }
+
         createFuncs.pop_front();
     }
 }
@@ -211,22 +216,41 @@ angle::Result Platform::getDeviceIDs(DeviceType deviceType,
     return angle::Result::Continue;
 }
 
+bool Platform::hasDeviceType(DeviceType deviceType) const
+{
+    for (const DevicePtr &device : mDevices)
+    {
+        if (IsDeviceTypeMatch(deviceType, device->getInfo().type))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 cl_context Platform::CreateContext(const cl_context_properties *properties,
                                    cl_uint numDevices,
                                    const cl_device_id *devices,
                                    ContextErrorCB notify,
                                    void *userData)
 {
-    Platform *platform           = nullptr;
-    bool userSync                = false;
-    Context::PropArray propArray = ParseContextProperties(properties, platform, userSync);
-    ASSERT(platform != nullptr);
     DevicePtrs devs;
     devs.reserve(numDevices);
     while (numDevices-- != 0u)
     {
         devs.emplace_back(&(*devices++)->cast<Device>());
     }
+
+    Platform *platform           = nullptr;
+    bool userSync                = false;
+    Context::PropArray propArray = ParseContextProperties(properties, platform, userSync);
+    if (platform == nullptr)
+    {
+        // All devices in the list have already been validated at this point to contain the same
+        // platform - just use/select the first device's platform.
+        platform = &devs.front()->getPlatform();
+    }
+
     return Object::Create<Context>(*platform, std::move(propArray), std::move(devs), notify,
                                    userData, userSync);
 }
@@ -239,7 +263,13 @@ cl_context Platform::CreateContextFromType(const cl_context_properties *properti
     Platform *platform           = nullptr;
     bool userSync                = false;
     Context::PropArray propArray = ParseContextProperties(properties, platform, userSync);
-    ASSERT(platform != nullptr);
+
+    // Choose default platform if user does not specify in the context properties field
+    if (platform == nullptr)
+    {
+        platform = Platform::GetDefault();
+    }
+
     return Object::Create<Context>(*platform, std::move(propArray), deviceType, notify, userData,
                                    userSync);
 }
@@ -253,8 +283,9 @@ Platform::~Platform() = default;
 
 Platform::Platform(const rx::CLPlatformImpl::CreateFunc &createFunc)
     : mImpl(createFunc(*this)),
-      mInfo(mImpl->createInfo()),
-      mDevices(createDevices(mImpl->createDevices()))
+      mInfo(mImpl ? mImpl->createInfo() : rx::CLPlatformImpl::Info{}),
+      mDevices(mImpl ? createDevices(mImpl->createDevices()) : DevicePtrs{}),
+      mMultiThreadPool(mImpl ? angle::WorkerThreadPool::Create(0, ANGLEPlatformCurrent()) : nullptr)
 {}
 
 DevicePtrs Platform::createDevices(rx::CLDeviceImpl::CreateDatas &&createDatas)
@@ -276,6 +307,16 @@ DevicePtrs Platform::createDevices(rx::CLDeviceImpl::CreateDatas &&createDatas)
     return devices;
 }
 
+angle::FrameCaptureShared *Platform::getFrameCaptureShared()
+{
+    if (mFrameCaptureShared == nullptr)
+    {
+        mFrameCaptureShared = new angle::FrameCaptureShared;
+    }
+    return mFrameCaptureShared;
+}
+
+angle::FrameCaptureShared *Platform::mFrameCaptureShared = nullptr;
 constexpr char Platform::kVendor[];
 constexpr char Platform::kIcdSuffix[];
 

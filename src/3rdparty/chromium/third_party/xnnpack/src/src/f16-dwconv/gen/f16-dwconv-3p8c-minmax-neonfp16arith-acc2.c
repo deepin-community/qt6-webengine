@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f16-dwconv/unipass-neonfp16arith.c.in
 //   Generator: tools/xngen
@@ -7,31 +8,36 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/dwconv.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/dwconv.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
 
 
 void xnn_f16_dwconv_minmax_ukernel_3p8c__neonfp16arith_acc2(
     size_t channels,
     size_t output_width,
-    const void** input,
-    const void* weights,
-    void* output_ptr,
+    const xnn_float16** input,
+    const xnn_float16* weights,
+    xnn_float16* output_ptr,
     intptr_t input_stride,
     size_t output_increment,
     size_t input_offset,
-    const void* zero,
-    const union xnn_f16_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    size_t input_pixel_stride,
+    const xnn_float16* zero,
+    const struct xnn_f16_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(channels != 0);
   assert(output_width != 0);
 
   uint16_t* output = (uint16_t*) output_ptr;
-  const float16x8_t vmin = vreinterpretq_f16_u16(vld1q_dup_u16(&params->fp16arith.min));
-  const float16x8_t vmax = vreinterpretq_f16_u16(vld1q_dup_u16(&params->fp16arith.max));
+  const float16x8_t vmin = vreinterpretq_f16_u16(vld1q_dup_u16((const uint16_t*) &params->scalar.min));
+  const float16x8_t vmax = vreinterpretq_f16_u16(vld1q_dup_u16((const uint16_t*) &params->scalar.max));
   do {
     const uint16_t* i0 = (const uint16_t*) input[0];
     assert(i0 != NULL);
@@ -49,7 +55,7 @@ void xnn_f16_dwconv_minmax_ukernel_3p8c__neonfp16arith_acc2(
       i2 = (const uint16_t*) ((uintptr_t) i2 + input_offset);
     }
 
-    input = (const void**) ((uintptr_t) input + input_stride);
+    input = (const xnn_float16**) ((uintptr_t) input + input_stride);
 
     size_t c = channels;
     const uint16_t* w = (const uint16_t*) weights;
@@ -101,7 +107,7 @@ void xnn_f16_dwconv_minmax_ukernel_3p8c__neonfp16arith_acc2(
 
       float16x4_t vacc0123 = vget_low_f16(vacc01234567);
       if (c & 4) {
-        vst1_u16(output, vreinterpret_u16_f16(vacc0123)); output += 4;
+        vst1_u16((uint16_t*) output, vreinterpret_u16_f16(vacc0123)); output += 4;
         vacc0123 = vget_high_f16(vacc01234567);
       }
       if (c & 2) {
@@ -109,10 +115,11 @@ void xnn_f16_dwconv_minmax_ukernel_3p8c__neonfp16arith_acc2(
         vacc0123 = vext_f16(vacc0123, vacc0123, 2);
       }
       if (c & 1) {
-        vst1_lane_u16(output, vreinterpret_u16_f16(vacc0123), 0); output += 1;
+        vst1_lane_u16((uint16_t*) output, vreinterpret_u16_f16(vacc0123), 0); output += 1;
       }
     }
 
+    input_offset += input_pixel_stride;
     output = (uint16_t*) ((uintptr_t) output + output_increment);
   } while (--output_width != 0);
 }

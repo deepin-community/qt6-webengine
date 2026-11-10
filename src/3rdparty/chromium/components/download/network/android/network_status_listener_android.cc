@@ -6,6 +6,8 @@
 
 #include "base/android/jni_android.h"
 #include "base/trace_event/trace_event.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
 #include "components/download/network/jni_headers/NetworkStatusListenerAndroid_jni.h"
 
 namespace download {
@@ -16,7 +18,6 @@ NetworkStatusListenerAndroid::~NetworkStatusListenerAndroid() = default;
 
 void NetworkStatusListenerAndroid::OnNetworkStatusReady(
     JNIEnv* env,
-    const base::android::JavaRef<jobject>& jobj,
     jint connectionType) {
   DCHECK(observer_);
   using ConnectionType = network::mojom::ConnectionType;
@@ -26,7 +27,6 @@ void NetworkStatusListenerAndroid::OnNetworkStatusReady(
 
 void NetworkStatusListenerAndroid::NotifyNetworkChange(
     JNIEnv* env,
-    const base::android::JavaRef<jobject>& jobj,
     jint connectionType) {
   DCHECK(observer_);
   using ConnectionType = network::mojom::ConnectionType;
@@ -41,8 +41,7 @@ void NetworkStatusListenerAndroid::Start(
   NetworkStatusListener::Start(observer);
   JNIEnv* env = base::android::AttachCurrentThread();
   java_obj_.Reset(env, Java_NetworkStatusListenerAndroid_create(
-                           env, reinterpret_cast<intptr_t>(this))
-                           .obj());
+                           env, reinterpret_cast<intptr_t>(this)));
 }
 
 void NetworkStatusListenerAndroid::Stop() {

@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-vbinary/vop-avx512f.c.in
 //   Generator: tools/xngen
@@ -8,12 +9,15 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <immintrin.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/vbinary.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/vbinary.h"
 
 
 void xnn_f32_vmin_ukernel__avx512f_u32(
@@ -21,7 +25,7 @@ void xnn_f32_vmin_ukernel__avx512f_u32(
     const float* input_a,
     const float* input_b,
     float* output,
-    const union xnn_f32_default_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const struct xnn_f32_default_params* restrict params)
 {
   assert(batch != 0);
   assert(batch % sizeof(float) == 0);
@@ -31,14 +35,13 @@ void xnn_f32_vmin_ukernel__avx512f_u32(
 
 
   for (; batch >= 32 * sizeof(float); batch -= 32 * sizeof(float)) {
-    __m512 vacc0 = _mm512_loadu_ps(input_a);
-    __m512 vacc1 = _mm512_loadu_ps(input_a + 16);
+    const __m512 va0 = _mm512_loadu_ps(input_a);
+    const __m512 va1 = _mm512_loadu_ps(input_a + 16);
     input_a += 32;
 
-    vacc0 = _mm512_min_ps(vacc0, _mm512_loadu_ps(input_b));
-    vacc1 = _mm512_min_ps(vacc1, _mm512_loadu_ps(input_b + 16));
+    __m512 vacc0 = _mm512_min_ps(va0, _mm512_loadu_ps(input_b));
+    __m512 vacc1 = _mm512_min_ps(va1, _mm512_loadu_ps(input_b + 16));
     input_b += 32;
-
 
 
     _mm512_storeu_ps(output, vacc0);
@@ -46,10 +49,10 @@ void xnn_f32_vmin_ukernel__avx512f_u32(
     output += 32;
   }
   for (; batch >= 16 * sizeof(float); batch -= 16 * sizeof(float)) {
-    __m512 vacc = _mm512_loadu_ps(input_a);
+    const __m512 va = _mm512_loadu_ps(input_a);
     input_a += 16;
 
-    vacc = _mm512_min_ps(vacc, _mm512_loadu_ps(input_b));
+    __m512 vacc = _mm512_min_ps(va, _mm512_loadu_ps(input_b));
     input_b += 16;
 
 
@@ -61,10 +64,11 @@ void xnn_f32_vmin_ukernel__avx512f_u32(
     assert(batch <= 15 * sizeof(float));
     // Prepare mask for valid 32-bit elements (depends on batch).
     batch >>= XNN_LOG2_SIZEOF_FLOAT;
-    const __mmask16 vmask = _cvtu32_mask16((uint16_t) ((uint32_t) (UINT32_C(1) << batch) - UINT32_C(1)));
+    const __mmask16 vmask = _cvtu32_mask16((uint32_t) ((UINT32_C(1) << batch) - UINT32_C(1)));
 
-    __m512 vacc = _mm512_maskz_loadu_ps(vmask, input_a);
-    vacc = _mm512_maskz_min_ps(vmask, vacc, _mm512_maskz_loadu_ps(vmask, input_b));
+    const __m512 va = _mm512_maskz_loadu_ps(vmask, input_a);
+    __m512 vacc = _mm512_maskz_min_ps(vmask, va, _mm512_maskz_loadu_ps(vmask, input_b));
+
     _mm512_mask_storeu_ps(output, vmask, vacc);
   }
 }

@@ -4,6 +4,8 @@
 
 #include "media/formats/hls/rendition_manager.h"
 
+#include <optional>
+
 #include "base/logging.h"
 #include "base/test/gmock_callback_support.h"
 #include "media/base/media_util.h"
@@ -13,14 +15,27 @@
 #include "media/formats/hls/types.h"
 #include "media/formats/hls/variant_stream.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace media::hls {
 
 namespace {
 
+std::string MakeVariantStr(uint64_t bandwidth,
+                           std::optional<std::string_view> resolution,
+                           std::optional<std::string_view> framerate) {
+  std::stringstream stream_inf;
+  stream_inf << "#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=" << bandwidth;
+  if (resolution.has_value()) {
+    stream_inf << ",RESOLUTION=" << resolution.value();
+  }
+  if (framerate.has_value()) {
+    stream_inf << ",FRAME-RATE=" << framerate.value();
+  }
+  return stream_inf.str();
+}
+
 RenditionManager::CodecSupportType GetCodecSupportType(
-    base::StringPiece container,
+    std::string_view container,
     base::span<const std::string> codecs) {
   bool has_audio = false;
   bool has_video = false;
@@ -48,7 +63,7 @@ RenditionManager::CodecSupportType GetCodecSupportType(
 }
 
 RenditionManager::CodecSupportType GetCodecSupportForSoftwareOnlyLinux(
-    base::StringPiece container,
+    std::string_view container,
     base::span<const std::string> codecs) {
   bool has_audio = false;
   bool has_video = false;
@@ -96,20 +111,29 @@ class HlsRenditionManagerTest : public testing::Test {
  public:
   MOCK_METHOD(void, VariantSelected, (std::string, std::string), ());
 
-  void _VariantSelected(const VariantStream* vs, const AudioRendition* ar) {
+  void _VariantSelected(AdaptationReason,
+                        const VariantStream*,
+                        std::optional<RenditionGroup::RenditionTrack> vr,
+                        std::optional<RenditionGroup::RenditionTrack> ar) {
     std::string variant_path = "NONE";
     std::string rendition_path = "NONE";
-    if (vs) {
-      variant_path = vs->GetPrimaryRenditionUri().path();
+    if (vr.has_value()) {
+      variant_path = std::get<1>(*vr)->GetUri().value().path();
     }
     if (ar) {
-      CHECK(ar->GetUri().has_value());
-      rendition_path = ar->GetUri()->path();
+      CHECK(ar.has_value());
+      rendition_path = std::get<1>(*ar)->GetUri().value().path();
     }
     VariantSelected(variant_path, rendition_path);
   }
 
   decltype(auto) GetVariantCb() {
+    return base::BindRepeating(&HlsRenditionManagerTest::_VariantSelected,
+                               base::Unretained(this),
+                               AdaptationReason::kUserSelection);
+  }
+
+  decltype(auto) GetVariantWithAdaptation() {
     return base::BindRepeating(&HlsRenditionManagerTest::_VariantSelected,
                                base::Unretained(this));
   }
@@ -120,21 +144,21 @@ class HlsRenditionManagerTest : public testing::Test {
     builder.AppendLine("#EXTM3U");
     ([&] { builder.AppendLine(strings); }(), ...);
     return RenditionManager(builder.Parse(),
-                            base::BindRepeating(GetVariantCb()),
+                            base::BindRepeating(GetVariantWithAdaptation()),
                             base::BindRepeating(&GetCodecSupportType));
   }
 
   template <typename... Strings>
   RenditionManager GetCustomSupportRenditionManager(
       base::RepeatingCallback<RenditionManager::CodecSupportType(
-          base::StringPiece,
+          std::string_view,
           base::span<const std::string>)> support_cb,
       Strings... strings) {
     MultivariantPlaylistTestBuilder builder;
     builder.AppendLine("#EXTM3U");
     ([&] { builder.AppendLine(strings); }(), ...);
     return RenditionManager(builder.Parse(),
-                            base::BindRepeating(GetVariantCb()),
+                            base::BindRepeating(GetVariantWithAdaptation()),
                             std::move(support_cb));
   }
 };
@@ -162,7 +186,7 @@ TEST_F(HlsRenditionManagerTest, NoSupportedCodecs) {
       "http://example.com/audio-only.m3u8",
       "#EXT-X-STREAM-INF:BANDWIDTH=65000,CODECS=\"av02.00.00\"",
       "http://example.com/audio-only.m3u8");
-  ASSERT_FALSE(rm.HasAnyVariants());
+  ASSERT_FALSE(rm.HasSelectableVariants());
   EXPECT_CALL(*this, VariantSelected("NONE", "NONE"));
   rm.Reselect(GetVariantCb());
 }
@@ -561,17 +585,17 @@ TEST_F(HlsRenditionManagerTest, MultipleRenditionGroupsVariantsOutOfOrder) {
 
   // Now lets check the available renditions for this selected variant. These
   // Should be in the same order as the manifest.
-  const auto renditions = rm.GetSelectableAudioRenditions();
+  const auto renditions = rm.GetSelectableExtraRenditions();
   ASSERT_EQ(renditions.size(), 3u);
-  ASSERT_EQ(std::get<1>(renditions[0]), "English");
-  ASSERT_EQ(std::get<1>(renditions[1]), "Dubbing");
-  ASSERT_EQ(std::get<1>(renditions[2]), "German");
+  ASSERT_EQ(renditions[0].label().value(), "English");
+  ASSERT_EQ(renditions[1].label().value(), "Dubbing");
+  ASSERT_EQ(renditions[2].label().value(), "German");
 
   // Select the dubbing rendition, and get a change.
-  const auto dubbing_id = std::get<0>(renditions[1]);
+  const auto dubbing_id = renditions[1].track_id();
   EXPECT_CALL(*this, VariantSelected("/video/800kbit.m3u8",
                                      "/audio/stereo/none/128kbit.m3u8"));
-  rm.SetPreferredAudioRendition(dubbing_id);
+  rm.SetPreferredExtraRendition(dubbing_id);
 
   // Increase the network speed to full again. Because the user has selected
   // the dubbing track, we try to match the language.
@@ -585,10 +609,10 @@ TEST_F(HlsRenditionManagerTest, MultipleRenditionGroupsVariantsOutOfOrder) {
   rm.UpdateNetworkSpeed(831280);
 
   // Select the german rendition, and get a change.
-  const auto german_id = std::get<0>(renditions[2]);
+  const auto german_id = renditions[2].track_id();
   EXPECT_CALL(*this, VariantSelected("/video/800kbit.m3u8",
                                      "/audio/stereo/de/128kbit.m3u8"));
-  rm.SetPreferredAudioRendition(german_id);
+  rm.SetPreferredExtraRendition(german_id);
 
   // Increase the network speed to full again. Because the user has selected
   // the german track, but the surround sound has no german audio, we switch
@@ -603,10 +627,153 @@ TEST_F(HlsRenditionManagerTest, MultipleRenditionGroupsVariantsOutOfOrder) {
                                      "/audio/stereo/de/128kbit.m3u8"));
   rm.UpdateNetworkSpeed(831280);
 
-  // Unselect a preferred rendition, which switches back to english.
-  EXPECT_CALL(*this, VariantSelected("/video/800kbit.m3u8",
-                                     "/audio/stereo/en/128kbit.m3u8"));
-  rm.SetPreferredAudioRendition(absl::nullopt);
+  // Unselect a preferred rendition, which does not switch tracks.
+  EXPECT_CALL(*this, VariantSelected(_, _)).Times(0);
+  rm.SetPreferredExtraRendition(std::nullopt);
+}
+
+TEST_F(HlsRenditionManagerTest, CantSelectRenditionWithNoURI) {
+  {
+    auto rm = GetRenditionManager(
+        "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"G\",NAME=\"A\",URI=\"A.m3u8\"",
+        "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"G\",NAME=\"B\",URI=\"B.m3u8\"",
+        "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"G\",NAME=\"C\",AUTOSELECT=YES",
+        "#EXT-X-STREAM-INF:BANDWIDTH=100,CODECS=\"audio.codec,video.codec\","
+        "AUDIO=\"G\"",
+        "100.m3u8",
+        "#EXT-X-STREAM-INF:BANDWIDTH=200,CODECS=\"audio.codec,video.codec\","
+        "AUDIO=\"G\"",
+        "200.m3u8");
+
+    // The C rendition is autoselectable, but has no URL
+    EXPECT_CALL(*this, VariantSelected("/200.m3u8", "NONE"));
+    rm.Reselect(GetVariantCb());
+
+    // The user has selected B explicitly, so we use B as the primary rendition.
+    const auto renditions = rm.GetSelectableExtraRenditions();
+    EXPECT_CALL(*this, VariantSelected("/200.m3u8", "/B.m3u8"));
+    rm.SetPreferredExtraRendition(renditions[1].track_id());
+
+    // The user has selected C explicitly, but too bad, it has no URI.
+    EXPECT_CALL(*this, VariantSelected("/200.m3u8", "NONE"));
+    rm.SetPreferredExtraRendition(renditions[2].track_id());
+  }
+}
+
+TEST_F(HlsRenditionManagerTest, AudioOnlyRenditionSelectionOverrides) {
+  {
+    auto rm = GetRenditionManager(
+        "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"G\",NAME=\"A\",URI=\"A.m3u8\"",
+        "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"G\",NAME=\"B\",URI=\"B.m3u8\"",
+        "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"G\",NAME=\"C\",URI=\"C.m3u8\"",
+        "#EXT-X-STREAM-INF:BANDWIDTH=100,CODECS=\"audio.codec\",AUDIO=\"G\"",
+        "100.m3u8",
+        "#EXT-X-STREAM-INF:BANDWIDTH=200,CODECS=\"audio.codec\",AUDIO=\"G\"",
+        "200.m3u8");
+
+    // Nothing is auto-selectable
+    EXPECT_CALL(*this, VariantSelected("/200.m3u8", "NONE"));
+    rm.Reselect(GetVariantCb());
+
+    // The user has selected B explicitly, so we use B as the primary rendition.
+    const auto renditions = rm.GetSelectableExtraRenditions();
+    EXPECT_CALL(*this, VariantSelected("/B.m3u8", "NONE"));
+    rm.SetPreferredExtraRendition(renditions[1].track_id());
+  }
+  {
+    auto rm = GetRenditionManager(
+        "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"G\",NAME=\"A\",URI=\"A.m3u8\","
+        "AUTOSELECT=YES",
+        "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"G\",NAME=\"B\",URI=\"B.m3u8\"",
+        "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"G\",NAME=\"C\",URI=\"C.m3u8\"",
+        "#EXT-X-STREAM-INF:BANDWIDTH=100,CODECS=\"audio.codec\",AUDIO=\"G\"",
+        "100.m3u8",
+        "#EXT-X-STREAM-INF:BANDWIDTH=200,CODECS=\"audio.codec\",AUDIO=\"G\"",
+        "200.m3u8");
+
+    // All variants are playable, so the best one selected. The default audio
+    // override is also selected.
+    EXPECT_CALL(*this, VariantSelected("/A.m3u8", "NONE"));
+    rm.Reselect(GetVariantCb());
+  }
+}
+
+TEST_F(HlsRenditionManagerTest, VariantNames) {
+  {
+    // Differentiated by resolution
+    auto variants =
+        GetRenditionManager(
+            MakeVariantStr(1234, "1920x1080", std::nullopt), "playlist1.m3u8",
+            MakeVariantStr(1234, "1366x768", std::nullopt), "playlist2.m3u8")
+            .GetSelectablePrimaryRenditions();
+    ASSERT_EQ(variants.size(), 2u);
+    ASSERT_EQ(variants[0].label().value(), "1920x1080");
+    ASSERT_EQ(variants[1].label().value(), "1366x768");
+  }
+
+  {
+    // No differentiation
+    auto variants =
+        GetRenditionManager(
+            MakeVariantStr(1234, "1920x1080", std::nullopt), "playlist1.m3u8",
+            MakeVariantStr(1234, "1920x1080", std::nullopt), "playlist2.m3u8")
+            .GetSelectablePrimaryRenditions();
+    ASSERT_EQ(variants.size(), 2u);
+    ASSERT_EQ(variants[0].label().value(), "Stream: 1");
+    ASSERT_EQ(variants[1].label().value(), "Stream: 2");
+  }
+
+  {
+    // Same resolution, differentiated by framerate
+    auto variants =
+        GetRenditionManager(
+            MakeVariantStr(1234, "1920x1080", "24.00"), "playlist1.m3u8",
+            MakeVariantStr(1234, "1920x1080", "60.00"), "playlist2.m3u8")
+            .GetSelectablePrimaryRenditions();
+    ASSERT_EQ(variants.size(), 2u);
+    ASSERT_EQ(variants[0].label().value(), "24fps");
+    ASSERT_EQ(variants[1].label().value(), "60fps");
+  }
+
+  {
+    // No differentiation
+    auto variants =
+        GetRenditionManager(
+            MakeVariantStr(1234, "1920x1080", "60.00"), "playlist1.m3u8",
+            MakeVariantStr(1234, "1920x1080", "60.00"), "playlist2.m3u8")
+            .GetSelectablePrimaryRenditions();
+    ASSERT_EQ(variants.size(), 2u);
+    ASSERT_EQ(variants[0].label().value(), "Stream: 1");
+    ASSERT_EQ(variants[1].label().value(), "Stream: 2");
+  }
+
+  {
+    // Only bandwidth differentiation
+    auto variants =
+        GetRenditionManager(
+            MakeVariantStr(831270, "1920x1080", "60.00"), "playlist1.m3u8",
+            MakeVariantStr(1144430, "1920x1080", "60.00"), "playlist2.m3u8")
+            .GetSelectablePrimaryRenditions();
+    ASSERT_EQ(variants.size(), 2u);
+    ASSERT_EQ(variants[0].label().value(), "831 Kbps");
+    ASSERT_EQ(variants[1].label().value(), "1 Mbps");
+  }
+
+  {
+    // Differentiated by cross prodoct of resolution and bandwidth
+    auto variants =
+        GetRenditionManager(
+            MakeVariantStr(831270, "1920x1080", "60.00"), "playlist1.m3u8",
+            MakeVariantStr(1144430, "1920x1080", "24.00"), "playlist2.m3u8",
+            MakeVariantStr(1234, "1366x768", "60.00"), "playlist3.m3u8",
+            MakeVariantStr(67989, "1366x768", "24.00"), "playlist4.m3u8")
+            .GetSelectablePrimaryRenditions();
+    ASSERT_EQ(variants.size(), 4u);
+    ASSERT_EQ(variants[0].label().value(), "1366x768 60fps");
+    ASSERT_EQ(variants[1].label().value(), "1366x768 24fps");
+    ASSERT_EQ(variants[2].label().value(), "1920x1080 60fps");
+    ASSERT_EQ(variants[3].label().value(), "1920x1080 24fps");
+  }
 }
 
 }  // namespace media::hls

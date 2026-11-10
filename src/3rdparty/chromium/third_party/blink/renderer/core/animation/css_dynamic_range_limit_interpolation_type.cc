@@ -6,6 +6,9 @@
 
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/core/animation/interpolable_dynamic_range_limit.h"
+#include "third_party/blink/renderer/core/animation/length_units_checker.h"
+#include "third_party/blink/renderer/core/animation/tree_counting_checker.h"
+#include "third_party/blink/renderer/core/css/css_dynamic_range_limit_mix_value.h"
 #include "third_party/blink/renderer/core/css/resolver/style_builder_converter.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 
@@ -53,16 +56,31 @@ InterpolationValue CSSDynamicRangeLimitInterpolationType::MaybeConvertInherit(
   DynamicRangeLimit inherited_limit =
       state.ParentStyle()->GetDynamicRangeLimit();
   conversion_checkers.push_back(
-      std::make_unique<InheritedDynamicRangeLimitChecker>(inherited_limit));
+      MakeGarbageCollected<InheritedDynamicRangeLimitChecker>(inherited_limit));
   return ConvertDynamicRangeLimit(inherited_limit);
 }
 
 InterpolationValue CSSDynamicRangeLimitInterpolationType::MaybeConvertValue(
     const CSSValue& value,
-    const StyleResolverState* state,
+    const StyleResolverState& state,
     ConversionCheckers& conversion_checkers) const {
+  if (auto* mix_value =
+          DynamicTo<cssvalue::CSSDynamicRangeLimitMixValue>(value)) {
+    CSSPrimitiveValue::LengthTypeFlags types;
+    for (const CSSPrimitiveValue* primitive_value : mix_value->Percentages()) {
+      if (primitive_value->IsElementDependent()) {
+        conversion_checkers.push_back(
+            TreeCountingChecker::Create(state.CssToLengthConversionData()));
+      }
+      primitive_value->AccumulateLengthUnitTypes(types);
+      if (InterpolationType::ConversionChecker* length_units_checker =
+              LengthUnitsChecker::MaybeCreate(types, state)) {
+        conversion_checkers.push_back(length_units_checker);
+      }
+    }
+  }
   return ConvertDynamicRangeLimit(
-      StyleBuilderConverterBase::ConvertDynamicRangeLimit(value));
+      StyleBuilderConverter::ConvertDynamicRangeLimit(state, value));
 }
 
 InterpolationValue CSSDynamicRangeLimitInterpolationType::

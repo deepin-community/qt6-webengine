@@ -16,16 +16,14 @@ export const enum PhysicalDirection {
   TOP_TO_BOTTOM = 'top-to-bottom',
 }
 
-type DirectionsDict = {
-  [key: string]: PhysicalDirection,
-};
+type DirectionsDict = Record<string, PhysicalDirection>;
 
-export type IconInfo = {
-  iconName: string,
-  rotate: number,
-  scaleX: number,
-  scaleY: number,
-};
+export interface IconInfo {
+  iconName: string;
+  rotate: number;
+  scaleX: number;
+  scaleY: number;
+}
 
 type ComputedStyles = Map<string, string>;
 
@@ -104,7 +102,7 @@ export function rotateFlexDirectionIcon(direction: PhysicalDirection): IconInfo 
 
   return {
     iconName: 'flex-direction',
-    rotate: rotate,
+    rotate,
     scaleX: flipX ? -1 : 1,
     scaleY: flipY ? -1 : 1,
   };
@@ -250,21 +248,21 @@ function baselineIcon(): IconInfo {
   };
 }
 
-function flexAlignSelfIcon(iconName: string): (styles: ComputedStyles, parentStyles: ComputedStyles) => IconInfo {
-  function getIcon(computedStyles: ComputedStyles, parentComputedStyles: ComputedStyles): IconInfo {
+function flexAlignSelfIcon(iconName: string): (parentStyles: ComputedStyles) => IconInfo {
+  function getIcon(parentComputedStyles: ComputedStyles): IconInfo {
     return flexAlignItemsIcon(iconName)(parentComputedStyles);
   }
   return getIcon;
 }
 
-function gridAlignSelfIcon(iconName: string): (styles: ComputedStyles, parentStyles: ComputedStyles) => IconInfo {
-  function getIcon(computedStyles: ComputedStyles, parentComputedStyles: ComputedStyles): IconInfo {
+function gridAlignSelfIcon(iconName: string): (parentStyles: ComputedStyles) => IconInfo {
+  function getIcon(parentComputedStyles: ComputedStyles): IconInfo {
     return gridAlignItemsIcon(iconName)(parentComputedStyles);
   }
   return getIcon;
 }
 
-export function roateFlexWrapIcon(iconName: string, direction: PhysicalDirection): IconInfo {
+export function rotateFlexWrapIcon(iconName: string, direction: PhysicalDirection): IconInfo {
   return {
     iconName,
     rotate: direction === PhysicalDirection.BOTTOM_TO_TOP || direction === PhysicalDirection.TOP_TO_BOTTOM ? 90 : 0,
@@ -277,7 +275,7 @@ function flexWrapIcon(iconName: string): (styles: ComputedStyles) => IconInfo {
   function getIcon(computedStyles: ComputedStyles): IconInfo {
     const directions = getPhysicalDirections(computedStyles);
     const computedFlexDirection = computedStyles.get('flex-direction') || 'row';
-    return roateFlexWrapIcon(iconName, directions[computedFlexDirection]);
+    return rotateFlexWrapIcon(iconName, directions[computedFlexDirection]);
   }
   return getIcon;
 }
@@ -309,9 +307,17 @@ const flexContainerIcons = new Map([
   ['justify-content: space-evenly', flexJustifyContentIcon('justify-content-space-evenly')],
   ['justify-content: flex-end', flexJustifyContentIcon('justify-content-end')],
   ['justify-content: flex-start', flexJustifyContentIcon('justify-content-start')],
+  ['justify-content: end', flexJustifyContentIcon('justify-content-end')],
+  ['justify-content: start', flexJustifyContentIcon('justify-content-start')],
+  ['justify-content: right', flexJustifyContentIcon('justify-content-end')],
+  ['justify-content: left', flexJustifyContentIcon('justify-content-start')],
   ['align-items: stretch', flexAlignItemsIcon('align-items-stretch')],
   ['align-items: flex-end', flexAlignItemsIcon('align-items-end')],
   ['align-items: flex-start', flexAlignItemsIcon('align-items-start')],
+  ['align-items: end', flexAlignItemsIcon('align-items-end')],
+  ['align-items: start', flexAlignItemsIcon('align-items-start')],
+  ['align-items: self-end', flexAlignItemsIcon('align-items-end')],
+  ['align-items: self-start', flexAlignItemsIcon('align-items-start')],
   ['align-items: center', flexAlignItemsIcon('align-items-center')],
   ['align-items: baseline', baselineIcon],
   ['align-content: baseline', baselineIcon],
@@ -324,6 +330,10 @@ const flexItemIcons = new Map([
   ['align-self: center', flexAlignSelfIcon('align-self-center')],
   ['align-self: flex-start', flexAlignSelfIcon('align-self-start')],
   ['align-self: flex-end', flexAlignSelfIcon('align-self-end')],
+  ['align-self: start', gridAlignSelfIcon('align-self-start')],
+  ['align-self: end', gridAlignSelfIcon('align-self-end')],
+  ['align-self: self-start', gridAlignSelfIcon('align-self-start')],
+  ['align-self: self-end', gridAlignSelfIcon('align-self-end')],
   ['align-self: stretch', flexAlignSelfIcon('align-self-stretch')],
 ]);
 
@@ -342,15 +352,23 @@ const gridContainerIcons = new Map([
   ['justify-content: space-evenly', gridJustifyContentIcon('justify-content-space-evenly')],
   ['justify-content: end', gridJustifyContentIcon('justify-content-end')],
   ['justify-content: start', gridJustifyContentIcon('justify-content-start')],
+  ['justify-content: right', gridJustifyContentIcon('justify-content-end')],
+  ['justify-content: left', gridJustifyContentIcon('justify-content-start')],
   ['align-items: stretch', gridAlignItemsIcon('align-items-stretch')],
   ['align-items: end', gridAlignItemsIcon('align-items-end')],
   ['align-items: start', gridAlignItemsIcon('align-items-start')],
+  ['align-items: self-end', gridAlignItemsIcon('align-items-end')],
+  ['align-items: self-start', gridAlignItemsIcon('align-items-start')],
   ['align-items: center', gridAlignItemsIcon('align-items-center')],
   ['align-items: baseline', baselineIcon],
   ['justify-items: center', gridJustifyItemsIcon('justify-items-center')],
   ['justify-items: stretch', gridJustifyItemsIcon('justify-items-stretch')],
   ['justify-items: end', gridJustifyItemsIcon('justify-items-end')],
   ['justify-items: start', gridJustifyItemsIcon('justify-items-start')],
+  ['justify-items: self-end', gridJustifyItemsIcon('justify-items-end')],
+  ['justify-items: self-start', gridJustifyItemsIcon('justify-items-start')],
+  ['justify-items: right', gridJustifyItemsIcon('justify-items-end')],
+  ['justify-items: left', gridJustifyItemsIcon('justify-items-start')],
   ['justify-items: baseline', baselineIcon],
 ]);
 
@@ -359,6 +377,8 @@ const gridItemIcons = new Map([
   ['align-self: center', gridAlignSelfIcon('align-self-center')],
   ['align-self: start', gridAlignSelfIcon('align-self-start')],
   ['align-self: end', gridAlignSelfIcon('align-self-end')],
+  ['align-self: self-start', gridAlignSelfIcon('align-self-start')],
+  ['align-self: self-end', gridAlignSelfIcon('align-self-end')],
   ['align-self: stretch', gridAlignSelfIcon('align-self-stretch')],
 ]);
 
@@ -381,7 +401,7 @@ export function findIcon(
     }
   }
   if (isFlexContainer(parentComputedStyles)) {
-    const icon = findFlexItemIcon(text, computedStyles, parentComputedStyles);
+    const icon = findFlexItemIcon(text, parentComputedStyles);
     if (icon) {
       return icon;
     }
@@ -393,7 +413,7 @@ export function findIcon(
     }
   }
   if (isGridContainer(parentComputedStyles)) {
-    const icon = findGridItemIcon(text, computedStyles, parentComputedStyles);
+    const icon = findGridItemIcon(text, parentComputedStyles);
     if (icon) {
       return icon;
     }
@@ -409,11 +429,10 @@ export function findFlexContainerIcon(text: string, computedStyles: ComputedStyl
   return null;
 }
 
-export function findFlexItemIcon(
-    text: string, computedStyles: ComputedStyles|null, parentComputedStyles?: ComputedStyles|null): IconInfo|null {
+export function findFlexItemIcon(text: string, parentComputedStyles?: ComputedStyles|null): IconInfo|null {
   const resolver = flexItemIcons.get(text);
   if (resolver) {
-    return resolver(computedStyles || new Map(), parentComputedStyles || new Map());
+    return resolver(parentComputedStyles || new Map());
   }
   return null;
 }
@@ -426,11 +445,10 @@ export function findGridContainerIcon(text: string, computedStyles: ComputedStyl
   return null;
 }
 
-export function findGridItemIcon(
-    text: string, computedStyles: ComputedStyles|null, parentComputedStyles?: ComputedStyles|null): IconInfo|null {
+export function findGridItemIcon(text: string, parentComputedStyles?: ComputedStyles|null): IconInfo|null {
   const resolver = gridItemIcons.get(text);
   if (resolver) {
-    return resolver(computedStyles || new Map(), parentComputedStyles || new Map());
+    return resolver(parentComputedStyles || new Map());
   }
   return null;
 }

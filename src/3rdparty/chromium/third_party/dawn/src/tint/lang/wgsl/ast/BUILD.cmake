@@ -34,8 +34,6 @@
 #                       Do not modify this file directly
 ################################################################################
 
-include(lang/wgsl/ast/transform/BUILD.cmake)
-
 ################################################################################
 # Target:    tint_lang_wgsl_ast
 # Kind:      lib
@@ -53,8 +51,8 @@ tint_add_target(tint_lang_wgsl_ast lib
   lang/wgsl/ast/binary_expression.h
   lang/wgsl/ast/binding_attribute.cc
   lang/wgsl/ast/binding_attribute.h
-  lang/wgsl/ast/bitcast_expression.cc
-  lang/wgsl/ast/bitcast_expression.h
+  lang/wgsl/ast/blend_src_attribute.cc
+  lang/wgsl/ast/blend_src_attribute.h
   lang/wgsl/ast/block_statement.cc
   lang/wgsl/ast/block_statement.h
   lang/wgsl/ast/bool_literal_expression.cc
@@ -125,8 +123,8 @@ tint_add_target(tint_lang_wgsl_ast lib
   lang/wgsl/ast/increment_decrement_statement.h
   lang/wgsl/ast/index_accessor_expression.cc
   lang/wgsl/ast/index_accessor_expression.h
-  lang/wgsl/ast/index_attribute.cc
-  lang/wgsl/ast/index_attribute.h
+  lang/wgsl/ast/input_attachment_index_attribute.cc
+  lang/wgsl/ast/input_attachment_index_attribute.h
   lang/wgsl/ast/int_literal_expression.cc
   lang/wgsl/ast/int_literal_expression.h
   lang/wgsl/ast/internal_attribute.cc
@@ -164,6 +162,8 @@ tint_add_target(tint_lang_wgsl_ast lib
   lang/wgsl/ast/requires.h
   lang/wgsl/ast/return_statement.cc
   lang/wgsl/ast/return_statement.h
+  lang/wgsl/ast/row_major_attribute.cc
+  lang/wgsl/ast/row_major_attribute.h
   lang/wgsl/ast/stage_attribute.cc
   lang/wgsl/ast/stage_attribute.h
   lang/wgsl/ast/statement.cc
@@ -206,23 +206,22 @@ tint_add_target(tint_lang_wgsl_ast lib
 tint_target_add_dependencies(tint_lang_wgsl_ast lib
   tint_api_common
   tint_lang_core
-  tint_lang_core_constant
   tint_lang_core_type
   tint_lang_wgsl
-  tint_lang_wgsl_features
+  tint_utils
   tint_utils_containers
   tint_utils_diagnostic
   tint_utils_ice
-  tint_utils_id
   tint_utils_macros
   tint_utils_math
   tint_utils_memory
-  tint_utils_reflection
-  tint_utils_result
   tint_utils_rtti
   tint_utils_symbol
   tint_utils_text
-  tint_utils_traits
+)
+
+tint_target_add_external_dependencies(tint_lang_wgsl_ast lib
+  "src_utils"
 )
 
 ################################################################################
@@ -234,7 +233,7 @@ tint_add_target(tint_lang_wgsl_ast_test test
   lang/wgsl/ast/assignment_statement_test.cc
   lang/wgsl/ast/binary_expression_test.cc
   lang/wgsl/ast/binding_attribute_test.cc
-  lang/wgsl/ast/bitcast_expression_test.cc
+  lang/wgsl/ast/blend_src_attribute_test.cc
   lang/wgsl/ast/block_statement_test.cc
   lang/wgsl/ast/bool_literal_expression_test.cc
   lang/wgsl/ast/break_if_statement_test.cc
@@ -269,7 +268,7 @@ tint_add_target(tint_lang_wgsl_ast_test test
   lang/wgsl/ast/if_statement_test.cc
   lang/wgsl/ast/increment_decrement_statement_test.cc
   lang/wgsl/ast/index_accessor_expression_test.cc
-  lang/wgsl/ast/index_attribute_test.cc
+  lang/wgsl/ast/input_attachment_index_attribute_test.cc
   lang/wgsl/ast/int_literal_expression_test.cc
   lang/wgsl/ast/interpolate_attribute_test.cc
   lang/wgsl/ast/location_attribute_test.cc
@@ -304,30 +303,25 @@ tint_target_add_dependencies(tint_lang_wgsl_ast_test test
   tint_lang_core_type
   tint_lang_wgsl
   tint_lang_wgsl_ast
-  tint_lang_wgsl_ast_transform
-  tint_lang_wgsl_common
-  tint_lang_wgsl_features
   tint_lang_wgsl_program
   tint_lang_wgsl_resolver
   tint_lang_wgsl_sem
   tint_lang_wgsl_writer_ir_to_program
+  tint_utils
   tint_utils_containers
   tint_utils_diagnostic
   tint_utils_ice
-  tint_utils_id
   tint_utils_macros
   tint_utils_math
   tint_utils_memory
-  tint_utils_reflection
-  tint_utils_result
   tint_utils_rtti
   tint_utils_symbol
   tint_utils_text
-  tint_utils_traits
 )
 
 tint_target_add_external_dependencies(tint_lang_wgsl_ast_test test
   "gtest"
+  "src_utils"
 )
 
 if(TINT_BUILD_WGSL_READER)

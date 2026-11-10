@@ -28,7 +28,6 @@ std::string DisplayConnectionTypeString(DisplayConnectionType type) {
       return "network";
   }
   NOTREACHED();
-  return std::string();
 }
 
 }  // namespace display

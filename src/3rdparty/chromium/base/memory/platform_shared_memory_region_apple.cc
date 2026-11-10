@@ -8,15 +8,17 @@
 
 #include "base/apple/mach_logging.h"
 #include "base/apple/scoped_mach_vm.h"
+#include "base/check_op.h"
+#include "base/types/expected.h"
 
 namespace base::subtle {
 
 // static
-PlatformSharedMemoryRegion PlatformSharedMemoryRegion::Take(
-    apple::ScopedMachSendRight handle,
-    Mode mode,
-    size_t size,
-    const UnguessableToken& guid) {
+expected<PlatformSharedMemoryRegion, PlatformSharedMemoryRegion::TakeError>
+PlatformSharedMemoryRegion::TakeOrFail(apple::ScopedMachSendRight handle,
+                                       Mode mode,
+                                       size_t size,
+                                       const UnguessableToken& guid) {
   if (!handle.is_valid()) {
     return {};
   }
@@ -29,10 +31,11 @@ PlatformSharedMemoryRegion PlatformSharedMemoryRegion::Take(
     return {};
   }
 
-  CHECK(
-      CheckPlatformHandlePermissionsCorrespondToMode(handle.get(), mode, size));
-
-  return PlatformSharedMemoryRegion(std::move(handle), mode, size, guid);
+  return CheckPlatformHandlePermissionsCorrespondToMode(handle.get(), mode,
+                                                        size)
+      .transform([&] {
+        return PlatformSharedMemoryRegion(std::move(handle), mode, size, guid);
+      });
 }
 
 mach_port_t PlatformSharedMemoryRegion::GetPlatformHandle() const {
@@ -155,7 +158,8 @@ PlatformSharedMemoryRegion PlatformSharedMemoryRegion::Create(Mode mode,
 }
 
 // static
-bool PlatformSharedMemoryRegion::CheckPlatformHandlePermissionsCorrespondToMode(
+expected<void, PlatformSharedMemoryRegion::TakeError>
+PlatformSharedMemoryRegion::CheckPlatformHandlePermissionsCorrespondToMode(
     PlatformSharedMemoryHandle handle,
     Mode mode,
     size_t size) {
@@ -167,26 +171,23 @@ bool PlatformSharedMemoryRegion::CheckPlatformHandlePermissionsCorrespondToMode(
   if (kr == KERN_SUCCESS) {
     kern_return_t kr_deallocate =
         vm_deallocate(mach_task_self(), temp_addr, size);
-    // TODO(https://crbug.com/838365): convert to DLOG when bug fixed.
+    // TODO(crbug.com/40574272): convert to DLOG when bug fixed.
     MACH_LOG_IF(ERROR, kr_deallocate != KERN_SUCCESS, kr_deallocate)
         << "vm_deallocate";
   } else if (kr != KERN_INVALID_RIGHT) {
     MACH_LOG(ERROR, kr) << "vm_map";
-    return false;
+    return unexpected(TakeError::kVmMapFailed);
   }
 
   bool is_read_only = kr == KERN_INVALID_RIGHT;
   bool expected_read_only = mode == Mode::kReadOnly;
 
   if (is_read_only != expected_read_only) {
-    // TODO(https://crbug.com/838365): convert to DLOG when bug fixed.
-    LOG(ERROR) << "VM region has a wrong protection mask: it is"
-               << (is_read_only ? " " : " not ") << "read-only but it should"
-               << (expected_read_only ? " " : " not ") << "be";
-    return false;
+    return unexpected(expected_read_only ? TakeError::kExpectedReadOnlyButNot
+                                         : TakeError::kExpectedWritableButNot);
   }
 
-  return true;
+  return ok();
 }
 
 PlatformSharedMemoryRegion::PlatformSharedMemoryRegion(

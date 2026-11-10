@@ -10,6 +10,8 @@
 #include "xfa/fwl/cfwl_themebackground.h"
 #include "xfa/fwl/cfwl_widget.h"
 
+namespace pdfium {
+
 CFWL_BarcodeTP::CFWL_BarcodeTP() = default;
 
 CFWL_BarcodeTP::~CFWL_BarcodeTP() = default;
@@ -17,13 +19,15 @@ CFWL_BarcodeTP::~CFWL_BarcodeTP() = default;
 void CFWL_BarcodeTP::DrawBackground(const CFWL_ThemeBackground& pParams) {
   switch (pParams.GetPart()) {
     case CFWL_ThemePart::Part::kBorder:
-      DrawBorder(pParams.GetGraphics(), pParams.m_PartRect, pParams.m_matrix);
+      DrawBorder(pParams.GetGraphics(), pParams.part_rect_, pParams.matrix_);
       break;
     case CFWL_ThemePart::Part::kBackground:
-      FillBackground(pParams.GetGraphics(), pParams.m_PartRect,
-                     pParams.m_matrix);
+      FillBackground(pParams.GetGraphics(), pParams.part_rect_,
+                     pParams.matrix_);
       break;
     default:
       break;
   }
 }
+
+}  // namespace pdfium

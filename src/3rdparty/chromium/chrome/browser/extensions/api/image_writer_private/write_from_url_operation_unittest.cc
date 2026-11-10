@@ -6,8 +6,12 @@
 
 #include <utility>
 
+#include "base/containers/heap_array.h"
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "chrome/browser/extensions/api/image_writer_private/error_constants.h"
 #include "chrome/browser/extensions/api/image_writer_private/test_utils.h"
 #include "chrome/test/base/testing_profile.h"
@@ -15,6 +19,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/test/url_loader_interceptor.h"
+#include "crypto/obsolete/md5.h"
 
 namespace extensions {
 namespace image_writer {
@@ -200,11 +205,10 @@ TEST_F(ImageWriterWriteFromUrlOperationTest, DownloadFile) {
 }
 
 TEST_F(ImageWriterWriteFromUrlOperationTest, VerifyFile) {
-  std::unique_ptr<char[]> data_buffer(new char[kTestFileSize]);
-  base::ReadFile(test_utils_.GetImagePath(), data_buffer.get(), kTestFileSize);
-  base::MD5Digest expected_digest;
-  base::MD5Sum(data_buffer.get(), kTestFileSize, &expected_digest);
-  std::string expected_hash = base::MD5DigestToBase16(expected_digest);
+  auto buffer = base::HeapArray<uint8_t>::Uninit(kTestFileSize);
+  base::ReadFile(test_utils_.GetImagePath(), buffer);
+  std::string expected_hash = base::ToLowerASCII(
+      base::HexEncode(crypto::obsolete::Md5::HashForTesting(buffer.as_span())));
 
   scoped_refptr<WriteFromUrlOperationForTest> operation =
       CreateOperation(GURL(""), expected_hash);

@@ -4,10 +4,11 @@
 
 #include "content/web_test/renderer/blink_test_helpers.h"
 
+#include <string_view>
+
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/path_service.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -27,7 +28,7 @@ using blink::WebURL;
 
 namespace {
 
-constexpr base::StringPiece kFileScheme = "file:///";
+constexpr std::string_view kFileScheme = "file:///";
 
 base::FilePath GetWebTestsFilePath() {
   static base::FilePath path;
@@ -63,8 +64,8 @@ base::FilePath GetExternalWPTFilePath() {
 // the WPT test directory.
 //
 // Note that this doesn't apply when the WPT tests are run by the python script.
-WebURL RewriteWPTAbsolutePath(base::StringPiece utf8_url) {
-  if (!base::StartsWith(utf8_url, kFileScheme, base::CompareCase::SENSITIVE) ||
+WebURL RewriteWPTAbsolutePath(std::string_view utf8_url) {
+  if (!utf8_url.starts_with(kFileScheme) ||
       utf8_url.find("/web_tests/") != std::string::npos) {
     return WebURL(GURL(utf8_url));
   }
@@ -74,9 +75,9 @@ WebURL RewriteWPTAbsolutePath(base::StringPiece utf8_url) {
   static constexpr size_t kFileSchemeAndDriveLen = kFileScheme.size() + 3;
   if (utf8_url.size() <= kFileSchemeAndDriveLen)
     return WebURL();
-  base::StringPiece path = utf8_url.substr(kFileSchemeAndDriveLen);
+  std::string_view path = utf8_url.substr(kFileSchemeAndDriveLen);
 #else
-  base::StringPiece path = utf8_url.substr(kFileScheme.size());
+  std::string_view path = utf8_url.substr(kFileScheme.size());
 #endif
   base::FilePath new_path = GetExternalWPTFilePath().AppendASCII(path);
   return WebURL(net::FilePathToFileURL(new_path));
@@ -126,14 +127,14 @@ static base::FilePath GetBuildDirectory() {
   return result;
 }
 
-WebURL RewriteWebTestsURL(base::StringPiece utf8_url, bool is_wpt_mode) {
+WebURL RewriteWebTestsURL(std::string_view utf8_url, bool is_wpt_mode) {
   if (is_wpt_mode)
     return RewriteWPTAbsolutePath(utf8_url);
 
-  static constexpr base::StringPiece kGenPrefix = "file:///gen/";
+  static constexpr std::string_view kGenPrefix = "file:///gen/";
 
   // Map "file:///gen/" to "file://<build directory>/gen/".
-  if (base::StartsWith(utf8_url, kGenPrefix, base::CompareCase::SENSITIVE)) {
+  if (utf8_url.starts_with(kGenPrefix)) {
     base::FilePath gen_directory_path =
         GetBuildDirectory().Append(FILE_PATH_LITERAL("gen/"));
     std::string new_url("file://");
@@ -142,10 +143,11 @@ WebURL RewriteWebTestsURL(base::StringPiece utf8_url, bool is_wpt_mode) {
     return WebURL(GURL(new_url));
   }
 
-  static constexpr base::StringPiece kPrefix = "file:///tmp/web_tests/";
+  static constexpr std::string_view kPrefix = "file:///tmp/web_tests/";
 
-  if (!base::StartsWith(utf8_url, kPrefix, base::CompareCase::SENSITIVE))
+  if (!utf8_url.starts_with(kPrefix)) {
     return WebURL(GURL(utf8_url));
+  }
 
   std::string new_url("file://");
   new_url.append(GetWebTestsFilePath().AsUTF8Unsafe());
@@ -153,11 +155,11 @@ WebURL RewriteWebTestsURL(base::StringPiece utf8_url, bool is_wpt_mode) {
   return WebURL(GURL(new_url));
 }
 
-WebURL RewriteFileURLToLocalResource(base::StringPiece resource) {
+WebURL RewriteFileURLToLocalResource(std::string_view resource) {
   return RewriteWebTestsURL(resource, /*is_wpt_mode=*/false);
 }
 
-bool IsWebPlatformTest(base::StringPiece test_url) {
+bool IsWebPlatformTest(std::string_view test_url) {
   // ://web-platform.test is a part of the http/https URL of a wpt test run by
   // the python script.
   return test_url.find("://web-platform.test") != std::string::npos ||

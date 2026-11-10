@@ -6,12 +6,13 @@
 #define CONTENT_RENDERER_NAVIGATION_CLIENT_H_
 
 #include "base/memory/raw_ptr.h"
+#include "base/uuid.h"
 #include "content/common/frame.mojom.h"
 #include "content/common/navigation_client.mojom.h"
 #include "content/public/common/alternative_error_page_override_info.mojom.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
-#include "third_party/blink/public/common/permissions_policy/permissions_policy.h"
+#include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
 
 namespace content {
 
@@ -19,7 +20,13 @@ class RenderFrameImpl;
 
 class NavigationClient : mojom::NavigationClient {
  public:
-  explicit NavigationClient(RenderFrameImpl* render_frame);
+  // Used for browser-initiated navigations.
+  NavigationClient(RenderFrameImpl* render_frame,
+                   NavigationClient* initiator_navigation_client);
+  // Used for renderer-initiated navigations.
+  NavigationClient(RenderFrameImpl* render_frame,
+                   blink::mojom::BeginNavigationParamsPtr begin_params,
+                   blink::mojom::CommonNavigationParamsPtr common_params);
   ~NavigationClient() override;
 
   // mojom::NavigationClient implementation:
@@ -43,7 +50,8 @@ class NavigationClient : mojom::NavigationClient {
           fetch_later_loader_factory,
       const blink::DocumentToken& document_token,
       const base::UnguessableToken& devtools_navigation_token,
-      const std::optional<blink::ParsedPermissionsPolicy>& permissions_policy,
+      const base::Uuid& base_auction_nonce,
+      const std::optional<network::ParsedPermissionsPolicy>& permissions_policy,
       blink::mojom::PolicyContainerPtr policy_container,
       mojo::PendingRemote<blink::mojom::CodeCacheHost> code_cache_host,
       mojo::PendingRemote<blink::mojom::CodeCacheHost>
@@ -61,6 +69,7 @@ class NavigationClient : mojom::NavigationClient {
       const std::optional<std::string>& error_page_content,
       std::unique_ptr<blink::PendingURLLoaderFactoryBundle> subresource_loaders,
       const blink::DocumentToken& document_token,
+      const base::UnguessableToken& devtools_navigation_token,
       blink::mojom::PolicyContainerPtr policy_container,
       mojom::AlternativeErrorPageOverrideInfoPtr alternative_error_page_info,
       CommitFailedNavigationCallback callback) override;
@@ -82,6 +91,19 @@ class NavigationClient : mojom::NavigationClient {
 
   void ResetWithoutCancelling();
 
+  void ResetForNewNavigation(bool is_duplicate_navigation);
+
+  void ResetForAbort();
+
+  bool HasBeginNavigationParams() const { return !!begin_params_; }
+
+  const blink::mojom::BeginNavigationParams& begin_params() const {
+    return *begin_params_;
+  }
+  const blink::mojom::CommonNavigationParams& common_params() const {
+    return *common_params_;
+  }
+
  private:
   // OnDroppedNavigation is bound from BeginNavigation till CommitNavigation.
   // During this period, it is called when the interface pipe is closed from the
@@ -98,9 +120,14 @@ class NavigationClient : mojom::NavigationClient {
       this};
   mojo::Remote<mojom::NavigationRendererCancellationListener>
       renderer_cancellation_listener_remote_;
-  raw_ptr<RenderFrameImpl, ExperimentalRenderer> render_frame_;
+  raw_ptr<RenderFrameImpl, DanglingUntriaged> render_frame_;
   // See NavigationState::was_initiated_in_this_frame for details.
   bool was_initiated_in_this_frame_ = false;
+
+  // If the navigation is initiated by this renderer, this will be set to the
+  // params sent on the
+  blink::mojom::BeginNavigationParamsPtr begin_params_;
+  blink::mojom::CommonNavigationParamsPtr common_params_;
 
   base::WeakPtrFactory<NavigationClient> weak_ptr_factory_{this};
 };

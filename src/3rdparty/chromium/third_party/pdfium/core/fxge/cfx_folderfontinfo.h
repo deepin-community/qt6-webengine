@@ -31,7 +31,7 @@ class CFX_FolderFontInfo : public SystemFontInfoIface {
   void AddPath(const ByteString& path);
 
   // SystemFontInfoIface:
-  bool EnumFontList(CFX_FontMapper* pMapper) override;
+  void EnumFontList(CFX_FontMapper* pMapper) override;
   void* MapFont(int weight,
                 bool bItalic,
                 FX_Charset charset,
@@ -46,23 +46,31 @@ class CFX_FolderFontInfo : public SystemFontInfoIface {
   bool GetFontCharset(void* hFont, FX_Charset* charset) override;
 
  protected:
-  friend class CFX_FolderFontInfoTest;
+  friend class CFXFolderFontInfoTest;
 
   class FontFaceInfo {
    public:
+    static constexpr int32_t kSimilarityScoreMax = 68;
+
     FontFaceInfo(ByteString filePath,
                  ByteString faceName,
                  ByteString fontTables,
                  uint32_t fontOffset,
                  uint32_t fileSize);
 
-    const ByteString m_FilePath;
-    const ByteString m_FaceName;
-    const ByteString m_FontTables;
-    const uint32_t m_FontOffset;
-    const uint32_t m_FileSize;
-    uint32_t m_Styles = 0;
-    uint32_t m_Charsets = 0;
+    bool IsEligibleForFindFont(uint32_t flag, FX_Charset charset) const;
+    int32_t SimilarityScore(int weight,
+                            bool italic,
+                            int pitch_family,
+                            bool exact_match_bonus) const;
+
+    const ByteString file_path_;
+    const ByteString face_name_;
+    const ByteString font_tables_;
+    const uint32_t font_offset_;
+    const uint32_t file_size_;
+    uint32_t styles_ = 0;
+    uint32_t charsets_ = 0;
   };
 
   void ScanPath(const ByteString& path);
@@ -79,9 +87,9 @@ class CFX_FolderFontInfo : public SystemFontInfoIface {
                  const ByteString& family,
                  bool bMatchName);
 
-  std::map<ByteString, std::unique_ptr<FontFaceInfo>> m_FontList;
-  std::vector<ByteString> m_PathList;
-  UnownedPtr<CFX_FontMapper> m_pMapper;
+  std::map<ByteString, std::unique_ptr<FontFaceInfo>> font_list_;
+  std::vector<ByteString> path_list_;
+  UnownedPtr<CFX_FontMapper> mapper_;
 };
 
 #endif  // CORE_FXGE_CFX_FOLDERFONTINFO_H_

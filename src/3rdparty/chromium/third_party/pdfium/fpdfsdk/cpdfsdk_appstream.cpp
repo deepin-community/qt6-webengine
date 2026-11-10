@@ -8,6 +8,7 @@
 
 #include <math.h>
 
+#include <array>
 #include <iterator>
 #include <memory>
 #include <sstream>
@@ -31,6 +32,8 @@
 #include "core/fpdfdoc/cpdf_icon.h"
 #include "core/fpdfdoc/cpvt_word.h"
 #include "core/fxcrt/fx_string_wrappers.h"
+#include "core/fxcrt/numerics/safe_conversions.h"
+#include "core/fxcrt/span.h"
 #include "fpdfsdk/cpdfsdk_formfillenvironment.h"
 #include "fpdfsdk/cpdfsdk_interactiveform.h"
 #include "fpdfsdk/cpdfsdk_pageview.h"
@@ -38,8 +41,6 @@
 #include "fpdfsdk/pwl/cpwl_edit.h"
 #include "fpdfsdk/pwl/cpwl_edit_impl.h"
 #include "fpdfsdk/pwl/cpwl_wnd.h"
-#include "third_party/base/containers/span.h"
-#include "third_party/base/numerics/safe_conversions.h"
 
 namespace {
 
@@ -122,8 +123,9 @@ void WriteLine(fxcrt::ostringstream& stream, const CFX_PointF& point) {
 void WriteClosedLoop(fxcrt::ostringstream& stream,
                      pdfium::span<const CFX_PointF> points) {
   WriteMove(stream, points[0]);
-  for (const auto& point : points.subspan(1))
+  for (const auto& point : points.subspan<1u>()) {
     WriteLine(stream, point);
+  }
   WriteLine(stream, points[0]);
 }
 
@@ -186,49 +188,50 @@ ByteString GetAP_Check(const CFX_FloatRect& crBBox) {
   const float fWidth = crBBox.Width();
   const float fHeight = crBBox.Height();
 
-  CFX_PointF pts[8][3] = {{CFX_PointF(0.28f, 0.52f), CFX_PointF(0.27f, 0.48f),
-                           CFX_PointF(0.29f, 0.40f)},
-                          {CFX_PointF(0.30f, 0.33f), CFX_PointF(0.31f, 0.29f),
-                           CFX_PointF(0.31f, 0.28f)},
-                          {CFX_PointF(0.39f, 0.28f), CFX_PointF(0.49f, 0.29f),
-                           CFX_PointF(0.77f, 0.67f)},
-                          {CFX_PointF(0.76f, 0.68f), CFX_PointF(0.78f, 0.69f),
-                           CFX_PointF(0.76f, 0.75f)},
-                          {CFX_PointF(0.76f, 0.75f), CFX_PointF(0.73f, 0.80f),
-                           CFX_PointF(0.68f, 0.75f)},
-                          {CFX_PointF(0.68f, 0.74f), CFX_PointF(0.68f, 0.74f),
-                           CFX_PointF(0.44f, 0.47f)},
-                          {CFX_PointF(0.43f, 0.47f), CFX_PointF(0.40f, 0.47f),
-                           CFX_PointF(0.41f, 0.58f)},
-                          {CFX_PointF(0.40f, 0.60f), CFX_PointF(0.28f, 0.66f),
-                           CFX_PointF(0.30f, 0.56f)}};
+  using PointRow = std::array<CFX_PointF, 3>;
+  std::array<PointRow, 8> point_table = {{
+      {{CFX_PointF(0.28f, 0.52f), CFX_PointF(0.27f, 0.48f),
+        CFX_PointF(0.29f, 0.40f)}},
+      {{CFX_PointF(0.30f, 0.33f), CFX_PointF(0.31f, 0.29f),
+        CFX_PointF(0.31f, 0.28f)}},
+      {{CFX_PointF(0.39f, 0.28f), CFX_PointF(0.49f, 0.29f),
+        CFX_PointF(0.77f, 0.67f)}},
+      {{CFX_PointF(0.76f, 0.68f), CFX_PointF(0.78f, 0.69f),
+        CFX_PointF(0.76f, 0.75f)}},
+      {{CFX_PointF(0.76f, 0.75f), CFX_PointF(0.73f, 0.80f),
+        CFX_PointF(0.68f, 0.75f)}},
+      {{CFX_PointF(0.68f, 0.74f), CFX_PointF(0.68f, 0.74f),
+        CFX_PointF(0.44f, 0.47f)}},
+      {{CFX_PointF(0.43f, 0.47f), CFX_PointF(0.40f, 0.47f),
+        CFX_PointF(0.41f, 0.58f)}},
+      {{CFX_PointF(0.40f, 0.60f), CFX_PointF(0.28f, 0.66f),
+        CFX_PointF(0.30f, 0.56f)}},
+  }};
 
-  for (size_t i = 0; i < std::size(pts); ++i) {
-    for (size_t j = 0; j < std::size(pts[0]); ++j) {
-      pts[i][j].x = pts[i][j].x * fWidth + crBBox.left;
-      pts[i][j].y *= pts[i][j].y * fHeight + crBBox.bottom;
+  for (PointRow& row : point_table) {
+    for (CFX_PointF& point : row) {
+      point.x = point.x * fWidth + crBBox.left;
+      point.y = point.y * fHeight + crBBox.bottom;
     }
   }
 
   fxcrt::ostringstream csAP;
-  WriteMove(csAP, pts[0][0]);
+  WriteMove(csAP, point_table[0][0]);
 
-  for (size_t i = 0; i < std::size(pts); ++i) {
-    size_t nNext = i < std::size(pts) - 1 ? i + 1 : 0;
-    const CFX_PointF& pt_next = pts[nNext][0];
-
-    float px1 = pts[i][1].x - pts[i][0].x;
-    float py1 = pts[i][1].y - pts[i][0].y;
-    float px2 = pts[i][2].x - pt_next.x;
-    float py2 = pts[i][2].y - pt_next.y;
-
+  for (size_t i = 0; i < point_table.size(); ++i) {
+    size_t nNext = i < point_table.size() - 1 ? i + 1 : 0;
+    const CFX_PointF& pt_next = point_table[nNext][0];
+    float px1 = point_table[i][1].x - point_table[i][0].x;
+    float py1 = point_table[i][1].y - point_table[i][0].y;
+    float px2 = point_table[i][2].x - pt_next.x;
+    float py2 = point_table[i][2].y - pt_next.y;
     WriteBezierCurve(
         csAP,
-        {pts[i][0].x + px1 * FXSYS_BEZIER, pts[i][0].y + py1 * FXSYS_BEZIER},
+        {point_table[i][0].x + px1 * FXSYS_BEZIER,
+         point_table[i][0].y + py1 * FXSYS_BEZIER},
         {pt_next.x + px2 * FXSYS_BEZIER, pt_next.y + py2 * FXSYS_BEZIER},
         pt_next);
   }
-
   return ByteString(csAP);
 }
 
@@ -317,7 +320,7 @@ ByteString GetAP_Star(const CFX_FloatRect& crBBox) {
   CFX_PointF ptCenter = CFX_PointF((crBBox.left + crBBox.right) / 2.0f,
                                    (crBBox.top + crBBox.bottom) / 2.0f);
 
-  CFX_PointF points[5];
+  std::array<CFX_PointF, 5> points;
   float fAngle = FXSYS_PI / 10.0f;
   for (auto& point : points) {
     point =
@@ -326,12 +329,11 @@ ByteString GetAP_Star(const CFX_FloatRect& crBBox) {
   }
 
   WriteMove(csAP, points[0]);
-
-  int next = 0;
-  for (size_t i = 0; i < std::size(points); ++i) {
-    next = (next + 2) % std::size(points);
-    WriteLine(csAP, points[next]);
-  }
+  WriteLine(csAP, points[2]);
+  WriteLine(csAP, points[4]);
+  WriteLine(csAP, points[1]);
+  WriteLine(csAP, points[3]);
+  WriteLine(csAP, points[0]);
 
   return ByteString(csAP);
 }
@@ -587,15 +589,17 @@ ByteString GetRadioButtonAppStream(const CFX_FloatRect& rcBBox,
   }
 }
 
-ByteString GetFontSetString(IPVT_FontMap* pFontMap,
+ByteString GetFontSetString(IPVT_FontMap* font_map,
                             int32_t nFontIndex,
                             float fFontSize) {
-  if (!pFontMap)
+  if (!font_map) {
     return ByteString();
+  }
 
-  ByteString sFontAlias = pFontMap->GetPDFFontAlias(nFontIndex);
-  if (sFontAlias.GetLength() <= 0 || fFontSize <= 0)
+  ByteString sFontAlias = font_map->GetPDFFontAlias(nFontIndex);
+  if (sFontAlias.GetLength() <= 0 || fFontSize <= 0) {
     return ByteString();
+  }
 
   fxcrt::ostringstream sRet;
   sRet << "/" << sFontAlias << " " << fFontSize << " "
@@ -604,8 +608,9 @@ ByteString GetFontSetString(IPVT_FontMap* pFontMap,
 }
 
 ByteString GetWordRenderString(ByteStringView strWords) {
-  if (strWords.IsEmpty())
+  if (strWords.IsEmpty()) {
     return ByteString();
+  }
   return PDF_EncodeString(strWords) + " " + kShowTextOperator + "\n";
 }
 
@@ -689,8 +694,9 @@ ByteString GetEditAppStream(CPWL_EditImpl* pEdit,
     }
   }
 
-  if (!sWords.IsEmpty())
+  if (!sWords.IsEmpty()) {
     sEditStream << GetWordRenderString(sWords.AsStringView());
+  }
 
   fxcrt::ostringstream sAppStream;
   if (sEditStream.tellp() > 0) {
@@ -702,20 +708,23 @@ ByteString GetEditAppStream(CPWL_EditImpl* pEdit,
 ByteString GenerateIconAppStream(CPDF_IconFit& fit,
                                  RetainPtr<CPDF_Stream> pIconStream,
                                  const CFX_FloatRect& rcIcon) {
-  if (rcIcon.IsEmpty() || !pIconStream)
+  if (rcIcon.IsEmpty() || !pIconStream) {
     return ByteString();
+  }
 
   CPWL_Wnd::CreateParams cp(nullptr, nullptr, nullptr);
   cp.dwFlags = PWS_VISIBLE;
   auto pWnd = std::make_unique<CPWL_Wnd>(cp, nullptr);
   pWnd->Realize();
-  if (!pWnd->Move(rcIcon, false, false))
+  if (!pWnd->Move(rcIcon, false, false)) {
     return ByteString();
+  }
 
   auto pPDFIcon = std::make_unique<CPDF_Icon>(std::move(pIconStream));
   ByteString sAlias = pPDFIcon->GetImageAlias();
-  if (sAlias.GetLength() <= 0)
+  if (sAlias.GetLength() <= 0) {
     return ByteString();
+  }
 
   const CFX_FloatRect rcPlate = pWnd->GetClientRect();
   const CFX_SizeF image_size = pPDFIcon->GetImageSize();
@@ -744,7 +753,7 @@ ByteString GenerateIconAppStream(CPDF_IconFit& fit,
 }
 
 ByteString GetPushButtonAppStream(const CFX_FloatRect& rcBBox,
-                                  IPVT_FontMap* pFontMap,
+                                  IPVT_FontMap* font_map,
                                   RetainPtr<CPDF_Stream> pIconStream,
                                   CPDF_IconFit& IconFit,
                                   const WideString& sLabel,
@@ -754,15 +763,16 @@ ByteString GetPushButtonAppStream(const CFX_FloatRect& rcBBox,
   const float fAutoFontScale = 1.0f / 3.0f;
 
   auto pEdit = std::make_unique<CPWL_EditImpl>();
-  pEdit->SetFontMap(pFontMap);
+  pEdit->SetFontMap(font_map);
   pEdit->SetAlignmentH(1);
   pEdit->SetAlignmentV(1);
   pEdit->SetMultiLine(false);
   pEdit->SetAutoReturn(false);
-  if (FXSYS_IsFloatZero(fFontSize))
+  if (FXSYS_IsFloatZero(fFontSize)) {
     pEdit->SetAutoFontSize(true);
-  else
+  } else {
     pEdit->SetFontSize(fFontSize);
+  }
 
   pEdit->Initialize();
   pEdit->SetText(sLabel);
@@ -920,8 +930,9 @@ ByteString GetPushButtonAppStream(const CFX_FloatRect& rcBBox,
     }
   }
 
-  if (sTemp.tellp() <= 0)
+  if (sTemp.tellp() <= 0) {
     return ByteString();
+  }
 
   fxcrt::ostringstream sAppStream;
   {
@@ -1035,8 +1046,9 @@ ByteString GetBorderAppStreamInternal(const CFX_FloatRect& rect,
 }
 
 ByteString GetDropButtonAppStream(const CFX_FloatRect& rcBBox) {
-  if (rcBBox.IsEmpty())
+  if (rcBBox.IsEmpty()) {
     return ByteString();
+  }
 
   fxcrt::ostringstream sAppStream;
   {
@@ -1054,7 +1066,7 @@ ByteString GetDropButtonAppStream(const CFX_FloatRect& rcBBox) {
         rcBBox, 2, CFX_Color(CFX_Color::Type::kGray, 0),
         CFX_Color(CFX_Color::Type::kGray, 1),
         CFX_Color(CFX_Color::Type::kGray, 0.5), BorderStyle::kBeveled,
-        CPWL_Dash(3, 0, 0));
+        CPWL_Dash{3, 0, 0});
   }
 
   CFX_PointF ptCenter = CFX_PointF((rcBBox.left + rcBBox.right) / 2,
@@ -1088,22 +1100,22 @@ ByteString GetRectFillAppStream(const CFX_FloatRect& rect,
 }
 
 void SetDefaultIconName(CPDF_Stream* pIcon, const char* name) {
-  if (!pIcon)
+  if (!pIcon) {
     return;
+  }
 
   RetainPtr<CPDF_Dictionary> pImageDict = pIcon->GetMutableDict();
-  if (!pImageDict)
+  if (pImageDict->KeyExist("Name")) {
     return;
+  }
 
-  if (pImageDict->KeyExist("Name"))
-    return;
-
-  pImageDict->SetNewFor<CPDF_String>("Name", name, false);
+  pImageDict->SetNewFor<CPDF_String>("Name", name);
 }
 
-absl::optional<CheckStyle> CheckStyleFromCaption(const WideString& caption) {
-  if (caption.IsEmpty())
-    return absl::nullopt;
+std::optional<CheckStyle> CheckStyleFromCaption(const WideString& caption) {
+  if (caption.IsEmpty()) {
+    return std::nullopt;
+  }
 
   // Character values are ZapfDingbats encodings of named glyphs.
   switch (caption[0]) {
@@ -1120,7 +1132,7 @@ absl::optional<CheckStyle> CheckStyleFromCaption(const WideString& caption) {
     case L'u':
       return CheckStyle::kDiamond;
     default:
-      return absl::nullopt;
+      return std::nullopt;
   }
 }
 
@@ -1164,14 +1176,14 @@ void CPDFSDK_AppStream::SetAsPushButton() {
   CFX_Color crBorder = pControl->GetOriginalBorderColor();
 
   float fBorderWidth = static_cast<float>(widget_->GetBorderWidth());
-  CPWL_Dash dsBorder(3, 0, 0);
+  CPWL_Dash dsBorder{3, 0, 0};
   CFX_Color crLeftTop;
   CFX_Color crRightBottom;
 
   BorderStyle nBorderStyle = widget_->GetBorderStyle();
   switch (nBorderStyle) {
     case BorderStyle::kDash:
-      dsBorder = CPWL_Dash(3, 3, 0);
+      dsBorder = CPWL_Dash{3, 3, 0};
       break;
     case BorderStyle::kBeveled:
       fBorderWidth *= 2;
@@ -1189,41 +1201,44 @@ void CPDFSDK_AppStream::SetAsPushButton() {
 
   CFX_FloatRect rcClient = rcWindow.GetDeflated(fBorderWidth, fBorderWidth);
   CPDF_DefaultAppearance da = pControl->GetDefaultAppearance();
-  absl::optional<CFX_Color> color = da.GetColor();
+  std::optional<CFX_Color> color = da.GetColor();
   CFX_Color crText = color.value_or(CFX_Color(CFX_Color::Type::kGray, 0));
 
-  float fFontSize;
-  ByteString csNameTag;
-  absl::optional<ByteString> font = da.GetFont(&fFontSize);
-  if (font.has_value())
-    csNameTag = font.value();
-  else
-    fFontSize = 12.0f;
+  const float font_size =
+      da.GetFont()
+          .value_or(CPDF_DefaultAppearance::FontNameAndSize{.size = 12.0f})
+          .size;
 
   WideString csWCaption;
   WideString csNormalCaption;
   WideString csRolloverCaption;
   WideString csDownCaption;
-  if (pControl->HasMKEntry(pdfium::appearance::kCA))
+  if (pControl->HasMKEntry(pdfium::appearance::kCA)) {
     csNormalCaption = pControl->GetNormalCaption();
+  }
 
-  if (pControl->HasMKEntry(pdfium::appearance::kRC))
+  if (pControl->HasMKEntry(pdfium::appearance::kRC)) {
     csRolloverCaption = pControl->GetRolloverCaption();
+  }
 
-  if (pControl->HasMKEntry(pdfium::appearance::kAC))
+  if (pControl->HasMKEntry(pdfium::appearance::kAC)) {
     csDownCaption = pControl->GetDownCaption();
+  }
 
   RetainPtr<CPDF_Stream> pNormalIcon;
   RetainPtr<CPDF_Stream> pRolloverIcon;
   RetainPtr<CPDF_Stream> pDownIcon;
-  if (pControl->HasMKEntry(pdfium::appearance::kI))
+  if (pControl->HasMKEntry(pdfium::appearance::kI)) {
     pNormalIcon = pControl->GetNormalIcon();
+  }
 
-  if (pControl->HasMKEntry(pdfium::appearance::kRI))
+  if (pControl->HasMKEntry(pdfium::appearance::kRI)) {
     pRolloverIcon = pControl->GetRolloverIcon();
+  }
 
-  if (pControl->HasMKEntry(pdfium::appearance::kIX))
+  if (pControl->HasMKEntry(pdfium::appearance::kIX)) {
     pDownIcon = pControl->GetDownIcon();
+  }
 
   SetDefaultIconName(pNormalIcon.Get(), "ImgA");
   SetDefaultIconName(pRolloverIcon.Get(), "ImgB");
@@ -1239,11 +1254,12 @@ void CPDFSDK_AppStream::SetAsPushButton() {
                                    crRightBottom, nBorderStyle, dsBorder) +
         GetPushButtonAppStream(iconFit.GetFittingBounds() ? rcWindow : rcClient,
                                &font_map, pNormalIcon, iconFit, csNormalCaption,
-                               crText, fFontSize, nLayout);
+                               crText, font_size, nLayout);
 
     Write("N", csAP, ByteString());
-    if (pNormalIcon)
+    if (pNormalIcon) {
       AddImage("N", pNormalIcon.Get());
+    }
 
     CPDF_FormControl::HighlightingMode eHLM = pControl->GetHighlightingMode();
     if (eHLM != CPDF_FormControl::kPush && eHLM != CPDF_FormControl::kToggle) {
@@ -1266,11 +1282,12 @@ void CPDFSDK_AppStream::SetAsPushButton() {
                                    crRightBottom, nBorderStyle, dsBorder) +
         GetPushButtonAppStream(iconFit.GetFittingBounds() ? rcWindow : rcClient,
                                &font_map, pRolloverIcon, iconFit,
-                               csRolloverCaption, crText, fFontSize, nLayout);
+                               csRolloverCaption, crText, font_size, nLayout);
 
     Write("R", csAP, ByteString());
-    if (pRolloverIcon)
+    if (pRolloverIcon) {
       AddImage("R", pRolloverIcon.Get());
+    }
 
     if (csDownCaption.IsEmpty() && !pDownIcon) {
       csDownCaption = csNormalCaption;
@@ -1302,11 +1319,12 @@ void CPDFSDK_AppStream::SetAsPushButton() {
                                    crRightBottom, nBorderStyle, dsBorder) +
         GetPushButtonAppStream(iconFit.GetFittingBounds() ? rcWindow : rcClient,
                                &font_map, pDownIcon, iconFit, csDownCaption,
-                               crText, fFontSize, nLayout);
+                               crText, font_size, nLayout);
 
     Write("D", csAP, ByteString());
-    if (pDownIcon)
+    if (pDownIcon) {
       AddImage("D", pDownIcon.Get());
+    }
   }
 }
 
@@ -1315,14 +1333,14 @@ void CPDFSDK_AppStream::SetAsCheckBox() {
   CFX_Color crBackground = pControl->GetOriginalBackgroundColor();
   CFX_Color crBorder = pControl->GetOriginalBorderColor();
   float fBorderWidth = static_cast<float>(widget_->GetBorderWidth());
-  CPWL_Dash dsBorder(3, 0, 0);
+  CPWL_Dash dsBorder{3, 0, 0};
   CFX_Color crLeftTop;
   CFX_Color crRightBottom;
 
   BorderStyle nBorderStyle = widget_->GetBorderStyle();
   switch (nBorderStyle) {
     case BorderStyle::kDash:
-      dsBorder = CPWL_Dash(3, 3, 0);
+      dsBorder = CPWL_Dash{3, 3, 0};
       break;
     case BorderStyle::kBeveled:
       fBorderWidth *= 2;
@@ -1340,7 +1358,7 @@ void CPDFSDK_AppStream::SetAsCheckBox() {
 
   CFX_FloatRect rcWindow = widget_->GetRotatedRect();
   CFX_FloatRect rcClient = rcWindow.GetDeflated(fBorderWidth, fBorderWidth);
-  absl::optional<CFX_Color> color = pControl->GetDefaultAppearance().GetColor();
+  std::optional<CFX_Color> color = pControl->GetDefaultAppearance().GetColor();
   CFX_Color crText = color.value_or(CFX_Color());
 
   CheckStyle nStyle = CheckStyleFromCaption(pControl->GetNormalCaption())
@@ -1385,8 +1403,9 @@ void CPDFSDK_AppStream::SetAsCheckBox() {
   Write("D", csAP_D_OFF, "Off");
 
   ByteString csAS = widget_->GetAppState();
-  if (csAS.IsEmpty())
+  if (csAS.IsEmpty()) {
     widget_->SetAppStateOff();
+  }
 }
 
 void CPDFSDK_AppStream::SetAsRadioButton() {
@@ -1394,14 +1413,14 @@ void CPDFSDK_AppStream::SetAsRadioButton() {
   CFX_Color crBackground = pControl->GetOriginalBackgroundColor();
   CFX_Color crBorder = pControl->GetOriginalBorderColor();
   float fBorderWidth = static_cast<float>(widget_->GetBorderWidth());
-  CPWL_Dash dsBorder(3, 0, 0);
+  CPWL_Dash dsBorder{3, 0, 0};
   CFX_Color crLeftTop;
   CFX_Color crRightBottom;
 
   BorderStyle nBorderStyle = widget_->GetBorderStyle();
   switch (nBorderStyle) {
     case BorderStyle::kDash:
-      dsBorder = CPWL_Dash(3, 3, 0);
+      dsBorder = CPWL_Dash{3, 3, 0};
       break;
     case BorderStyle::kBeveled:
       fBorderWidth *= 2;
@@ -1419,7 +1438,7 @@ void CPDFSDK_AppStream::SetAsRadioButton() {
 
   CFX_FloatRect rcWindow = widget_->GetRotatedRect();
   CFX_FloatRect rcClient = rcWindow.GetDeflated(fBorderWidth, fBorderWidth);
-  absl::optional<CFX_Color> color = pControl->GetDefaultAppearance().GetColor();
+  std::optional<CFX_Color> color = pControl->GetDefaultAppearance().GetColor();
   CFX_Color crText = color.value_or(CFX_Color());
   CheckStyle nStyle = CheckStyleFromCaption(pControl->GetNormalCaption())
                           .value_or(CheckStyle::kCircle);
@@ -1501,11 +1520,12 @@ void CPDFSDK_AppStream::SetAsRadioButton() {
   Write("D", csAP_D_OFF, "Off");
 
   ByteString csAS = widget_->GetAppState();
-  if (csAS.IsEmpty())
+  if (csAS.IsEmpty()) {
     widget_->SetAppStateOff();
+  }
 }
 
-void CPDFSDK_AppStream::SetAsComboBox(absl::optional<WideString> sValue) {
+void CPDFSDK_AppStream::SetAsComboBox(std::optional<WideString> sValue) {
   CPDF_FormControl* pControl = widget_->GetFormControl();
   CPDF_FormField* pField = pControl->GetField();
   fxcrt::ostringstream sBody;
@@ -1531,10 +1551,11 @@ void CPDFSDK_AppStream::SetAsComboBox(absl::optional<WideString> sValue) {
   pEdit->SetAlignmentV(1);
 
   float fFontSize = widget_->GetFontSize();
-  if (FXSYS_IsFloatZero(fFontSize))
+  if (FXSYS_IsFloatZero(fFontSize)) {
     pEdit->SetAutoFontSize(true);
-  else
+  } else {
     pEdit->SetFontSize(fFontSize);
+  }
 
   pEdit->Initialize();
   if (sValue.has_value()) {
@@ -1657,7 +1678,7 @@ void CPDFSDK_AppStream::SetAsListBox() {
         ByteString());
 }
 
-void CPDFSDK_AppStream::SetAsTextField(absl::optional<WideString> sValue) {
+void CPDFSDK_AppStream::SetAsTextField(std::optional<WideString> sValue) {
   CPDF_FormControl* pControl = widget_->GetFormControl();
   CPDF_FormField* pField = pControl->GetField();
   fxcrt::ostringstream sBody;
@@ -1695,8 +1716,9 @@ void CPDFSDK_AppStream::SetAsTextField(absl::optional<WideString> sValue) {
   float fFontSize = widget_->GetFontSize();
 
 #ifdef PDF_ENABLE_XFA
-  if (!sValue.has_value() && widget_->GetMixXFAWidget())
+  if (!sValue.has_value() && widget_->GetMixXFAWidget()) {
     sValue = widget_->GetValue();
+  }
 #endif  // PDF_ENABLE_XFA
 
   if (nMaxLen > 0) {
@@ -1707,16 +1729,18 @@ void CPDFSDK_AppStream::SetAsTextField(absl::optional<WideString> sValue) {
             font_map.GetPDFFont(0).Get(), rcClient, nMaxLen);
       }
     } else {
-      if (sValue.has_value())
-        nMaxLen = pdfium::base::checked_cast<int>(sValue.value().GetLength());
+      if (sValue.has_value()) {
+        nMaxLen = pdfium::checked_cast<int>(sValue.value().GetLength());
+      }
       pEdit->SetLimitChar(nMaxLen);
     }
   }
 
-  if (FXSYS_IsFloatZero(fFontSize))
+  if (FXSYS_IsFloatZero(fFontSize)) {
     pEdit->SetAutoFontSize(true);
-  else
+  } else {
     pEdit->SetFontSize(fFontSize);
+  }
 
   pEdit->Initialize();
   pEdit->SetText(sValue.value_or(pField->GetValue()));
@@ -1771,7 +1795,7 @@ void CPDFSDK_AppStream::SetAsTextField(absl::optional<WideString> sValue) {
         ByteString sColor =
             GetStrokeColorAppStream(widget_->GetBorderPWLColor());
         if (sColor.GetLength() > 0) {
-          CPWL_Dash dsBorder = CPWL_Dash(3, 3, 0);
+          CPWL_Dash dsBorder = CPWL_Dash{3, 3, 0};
           AutoClosedQCommand q(&sLines);
           sLines << widget_->GetBorderWidth() << " " << kSetLineWidthOperator
                  << "\n"
@@ -1801,14 +1825,12 @@ void CPDFSDK_AppStream::SetAsTextField(absl::optional<WideString> sValue) {
 }
 
 void CPDFSDK_AppStream::AddImage(const ByteString& sAPType,
-                                 CPDF_Stream* pImage) {
-  RetainPtr<CPDF_Stream> pStream = dict_->GetMutableStreamFor(sAPType);
+                                 const CPDF_Stream* pImage) {
+  RetainPtr<CPDF_Stream> pStream =
+      dict_->GetMutableStreamFor(sAPType.AsStringView());
   RetainPtr<CPDF_Dictionary> pStreamDict = pStream->GetMutableDict();
-  ByteString sImageAlias = "IMG";
 
-  RetainPtr<const CPDF_Dictionary> pImageDict = pImage->GetDict();
-  if (pImageDict)
-    sImageAlias = pImageDict->GetByteStringFor("Name");
+  const ByteString sImageAlias = pImage->GetDict()->GetByteStringFor("Name");
 
   RetainPtr<CPDF_Dictionary> pStreamResList =
       pStreamDict->GetOrCreateDictFor("Resources");
@@ -1818,51 +1840,48 @@ void CPDFSDK_AppStream::AddImage(const ByteString& sAPType,
                                       pImage->GetObjNum());
 }
 
-void CPDFSDK_AppStream::Write(const ByteString& sAPType,
+void CPDFSDK_AppStream::Write(ByteStringView sAPType,
                               const ByteString& sContents,
                               const ByteString& sAPState) {
-  RetainPtr<CPDF_Dictionary> pParentDict;
+  RetainPtr<CPDF_Dictionary> parent_dict;
   ByteString key;
   if (sAPState.IsEmpty()) {
-    pParentDict = dict_;
+    parent_dict = dict_;
     key = sAPType;
   } else {
-    pParentDict = dict_->GetOrCreateDictFor(sAPType);
+    parent_dict = dict_->GetOrCreateDictFor(sAPType);
     key = sAPState;
   }
 
-  RetainPtr<CPDF_Dictionary> pOrigStreamDict;
-
-  // If `pStream` is created by CreateModifiedAPStream(), then it is safe to
+  // If `stream` is created by CreateModifiedAPStream(), then it is safe to
   // edit, as it is not shared.
-  RetainPtr<CPDF_Stream> pStream = pParentDict->GetMutableStreamFor(key);
+  RetainPtr<CPDF_Stream> stream =
+      parent_dict->GetMutableStreamFor(key.AsStringView());
   CPDF_Document* doc = widget_->GetPageView()->GetPDFDocument();
-  if (!doc->IsModifiedAPStream(pStream.Get())) {
-    if (pStream)
-      pOrigStreamDict = pStream->GetMutableDict();
-    pStream.Reset(doc->CreateModifiedAPStream());
-    pParentDict->SetNewFor<CPDF_Reference>(key, doc, pStream->GetObjNum());
-  }
+  if (!doc->IsModifiedAPStream(stream.Get())) {
+    auto new_stream_dict = doc->New<CPDF_Dictionary>();
+    new_stream_dict->SetNewFor<CPDF_Name>("Type", "XObject");
+    new_stream_dict->SetNewFor<CPDF_Name>("Subtype", "Form");
+    new_stream_dict->SetNewFor<CPDF_Number>("FormType", 1);
 
-  RetainPtr<CPDF_Dictionary> pStreamDict = pStream->GetMutableDict();
-  if (!pStreamDict) {
-    pStreamDict = doc->New<CPDF_Dictionary>();
-    pStreamDict->SetNewFor<CPDF_Name>("Type", "XObject");
-    pStreamDict->SetNewFor<CPDF_Name>("Subtype", "Form");
-    pStreamDict->SetNewFor<CPDF_Number>("FormType", 1);
-
-    if (pOrigStreamDict) {
-      RetainPtr<const CPDF_Dictionary> pResources =
-          pOrigStreamDict->GetDictFor("Resources");
-      if (pResources)
-        pStreamDict->SetFor("Resources", pResources->Clone());
+    if (stream) {
+      RetainPtr<const CPDF_Dictionary> original_stream_dict = stream->GetDict();
+      if (original_stream_dict) {
+        RetainPtr<const CPDF_Dictionary> resources_dict =
+            original_stream_dict->GetDictFor("Resources");
+        if (resources_dict) {
+          new_stream_dict->SetFor("Resources", resources_dict->Clone());
+        }
+      }
     }
-
-    pStream->InitStreamWithEmptyData(pStreamDict);
+    stream = doc->CreateModifiedAPStream(std::move(new_stream_dict));
+    parent_dict->SetNewFor<CPDF_Reference>(key, doc, stream->GetObjNum());
   }
-  pStreamDict->SetMatrixFor("Matrix", widget_->GetMatrix());
-  pStreamDict->SetRectFor("BBox", widget_->GetRotatedRect());
-  pStream->SetDataAndRemoveFilter(sContents.raw_span());
+
+  RetainPtr<CPDF_Dictionary> stream_dict = stream->GetMutableDict();
+  stream_dict->SetMatrixFor("Matrix", widget_->GetMatrix());
+  stream_dict->SetRectFor("BBox", widget_->GetRotatedRect());
+  stream->SetDataAndRemoveFilter(sContents.unsigned_span());
 }
 
 void CPDFSDK_AppStream::Remove(ByteStringView sAPType) {
@@ -1871,8 +1890,9 @@ void CPDFSDK_AppStream::Remove(ByteStringView sAPType) {
 
 ByteString CPDFSDK_AppStream::GetBackgroundAppStream() const {
   CFX_Color crBackground = widget_->GetFillPWLColor();
-  if (crBackground.nColorType != CFX_Color::Type::kTransparent)
+  if (crBackground.nColorType != CFX_Color::Type::kTransparent) {
     return GetRectFillAppStream(widget_->GetRotatedRect(), crBackground);
+  }
 
   return ByteString();
 }
@@ -1885,12 +1905,12 @@ ByteString CPDFSDK_AppStream::GetBorderAppStream() const {
   CFX_Color crRightBottom;
 
   float fBorderWidth = static_cast<float>(widget_->GetBorderWidth());
-  CPWL_Dash dsBorder(3, 0, 0);
+  CPWL_Dash dsBorder{3, 0, 0};
 
   BorderStyle nBorderStyle = widget_->GetBorderStyle();
   switch (nBorderStyle) {
     case BorderStyle::kDash:
-      dsBorder = CPWL_Dash(3, 3, 0);
+      dsBorder = CPWL_Dash{3, 3, 0};
       break;
     case BorderStyle::kBeveled:
       fBorderWidth *= 2;

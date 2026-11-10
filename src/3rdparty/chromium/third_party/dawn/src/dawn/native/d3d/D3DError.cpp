@@ -31,6 +31,8 @@
 #include <sstream>
 #include <string>
 
+#include "dawn/common/windows_with_undefs.h"
+
 namespace dawn::native::d3d {
 const char* HRESULTAsString(HRESULT result) {
     // There's a lot of possible HRESULTS, but these ones are the ones specifically listed as
@@ -41,6 +43,12 @@ const char* HRESULTAsString(HRESULT result) {
             return "S_OK";
         case S_FALSE:
             return "S_FALSE";
+
+        // Wait results that are not errors:
+        case WAIT_ABANDONED:
+            return "WAIT_ABAONDONED";
+        case WAIT_TIMEOUT:
+            return "WAIT_TIMEOUT";
 
         // Generic errors:
         case E_FAIL:
@@ -67,6 +75,8 @@ const char* HRESULTAsString(HRESULT result) {
             return "DXGI_ERROR_DRIVER_INTERNAL_ERROR";
         case DXGI_ERROR_WAS_STILL_DRAWING:
             return "DXGI_ERROR_WAS_STILL_DRAWING";
+        case DXGI_ERROR_NOT_CURRENTLY_AVAILABLE:
+            return "DXGI_ERROR_NOT_CURRENTLY_AVAILABLE";
 
         // D3D11 errors:
         case D3D11_ERROR_TOO_MANY_UNIQUE_STATE_OBJECTS:
@@ -96,7 +106,7 @@ const char* HRESULTAsString(HRESULT result) {
 }
 
 MaybeError CheckHRESULTImpl(HRESULT result, const char* context) {
-    if (DAWN_LIKELY(SUCCEEDED(result))) {
+    if (SUCCEEDED(result)) [[likely]] {
         return {};
     }
 

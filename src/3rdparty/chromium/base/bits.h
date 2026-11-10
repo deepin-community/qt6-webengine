@@ -12,6 +12,7 @@
 
 #include <bit>
 #include <concepts>
+#include <type_traits>
 
 #include "base/check.h"
 
@@ -32,27 +33,11 @@ concept UnsignedInteger =
 // concept that captures all the types that must be supported for compatibility
 // but that we want to remove.
 //
-// TODO(https://crbug.com/1414634): Switch uses to supported functions and
+// TODO(crbug.com/40256225): Switch uses to supported functions and
 // remove.
 template <typename T>
 concept SignedIntegerDeprecatedDoNotUse =
     std::integral<T> && !UnsignedInteger<T>;
-
-// Returns true iff |value| is a power of 2. DEPRECATED; use
-// std::has_single_bit() instead.
-//
-// TODO(https://crbug.com/1414634): Switch uses and remove.
-template <typename T>
-  requires SignedIntegerDeprecatedDoNotUse<T>
-constexpr bool IsPowerOfTwoDeprecatedDoNotUse(T value) {
-  // From "Hacker's Delight": Section 2.1 Manipulating Rightmost Bits.
-  //
-  // Only positive integers with a single bit set are powers of two. If only one
-  // bit is set in x (e.g. 0b00000100000000) then |x-1| will have that bit set
-  // to zero and all bits to its right set to 1 (e.g. 0b00000011111111). Hence
-  // |x & (x-1)| is 0 iff x is a power of two.
-  return value > 0 && (value & (value - 1)) == 0;
-}
 
 // Round down |size| to a multiple of alignment, which must be a power of two.
 template <typename T>
@@ -65,12 +50,12 @@ inline constexpr T AlignDown(T size, T alignment) {
 // Round down |size| to a multiple of alignment, which must be a power of two.
 // DEPRECATED; use the UnsignedInteger version.
 //
-// TODO(https://crbug.com/1414634): Switch uses and remove.
+// TODO(crbug.com/40256225): Switch uses and remove.
 template <typename T>
-  requires SignedIntegerDeprecatedDoNotUse<T>
-inline constexpr T AlignDownDeprecatedDoNotUse(T size, T alignment) {
-  DCHECK(IsPowerOfTwoDeprecatedDoNotUse(alignment));
-  return size & ~(alignment - 1);
+inline constexpr auto AlignDownDeprecatedDoNotUse(T size, T alignment) {
+  using U = std::make_unsigned_t<T>;
+  DCHECK(std::has_single_bit(static_cast<U>(alignment)));
+  return static_cast<U>(size) & ~static_cast<U>(alignment - 1);
 }
 
 // Move |ptr| back to the previous multiple of alignment, which must be a power
@@ -93,12 +78,13 @@ inline constexpr T AlignUp(T size, T alignment) {
 // Round up |size| to a multiple of alignment, which must be a power of two.
 // DEPRECATED; use the UnsignedInteger version.
 //
-// TODO(https://crbug.com/1414634): Switch uses and remove.
+// TODO(crbug.com/40256225): Switch uses and remove.
 template <typename T>
   requires SignedIntegerDeprecatedDoNotUse<T>
 inline constexpr T AlignUpDeprecatedDoNotUse(T size, T alignment) {
-  DCHECK(IsPowerOfTwoDeprecatedDoNotUse(alignment));
-  return (size + alignment - 1) & ~(alignment - 1);
+  using U = std::make_unsigned_t<T>;
+  DCHECK(std::has_single_bit(static_cast<U>(alignment)));
+  return static_cast<U>(size + alignment - 1) & ~static_cast<U>(alignment - 1);
 }
 
 // Advance |ptr| to the next multiple of alignment, which must be a power of

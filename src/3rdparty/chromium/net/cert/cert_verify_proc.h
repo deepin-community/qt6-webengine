@@ -12,12 +12,15 @@
 #include "base/gtest_prod_util.h"
 #include "base/memory/ref_counted.h"
 #include "build/build_config.h"
+#include "components/network_time/time_tracker/time_tracker.h"
 #include "crypto/crypto_buildflags.h"
 #include "net/base/hash_value.h"
+#include "net/base/ip_address.h"
 #include "net/base/net_export.h"
 #include "net/cert/ct_log_verifier.h"
 #include "net/cert/ct_policy_enforcer.h"
 #include "net/cert/ct_verifier.h"
+#include "net/cert/require_ct_delegate.h"
 #include "net/net_buildflags.h"
 #include "third_party/boringssl/src/pki/parsed_certificate.h"
 
@@ -40,6 +43,7 @@ typedef std::vector<scoped_refptr<X509Certificate>> CertificateList;
 class NET_EXPORT CertVerifyProc
     : public base::RefCountedThreadSafe<CertVerifyProc> {
  public:
+  // LINT.IfChange(CertVerifyProc.VerifyFlags)
   enum VerifyFlags {
     // If set, enables online revocation checking via CRLs and OCSP for the
     // certificate chain.
@@ -57,21 +61,22 @@ class NET_EXPORT CertVerifyProc
     // they are issued by non-public trust anchors.
     VERIFY_ENABLE_SHA1_LOCAL_ANCHORS = 1 << 2,
 
-    // If set, disables the policy enforcement described at
-    // https://security.googleblog.com/2017/09/chromes-plan-to-distrust-symantec.html
-    VERIFY_DISABLE_SYMANTEC_ENFORCEMENT = 1 << 3,
-
     // Disable network fetches during verification. This will override
     // VERIFY_REV_CHECKING_ENABLED and
     // VERIFY_REV_CHECKING_REQUIRED_LOCAL_ANCHORS if they are also specified.
     // (Note that this entirely disables the online revocation/AIA code paths.
     // Theoretically we could still check for cached results.)
-    VERIFY_DISABLE_NETWORK_FETCHES = 1 << 4,
+    VERIFY_DISABLE_NETWORK_FETCHES = 1 << 3,
+
+    // If set, Certificate Transparency requirements are evaluated in a
+    // stricter fashion as required by Signed Exchanges.
+    VERIFY_SXG_CT_REQUIREMENTS = 1 << 4,
 
     // Also update GetNetConstants() in net/log/net_log_util.cc when updating
     // this enum.
-    VERIFY_FLAGS_LAST = VERIFY_DISABLE_NETWORK_FETCHES
+    VERIFY_FLAGS_LAST = VERIFY_SXG_CT_REQUIREMENTS
   };
+  // LINT.ThenChange(/net/log/net_log_util.cc:CertVerifyProc.VerifyFlags)
 
   // The set factory parameters that are variable over time, but are expected to
   // be consistent between multiple verifiers that are created. For example,
@@ -91,12 +96,36 @@ class NET_EXPORT CertVerifyProc
     scoped_refptr<CRLSet> crl_set;
     std::vector<scoped_refptr<const net::CTLogVerifier>> ct_logs;
     scoped_refptr<net::CTPolicyEnforcer> ct_policy_enforcer;
+    std::optional<network_time::TimeTracker> time_tracker;
 #if BUILDFLAG(CHROME_ROOT_STORE_SUPPORTED)
-    absl::optional<net::ChromeRootStoreData> root_store_data;
+    std::optional<net::ChromeRootStoreData> root_store_data;
 #endif
 #if BUILDFLAG(CHROME_ROOT_STORE_OPTIONAL)
     bool use_chrome_root_store;
 #endif
+  };
+
+  // CIDR, consisting of an IP and a netmask.
+  struct NET_EXPORT CIDR {
+    net::IPAddress ip;
+    net::IPAddress mask;
+  };
+
+  // Single certificate, with constraints.
+  struct NET_EXPORT CertificateWithConstraints {
+    CertificateWithConstraints();
+    ~CertificateWithConstraints();
+    CertificateWithConstraints(const CertificateWithConstraints&);
+    CertificateWithConstraints& operator=(
+        const CertificateWithConstraints& other);
+    CertificateWithConstraints(CertificateWithConstraints&&);
+    CertificateWithConstraints& operator=(CertificateWithConstraints&& other);
+
+    std::shared_ptr<const bssl::ParsedCertificate> certificate;
+
+    std::vector<std::string> permitted_dns_names;
+
+    std::vector<CIDR> permitted_cidrs;
   };
 
   // The set of parameters that are variable over time and can differ between
@@ -120,6 +149,19 @@ class NET_EXPORT CertVerifyProc
     bssl::ParsedCertificateList
         additional_trust_anchors_with_enforced_constraints;
 
+    // Additional trust anchors to consider during path validation, but with
+    // name constraints specified outside of the certificate.
+    std::vector<CertificateWithConstraints>
+        additional_trust_anchors_with_constraints;
+
+    // Additional trust leafs to consider during path validation, possibly with
+    // name constraints specified outside of the certificate.
+    std::vector<CertificateWithConstraints> additional_trust_leafs;
+
+    // Additional trust anchors/leafs to consider during path validation,
+    // possibly with name constraints specified outside of the certificate.
+    std::vector<CertificateWithConstraints> additional_trust_anchors_and_leafs;
+
     // Additional temporary certs to consider as intermediates during path
     // validation. Ordinarily, implementations of CertVerifier use intermediate
     // certs from the configured system store. This is implementation-specific
@@ -129,10 +171,16 @@ class NET_EXPORT CertVerifyProc
     //  Additional SPKIs to consider as distrusted during path validation.
     std::vector<std::vector<uint8_t>> additional_distrusted_spkis;
 
+#if !BUILDFLAG(IS_CHROMEOS)
     // If true, use the user-added certs in the system trust store for path
     // validation.
     // This only has an impact if the Chrome Root Store is being used.
     bool include_system_trust_store = true;
+#endif
+
+    // Delegate that determines whether CT is required for each verification.
+    // May be nullptr if CT is not enabled.
+    scoped_refptr<const RequireCTDelegate> require_ct_delegate;
   };
 
   // These values are persisted to logs. Entries should not be renumbered and
@@ -145,8 +193,7 @@ class NET_EXPORT CertVerifyProc
     kMaxValue = kChainLengthOne
   };
 
-#if !(BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(IS_LINUX) || \
-      BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(CHROME_ROOT_STORE_ONLY))
+#if !(BUILDFLAG(IS_FUCHSIA) || BUILDFLAG(CHROME_ROOT_STORE_ONLY))
   // Creates and returns a CertVerifyProc that uses the system verifier.
   // |cert_net_fetcher| may not be used, depending on the implementation.
   static scoped_refptr<CertVerifyProc> CreateSystemVerifyProc(
@@ -161,7 +208,8 @@ class NET_EXPORT CertVerifyProc
       scoped_refptr<CRLSet> crl_set,
       std::unique_ptr<CTVerifier> ct_verifier,
       scoped_refptr<CTPolicyEnforcer> ct_policy_enforcer,
-      const InstanceParams instance_params);
+      const InstanceParams instance_params,
+      std::optional<network_time::TimeTracker> time_tracker);
 #endif
 
 #if BUILDFLAG(CHROME_ROOT_STORE_SUPPORTED)
@@ -174,7 +222,8 @@ class NET_EXPORT CertVerifyProc
       std::unique_ptr<CTVerifier> ct_verifier,
       scoped_refptr<CTPolicyEnforcer> ct_policy_enforcer,
       const ChromeRootStoreData* root_store_data,
-      const InstanceParams instance_params);
+      const InstanceParams instance_params,
+      std::optional<network_time::TimeTracker> time_tracker);
 #endif
 
   CertVerifyProc(const CertVerifyProc&) = delete;
@@ -196,6 +245,9 @@ class NET_EXPORT CertVerifyProc
   //
   // |flags| is bitwise OR'd of VerifyFlags:
   //
+  // If |time_now| is set it will be used as the current time, otherwise the
+  // system time will be used.
+  //
   // If VERIFY_REV_CHECKING_ENABLED is set in |flags|, online certificate
   // revocation checking is performed (i.e. OCSP and downloading CRLs). CRLSet
   // based revocation checking is always enabled, regardless of this flag.
@@ -206,6 +258,25 @@ class NET_EXPORT CertVerifyProc
              int flags,
              CertVerifyResult* verify_result,
              const NetLogWithSource& net_log);
+
+  // Performs 2-QWAC verification, if implemented by the subclass. Returns
+  // the verified 2-QWAC chain if `binding` is a valid 2-QWAC binding that
+  // binds `tls_cert`. The default implementation always fails.
+  virtual scoped_refptr<X509Certificate> Verify2QwacBinding(
+      std::string_view binding,
+      const std::string& hostname,
+      base::span<const uint8_t> tls_cert,
+      const NetLogWithSource& net_log);
+
+  // TODO(crbug.com/392931070): remove this (make internal to
+  // CertVerifyProcBuiltin), since it is only used internally by
+  // Verify2QwacBinding.
+  // Performs 2-QWAC verification, if implemented by the subclass. The default
+  // implementation always fails.
+  virtual int Verify2Qwac(X509Certificate* cert,
+                          const std::string& hostname,
+                          CertVerifyResult* verify_result,
+                          const NetLogWithSource& net_log);
 
  protected:
   explicit CertVerifyProc(scoped_refptr<CRLSet> crl_set);
@@ -226,11 +297,7 @@ class NET_EXPORT CertVerifyProc
 
  private:
   friend class base::RefCountedThreadSafe<CertVerifyProc>;
-  FRIEND_TEST_ALL_PREFIXES(CertVerifyProcTest, DigiNotarCerts);
   FRIEND_TEST_ALL_PREFIXES(CertVerifyProcTest, TestHasTooLongValidity);
-  FRIEND_TEST_ALL_PREFIXES(CertVerifyProcTest,
-                           VerifyRejectsSHA1AfterDeprecationLegacyMode);
-  FRIEND_TEST_ALL_PREFIXES(CertVerifyProcTest, SymantecCertsRejected);
 
   // Performs the actual verification using the desired underlying
   //
@@ -246,6 +313,11 @@ class NET_EXPORT CertVerifyProc
   // |verify_result->cert_status| should be non-zero, indicating an
   // error occurred.
   //
+  // If |time_now| is not nullopt, it will be used as the current time for
+  // certificate verification, if it is nullopt, the system time will be used
+  // instead. If a certificate verification fails with a NotBefore/NotAfter
+  // error when |time_now| is set, it will be retried with the system time.
+  //
   // On success, net::OK should be returned, with |verify_result| updated to
   // reflect the successfully verified chain.
   virtual int VerifyInternal(X509Certificate* cert,
@@ -260,7 +332,7 @@ class NET_EXPORT CertVerifyProc
   // (which are hashes of SubjectPublicKeyInfo structures) has name constraints
   // imposed on it and the names in |dns_names| are not permitted.
   static bool HasNameConstraintsViolation(
-      const HashValueVector& public_key_hashes,
+      const std::vector<SHA256HashValue>& public_key_hashes,
       const std::string& common_name,
       const std::vector<std::string>& dns_names,
       const std::vector<std::string>& ip_addrs);

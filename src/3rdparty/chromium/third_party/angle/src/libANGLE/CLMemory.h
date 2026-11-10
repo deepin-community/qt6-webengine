@@ -12,7 +12,6 @@
 #include "libANGLE/CLObject.h"
 #include "libANGLE/renderer/CLMemoryImpl.h"
 
-#include "common/Spinlock.h"
 #include "common/SynchronizedValue.h"
 
 #include <atomic>
@@ -62,14 +61,7 @@ class Memory : public _cl_mem, public Object
 
     Memory(const Buffer &buffer, Buffer &parent, MemFlags flags, size_t offset, size_t size);
 
-    Memory(const Image &image,
-           Context &context,
-           PropArray &&properties,
-           MemFlags flags,
-           const cl_image_format &format,
-           const ImageDescriptor &desc,
-           Memory *parent,
-           void *hostPtr);
+    Memory(Context &context, PropArray &&properties, MemFlags flags, Memory *parent, void *hostPtr);
 
     const ContextPtr mContext;
     const PropArray mProperties;
@@ -80,7 +72,7 @@ class Memory : public _cl_mem, public Object
     rx::CLMemoryImpl::Ptr mImpl;
     size_t mSize;
 
-    angle::SynchronizedValue<std::stack<CallbackData>, angle::Spinlock> mDestructorCallbacks;
+    angle::SynchronizedValue<std::stack<CallbackData>> mDestructorCallbacks;
     std::atomic<cl_uint> mMapCount;
 
     friend class Buffer;

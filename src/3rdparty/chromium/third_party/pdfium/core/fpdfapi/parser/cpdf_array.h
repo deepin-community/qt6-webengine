@@ -9,6 +9,7 @@
 
 #include <stddef.h>
 
+#include <optional>
 #include <set>
 #include <type_traits>
 #include <utility>
@@ -16,10 +17,9 @@
 
 #include "core/fpdfapi/parser/cpdf_indirect_object_holder.h"
 #include "core/fpdfapi/parser/cpdf_object.h"
+#include "core/fxcrt/check.h"
 #include "core/fxcrt/fx_coordinates.h"
 #include "core/fxcrt/retain_ptr.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-#include "third_party/base/check.h"
 
 // Arrays never contain nullptrs for objects within bounds, but some of the
 // methods will tolerate out-of-bounds indices and return nullptr for those
@@ -37,8 +37,8 @@ class CPDF_Array final : public CPDF_Object {
   bool WriteTo(IFX_ArchiveStream* archive,
                const CPDF_Encryptor* encryptor) const override;
 
-  bool IsEmpty() const { return m_Objects.empty(); }
-  size_t size() const { return m_Objects.size(); }
+  bool IsEmpty() const { return objects_.empty(); }
+  size_t size() const { return objects_.size(); }
 
   // The Get*ObjectAt() methods tolerate out-of-bounds indices and return
   // nullptr in those cases. Otherwise, for in-bound indices, the result
@@ -72,7 +72,7 @@ class CPDF_Array final : public CPDF_Object {
   CFX_FloatRect GetRect() const;
   CFX_Matrix GetMatrix() const;
 
-  absl::optional<size_t> Find(const CPDF_Object* pThat) const;
+  std::optional<size_t> Find(const CPDF_Object* pThat) const;
   bool Contains(const CPDF_Object* pThat) const;
 
   // Creates object owned by the array, and returns a retained pointer to it.
@@ -81,40 +81,49 @@ class CPDF_Array final : public CPDF_Object {
   // to Append()/SetAt()/InsertAt() since by creating a new object with no
   // previous references, they ensure cycles can not be introduced.
   template <typename T, typename... Args>
-  typename std::enable_if<!CanInternStrings<T>::value, RetainPtr<T>>::type
-  AppendNew(Args&&... args) {
+    requires(!CanInternStrings<T>::value)
+  RetainPtr<T> AppendNew(Args&&... args) {
+    static_assert(!std::is_same<T, CPDF_Stream>::value,
+                  "Cannot append a CPDF_Stream directly. Add it indirectly as "
+                  "a `CPDF_Reference` instead.");
     return pdfium::WrapRetain(static_cast<T*>(
         AppendInternal(pdfium::MakeRetain<T>(std::forward<Args>(args)...))));
   }
   template <typename T, typename... Args>
-  typename std::enable_if<CanInternStrings<T>::value, RetainPtr<T>>::type
-  AppendNew(Args&&... args) {
+    requires(CanInternStrings<T>::value)
+  RetainPtr<T> AppendNew(Args&&... args) {
     return pdfium::WrapRetain(static_cast<T*>(AppendInternal(
-        pdfium::MakeRetain<T>(m_pPool, std::forward<Args>(args)...))));
+        pdfium::MakeRetain<T>(pool_, std::forward<Args>(args)...))));
   }
   template <typename T, typename... Args>
-  typename std::enable_if<!CanInternStrings<T>::value, RetainPtr<T>>::type
-  SetNewAt(size_t index, Args&&... args) {
+    requires(!CanInternStrings<T>::value)
+  RetainPtr<T> SetNewAt(size_t index, Args&&... args) {
+    static_assert(!std::is_same<T, CPDF_Stream>::value,
+                  "Cannot set a CPDF_Stream directly. Add it indirectly as a "
+                  "`CPDF_Reference` instead.");
     return pdfium::WrapRetain(static_cast<T*>(SetAtInternal(
         index, pdfium::MakeRetain<T>(std::forward<Args>(args)...))));
   }
   template <typename T, typename... Args>
-  typename std::enable_if<CanInternStrings<T>::value, RetainPtr<T>>::type
-  SetNewAt(size_t index, Args&&... args) {
+    requires(CanInternStrings<T>::value)
+  RetainPtr<T> SetNewAt(size_t index, Args&&... args) {
     return pdfium::WrapRetain(static_cast<T*>(SetAtInternal(
-        index, pdfium::MakeRetain<T>(m_pPool, std::forward<Args>(args)...))));
+        index, pdfium::MakeRetain<T>(pool_, std::forward<Args>(args)...))));
   }
   template <typename T, typename... Args>
-  typename std::enable_if<!CanInternStrings<T>::value, RetainPtr<T>>::type
-  InsertNewAt(size_t index, Args&&... args) {
+    requires(!CanInternStrings<T>::value)
+  RetainPtr<T> InsertNewAt(size_t index, Args&&... args) {
+    static_assert(!std::is_same<T, CPDF_Stream>::value,
+                  "Cannot insert a CPDF_Stream directly. Add it indirectly as "
+                  "a `CPDF_Reference` instead.");
     return pdfium::WrapRetain(static_cast<T*>(InsertAtInternal(
         index, pdfium::MakeRetain<T>(std::forward<Args>(args)...))));
   }
   template <typename T, typename... Args>
-  typename std::enable_if<CanInternStrings<T>::value, RetainPtr<T>>::type
-  InsertNewAt(size_t index, Args&&... args) {
+    requires(CanInternStrings<T>::value)
+  RetainPtr<T> InsertNewAt(size_t index, Args&&... args) {
     return pdfium::WrapRetain(static_cast<T*>(InsertAtInternal(
-        index, pdfium::MakeRetain<T>(m_pPool, std::forward<Args>(args)...))));
+        index, pdfium::MakeRetain<T>(pool_, std::forward<Args>(args)...))));
   }
 
   // Adds non-null `object` to the end of the array, growing as appropriate.
@@ -138,7 +147,7 @@ class CPDF_Array final : public CPDF_Object {
   void RemoveAt(size_t index);
   void ConvertToIndirectObjectAt(size_t index,
                                  CPDF_IndirectObjectHolder* pHolder);
-  bool IsLocked() const { return !!m_LockCount; }
+  bool IsLocked() const { return !!lock_count_; }
 
  private:
   friend class CPDF_ArrayLocker;
@@ -158,9 +167,9 @@ class CPDF_Array final : public CPDF_Object {
       bool bDirect,
       std::set<const CPDF_Object*>* pVisited) const override;
 
-  std::vector<RetainPtr<CPDF_Object>> m_Objects;
-  WeakPtr<ByteStringPool> m_pPool;
-  mutable uint32_t m_LockCount = 0;
+  std::vector<RetainPtr<CPDF_Object>> objects_;
+  WeakPtr<ByteStringPool> pool_;
+  mutable uint32_t lock_count_ = 0;
 };
 
 class CPDF_ArrayLocker {
@@ -174,16 +183,16 @@ class CPDF_ArrayLocker {
   ~CPDF_ArrayLocker();
 
   const_iterator begin() const {
-    CHECK(m_pArray->IsLocked());
-    return m_pArray->m_Objects.begin();
+    CHECK(array_->IsLocked());
+    return array_->objects_.begin();
   }
   const_iterator end() const {
-    CHECK(m_pArray->IsLocked());
-    return m_pArray->m_Objects.end();
+    CHECK(array_->IsLocked());
+    return array_->objects_.end();
   }
 
  private:
-  RetainPtr<const CPDF_Array> const m_pArray;
+  RetainPtr<const CPDF_Array> const array_;
 };
 
 inline CPDF_Array* ToArray(CPDF_Object* obj) {

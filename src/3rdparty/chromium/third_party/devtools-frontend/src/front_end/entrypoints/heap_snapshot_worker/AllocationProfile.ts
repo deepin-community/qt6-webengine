@@ -30,15 +30,15 @@
 
 import * as HeapSnapshotModel from '../../models/heap_snapshot_model/heap_snapshot_model.js';
 
-import {type LiveObjects, type Profile} from './HeapSnapshot.js';
+import type {LiveObjects, Profile} from './HeapSnapshot.js';
 
 export class AllocationProfile {
   readonly #strings: string[];
   #nextNodeId: number;
   #functionInfos: FunctionAllocationInfo[];
-  #idToNode: {[x: number]: BottomUpAllocationNode|null};
-  readonly #idToTopDownNode: {[x: number]: TopDownAllocationNode};
-  #collapsedTopNodeIdToFunctionInfo: {[x: number]: FunctionAllocationInfo};
+  #idToNode: Record<number, BottomUpAllocationNode|null>;
+  readonly #idToTopDownNode: Record<number, TopDownAllocationNode>;
+  #collapsedTopNodeIdToFunctionInfo: Record<number, FunctionAllocationInfo>;
   #traceTops: HeapSnapshotModel.HeapSnapshotModel.SerializedAllocationNode[]|null;
 
   constructor(profile: Profile, liveObjectStats: LiveObjects) {
@@ -81,7 +81,6 @@ export class AllocationProfile {
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   #buildAllocationTree(profile: Profile, liveObjectStats: LiveObjects): TopDownAllocationNode {
     const traceTreeRaw = profile.trace_tree;
     const functionInfos = this.#functionInfos;

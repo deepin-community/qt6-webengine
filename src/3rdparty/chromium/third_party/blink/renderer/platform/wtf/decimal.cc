@@ -33,6 +33,7 @@
 #include <algorithm>
 #include <cfloat>
 
+#include "base/compiler_specific.h"
 #include "base/notreached.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
@@ -160,9 +161,9 @@ UInt128& UInt128::operator/=(const uint32_t divisor) {
   uint32_t quotient[4];
   uint32_t remainder = 0;
   for (int i = 3; i >= 0; --i) {
-    const uint64_t work = MakeUInt64(dividend[i], remainder);
+    const uint64_t work = MakeUInt64(UNSAFE_TODO(dividend[i]), remainder);
     remainder = static_cast<uint32_t>(work % divisor);
-    quotient[i] = static_cast<uint32_t>(work / divisor);
+    UNSAFE_TODO(quotient[i]) = static_cast<uint32_t>(work / divisor);
   }
   low_ = MakeUInt64(quotient[0], quotient[1]);
   high_ = MakeUInt64(quotient[2], quotient[3]);
@@ -410,7 +411,6 @@ Decimal Decimal::operator*(const Decimal& rhs) const {
   }
 
   NOTREACHED();
-  return Nan();
 }
 
 Decimal Decimal::operator/(const Decimal& rhs) const {
@@ -612,7 +612,6 @@ Decimal Decimal::CompareTo(const Decimal& rhs) const {
 
     default:
       NOTREACHED();
-      return Nan();
   }
 }
 
@@ -814,7 +813,6 @@ Decimal Decimal::FromString(const String& str) {
 
       default:
         NOTREACHED();
-        return Nan();
     }
   }
 
@@ -907,7 +905,6 @@ String Decimal::ToString() const {
 
     default:
       NOTREACHED();
-      return "";
   }
 
   StringBuilder builder;

@@ -82,20 +82,20 @@ GpuFence::FenceStatus GpuFence::GetStatusChangeTime(int fd,
   }
   *time = base::TimeTicks() + base::Nanoseconds(timestamp_ns);
   return FenceStatus::kSignaled;
-#endif
+#else
   NOTREACHED();
-  return FenceStatus::kInvalid;
+#endif
 }
 
 base::TimeTicks GpuFence::GetMaxTimestamp() const {
-  base::TimeTicks timestamp;
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
+  base::TimeTicks timestamp;
   FenceStatus status = GetStatusChangeTime(fence_handle_.Peek(), &timestamp);
   DCHECK_EQ(status, FenceStatus::kSignaled);
   return timestamp;
-#endif
+#else
   NOTREACHED();
-  return timestamp;
+#endif
 }
 
 }  // namespace gfx

@@ -11,15 +11,14 @@
 
 #include "base/check.h"
 #include "base/containers/contains.h"
-#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/no_destructor.h"
 #include "base/observer_list.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/browser/bad_message.h"
 #include "chrome/browser/printing/print_preview_dialog_controller.h"
 #include "chrome/browser/ui/webui/print_preview/print_preview_ui.h"
+#include "components/enterprise/buildflags/buildflags.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/render_frame_host.h"
@@ -30,14 +29,14 @@
 #include "printing/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_OOP_PRINTING)
-#include "chrome/browser/printing/prefs_util.h"
+#include "chrome/browser/printing/oop_features.h"
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/chromeos/policy/dlp/dlp_content_manager.h"
 #endif
 
-#if BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
+#if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
 #include "chrome/browser/enterprise/data_protection/print_utils.h"
 #endif
 
@@ -149,13 +148,13 @@ bool PrintViewManager::BasicPrint(content::RenderFrameHost* rfh) {
 bool PrintViewManager::PrintPreviewNow(content::RenderFrameHost* rfh,
                                        bool has_selection) {
   return PrintPreview(rfh,
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
                       mojo::NullAssociatedRemote(),
 #endif
                       has_selection);
 }
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 bool PrintViewManager::PrintPreviewWithPrintRenderer(
     content::RenderFrameHost* rfh,
     mojo::PendingAssociatedRemote<mojom::PrintRenderer> print_renderer) {
@@ -281,7 +280,7 @@ void PrintViewManager::SetReceiverImplForTesting(PrintManager* impl) {
 
 bool PrintViewManager::PrintPreview(
     content::RenderFrameHost* rfh,
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
     mojo::PendingAssociatedRemote<mojom::PrintRenderer> print_renderer,
 #endif
     bool has_selection) {
@@ -296,7 +295,7 @@ bool PrintViewManager::PrintPreview(
     return false;
 
   GetPrintRenderFrame(rfh)->InitiatePrintPreview(
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
       std::move(print_renderer),
 #endif
       has_selection);
@@ -333,8 +332,7 @@ void PrintViewManager::SetupScriptedPrintPreview(
     return;
   }
 
-  if (base::FeatureList::IsEnabled(kCheckPrintRfhIsActive) &&
-      !rfh->IsActive()) {
+  if (!rfh->IsActive()) {
     // Only active RFHs should show UI elements.
     std::move(callback).Run();
     return;
@@ -379,7 +377,7 @@ void PrintViewManager::ShowScriptedPrintPreview(bool source_is_modifiable) {
   DCHECK(print_preview_rfh_);
   if (GetCurrentTargetFrame() != print_preview_rfh_)
     return;
-#if BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
+#if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
   set_analyzing_content(/*analyzing=*/true);
 #endif
   RejectPrintPreviewRequestIfRestricted(
@@ -393,7 +391,7 @@ void PrintViewManager::OnScriptedPrintPreviewCallback(
     bool source_is_modifiable,
     content::GlobalRenderFrameHostId rfh_id,
     bool should_proceed) {
-#if BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
+#if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
   set_analyzing_content(/*analyzing=*/false);
 #endif
   if (!should_proceed) {
@@ -426,7 +424,7 @@ void PrintViewManager::OnScriptedPrintPreviewCallback(
 
 void PrintViewManager::RequestPrintPreview(
     mojom::RequestPrintPreviewParamsPtr params) {
-#if BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
+#if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
   set_analyzing_content(/*analyzing=*/true);
 #endif
   RejectPrintPreviewRequestIfRestricted(
@@ -440,7 +438,7 @@ void PrintViewManager::OnRequestPrintPreviewCallback(
     mojom::RequestPrintPreviewParamsPtr params,
     content::GlobalRenderFrameHostId rfh_id,
     bool should_proceed) {
-#if BUILDFLAG(ENABLE_PRINT_CONTENT_ANALYSIS)
+#if BUILDFLAG(ENTERPRISE_CONTENT_ANALYSIS)
   set_analyzing_content(/*analyzing=*/false);
 #endif
   if (!should_proceed) {
@@ -451,11 +449,18 @@ void PrintViewManager::OnRequestPrintPreviewCallback(
   // Double-check that the RenderFrameHost is still alive and has a live
   // RenderFrame, since the DLP check is potentially asynchronous.
   auto* render_frame_host = content::RenderFrameHost::FromID(rfh_id);
-  if (!render_frame_host || !render_frame_host->IsRenderFrameLive())
+  if (!render_frame_host || !render_frame_host->IsRenderFrameLive()) {
     return;
+  }
 
-  if (params->webnode_only)
+  // Also check it is active. Only active RFHs should show UI elements.
+  if (!render_frame_host->IsActive()) {
+    return;
+  }
+
+  if (params->webnode_only) {
     PrintPreviewForWebNode(render_frame_host);
+  }
 
   auto* dialog_controller = PrintPreviewDialogController::GetInstance();
   CHECK(dialog_controller);
@@ -464,9 +469,10 @@ void PrintViewManager::OnRequestPrintPreviewCallback(
   PrintPreviewAllowedForTesting();
 }
 
-void PrintViewManager::CheckForCancel(int32_t preview_ui_id,
-                                      int32_t request_id,
-                                      CheckForCancelCallback callback) {
+void PrintViewManager::CheckForCancel(
+    const base::UnguessableToken& preview_ui_id,
+    int32_t request_id,
+    CheckForCancelCallback callback) {
   std::move(callback).Run(
       PrintPreviewUI::ShouldCancelRequest(preview_ui_id, request_id));
 }

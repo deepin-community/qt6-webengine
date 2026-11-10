@@ -6,6 +6,7 @@
 
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/to_string.h"
 
 namespace optimization_guide {
 
@@ -14,7 +15,7 @@ std::string GetStringFromValue(const proto::Value& value) {
     case proto::Value::kStringValue:
       return value.string_value();
     case proto::Value::kBooleanValue:
-      return value.boolean_value() ? "true" : "false";
+      return base::ToString(value.boolean_value());
     case proto::Value::kInt32Value:
       return base::NumberToString(value.int32_value());
     case proto::Value::kInt64Value:
@@ -23,7 +24,6 @@ std::string GetStringFromValue(const proto::Value& value) {
       return base::NumberToString(value.float_value());
     case proto::Value::TYPE_NOT_SET:
       NOTREACHED();
-      return std::string();
   }
 }
 
@@ -45,7 +45,6 @@ bool AreValuesEqual(const proto::Value& a, const proto::Value& b) {
       return a.float_value() == b.float_value();
     case proto::Value::TYPE_NOT_SET:
       NOTREACHED();
-      return false;
   }
 }
 

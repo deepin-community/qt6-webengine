@@ -2,26 +2,37 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_INL_H_
-#define BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_INL_H_
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
 
-#include <algorithm>
+#ifndef PARTITION_ALLOC_PARTITION_ALLOC_INL_H_
+#define PARTITION_ALLOC_PARTITION_ALLOC_INL_H_
+
 #include <cstring>
 
-#include "build/build_config.h"
+#include "partition_alloc/build_config.h"
+#include "partition_alloc/buildflags.h"
+#include "partition_alloc/in_slot_metadata.h"
 #include "partition_alloc/partition_alloc_base/compiler_specific.h"
-#include "partition_alloc/partition_alloc_base/debug/debugging_buildflags.h"
+#include "partition_alloc/partition_alloc_base/cxx_wrapper/algorithm.h"
 #include "partition_alloc/partition_alloc_config.h"
-#include "partition_alloc/partition_ref_count.h"
 #include "partition_alloc/random.h"
 #include "partition_alloc/tagging.h"
 #include "partition_alloc/thread_isolation/thread_isolation.h"
 
 // Prefetch *x into memory.
-#if defined(__clang__) || defined(COMPILER_GCC)
-#define PA_PREFETCH(x) __builtin_prefetch(x)
+#if defined(__clang__) || PA_BUILDFLAG(PA_COMPILER_GCC)
+#define PA_PREFETCH(x) __builtin_prefetch(x, 0)
 #else
 #define PA_PREFETCH(x)
+#endif
+
+#if defined(__clang__) || PA_BUILDFLAG(PA_COMPILER_GCC)
+#define PA_PREFETCH_FOR_WRITE(x) __builtin_prefetch(x, 1)
+#else
+#define PA_PREFETCH_FOR_WRITE(x)
 #endif
 
 namespace partition_alloc::internal {
@@ -33,7 +44,7 @@ namespace partition_alloc::internal {
 // MSVC only supports inline assembly on x86. This preprocessor directive
 // is intended to be a replacement for the same.
 //
-// TODO(crbug.com/1351310): Make sure inlining doesn't degrade this into
+// TODO(crbug.com/40234441): Make sure inlining doesn't degrade this into
 // a no-op or similar. The documentation doesn't say.
 #pragma optimize("", off)
 #endif
@@ -51,7 +62,7 @@ PA_ALWAYS_INLINE void SecureMemset(void* ptr, uint8_t value, size_t size) {
 #pragma optimize("", on)
 #endif
 
-#if BUILDFLAG(PA_EXPENSIVE_DCHECKS_ARE_ON)
+#if PA_BUILDFLAG(EXPENSIVE_DCHECKS_ARE_ON)
 // Used to memset() memory for debugging purposes only.
 PA_ALWAYS_INLINE void DebugMemset(void* ptr, int value, size_t size) {
   // Only set the first 512kiB of the allocation. This is enough to detect uses
@@ -59,29 +70,13 @@ PA_ALWAYS_INLINE void DebugMemset(void* ptr, int value, size_t size) {
   // faster. Note that for direct-mapped allocations, memory is decomitted at
   // free() time, so freed memory usage cannot happen.
 
-#if BUILDFLAG(ENABLE_THREAD_ISOLATION)
+#if PA_BUILDFLAG(ENABLE_THREAD_ISOLATION) && PA_BUILDFLAG(ENABLE_PKEYS)
   LiftThreadIsolationScope lift_thread_isolation_restrictions;
 #endif
   size_t size_to_memset = std::min(size, size_t{1} << 19);
   memset(ptr, value, size_to_memset);
 }
-#endif  // BUILDFLAG(PA_EXPENSIVE_DCHECKS_ARE_ON)
-
-// Returns true if we've hit the end of a random-length period. We don't want to
-// invoke `RandomValue` too often, because we call this function in a hot spot
-// (`Free`), and `RandomValue` incurs the cost of atomics.
-#if !BUILDFLAG(PA_DCHECK_IS_ON)
-PA_ALWAYS_INLINE bool RandomPeriod() {
-  static thread_local uint8_t counter = 0;
-  if (PA_UNLIKELY(counter == 0)) {
-    // It's OK to truncate this value.
-    counter = static_cast<uint8_t>(RandomValue());
-  }
-  // If `counter` is 0, this will wrap. That is intentional and OK.
-  counter--;
-  return counter == 0;
-}
-#endif  // !BUILDFLAG(PA_DCHECK_IS_ON)
+#endif  // PA_BUILDFLAG(EXPENSIVE_DCHECKS_ARE_ON)
 
 PA_ALWAYS_INLINE uintptr_t ObjectInnerPtr2Addr(const void* ptr) {
   return UntagPtr(ptr);
@@ -99,6 +94,41 @@ PA_ALWAYS_INLINE uintptr_t SlotStartPtr2Addr(const void* slot_start) {
   return UntagPtr(slot_start);
 }
 
+// In order to resolve circular dependencies, define template method:
+// GetMetadataOffset() here and SlotSpanMetadata::FromAddr(),
+// SuperPageExtentEntry's SuperPageBeginFromExtent() ... use it.
+template <typename T>
+std::ptrdiff_t GetMetadataOffset([[maybe_unused]] const T* root) {
+#if PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
+#if PA_BUILDFLAG(DCHECKS_ARE_ON)
+  PA_DCHECK(root);
+#endif  // PA_BUILDFLAG(DCHECKS_ARE_ON)
+  return static_cast<std::ptrdiff_t>(root->MetadataOffset());
+#else
+  return static_cast<std::ptrdiff_t>(SystemPageSize());
+#endif  // PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
+}
+
+PA_ALWAYS_INLINE uintptr_t
+PartitionSuperPageToMetadataPage(uintptr_t super_page,
+                                 [[maybe_unused]] std::ptrdiff_t offset) {
+#if PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
+  return super_page + static_cast<uintptr_t>(offset);
+#else
+  return super_page + SystemPageSize();
+#endif  // PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
+}
+
+PA_ALWAYS_INLINE uintptr_t
+PartitionMetadataPageToSuperPage(uintptr_t metadata_page,
+                                 [[maybe_unused]] std::ptrdiff_t offset) {
+#if PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
+  return metadata_page - static_cast<uintptr_t>(offset);
+#else
+  return metadata_page - SystemPageSize();
+#endif  // PA_CONFIG(MOVE_METADATA_OUT_OF_GIGACAGE)
+}
+
 }  // namespace partition_alloc::internal
 
-#endif  // BASE_ALLOCATOR_PARTITION_ALLOCATOR_SRC_PARTITION_ALLOC_PARTITION_ALLOC_INL_H_
+#endif  // PARTITION_ALLOC_PARTITION_ALLOC_INL_H_

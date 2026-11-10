@@ -12,12 +12,16 @@ import command_executor
 from command_executor import Command
 from webelement import WebElement
 from webshadowroot import WebShadowRoot
+from windowreference import WindowReference
+from framereference import FrameReference
 from websocket_connection import WebSocketConnection
 from exceptions import *
 
-ELEMENT_KEY_W3C = "element-6066-11e4-a52e-4f735466cecf"
-ELEMENT_KEY = "ELEMENT"
-SHADOW_KEY = "shadow-6066-11e4-a52e-4f735466cecf"
+ELEMENT_KEY_W3C = 'element-6066-11e4-a52e-4f735466cecf'
+ELEMENT_KEY = 'ELEMENT'
+SHADOW_KEY = 'shadow-6066-11e4-a52e-4f735466cecf'
+FRAME_KEY = 'frame-075b-4da1-b6ba-e579c2d3230a'
+WINDOW_KEY = 'window-fcc6-11e5-b4f8-330a88ab9d7f'
 MAX_RETRY_COUNT = 5
 
 def _ExceptionForLegacyResponse(response):
@@ -52,6 +56,11 @@ def _ExceptionForLegacyResponse(response):
 def _ExceptionForStandardResponse(response):
   error = response['value']['error']
   msg = response['value']['message']
+
+  stacktrace = response['value']['stacktrace']
+  if stacktrace:
+      msg += '\n\nStackTrace:\n\n' + stacktrace
+
   return EXCEPTION_MAP.get(error, ChromeDriverException)(msg)
 
 class ChromeDriver(object):
@@ -106,8 +115,10 @@ class ChromeDriver(object):
       send_w3c_capability=True, send_w3c_request=True,
       page_load_strategy=None, unexpected_alert_behaviour=None,
       devtools_events_to_log=None, accept_insecure_certs=None,
-      timeouts=None, test_name=None, web_socket_url=None, browser_name=None):
-    self._executor = command_executor.CommandExecutor(server_url)
+      timeouts=None, test_name=None, web_socket_url=None, browser_name=None,
+      http_timeout=None):
+    self._executor = command_executor.CommandExecutor(server_url,
+                                                      http_timeout=http_timeout)
     self._server_url = server_url
     self.w3c_compliant = False
     self.debuggerAddress = None
@@ -146,7 +157,7 @@ class ChromeDriver(object):
     assert type(chrome_switches) is list
     options['args'] = chrome_switches
 
-    # TODO(crbug.com/1011000): Work around a bug with headless on Mac.
+    # TODO(crbug.com/40101714): Work around a bug with headless on Mac.
     if (util.GetPlatformName() == 'mac' and
         browser_name == 'chrome-headless-shell' and
         debugger_address is None):
@@ -250,6 +261,14 @@ class ChromeDriver(object):
     else:
       raise UnknownError("unexpected response")
 
+  def _KeyToTypeMap(self):
+      return [
+        (WINDOW_KEY, WindowReference),
+        (FRAME_KEY, FrameReference),
+        (SHADOW_KEY, WebShadowRoot),
+        (ELEMENT_KEY_W3C if self.w3c_compliant else ELEMENT_KEY, WebElement),
+      ]
+
   def _WrapValue(self, value):
     """Wrap value from client side for chromedriver side."""
     if isinstance(value, dict):
@@ -257,36 +276,25 @@ class ChromeDriver(object):
       for key, val in value.items():
         converted[key] = self._WrapValue(val)
       return converted
-    elif isinstance(value, WebElement):
-      if (self.w3c_compliant):
-        return {ELEMENT_KEY_W3C: value._id}
-      else:
-        return {ELEMENT_KEY: value._id}
-    elif isinstance(value, WebShadowRoot):
-        return {SHADOW_KEY: value._id}
-    elif isinstance(value, list):
+    key_to_type = self._KeyToTypeMap()
+    for key, wrapper_type in key_to_type:
+        if isinstance(value, wrapper_type):
+            return {key: value._id}
+    if isinstance(value, list):
       return list(self._WrapValue(item) for item in value)
-    else:
-      return value
+    return value
 
   def _UnwrapValue(self, value):
     if isinstance(value, dict):
-      if (self.w3c_compliant and len(value) == 1
-          and ELEMENT_KEY_W3C in value
-          and isinstance(
-            value[ELEMENT_KEY_W3C], str)):
-        return WebElement(self, value[ELEMENT_KEY_W3C])
-      elif (len(value) == 1 and SHADOW_KEY in value
-            and isinstance(value[SHADOW_KEY], str)):
-        return WebShadowRoot(self, value[SHADOW_KEY])
-      elif (len(value) == 1 and ELEMENT_KEY in value
-            and isinstance(value[ELEMENT_KEY], str)):
-        return WebElement(self, value[ELEMENT_KEY])
-      else:
-        unwraped = {}
-        for key, val in value.items():
-          unwraped[key] = self._UnwrapValue(val)
-        return unwraped
+      key_to_type = self._KeyToTypeMap()
+      for key, wrapper_type in key_to_type:
+          if (len(value) == 1 and key in value
+              and isinstance(value[key], str)):
+              return wrapper_type(self, value[key])
+      unwraped = {}
+      for key, val in value.items():
+        unwraped[key] = self._UnwrapValue(val)
+      return unwraped
     elif isinstance(value, list):
       return list(self._UnwrapValue(item) for item in value)
     else:
@@ -592,6 +600,19 @@ class ChromeDriver(object):
   def FullScreenWindow(self):
     return self.ExecuteCommand(Command.FULLSCREEN_WINDOW)
 
+  def SetDevicePosture(self, posture):
+    return self.ExecuteCommand(Command.SET_DEVICE_POSTURE, {'posture': posture})
+
+  def ClearDevicePosture(self):
+    return self.ExecuteCommand(Command.CLEAR_DEVICE_POSTURE)
+
+  def SetDisplayFeatures(self, features):
+    return self.ExecuteCommand(Command.SET_DISPLAY_FEATURES,
+                               {'features': features})
+
+  def ClearDisplayFeatures(self):
+    return self.ExecuteCommand(Command.CLEAR_DISPLAY_FEATURES)
+
   def TakeScreenshot(self):
     return self.ExecuteCommand(Command.SCREENSHOT)
 
@@ -670,7 +691,8 @@ class ChromeDriver(object):
   def AddVirtualAuthenticator(self, protocol=None, transport=None,
                               hasResidentKey=None, hasUserVerification=None,
                               isUserConsenting=None, isUserVerified=None,
-                              extensions=None):
+                              extensions=None, defaultBackupState=None,
+                              defaultBackupEligibility=None):
     options = {}
     if protocol is not None:
       options['protocol'] = protocol
@@ -686,6 +708,10 @@ class ChromeDriver(object):
       options['isUserVerified'] = isUserVerified
     if extensions is not None:
       options['extensions'] = extensions
+    if defaultBackupState is not None:
+      options['defaultBackupState'] = defaultBackupState
+    if defaultBackupEligibility is not None:
+      options['defaultBackupEligibility'] = defaultBackupEligibility
 
     return self.ExecuteCommand(Command.ADD_VIRTUAL_AUTHENTICATOR, options)
 
@@ -695,7 +721,9 @@ class ChromeDriver(object):
 
   def AddCredential(self, authenticatorId=None, credentialId=None,
                     isResidentCredential=None, rpId=None, privateKey=None,
-                    userHandle=None, signCount=None, largeBlob=None):
+                    userHandle=None, signCount=None, largeBlob=None,
+                    backupState=None, backupEligibility=None,userName=None,
+                    userDisplayName=None):
     options = {}
     if authenticatorId is not None:
       options['authenticatorId'] = authenticatorId
@@ -713,6 +741,14 @@ class ChromeDriver(object):
       options['signCount'] = signCount
     if largeBlob is not None:
       options['largeBlob'] = largeBlob
+    if backupState is not None:
+      options['backupState'] = backupState
+    if backupEligibility is not None:
+      options['backupEligibility'] = backupEligibility
+    if userName is not None:
+      options['userName'] = userName
+    if userDisplayName is not None:
+      options['userDisplayName'] = userDisplayName
     return self.ExecuteCommand(Command.ADD_CREDENTIAL, options)
 
   def GetCredentials(self, authenticatorId):
@@ -732,6 +768,15 @@ class ChromeDriver(object):
     params = {'authenticatorId': authenticatorId,
               'isUserVerified': isUserVerified}
     return self.ExecuteCommand(Command.SET_USER_VERIFIED, params)
+
+  def SetCredentialProperties(self, authenticatorId, credentialId,
+                              backupState=None, backupEligibility=None):
+    params = {'authenticatorId': authenticatorId, 'credentialId': credentialId}
+    if backupState is not None:
+      params['backupState'] = backupState
+    if backupEligibility is not None:
+      params['backupEligibility'] = backupEligibility
+    return self.ExecuteCommand(Command.SET_CREDENTIAL_PROPERTIES, params)
 
   def SetSPCTransactionMode(self, mode):
     params = {'mode': mode}
@@ -770,6 +815,9 @@ class ChromeDriver(object):
   def ResetCooldown(self):
     return self.ExecuteCommand(Command.RESET_COOLDOWN, {})
 
+  def RunBounceTrackingMitigations(self):
+    return self.ExecuteCommand(Command.RUN_BOUNCE_TRACKING_MITIGATIONS, {})
+
   def GetSessionId(self):
     if not hasattr(self, '_session_id'):
       return None
@@ -778,6 +826,29 @@ class ChromeDriver(object):
   def GetCastSinks(self, vendorId):
     params = {'vendorId': vendorId}
     return self.ExecuteCommand(Command.GET_CAST_SINKS, params)
+
+  def CreateVirtualPressureSource(self, type, metadata=None):
+    params = {'type': type}
+    if metadata is not None:
+      params.update(metadata)
+    return self.ExecuteCommand(Command.CREATE_VIRTUAL_PRESSURE_SOURCE, params)
+
+  def UpdateVirtualPressureSource(self, type, sample,
+                                  own_contribution_estimate):
+    params = {'type': type,
+              'sample': sample,
+              'own_contribution_estimate': own_contribution_estimate}
+    return self.ExecuteCommand(Command.UPDATE_VIRTUAL_PRESSURE_SOURCE,
+                               params)
+
+  def RemoveVirtualPressureSource(self, type):
+    params = {'type': type}
+    return self.ExecuteCommand(Command.REMOVE_VIRTUAL_PRESSURE_SOURCE, params)
+
+  def SetProtectedAudienceKAnonymity(self, owner, name, hashes):
+    params = {'owner': owner, 'name': name, 'hashes': hashes}
+    return self.ExecuteCommand(Command.SET_PROTECTED_AUDIENCE_KANONYMITY,
+                               params)
 
   def __enter__(self):
     return self

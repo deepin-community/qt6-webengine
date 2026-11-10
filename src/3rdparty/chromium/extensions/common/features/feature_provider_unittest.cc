@@ -10,8 +10,8 @@
 #include <string_view>
 #include <utility>
 
-#include "base/ranges/algorithm.h"
 #include "base/test/bind.h"
+#include "build/android_buildflags.h"
 #include "build/build_config.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/extensions_client.h"
@@ -36,19 +36,19 @@ TEST(FeatureProviderTest, ManifestFeatureTypes) {
   const std::vector<Manifest::Type>& extension_types =
       feature->extension_types();
   EXPECT_EQ(8u, extension_types.size());
-  EXPECT_EQ(1, base::ranges::count(extension_types, Manifest::TYPE_EXTENSION));
-  EXPECT_EQ(1, base::ranges::count(extension_types,
-                                   Manifest::TYPE_LEGACY_PACKAGED_APP));
+  EXPECT_EQ(1, std::ranges::count(extension_types, Manifest::TYPE_EXTENSION));
+  EXPECT_EQ(1, std::ranges::count(extension_types,
+                                  Manifest::TYPE_LEGACY_PACKAGED_APP));
   EXPECT_EQ(1,
-            base::ranges::count(extension_types, Manifest::TYPE_PLATFORM_APP));
-  EXPECT_EQ(1, base::ranges::count(extension_types, Manifest::TYPE_HOSTED_APP));
-  EXPECT_EQ(1, base::ranges::count(extension_types, Manifest::TYPE_THEME));
+            std::ranges::count(extension_types, Manifest::TYPE_PLATFORM_APP));
+  EXPECT_EQ(1, std::ranges::count(extension_types, Manifest::TYPE_HOSTED_APP));
+  EXPECT_EQ(1, std::ranges::count(extension_types, Manifest::TYPE_THEME));
   EXPECT_EQ(1,
-            base::ranges::count(extension_types, Manifest::TYPE_SHARED_MODULE));
-  EXPECT_EQ(1, base::ranges::count(extension_types,
-                                   Manifest::TYPE_LOGIN_SCREEN_EXTENSION));
-  EXPECT_EQ(1, base::ranges::count(extension_types,
-                                   Manifest::TYPE_CHROMEOS_SYSTEM_EXTENSION));
+            std::ranges::count(extension_types, Manifest::TYPE_SHARED_MODULE));
+  EXPECT_EQ(1, std::ranges::count(extension_types,
+                                  Manifest::TYPE_LOGIN_SCREEN_EXTENSION));
+  EXPECT_EQ(1, std::ranges::count(extension_types,
+                                  Manifest::TYPE_CHROMEOS_SYSTEM_EXTENSION));
 }
 
 // Tests that real manifest features have the correct availability for an
@@ -99,11 +99,11 @@ TEST(FeatureProviderTest, PermissionFeatureTypes) {
   const std::vector<Manifest::Type>& extension_types =
       feature->extension_types();
   EXPECT_EQ(3u, extension_types.size());
-  EXPECT_EQ(1, base::ranges::count(extension_types, Manifest::TYPE_EXTENSION));
-  EXPECT_EQ(1, base::ranges::count(extension_types,
-                                   Manifest::TYPE_LEGACY_PACKAGED_APP));
+  EXPECT_EQ(1, std::ranges::count(extension_types, Manifest::TYPE_EXTENSION));
+  EXPECT_EQ(1, std::ranges::count(extension_types,
+                                  Manifest::TYPE_LEGACY_PACKAGED_APP));
   EXPECT_EQ(1,
-            base::ranges::count(extension_types, Manifest::TYPE_PLATFORM_APP));
+            std::ranges::count(extension_types, Manifest::TYPE_PLATFORM_APP));
 }
 
 // Tests that real permission features have the correct availability for an app.
@@ -112,7 +112,7 @@ TEST(FeatureProviderTest, PermissionFeatureAvailability) {
 
   scoped_refptr<const Extension> app =
       ExtensionBuilder("test app", ExtensionBuilder::Type::PLATFORM_APP)
-          .AddPermission("power")
+          .AddAPIPermission("power")
           .Build();
   ASSERT_TRUE(app->is_platform_app());
 
@@ -127,9 +127,8 @@ TEST(FeatureProviderTest, PermissionFeatureAvailability) {
 
   // A permission only available to allowlisted extensions returns availability
   // NOT_FOUND_IN_ALLOWLIST.
-  // TODO(https://crbug.com/1251347): Port //device/bluetooth to Fuchsia to
-  // enable bluetooth extensions.
-#if !BUILDFLAG(IS_FUCHSIA)
+  // bluetoothPrivate is unsupported in desktop-android build.
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   feature = provider->GetFeature("bluetoothPrivate");
   ASSERT_TRUE(feature);
   EXPECT_EQ(Feature::NOT_FOUND_IN_ALLOWLIST,
@@ -138,10 +137,10 @@ TEST(FeatureProviderTest, PermissionFeatureAvailability) {
                                        mojom::ContextType::kUnspecified, GURL(),
                                        kUnspecifiedContextId, TestContextData())
                 .result());
-#endif  // !BUILDFLAG(IS_FUCHSIA)
+#endif
 
   // A permission that isn't part of the manifest returns NOT_PRESENT.
-  feature = provider->GetFeature("serial");
+  feature = provider->GetFeature("unlimitedStorage");
   ASSERT_TRUE(feature);
   EXPECT_EQ(Feature::NOT_PRESENT,
             feature

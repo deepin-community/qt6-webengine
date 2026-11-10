@@ -2,22 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <array>
+
 // This file is here so other GLES2 related files can have a common set of
 // includes where appropriate.
-
-#include "gpu/command_buffer/common/gles2_cmd_utils.h"
 
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
 #include <GLES2/gl2extchromium.h>
 #include <GLES3/gl3.h>
 #include <GLES3/gl31.h>
+#include <GLES3/gl32.h>
 
 #include <sstream>
 
 #include "base/check_op.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_math.h"
+#include "gpu/command_buffer/common/gles2_cmd_utils.h"
+#include "ui/gl/gl_enums.h"
 
 namespace gpu {
 namespace gles2 {
@@ -107,6 +110,8 @@ int GLES2Util::GLGetNumValuesReturned(int id) const {
       return 1;
     case GL_LINE_WIDTH:
       return 1;
+    case GL_MAJOR_VERSION:
+      return 1;
     case GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS:
       return 1;
     case GL_MAX_CUBE_MAP_TEXTURE_SIZE:
@@ -129,7 +134,11 @@ int GLES2Util::GLGetNumValuesReturned(int id) const {
       return 1;
     case GL_MAX_VIEWPORT_DIMS:
       return 2;
+    case GL_MINOR_VERSION:
+      return 1;
     case GL_NUM_COMPRESSED_TEXTURE_FORMATS:
+      return 1;
+    case GL_NUM_PROGRAM_BINARY_FORMATS:
       return 1;
     case GL_NUM_SHADER_BINARY_FORMATS:
       return 1;
@@ -147,9 +156,13 @@ int GLES2Util::GLGetNumValuesReturned(int id) const {
       return 1;
     case GL_SAMPLE_BUFFERS:
       return 1;
+    case GL_SAMPLE_COVERAGE:
+      return 1;
     case GL_SAMPLE_COVERAGE_INVERT:
       return 1;
     case GL_SAMPLE_COVERAGE_VALUE:
+      return 1;
+    case GL_SAMPLE_ALPHA_TO_COVERAGE:
       return 1;
     case GL_SAMPLES:
       return 1;
@@ -199,6 +212,10 @@ int GLES2Util::GLGetNumValuesReturned(int id) const {
       return 1;
     case GL_TEXTURE_BINDING_2D:
       return 1;
+    case GL_TEXTURE_BINDING_2D_ARRAY:
+      return 1;
+    case GL_TEXTURE_BINDING_3D:
+      return 1;
     case GL_TEXTURE_BINDING_CUBE_MAP:
       return 1;
     case GL_TEXTURE_BINDING_EXTERNAL_OES:
@@ -219,11 +236,15 @@ int GLES2Util::GLGetNumValuesReturned(int id) const {
       return 1;
     case GL_MAX_ARRAY_TEXTURE_LAYERS:
       return 1;
+    case GL_MAX_COLOR_ATTACHMENTS_EXT:
+      return 1;
     case GL_MAX_COMBINED_FRAGMENT_UNIFORM_COMPONENTS:
       return 1;
     case GL_MAX_COMBINED_UNIFORM_BLOCKS:
       return 1;
     case GL_MAX_COMBINED_VERTEX_UNIFORM_COMPONENTS:
+      return 1;
+    case GL_MAX_DRAW_BUFFERS:
       return 1;
     case GL_MAX_ELEMENT_INDEX:
       return 1;
@@ -263,9 +284,31 @@ int GLES2Util::GLGetNumValuesReturned(int id) const {
       return 1;
     case GL_MIN_PROGRAM_TEXEL_OFFSET:
       return 1;
+    case GL_NUM_EXTENSIONS:
+      return 1;
+    case GL_PACK_ROW_LENGTH:
+      return 1;
+    case GL_PACK_SKIP_PIXELS:
+      return 1;
+    case GL_PACK_SKIP_ROWS:
+      return 1;
     case GL_PIXEL_PACK_BUFFER_BINDING:
       return 1;
     case GL_PIXEL_UNPACK_BUFFER_BINDING:
+      return 1;
+    case GL_PRIMITIVE_RESTART_FIXED_INDEX:
+      return 1;
+    case GL_RASTERIZER_DISCARD:
+      return 1;
+    case GL_READ_BUFFER:
+      return 1;
+    case GL_READ_FRAMEBUFFER_BINDING:
+      return 1;
+    case GL_SAMPLER_BINDING:
+      return 1;
+    case GL_TRANSFORM_FEEDBACK_ACTIVE:
+      return 1;
+    case GL_TRANSFORM_FEEDBACK_BINDING:
       return 1;
     case GL_TRANSFORM_FEEDBACK_BUFFER_BINDING:
       return 1;
@@ -275,6 +318,8 @@ int GLES2Util::GLGetNumValuesReturned(int id) const {
       return 1;
     case GL_TRANSFORM_FEEDBACK_BUFFER_START:
       return 1;
+    case GL_TRANSFORM_FEEDBACK_PAUSED:
+      return 1;
     case GL_UNIFORM_BUFFER_BINDING:
       return 1;
     case GL_UNIFORM_BUFFER_SIZE:
@@ -282,6 +327,16 @@ int GLES2Util::GLGetNumValuesReturned(int id) const {
     case GL_UNIFORM_BUFFER_START:
       return 1;
     case GL_UNIFORM_BUFFER_OFFSET_ALIGNMENT:
+      return 1;
+    case GL_UNPACK_ROW_LENGTH:
+      return 1;
+    case GL_UNPACK_IMAGE_HEIGHT:
+      return 1;
+    case GL_UNPACK_SKIP_PIXELS:
+      return 1;
+    case GL_UNPACK_SKIP_ROWS:
+      return 1;
+    case GL_UNPACK_SKIP_IMAGES:
       return 1;
 
     // ES31
@@ -323,6 +378,8 @@ int GLES2Util::GLGetNumValuesReturned(int id) const {
       return 1;
     case GL_NUM_WINDOW_RECTANGLES_EXT:
       return 1;
+    case GL_WINDOW_RECTANGLE_EXT:
+      return 4;
 
     // -- glGetBufferParameteriv
     case GL_BUFFER_SIZE:
@@ -511,6 +568,97 @@ int GLES2Util::GLGetNumValuesReturned(int id) const {
     case GL_BIND_GENERATES_RESOURCE_CHROMIUM:
       return 1;
 
+    // -- GL_ANGLE_shader_pixel_local_storage
+    case GL_MAX_PIXEL_LOCAL_STORAGE_PLANES_ANGLE:
+    case GL_MAX_COMBINED_DRAW_BUFFERS_AND_PIXEL_LOCAL_STORAGE_PLANES_ANGLE:
+    case GL_PIXEL_LOCAL_STORAGE_ACTIVE_PLANES_ANGLE:
+    case GL_PIXEL_LOCAL_FORMAT_ANGLE:
+    case GL_PIXEL_LOCAL_TEXTURE_NAME_ANGLE:
+    case GL_PIXEL_LOCAL_TEXTURE_LEVEL_ANGLE:
+    case GL_PIXEL_LOCAL_TEXTURE_LAYER_ANGLE:
+      return 1;
+    case GL_PIXEL_LOCAL_CLEAR_VALUE_FLOAT_ANGLE:
+    case GL_PIXEL_LOCAL_CLEAR_VALUE_INT_ANGLE:
+    case GL_PIXEL_LOCAL_CLEAR_VALUE_UNSIGNED_INT_ANGLE:
+      return 4;
+
+    // -- GL_EXT_clip_control
+    case GL_CLIP_ORIGIN_EXT:
+    case GL_CLIP_DEPTH_MODE_EXT:
+      return 1;
+
+    // -- GL_EXT_depth_clamp
+    case GL_DEPTH_CLAMP_EXT:
+      return 1;
+
+    // -- GL_EXT_polygon_offset_clamp
+    case GL_POLYGON_OFFSET_CLAMP_EXT:
+      return 1;
+
+    // -- GL_KHR_parallel_shader_compile
+    case GL_COMPLETION_STATUS_KHR:
+      return 1;
+
+    // -- GL_ANGLE_polygon_mode
+    case GL_POLYGON_MODE_ANGLE:
+    case GL_POLYGON_OFFSET_LINE_ANGLE:
+      return 1;
+
+    // -- GL_OES_shader_multisample_interpolation
+    case GL_MIN_FRAGMENT_INTERPOLATION_OFFSET_OES:
+    case GL_MAX_FRAGMENT_INTERPOLATION_OFFSET_OES:
+    case GL_FRAGMENT_INTERPOLATION_OFFSET_BITS_OES:
+      return 1;
+
+    // -- GL_EXT_clip_cull_distance
+    case GL_MAX_CLIP_DISTANCES_ANGLE:
+    case GL_MAX_CULL_DISTANCES_ANGLE:
+    case GL_MAX_COMBINED_CLIP_AND_CULL_DISTANCES_ANGLE:
+    case GL_CLIP_DISTANCE0_ANGLE:
+    case GL_CLIP_DISTANCE1_ANGLE:
+    case GL_CLIP_DISTANCE2_ANGLE:
+    case GL_CLIP_DISTANCE3_ANGLE:
+    case GL_CLIP_DISTANCE4_ANGLE:
+    case GL_CLIP_DISTANCE5_ANGLE:
+    case GL_CLIP_DISTANCE6_ANGLE:
+    case GL_CLIP_DISTANCE7_ANGLE:
+      return 1;
+
+    // -- GL_ANGLE_provoking_vertex
+    case GL_PROVOKING_VERTEX_ANGLE:
+      return 1;
+
+    // -- GL_ANGLE_stencil_texturing
+    case GL_DEPTH_STENCIL_TEXTURE_MODE_ANGLE:
+      return 1;
+
+    // -- GL_EXT_framebuffer_sRGB
+    case GL_FRAMEBUFFER_SRGB_EXT:
+      return 1;
+
+    // -- GL_EXT_disjoint_timer_query
+    case GL_GPU_DISJOINT_EXT:
+      return 1;
+
+    // -- GL_EXT_blend_func_extended
+    case GL_MAX_DUAL_SOURCE_DRAW_BUFFERS_EXT:
+      return 1;
+
+    // -- GL_EXT_multisample_compatibility
+    case GL_MULTISAMPLE_EXT:
+    case GL_SAMPLE_ALPHA_TO_ONE_EXT:
+      return 1;
+
+    // -- GL_OES_vertex_array_object
+    case GL_VERTEX_ARRAY_BINDING_OES:
+      return 1;
+
+    // -- GL_OVR_multiview2
+    case GL_MAX_VIEWS_OVR:
+    case GL_FRAMEBUFFER_ATTACHMENT_TEXTURE_NUM_VIEWS_OVR:
+    case GL_FRAMEBUFFER_ATTACHMENT_TEXTURE_BASE_VIEW_INDEX_OVR:
+      return 1;
+
     // bad enum
     default:
       return 0;
@@ -570,15 +718,18 @@ uint32_t GLES2Util::ElementsPerGroup(int format, int type) {
     case GL_RGB:
     case GL_RGB_INTEGER:
     case GL_SRGB_EXT:
+    case GL_RGB16_EXT:
       return 3;
     case GL_LUMINANCE_ALPHA:
     case GL_RG_EXT:
     case GL_RG_INTEGER:
+    case GL_RG16_EXT:
       return 2;
     case GL_RGBA:
     case GL_RGBA_INTEGER:
     case GL_BGRA_EXT:
     case GL_SRGB_ALPHA_EXT:
+    case GL_RGBA16_EXT:
       return 4;
     case GL_ALPHA:
     case GL_LUMINANCE:
@@ -590,6 +741,7 @@ uint32_t GLES2Util::ElementsPerGroup(int format, int type) {
     case GL_DEPTH_STENCIL_OES:
     case GL_RED_EXT:
     case GL_RED_INTEGER:
+    case GL_R16_EXT:
       return 1;
     default:
       return 0;
@@ -951,7 +1103,6 @@ uint32_t GLES2Util::GLErrorToErrorBit(uint32_t error) {
       return gl_error_bit::kContextLost;
     default:
       NOTREACHED();
-      return gl_error_bit::kNoError;
   }
 }
 
@@ -971,16 +1122,18 @@ uint32_t GLES2Util::GLErrorBitToGLError(uint32_t error_bit) {
       return GL_CONTEXT_LOST_KHR;
     default:
       NOTREACHED();
-      return GL_NO_ERROR;
   }
 }
 
 uint32_t GLES2Util::IndexToGLFaceTarget(int index) {
-  static uint32_t faces[] = {
-      GL_TEXTURE_CUBE_MAP_POSITIVE_X, GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
-      GL_TEXTURE_CUBE_MAP_POSITIVE_Y, GL_TEXTURE_CUBE_MAP_NEGATIVE_Y,
-      GL_TEXTURE_CUBE_MAP_POSITIVE_Z, GL_TEXTURE_CUBE_MAP_NEGATIVE_Z,
-  };
+  static auto faces = std::to_array<uint32_t>({
+      GL_TEXTURE_CUBE_MAP_POSITIVE_X,
+      GL_TEXTURE_CUBE_MAP_NEGATIVE_X,
+      GL_TEXTURE_CUBE_MAP_POSITIVE_Y,
+      GL_TEXTURE_CUBE_MAP_NEGATIVE_Y,
+      GL_TEXTURE_CUBE_MAP_POSITIVE_Z,
+      GL_TEXTURE_CUBE_MAP_NEGATIVE_Z,
+  });
   return faces[index];
 }
 
@@ -1006,7 +1159,6 @@ size_t GLES2Util::GLTargetToFaceIndex(uint32_t target) {
       return 5;
     default:
       NOTREACHED();
-      return 0;
   }
 }
 
@@ -1027,7 +1179,6 @@ uint32_t GLES2Util::GLFaceTargetToTextureTarget(uint32_t target) {
       return GL_TEXTURE_CUBE_MAP;
     default:
       NOTREACHED();
-      return 0;
   }
 }
 
@@ -1165,9 +1316,6 @@ uint32_t GLES2Util::GetChannelsForFormat(int format) {
     case GL_RGB16_SNORM_EXT:
     case GL_RGBX8_ANGLE:
       return kRGB;
-    case GL_RGB_YCRCB_420_CHROMIUM:
-    case GL_RGB_YCBCR_420V_CHROMIUM:
-    case GL_RGB_YCBCR_P010_CHROMIUM:
     case GL_BGRA_EXT:
     case GL_BGRA8_EXT:
     case GL_RGBA16F_EXT:
@@ -1341,7 +1489,6 @@ void GLES2Util::GetColorFormatComponentSizes(
           return;
         default:
           NOTREACHED();
-          break;
       }
       break;
     case GL_LUMINANCE_ALPHA:
@@ -1357,7 +1504,6 @@ void GLES2Util::GetColorFormatComponentSizes(
           return;
         default:
           NOTREACHED();
-          break;
       }
       break;
     default:
@@ -1506,7 +1652,6 @@ void GLES2Util::GetColorFormatComponentSizes(
       break;
     default:
       NOTREACHED();
-      break;
   }
 }
 
@@ -1529,17 +1674,7 @@ uint32_t GLES2Util::GetChannelsNeededForAttachmentType(
 }
 
 std::string GLES2Util::GetStringEnum(uint32_t value) {
-  const EnumToString* entry = enum_to_string_table_;
-  const EnumToString* end = entry + enum_to_string_table_len_;
-  for (; entry < end; ++entry) {
-    if (value == entry->value)
-      return entry->name;
-  }
-  std::stringstream ss;
-  ss.fill('0');
-  ss.width(value < 0x10000 ? 4 : 8);
-  ss << std::hex << value;
-  return "0x" + ss.str();
+  return gl::GLEnums::GetStringEnum(value);
 }
 
 std::string GLES2Util::GetStringError(uint32_t value) {
@@ -1557,7 +1692,8 @@ std::string GLES2Util::GetStringBool(uint32_t value) {
 std::string GLES2Util::GetQualifiedEnumString(const EnumToString* table,
                                               size_t count,
                                               uint32_t value) {
-  for (const EnumToString* end = table + count; table < end; ++table) {
+  for (const EnumToString* end = UNSAFE_TODO(table + count); table < end;
+       UNSAFE_TODO(++table)) {
     if (table->value == value) {
       return table->name;
     }
@@ -1763,9 +1899,7 @@ uint32_t GLES2Util::ConvertToSizedFormat(uint32_t format, uint32_t type) {
           return GL_RGB16_EXT;
         default:
           NOTREACHED();
-          break;
       }
-      break;
     case GL_RGBA:
       switch (type) {
         case GL_UNSIGNED_BYTE:
@@ -1782,9 +1916,7 @@ uint32_t GLES2Util::ConvertToSizedFormat(uint32_t format, uint32_t type) {
           return GL_RGBA16_EXT;
         default:
           NOTREACHED();
-          break;
       }
-      break;
     case GL_ALPHA:
       switch (type) {
         case GL_UNSIGNED_BYTE:
@@ -1795,9 +1927,7 @@ uint32_t GLES2Util::ConvertToSizedFormat(uint32_t format, uint32_t type) {
           return GL_ALPHA32F_EXT;
         default:
           NOTREACHED();
-          break;
       }
-      break;
     case GL_RED:
       switch (type) {
         case GL_UNSIGNED_BYTE:
@@ -1810,9 +1940,7 @@ uint32_t GLES2Util::ConvertToSizedFormat(uint32_t format, uint32_t type) {
           return GL_R16_EXT;
         default:
           NOTREACHED();
-          break;
       }
-      break;
     case GL_RG:
       switch (type) {
         case GL_UNSIGNED_BYTE:
@@ -1825,36 +1953,28 @@ uint32_t GLES2Util::ConvertToSizedFormat(uint32_t format, uint32_t type) {
           return GL_RG16_EXT;
         default:
           NOTREACHED();
-          break;
       }
-      break;
     case GL_SRGB_EXT:
       switch (type) {
         case GL_UNSIGNED_BYTE:
           return GL_SRGB8;
         default:
           NOTREACHED();
-          break;
       }
-      break;
     case GL_SRGB_ALPHA_EXT:
       switch (type) {
         case GL_UNSIGNED_BYTE:
           return GL_SRGB8_ALPHA8;
         default:
           NOTREACHED();
-          break;
       }
-      break;
     case GL_BGRA_EXT:
       switch (type) {
         case GL_UNSIGNED_BYTE:
           return GL_BGRA8_EXT;
         default:
           NOTREACHED();
-          break;
       }
-      break;
     default:
       break;
   }

@@ -4,60 +4,62 @@
 
 // Original code copyright 2014 Foxit Software Inc. http://www.foxitsoftware.com
 
+#include <array>
 #include <iterator>
 #include <memory>
 #include <utility>
 
 #include "build/build_config.h"
+#include "core/fxcrt/check.h"
+#include "core/fxcrt/compiler_specific.h"
 #include "core/fxcrt/fx_codepage.h"
 #include "core/fxge/cfx_folderfontinfo.h"
 #include "core/fxge/cfx_fontmgr.h"
 #include "core/fxge/cfx_gemodule.h"
 #include "core/fxge/fx_font.h"
 #include "core/fxge/systemfontinfo_iface.h"
-#include "third_party/base/check.h"
 
-#if !BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CHROMEOS) && !defined(OS_FUCHSIA) && \
-    !defined(OS_ASMJS)
+#if !BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CHROMEOS) && !defined(OS_ASMJS)
 #error "Included on the wrong platform"
 #endif
 
 namespace {
 
-enum JpFontFamily : uint8_t {
+enum JpFontFamilyRowIndex : uint8_t {
   kJpFontPGothic,
   kJpFontGothic,
   kJpFontPMincho,
   kJpFontMincho,
-  kCount
 };
 
-const char* const kLinuxJpFontList[][JpFontFamily::kCount] = {
-    {"TakaoPGothic", "VL PGothic", "IPAPGothic", "VL Gothic"},
-    {"TakaoGothic", "VL Gothic", "IPAGothic", "Kochi Gothic"},
-    {"TakaoPMincho", "IPAPMincho", "VL Gothic", "Kochi Mincho"},
-    {"TakaoMincho", "IPAMincho", "VL Gothic", "Kochi Mincho"},
-};
+constexpr size_t kJpFontFamilyColumnCount = 5;
+using JpFontFamilyRow = std::array<const char*, kJpFontFamilyColumnCount>;
+constexpr auto kJpFontTable = std::to_array<const JpFontFamilyRow>({
+    {{"MS PGothic", "TakaoPGothic", "VL PGothic", "IPAPGothic", "VL Gothic"}},
+    {{"MS Gothic", "TakaoGothic", "VL Gothic", "IPAGothic", "Kochi Gothic"}},
+    {{"MS PMincho", "TakaoPMincho", "IPAPMincho", "VL Gothic", "Kochi Mincho"}},
+    {{"MS Mincho", "TakaoMincho", "IPAMincho", "VL Gothic", "Kochi Mincho"}},
+});
 
-const char* const kLinuxGbFontList[] = {
+const char* const kGbFontList[] = {
     "AR PL UMing CN Light",
     "WenQuanYi Micro Hei",
     "AR PL UKai CN",
 };
 
-const char* const kLinuxB5FontList[] = {
+const char* const kB5FontList[] = {
     "AR PL UMing TW Light",
     "WenQuanYi Micro Hei",
     "AR PL UKai TW",
 };
 
-const char* const kLinuxHGFontList[] = {
+const char* const kHGFontList[] = {
     "UnDotum",
 };
 
-JpFontFamily GetJapanesePreference(const ByteString& face,
-                                   int weight,
-                                   int pitch_family) {
+JpFontFamilyRowIndex GetJapanesePreference(const ByteString& face,
+                                           int weight,
+                                           int pitch_family) {
   if (face.Contains("Gothic") ||
       face.Contains("\x83\x53\x83\x56\x83\x62\x83\x4e")) {
     if (face.Contains("PGothic") ||
@@ -72,8 +74,9 @@ JpFontFamily GetJapanesePreference(const ByteString& face,
     }
     return kJpFontMincho;
   }
-  if (!FontFamilyIsRoman(pitch_family) && weight > 400)
+  if (!FontFamilyIsRoman(pitch_family) && weight > 400) {
     return kJpFontPGothic;
+  }
 
   return kJpFontPMincho;
 }
@@ -99,42 +102,47 @@ void* CFX_LinuxFontInfo::MapFont(int weight,
                                  int pitch_family,
                                  const ByteString& face) {
   void* font = GetSubstFont(face);
-  if (font)
+  if (font) {
     return font;
+  }
 
   bool bCJK = true;
   switch (charset) {
     case FX_Charset::kShiftJIS: {
-      JpFontFamily index = GetJapanesePreference(face, weight, pitch_family);
-      DCHECK(index < std::size(kLinuxJpFontList));
-      for (const char* name : kLinuxJpFontList[index]) {
-        auto it = m_FontList.find(name);
-        if (it != m_FontList.end())
+      JpFontFamilyRowIndex index =
+          GetJapanesePreference(face, weight, pitch_family);
+      for (const char* name : kJpFontTable[index]) {
+        auto it = font_list_.find(name);
+        if (it != font_list_.end()) {
           return it->second.get();
+        }
       }
       break;
     }
     case FX_Charset::kChineseSimplified: {
-      for (const char* name : kLinuxGbFontList) {
-        auto it = m_FontList.find(name);
-        if (it != m_FontList.end())
+      for (const char* name : kGbFontList) {
+        auto it = font_list_.find(name);
+        if (it != font_list_.end()) {
           return it->second.get();
+        }
       }
       break;
     }
     case FX_Charset::kChineseTraditional: {
-      for (const char* name : kLinuxB5FontList) {
-        auto it = m_FontList.find(name);
-        if (it != m_FontList.end())
+      for (const char* name : kB5FontList) {
+        auto it = font_list_.find(name);
+        if (it != font_list_.end()) {
           return it->second.get();
+        }
       }
       break;
     }
     case FX_Charset::kHangul: {
-      for (const char* name : kLinuxHGFontList) {
-        auto it = m_FontList.find(name);
-        if (it != m_FontList.end())
+      for (const char* name : kHGFontList) {
+        auto it = font_list_.find(name);
+        if (it != font_list_.end()) {
           return it->second.get();
+        }
       }
       break;
     }
@@ -146,11 +154,16 @@ void* CFX_LinuxFontInfo::MapFont(int weight,
 }
 
 bool CFX_LinuxFontInfo::ParseFontCfg(const char** pUserPaths) {
-  if (!pUserPaths)
+  if (!pUserPaths) {
     return false;
+  }
 
-  for (const char** pPath = pUserPaths; *pPath; ++pPath)
-    AddPath(*pPath);
+  // SAFETY: nullptr-terminated array required from caller.
+  UNSAFE_BUFFERS({
+    for (const char** pPath = pUserPaths; *pPath; ++pPath) {
+      AddPath(*pPath);
+    }
+  });
   return true;
 }
 

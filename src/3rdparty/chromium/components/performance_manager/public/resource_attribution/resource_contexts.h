@@ -5,16 +5,18 @@
 #ifndef COMPONENTS_PERFORMANCE_MANAGER_PUBLIC_RESOURCE_ATTRIBUTION_RESOURCE_CONTEXTS_H_
 #define COMPONENTS_PERFORMANCE_MANAGER_PUBLIC_RESOURCE_ATTRIBUTION_RESOURCE_CONTEXTS_H_
 
+#include <variant>
+
 #include "base/types/strong_alias.h"
 #include "base/types/variant_util.h"
 #include "components/performance_manager/public/resource_attribution/frame_context.h"
+#include "components/performance_manager/public/resource_attribution/origin_in_browsing_instance_context.h"
 #include "components/performance_manager/public/resource_attribution/page_context.h"
 #include "components/performance_manager/public/resource_attribution/process_context.h"
 #include "components/performance_manager/public/resource_attribution/type_helpers.h"
 #include "components/performance_manager/public/resource_attribution/worker_context.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
 
-namespace performance_manager::resource_attribution {
+namespace resource_attribution {
 
 // Each ResourceContext measured by resource attribution is identified by an
 // object with the following properties:
@@ -44,32 +46,47 @@ namespace performance_manager::resource_attribution {
 // should never be passed to other renderers to prevent data leaks.
 
 // Contexts for PerformanceManager nodes. There is one *Context type for each
-// node type.
+// node type:
+//
+// * FrameContext -> FrameNode
+// * PageContext -> PageNode
+// * ProcessContext -> ProcessNode
+// * WorkerContext -> WorkerNode
+
+// And more advanced context aggregations:
+//
+// * OriginInBrowsingInstanceContext: aggregates FrameContexts and
+//   WorkerContexts that belong to a given browsing instance and origin (a
+//   FrameContext's origin can change, so it can belong to different
+//   OriginInBrowsingInstanceContexts at different points in time).
 
 // A variant holding any type of resource context.
-using ResourceContext =
-    absl::variant<FrameContext, PageContext, ProcessContext, WorkerContext>;
+using ResourceContext = std::variant<FrameContext,
+                                     PageContext,
+                                     ProcessContext,
+                                     WorkerContext,
+                                     OriginInBrowsingInstanceContext>;
 
 // Returns true iff `context` currently holds a resource context of type T.
-template <typename T,
-          internal::EnableIfIsVariantAlternative<T, ResourceContext> = true>
+template <typename T>
+  requires(internal::kIsVariantAlternative<T, ResourceContext>)
 constexpr bool ContextIs(const ResourceContext& context) {
-  return absl::holds_alternative<T>(context);
+  return std::holds_alternative<T>(context);
 }
 
 // If `context` currently holds a resource context of type T, returns a
 // reference to that context. Otherwise, crashes.
-template <typename T,
-          internal::EnableIfIsVariantAlternative<T, ResourceContext> = true>
+template <typename T>
+  requires(internal::kIsVariantAlternative<T, ResourceContext>)
 constexpr const T& AsContext(const ResourceContext& context) {
-  return absl::get<T>(context);
+  return std::get<T>(context);
 }
 
 // If `context` currently holds a resource context of type T, returns a
 // copy of that context. Otherwise, returns nullopt.
-template <typename T,
-          internal::EnableIfIsVariantAlternative<T, ResourceContext> = true>
-constexpr absl::optional<T> AsOptionalContext(const ResourceContext& context) {
+template <typename T>
+  requires(internal::kIsVariantAlternative<T, ResourceContext>)
+constexpr std::optional<T> AsOptionalContext(const ResourceContext& context) {
   return internal::GetAsOptional<T>(context);
 }
 
@@ -89,8 +106,8 @@ class ResourceContextTypeId
   constexpr explicit ResourceContextTypeId(const ResourceContext& context)
       : Super(context.index()) {}
 
-  template <typename T,
-            internal::EnableIfIsVariantAlternative<T, ResourceContext> = true>
+  template <typename T>
+    requires(internal::kIsVariantAlternative<T, ResourceContext>)
   static constexpr ResourceContextTypeId ForType() {
     return ResourceContextTypeId(
         base::VariantIndexOfType<ResourceContext, T>());
@@ -99,6 +116,6 @@ class ResourceContextTypeId
 
 }  // namespace internal
 
-}  // namespace performance_manager::resource_attribution
+}  // namespace resource_attribution
 
 #endif  // COMPONENTS_PERFORMANCE_MANAGER_PUBLIC_RESOURCE_ATTRIBUTION_RESOURCE_CONTEXTS_H_

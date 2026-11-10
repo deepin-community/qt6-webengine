@@ -5,30 +5,30 @@
 import("../../../../scripts/build/ninja/devtools_entrypoint.gni")
 import("../../../../scripts/build/ninja/devtools_module.gni")
 import("../../../../scripts/build/ninja/generate_css.gni")
+import("../../../../scripts/build/typescript/typescript.gni")
 import("../visibility.gni")
 
 generate_css("css_files") {
-  sources = [ "iconButton.css" ]
-}
-
-generate_css("legacy_css_files") {
-  sources = [ "icon.css" ]
-
-  legacy = true
+  sources = [
+    "fileSourceIcon.css",
+    "icon.css",
+    "iconButton.css",
+  ]
 }
 
 devtools_module("icon_button") {
   sources = [
+    "FileSourceIcon.ts",
     "Icon.ts",
     "IconButton.ts",
   ]
+
   deps = [
+    "../../../Images:optimize_images",
     "../../../ui/components/helpers:bundle",
     "../../../ui/components/render_coordinator:bundle",
-    "../../../ui/lit-html:bundle",
+    "../../../ui/lit:bundle",
   ]
-
-  visibility = [ "../../../../test/unittests/front_end/ui/components" ]
 }
 
 devtools_entrypoint("bundle") {
@@ -37,16 +37,32 @@ devtools_entrypoint("bundle") {
   deps = [
     ":css_files",
     ":icon_button",
-    ":legacy_css_files",
   ]
 
   visibility = [
     "../../../entrypoints/inspector_main/*",
     "../../../entrypoints/main/*",
+    "../../../panels/utils/*",
     "../../legacy/*",
     "../../legacy/components/color_picker/*",
     "../../legacy/components/object_ui/*",
   ]
 
   visibility += default_components_visibility
+}
+
+ts_library("unittests") {
+  testonly = true
+
+  sources = [
+    "FileSourceIcon.test.ts",
+    "Icon.test.ts",
+    "IconButton.test.ts",
+  ]
+
+  deps = [
+    ":bundle",
+    "../../../testing",
+    "../../lit:bundle",
+  ]
 }

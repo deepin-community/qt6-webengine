@@ -10,11 +10,22 @@
 
 #include "modules/desktop_capture/linux/wayland/base_capturer_pipewire.h"
 
+#include <sys/types.h>
+
+#include <cstdint>
+#include <memory>
+#include <utility>
+
+#include "modules/desktop_capture/delegated_source_list_controller.h"
 #include "modules/desktop_capture/desktop_capture_options.h"
+#include "modules/desktop_capture/desktop_capture_types.h"
 #include "modules/desktop_capture/desktop_capturer.h"
 #include "modules/desktop_capture/linux/wayland/restore_token_manager.h"
+#include "modules/desktop_capture/linux/wayland/screen_capture_portal_interface.h"
+#include "modules/desktop_capture/linux/wayland/screencast_portal.h"
 #include "modules/portal/pipewire_utils.h"
-#include "modules/portal/xdg_desktop_portal_utils.h"
+#include "modules/portal/portal_request_response.h"
+#include "modules/portal/xdg_session_details.h"
 #include "rtc_base/checks.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/time_utils.h"
@@ -45,7 +56,10 @@ bool BaseCapturerPipeWire::IsSupported() {
 BaseCapturerPipeWire::BaseCapturerPipeWire(const DesktopCaptureOptions& options,
                                            CaptureType type)
     : BaseCapturerPipeWire(options,
-                           std::make_unique<ScreenCastPortal>(type, this)) {
+                           std::make_unique<ScreenCastPortal>(
+                               type,
+                               this,
+                               options.prefer_cursor_embedded())) {
   is_screencast_portal_ = true;
 }
 
@@ -61,6 +75,10 @@ BaseCapturerPipeWire::BaseCapturerPipeWire(
 }
 
 BaseCapturerPipeWire::~BaseCapturerPipeWire() {
+  // Destroy the portal first. Its destructor may block until in-flight
+  // GDBus callbacks finish, and those callbacks access other members
+  // (options_, callback_) through the notifier_ pointer.
+  portal_.reset();
   options_.screencast_stream()->StopScreenCastStream();
 }
 
@@ -73,6 +91,7 @@ void BaseCapturerPipeWire::OnScreenCastRequestResult(RequestResponse result,
   // then it'll set it to the right value again soon enough.
   capturer_failed_ = false;
   if (result != RequestResponse::kSuccess ||
+      !options_.screencast_stream() ||
       !options_.screencast_stream()->StartScreenCastStream(
           stream_node_id, fd, options_.get_width(), options_.get_height(),
           options_.prefer_cursor_embedded(),
@@ -112,6 +131,7 @@ void BaseCapturerPipeWire::OnScreenCastSessionClosed() {
   if (!capturer_failed_) {
     options_.screencast_stream()->StopScreenCastStream();
   }
+  capturer_failed_ = true;
 }
 
 void BaseCapturerPipeWire::UpdateResolution(uint32_t width, uint32_t height) {
@@ -157,7 +177,7 @@ void BaseCapturerPipeWire::CaptureFrame() {
     return;
   }
 
-  int64_t capture_start_time_nanos = rtc::TimeNanos();
+  int64_t capture_start_time_nanos = TimeNanos();
   std::unique_ptr<DesktopFrame> frame =
       options_.screencast_stream()->CaptureFrame();
 
@@ -170,8 +190,8 @@ void BaseCapturerPipeWire::CaptureFrame() {
   // the frame, see ScreenCapturerX11::CaptureFrame.
 
   frame->set_capturer_id(DesktopCapturerId::kWaylandCapturerLinux);
-  frame->set_capture_time_ms((rtc::TimeNanos() - capture_start_time_nanos) /
-                             rtc::kNumNanosecsPerMillisec);
+  frame->set_capture_time_ms((TimeNanos() - capture_start_time_nanos) /
+                             kNumNanosecsPerMillisec);
   callback_->OnCaptureResult(Result::SUCCESS, std::move(frame));
 }
 

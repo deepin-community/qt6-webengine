@@ -26,6 +26,7 @@
 
 #if BUILDFLAG(IS_WIN)
 #include <windows.h>
+
 #include "base/process/process_handle.h"
 #endif
 
@@ -61,7 +62,7 @@ gfx::GpuFenceHandle::ScopedPlatformFence PlatformDuplicate(
   if (!result) {
     const DWORD last_error = ::GetLastError();
     base::debug::Alias(&last_error);
-    CHECK(false);
+    NOTREACHED();
   }
   return base::win::ScopedHandle(duplicated_handle);
 #else

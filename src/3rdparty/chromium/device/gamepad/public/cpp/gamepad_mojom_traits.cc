@@ -4,6 +4,7 @@
 
 #include "device/gamepad/public/cpp/gamepad_mojom_traits.h"
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 
 namespace mojo {
@@ -12,7 +13,7 @@ namespace mojo {
 void StructTraits<
     device::mojom::GamepadQuaternionDataView,
     device::GamepadQuaternion>::SetToNull(device::GamepadQuaternion* out) {
-  memset(out, 0, sizeof(device::GamepadQuaternion));
+  UNSAFE_TODO(memset(out, 0, sizeof(device::GamepadQuaternion)));
   out->not_null = false;
 }
 
@@ -33,7 +34,7 @@ bool StructTraits<device::mojom::GamepadQuaternionDataView,
 void StructTraits<device::mojom::GamepadVectorDataView,
                   device::GamepadVector>::SetToNull(device::GamepadVector*
                                                         out) {
-  memset(out, 0, sizeof(device::GamepadVector));
+  UNSAFE_TODO(memset(out, 0, sizeof(device::GamepadVector)));
   out->not_null = false;
 }
 
@@ -76,8 +77,6 @@ EnumTraits<device::mojom::GamepadHapticActuatorType,
   }
 
   NOTREACHED();
-  return device::mojom::GamepadHapticActuatorType::
-      GamepadHapticActuatorTypeVibration;
 }
 
 // static
@@ -101,14 +100,13 @@ bool EnumTraits<device::mojom::GamepadHapticActuatorType,
   }
 
   NOTREACHED();
-  return false;
 }
 
 // static
 void StructTraits<device::mojom::GamepadHapticActuatorDataView,
                   device::GamepadHapticActuator>::
     SetToNull(device::GamepadHapticActuator* out) {
-  memset(out, 0, sizeof(device::GamepadHapticActuator));
+  UNSAFE_TODO(memset(out, 0, sizeof(device::GamepadHapticActuator)));
   out->not_null = false;
 }
 
@@ -140,7 +138,7 @@ bool StructTraits<device::mojom::GamepadTouchDataView, device::GamepadTouch>::
 // static
 void StructTraits<device::mojom::GamepadPoseDataView,
                   device::GamepadPose>::SetToNull(device::GamepadPose* out) {
-  memset(out, 0, sizeof(device::GamepadPose));
+  UNSAFE_TODO(memset(out, 0, sizeof(device::GamepadPose)));
   out->not_null = false;
 }
 
@@ -187,7 +185,6 @@ EnumTraits<device::mojom::GamepadMapping, device::GamepadMapping>::ToMojom(
   }
 
   NOTREACHED();
-  return device::mojom::GamepadMapping::GamepadMappingNone;
 }
 
 // static
@@ -207,7 +204,6 @@ bool EnumTraits<device::mojom::GamepadMapping, device::GamepadMapping>::
   }
 
   NOTREACHED();
-  return false;
 }
 
 // static
@@ -224,7 +220,6 @@ EnumTraits<device::mojom::GamepadHand, device::GamepadHand>::ToMojom(
   }
 
   NOTREACHED();
-  return device::mojom::GamepadHand::GamepadHandNone;
 }
 
 // static
@@ -244,7 +239,6 @@ bool EnumTraits<device::mojom::GamepadHand, device::GamepadHand>::FromMojom(
   }
 
   NOTREACHED();
-  return false;
 }
 
 // static
@@ -252,10 +246,12 @@ base::span<const uint16_t>
 StructTraits<device::mojom::GamepadDataView, device::Gamepad>::id(
     const device::Gamepad& r) {
   size_t id_length = 0;
-  while (id_length < device::Gamepad::kIdLengthCap && r.id[id_length] != 0) {
+  while (id_length < device::Gamepad::kIdLengthCap &&
+         UNSAFE_TODO(r.id[id_length]) != 0) {
     id_length++;
   }
-  return base::make_span(reinterpret_cast<const uint16_t*>(r.id), id_length);
+  return UNSAFE_TODO(
+      base::span(reinterpret_cast<const uint16_t*>(r.id), id_length));
 }
 
 // static
@@ -264,9 +260,9 @@ bool StructTraits<device::mojom::GamepadDataView, device::Gamepad>::Read(
     device::Gamepad* out) {
   out->connected = data.connected();
 
-  memset(out->id, 0, sizeof(out->id));
-  base::span<uint16_t> id(reinterpret_cast<uint16_t*>(out->id),
-                          device::Gamepad::kIdLengthCap);
+  UNSAFE_TODO(memset(out->id, 0, sizeof(out->id)));
+  base::span<uint16_t> UNSAFE_TODO(
+      id(reinterpret_cast<uint16_t*>(out->id), device::Gamepad::kIdLengthCap));
   if (!data.ReadId(&id)) {
     return false;
   }

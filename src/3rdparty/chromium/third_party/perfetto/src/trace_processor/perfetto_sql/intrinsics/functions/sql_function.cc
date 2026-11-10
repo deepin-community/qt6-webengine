@@ -16,14 +16,14 @@
 
 #include "src/trace_processor/perfetto_sql/intrinsics/functions/sql_function.h"
 
-namespace perfetto {
-namespace trace_processor {
+#include "perfetto/base/status.h"
 
-base::Status SqlFunction::VerifyPostConditions(Context*) {
+namespace perfetto::trace_processor {
+
+base::Status LegacySqlFunction::VerifyPostConditions(Context*) {
   return base::OkStatus();
 }
 
-void SqlFunction::Cleanup(Context*) {}
+void LegacySqlFunction::Cleanup(Context*) {}
 
-}  // namespace trace_processor
-}  // namespace perfetto
+}  // namespace perfetto::trace_processor

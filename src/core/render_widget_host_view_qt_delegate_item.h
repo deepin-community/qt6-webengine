@@ -1,5 +1,6 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef RENDER_WIDGET_HOST_VIEW_QT_DELEGATE_ITEM_H
 #define RENDER_WIDGET_HOST_VIEW_QT_DELEGATE_ITEM_H
@@ -73,7 +74,7 @@ public:
     void setInputMethodHints(Qt::InputMethodHints) override;
     void setClearColor(const QColor &color) override;
     void unhandledWheelEvent(QWheelEvent *ev) override;
-
+    void updatePolish() override;
     void readyToSwap() override;
 
     void setWidgetDelegate(WidgetDelegate *delegate);
@@ -95,6 +96,7 @@ protected:
     void inputMethodEvent(QInputMethodEvent *event) override;
     void geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry) override;
     void itemChange(ItemChange change, const ItemChangeData &value) override;
+    void releaseResources() override;
     QSGNode *updatePaintNode(QSGNode *, UpdatePaintNodeData *) override;
 
     void adapterClientChanged(WebContentsAdapterClient *client) override;
@@ -104,7 +106,6 @@ private Q_SLOTS:
     void onBeforeRendering();
     void onAfterFrameEnd();
     void onWindowPosChanged();
-    void releaseTextureResources();
     void onHide();
 
 private:
@@ -114,6 +115,7 @@ private:
 
     RenderWidgetHostViewQtDelegateClient *m_client;
     bool m_isPopup;
+    QRectF m_popupRect;
     QColor m_clearColor;
     Qt::InputMethodHints m_inputMethodHints = {};
     QList<QMetaObject::Connection> m_windowConnections;

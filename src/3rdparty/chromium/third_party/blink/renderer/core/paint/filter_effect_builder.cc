@@ -124,20 +124,20 @@ Vector<float> SepiaMatrix(double amount) {
 }  // namespace
 
 FilterEffectBuilder::FilterEffectBuilder(const gfx::RectF& reference_box,
+                                         std::optional<gfx::SizeF> viewport,
                                          float zoom,
                                          Color current_color,
                                          mojom::blink::ColorScheme color_scheme,
                                          const cc::PaintFlags* fill_flags,
-                                         const cc::PaintFlags* stroke_flags,
-                                         SkTileMode blur_tile_mode)
+                                         const cc::PaintFlags* stroke_flags)
     : reference_box_(reference_box),
+      viewport_(viewport),
       zoom_(zoom),
       shorthand_scale_(1),
       current_color_(current_color),
       color_scheme_(color_scheme),
       fill_flags_(fill_flags),
-      stroke_flags_(stroke_flags),
-      blur_tile_mode_(blur_tile_mode) {}
+      stroke_flags_(stroke_flags) {}
 
 FilterEffect* FilterEffectBuilder::BuildFilterEffect(
     const FilterOperations& operations,
@@ -298,7 +298,7 @@ FilterEffect* FilterEffectBuilder::BuildFilterEffect(
             parent_filter, blur.x(), blur.y(), offset.x(), offset.y(),
             shadow.GetColor().Resolve(current_color_, color_scheme_),
             shadow.Opacity());
-        if (shadow.GetColor().IsCurrentColor()) {
+        if (filter_operation->UsesCurrentColor()) {
           effect->SetOriginTainted();
         }
         break;
@@ -375,8 +375,8 @@ CompositorFilterOperations FilterEffectBuilder::BuildFilterOperations(
     switch (op->GetType()) {
       case FilterOperation::OperationType::kReference: {
         auto& reference_operation = To<ReferenceFilterOperation>(*op);
-        Filter* reference_filter =
-            BuildReferenceFilter(reference_operation, nullptr);
+        Filter* reference_filter = BuildReferenceFilter(
+            reference_operation, nullptr, nullptr, filters.OriginTainted());
         if (reference_filter && reference_filter->LastEffect()) {
           // Set the interpolation space for the source of the (sub)filter to
           // match that of the previous primitive (or input).
@@ -393,6 +393,9 @@ CompositorFilterOperations FilterEffectBuilder::BuildFilterOperations(
           if (!paint_filter)
             continue;
           filters.AppendReferenceFilter(std::move(paint_filter));
+          if (filter_effect->OriginTainted()) {
+            filters.SetOriginTainted();
+          }
         }
         reference_operation.SetFilter(reference_filter);
         break;
@@ -426,11 +429,10 @@ CompositorFilterOperations FilterEffectBuilder::BuildFilterOperations(
       case FilterOperation::OperationType::kTurbulence:
         // These filter types only exist for Canvas filters.
         NOTREACHED();
-        break;
       case FilterOperation::OperationType::kColorMatrix: {
         Vector<float> matrix_values =
             To<ColorMatrixFilterOperation>(*op).Values();
-        filters.AppendColorMatrixFilter(matrix_values);
+        filters.AppendColorMatrixFilter(std::move(matrix_values));
         break;
       }
       case FilterOperation::OperationType::kInvert:
@@ -458,9 +460,9 @@ CompositorFilterOperations FilterEffectBuilder::BuildFilterOperations(
       }
       case FilterOperation::OperationType::kBlur: {
         float pixel_radius =
-            To<BlurFilterOperation>(*op).StdDeviation().GetFloatValue();
+            To<BlurFilterOperation>(*op).StdDeviation().Pixels();
         pixel_radius *= shorthand_scale_;
-        filters.AppendBlurFilter(pixel_radius, blur_tile_mode_);
+        filters.AppendBlurFilter(pixel_radius);
         break;
       }
       case FilterOperation::OperationType::kDropShadow: {
@@ -471,6 +473,9 @@ CompositorFilterOperations FilterEffectBuilder::BuildFilterOperations(
         filters.AppendDropShadowFilter(
             floored_offset, radius,
             shadow.GetColor().Resolve(current_color_, color_scheme_));
+        if (op->UsesCurrentColor()) {
+          filters.SetOriginTainted();
+        }
         break;
       }
       case FilterOperation::OperationType::kBoxReflect: {
@@ -482,8 +487,6 @@ CompositorFilterOperations FilterEffectBuilder::BuildFilterOperations(
             paint_filter_builder::BuildBoxReflectFilter(reflection, nullptr));
         break;
       }
-      case FilterOperation::OperationType::kNone:
-        break;
     }
     // TODO(fs): When transitioning from a reference filter using "linearRGB"
     // to a filter function we should insert a conversion (like the one below)
@@ -506,7 +509,8 @@ CompositorFilterOperations FilterEffectBuilder::BuildFilterOperations(
 Filter* FilterEffectBuilder::BuildReferenceFilter(
     const ReferenceFilterOperation& reference_operation,
     FilterEffect* previous_effect,
-    SVGFilterGraphNodeMap* node_map) const {
+    SVGFilterGraphNodeMap* node_map,
+    bool input_tainted) const {
   SVGResource* resource = reference_operation.Resource();
   auto* filter_element =
       DynamicTo<SVGFilterElement>(resource ? resource->Target() : nullptr);
@@ -515,10 +519,17 @@ Filter* FilterEffectBuilder::BuildReferenceFilter(
   if (auto* resource_container = resource->ResourceContainerNoCycleCheck())
     resource_container->ClearInvalidationMask();
 
+  std::optional<gfx::SizeF> unzoomed_viewport;
+  if (viewport_) {
+    gfx::SizeF unzoomed = *viewport_;
+    unzoomed.InvScale(zoom_);
+    unzoomed_viewport = unzoomed;
+  }
+
   gfx::RectF filter_region =
       LayoutSVGResourceContainer::ResolveRectangle<SVGFilterElement>(
           *filter_element, filter_element->filterUnits()->CurrentEnumValue(),
-          reference_box_);
+          reference_box_, unzoomed_viewport);
   bool primitive_bounding_box_mode =
       filter_element->primitiveUnits()->CurrentEnumValue() ==
       SVGUnitTypes::kSvgUnitTypeObjectboundingbox;
@@ -526,14 +537,16 @@ Filter* FilterEffectBuilder::BuildReferenceFilter(
       primitive_bounding_box_mode ? Filter::kBoundingBox : Filter::kUserSpace;
   auto* result = MakeGarbageCollected<Filter>(reference_box_, filter_region,
                                               zoom_, unit_scaling);
-  // TODO(fs): We rely on the presence of a node map here to opt-in to the
-  // check for an empty filter region. The reason for this is that we lack a
-  // viewport to resolve against for HTML content. This is crbug.com/512453.
   // If the filter has an empty region, then return a Filter without any
   // primitives since the behavior in these two cases (no primitives, empty
   // region) should match.
-  if (node_map && filter_region.IsEmpty())
+  if (filter_region.IsEmpty()) {
     return result;
+  }
+
+  if (input_tainted || (previous_effect && previous_effect->OriginTainted())) {
+    result->GetSourceGraphic()->SetOriginTainted();
+  }
 
   if (!previous_effect)
     previous_effect = result->GetSourceGraphic();

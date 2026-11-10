@@ -3,7 +3,10 @@
 // found in the LICENSE file.
 
 #include "third_party/blink/renderer/core/lcp_critical_path_predictor/lcp_script_observer.h"
+
 #include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/common/loader/lcp_critical_path_predictor_util.h"
+#include "third_party/blink/renderer/bindings/core/v8/capture_source_location.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 
 namespace blink {
@@ -33,7 +36,7 @@ HashSet<String> LCPScriptObserver::GetExecutingScriptUrls() {
   // Gather (promise) microtasks in execution. This is required as Probes
   // do not yet have an implementation that covers microtasks.
   v8::Isolate* isolate = v8::Isolate::TryGetCurrent();
-  auto v8_stack_urls = GetScriptUrlsFromCurrentStack(isolate, 0);
+  auto v8_stack_urls = CaptureScriptUrlsFromCurrentStack(isolate, 0);
   for (auto& url : v8_stack_urls) {
     if (url.empty()) {
       continue;
@@ -67,7 +70,7 @@ String LCPScriptObserver::GetScriptUrlFromCallFunctionProbe(
 
 LCPScriptObserver::LCPScriptObserver(LocalFrame* local_root)
     : local_root_(local_root) {
-  CHECK(base::FeatureList::IsEnabled(features::kLCPScriptObserver));
+  CHECK(blink::LcppScriptObserverEnabled());
   local_root_->GetProbeSink()->AddLCPScriptObserver(this);
 }
 
@@ -99,6 +102,14 @@ void LCPScriptObserver::Did(const probe::CallFunction& probe) {
 
 void LCPScriptObserver::Trace(Visitor* visitor) const {
   visitor->Trace(local_root_);
+}
+
+void LCPScriptObserver::Shutdown() {
+  if (!local_root_) {
+    return;
+  }
+  local_root_->GetProbeSink()->RemoveLCPScriptObserver(this);
+  local_root_ = nullptr;
 }
 
 }  // namespace blink

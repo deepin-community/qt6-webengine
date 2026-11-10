@@ -2,11 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "services/accessibility/features/devtools/os_devtools_session.h"
 
+#include <string_view>
 #include <utility>
 
 #include "base/functional/bind.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
@@ -22,7 +29,7 @@ std::vector<uint8_t> GetStringBytes(const v8_inspector::StringView& s) {
   if (s.is8Bit()) {
     return std::vector<uint8_t>(s.characters8(), s.characters8() + s.length());
   }
-  std::string converted = base::UTF16ToUTF8(base::StringPiece16(
+  std::string converted = base::UTF16ToUTF8(std::u16string_view(
       reinterpret_cast<const char16_t*>(s.characters16()), s.length()));
   const uint8_t* data = reinterpret_cast<const uint8_t*>(converted.data());
   return std::vector<uint8_t>(data, data + converted.size());
@@ -73,6 +80,8 @@ class OSDevToolsSession::IOSession : public blink::mojom::DevToolsSession {
         base::BindOnce(v8_thread_dispatch_, call_id, method,
                        std::vector<uint8_t>(message.begin(), message.end())));
   }
+
+  void UnpauseAndTerminate() override { NOTREACHED(); }
 
  private:
   IOSession(const scoped_refptr<DebugCommandQueue> debug_command_queue,
@@ -194,6 +203,10 @@ void OSDevToolsSession::DispatchProtocolCommand(
   }
 }
 
+void OSDevToolsSession::UnpauseAndTerminate() {
+  NOTREACHED();
+}
+
 void OSDevToolsSession::sendResponse(
     int call_id,
     std::unique_ptr<v8_inspector::StringBuffer> message) {
@@ -284,7 +297,7 @@ blink::mojom::DevToolsMessagePtr OSDevToolsSession::FinalizeMessage(
     message_to_send = std::move(json);
   }
   auto mojo_msg = blink::mojom::DevToolsMessage::New();
-  mojo_msg->data = std::move(message_to_send);
+  mojo_msg->data = {message_to_send};
   return mojo_msg;
 }
 

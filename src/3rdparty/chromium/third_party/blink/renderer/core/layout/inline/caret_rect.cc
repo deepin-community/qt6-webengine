@@ -4,13 +4,17 @@
 
 #include "third_party/blink/renderer/core/layout/inline/caret_rect.h"
 
+#include "third_party/blink/renderer/core/editing/editing_utilities.h"
 #include "third_party/blink/renderer/core/editing/local_caret_rect.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/layout/geometry/physical_rect.h"
+#include "third_party/blink/renderer/core/layout/geometry/writing_mode_converter.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_caret_position.h"
 #include "third_party/blink/renderer/core/layout/layout_block_flow.h"
 #include "third_party/blink/renderer/core/layout/layout_text_combine.h"
 #include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
+#include "third_party/blink/renderer/core/layout/text_utils.h"
+#include "third_party/blink/renderer/platform/text/character_break_iterator.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
 
 namespace blink {
@@ -36,51 +40,7 @@ TextDirection ResolvedDirection(const InlineCursor& cursor) {
   return line_box.Current().BaseDirection();
 }
 
-PhysicalRect ComputeLocalCaretRectByBoxSide(
-    const InlineCursor& cursor,
-    InlineCaretPositionType position_type) {
-  const bool is_horizontal = cursor.Current().Style().IsHorizontalWritingMode();
-  InlineCursor line_box(cursor);
-  line_box.MoveToContainingLine();
-  DCHECK(line_box);
-  const PhysicalOffset offset = cursor.Current().OffsetInContainerFragment();
-  const PhysicalOffset line_box_offset =
-      line_box.Current().OffsetInContainerFragment();
-  LayoutUnit caret_height = is_horizontal ? line_box.Current().Size().height
-                                          : line_box.Current().Size().width;
-  LayoutUnit caret_top;
-  if (cursor.Current().IsAtomicInline()) {
-    caret_top = is_horizontal ? line_box_offset.top - offset.top
-                              : line_box_offset.left - offset.left;
-  } else {
-    caret_top = is_horizontal ? line_box_offset.top : line_box_offset.left;
-  }
 
-  const LocalFrameView* frame_view =
-      cursor.Current().GetLayoutObject()->GetDocument().View();
-  LayoutUnit caret_width = frame_view->CaretWidth();
-
-  const bool is_ltr = IsLtr(ResolvedDirection(cursor));
-  LayoutUnit caret_left;
-  if (!cursor.Current().IsAtomicInline()) {
-    caret_left = is_horizontal ? offset.left : offset.top;
-  }
-  if (is_ltr != (position_type == InlineCaretPositionType::kBeforeBox)) {
-    if (is_horizontal)
-      caret_left += cursor.Current().Size().width - caret_width;
-    else
-      caret_left += cursor.Current().Size().height - caret_width;
-  }
-
-  if (!is_horizontal) {
-    std::swap(caret_top, caret_left);
-    std::swap(caret_width, caret_height);
-  }
-
-  const PhysicalOffset caret_location(caret_left, caret_top);
-  const PhysicalSize caret_size(caret_width, caret_height);
-  return PhysicalRect(caret_location, caret_size);
-}
 
 bool ShouldAlignCaretRight(ETextAlign text_align, TextDirection direction) {
   switch (text_align) {
@@ -99,7 +59,6 @@ bool ShouldAlignCaretRight(ETextAlign text_align, TextDirection direction) {
       return IsLtr(direction);
   }
   NOTREACHED();
-  return false;
 }
 
 LayoutUnit ClampAndRound(LayoutUnit value, LayoutUnit min, LayoutUnit max) {
@@ -110,42 +69,170 @@ LayoutUnit ClampAndRound(LayoutUnit value, LayoutUnit min, LayoutUnit max) {
   return LayoutUnit(ClampTo<LayoutUnit>(value, min_ceil, max_floor).Round());
 }
 
-PhysicalRect ComputeLocalCaretRectAtTextOffset(const InlineCursor& cursor,
-                                               unsigned offset) {
+LayoutUnit ComputeCharacterWidthAtOffset(const InlineCursor& cursor,
+                                         unsigned offset,
+                                         const ComputedStyle& style) {
+  unsigned cluster_size =
+      LengthOfGraphemeCluster(cursor.CurrentText().ToString(), offset);
+  // The width calculation takes into account font information from style.
+  // The zoom value is baked into the font size already.
+  float width = ComputeTextWidth(
+      StringView(cursor.CurrentText(), offset, cluster_size), style);
+
+  return LayoutUnit(width);
+}
+
+LogicalRect ComputeNextCharacterLogicalRect(const InlineCursor& cursor,
+                                            unsigned offset,
+                                            CaretShape caret_shape) {
+  const LocalFrameView* frame_view =
+      cursor.Current().GetLayoutObject()->GetFrameView();
+  LayoutUnit caret_width = frame_view->BarCaretWidth();
+
+  const ComputedStyle& style = cursor.Current().Style();
+
+  WritingModeConverter converter({style.GetWritingMode(), TextDirection::kLtr},
+                                 cursor.Current().Size());
+  LogicalRect caret_rect;
+  LayoutUnit cursor_block_size =
+      converter.ToLogical(cursor.Current().Size()).block_size;
+
+  LayoutUnit cursor_inline_size = caret_width;
+  LayoutUnit cursor_block_offset;
+
+  if (offset < cursor.Current().TextEndOffset()) {
+    cursor_inline_size = ComputeCharacterWidthAtOffset(
+        cursor, offset - cursor.Current().TextStartOffset(), style);
+  } else {
+    // If the next fragment is text, we need to get the width and height of
+    // the first visible character in this fragment.
+    auto next = cursor;
+    if (!IsLtr(ResolvedDirection(cursor))) {
+      next.MoveToPrevious();
+    } else {
+      next.MoveToNext();
+    }
+    if (next && next.Current().IsText() && !cursor.Current().IsLineBreak()) {
+      const ComputedStyle& style_next = next.Current().Style();
+      WritingModeConverter converter_next(
+          {style_next.GetWritingMode(), ResolvedDirection(next)},
+          next.Current().Size());
+      cursor_inline_size = ComputeCharacterWidthAtOffset(next, 0, style_next);
+      cursor_block_size =
+          converter_next.ToLogical(next.Current().Size()).block_size;
+      switch (style.GetWritingMode()) {
+        case WritingMode::kHorizontalTb:
+          cursor_block_offset =
+              next.Current().OffsetInContainerFragment().top -
+              cursor.Current().OffsetInContainerFragment().top;
+          break;
+        case WritingMode::kVerticalRl:
+        case WritingMode::kVerticalLr:
+        case WritingMode::kSidewaysRl:
+        case WritingMode::kSidewaysLr:
+          cursor_block_offset =
+              next.Current().OffsetInContainerFragment().left -
+              cursor.Current().OffsetInContainerFragment().left;
+          break;
+      }
+    } else {
+      // If there is no visible character after the insertion point, the UA must
+      // render the caret after the last visible character.
+      cursor_inline_size = ComputeCharacterWidthAtOffset(
+          cursor, offset - cursor.Current().TextStartOffset() - 1, style);
+    }
+  }
+  caret_rect.offset.block_offset = cursor_block_offset;
+
+  if (caret_shape == CaretShape::kBlock) {
+    caret_rect.size.block_size = cursor_block_size;
+    caret_rect.size.inline_size = cursor_inline_size;
+  } else {
+    caret_rect.size.block_size = caret_width;
+    caret_rect.size.inline_size = cursor_inline_size;
+    if (!IsFlippedLinesWritingMode(style.GetWritingMode())) {
+      caret_rect.offset.block_offset += cursor_block_size - caret_width;
+    }
+  }
+  return caret_rect;
+}
+
+LogicalRect ComputeLogicalCaretRectAtTextOffset(const InlineCursor& cursor,
+                                                unsigned offset,
+                                                CaretShape caret_shape) {
   DCHECK(cursor.Current().IsText());
   DCHECK_GE(offset, cursor.Current().TextStartOffset());
   DCHECK_LE(offset, cursor.Current().TextEndOffset());
 
   const LocalFrameView* frame_view =
       cursor.Current().GetLayoutObject()->GetDocument().View();
-  LayoutUnit caret_width = frame_view->CaretWidth();
+  LayoutUnit caret_width = frame_view->BarCaretWidth();
 
+  const ComputedStyle& style = cursor.Current().Style();
+
+  WritingModeConverter converter({style.GetWritingMode(), TextDirection::kLtr},
+                                 cursor.Current().Size());
+  LogicalRect caret_rect;
+  LayoutUnit cursor_block_size =
+      converter.ToLogical(cursor.Current().Size()).block_size;
+  if (caret_shape != CaretShape::kBar) [[unlikely]] {
+    // Get the width of the "next" character, or width of the last visible
+    // character if there is no visible next character.
+    caret_rect = ComputeNextCharacterLogicalRect(cursor, offset, caret_shape);
+  } else {
+    caret_rect.size.inline_size = caret_width;
+    caret_rect.size.block_size = cursor_block_size;
+  }
+
+  LayoutUnit caret_left = cursor.CaretInlinePositionForOffset(offset);
+  if (cursor.CurrentItem()->IsSvgText()) {
+    caret_left /= cursor.CurrentItem()->SvgScalingFactor();
+  }
+  if (!cursor.Current().IsLineBreak() && caret_shape == CaretShape::kBar) {
+    caret_left -= caret_width / 2;
+  }
+
+  caret_rect.offset.inline_offset = caret_left;
+
+  if (caret_shape == CaretShape::kBlock ||
+      caret_shape == CaretShape::kUnderscore) {
+    if (!IsLtr(ResolvedDirection(cursor))) {
+      caret_rect.offset.inline_offset =
+          caret_left - caret_rect.size.inline_size;
+    }
+  }
+
+  return caret_rect;
+}
+
+PhysicalRect ComputeLocalCaretRectAtTextOffset(const InlineCursor& cursor,
+                                               unsigned offset,
+                                               CaretShape caret_shape) {
+  const LocalFrameView* frame_view =
+      cursor.Current().GetLayoutObject()->GetFrameView();
+  LayoutUnit caret_width = frame_view->BarCaretWidth();
   const ComputedStyle& style = cursor.Current().Style();
   const bool is_horizontal = style.IsHorizontalWritingMode();
 
-  LayoutUnit caret_height = is_horizontal ? cursor.Current().Size().height
-                                          : cursor.Current().Size().width;
-  LayoutUnit caret_top;
-
-  LayoutUnit caret_left = cursor.CaretInlinePositionForOffset(offset);
-  if (!cursor.Current().IsLineBreak())
-    caret_left -= caret_width / 2;
-
-  if (!is_horizontal) {
-    std::swap(caret_top, caret_left);
-    std::swap(caret_width, caret_height);
-  }
+  WritingModeConverter converter({style.GetWritingMode(), TextDirection::kLtr},
+                                 cursor.Current().Size());
+  LogicalRect caret_rect =
+      ComputeLogicalCaretRectAtTextOffset(cursor, offset, caret_shape);
+  PhysicalRect physical_caret_rect = converter.ToPhysical(caret_rect);
 
   // Adjust the location to be relative to the inline formatting context.
-  PhysicalOffset caret_location = PhysicalOffset(caret_left, caret_top) +
-                                  cursor.Current().OffsetInContainerFragment();
+  PhysicalOffset caret_location =
+      physical_caret_rect.offset + cursor.Current().OffsetInContainerFragment();
   const auto* const text_combine = DynamicTo<LayoutTextCombine>(
       cursor.Current().GetLayoutObject()->Parent());
-  if (UNLIKELY(text_combine)) {
+  if (text_combine) [[unlikely]] {
     caret_location =
         text_combine->AdjustOffsetForLocalCaretRect(caret_location);
+    if (caret_shape != CaretShape::kBar) {
+      physical_caret_rect =
+          text_combine->AdjustRectForBoundingBox(physical_caret_rect);
+    }
   }
-  const PhysicalSize caret_size(caret_width, caret_height);
 
   const PhysicalBoxFragment& fragment = cursor.ContainerFragment();
   InlineCursor line_box(cursor);
@@ -176,26 +263,152 @@ PhysicalRect ComputeLocalCaretRectAtTextOffset(const InlineCursor& cursor,
       caret_location.left =
           ClampAndRound(caret_location.left, line_box_rect.X(), right_limit);
     }
-    return PhysicalRect(caret_location, caret_size);
+    return PhysicalRect(caret_location, physical_caret_rect.size);
   }
 
   // Similar adjustment and rounding for vertical text.
   const LayoutUnit min_y = std::min(LayoutUnit(), line_box_offset.top);
   const LayoutUnit bottom_limit =
-      std::max(fragment.Size().height, line_box_rect.Bottom()) - caret_height;
+      std::max(fragment.Size().height, line_box_rect.Bottom()) - caret_width;
   caret_location.top = ClampAndRound(caret_location.top, min_y, bottom_limit);
-  return PhysicalRect(caret_location, caret_size);
+  return PhysicalRect(caret_location, physical_caret_rect.size);
+}
+
+PhysicalRect ComputeLocalCaretRectByBoxSide(
+    const InlineCursor& cursor,
+    InlineCaretPositionType position_type,
+    CaretShape caret_shape) {
+  InlineCursor line_box(cursor);
+  line_box.MoveToContainingLine();
+  DCHECK(line_box);
+  bool is_atomic_inline = cursor.Current().IsAtomicInline();
+  // RTL is handled manually at the bottom of this function.
+  WritingModeConverter converter(
+      {cursor.Current().Style().GetWritingMode(), TextDirection::kLtr},
+      is_atomic_inline ? cursor.Current().Size()
+                       : cursor.ContainerFragment().Size());
+  LogicalRect line_rect =
+      converter.ToLogical(line_box.Current().RectInContainerFragment());
+  LogicalRect item_rect =
+      converter.ToLogical(cursor.Current().RectInContainerFragment());
+
+  LogicalRect caret_rect;
+  caret_rect.size.block_size = line_rect.size.block_size;
+  // The block-start of the caret is always the block-start of the line.
+  caret_rect.offset.block_offset = line_rect.offset.block_offset;
+  if (is_atomic_inline) {
+    // For atomic-inline, this function should return a rectangle relative to
+    // the atomic-inline.
+    caret_rect.offset.block_offset -= item_rect.offset.block_offset;
+  }
+
+  const LocalFrameView* frame_view =
+      cursor.Current().GetLayoutObject()->GetDocument().View();
+  caret_rect.size.inline_size = frame_view->BarCaretWidth();
+
+  const bool is_ltr = IsLtr(ResolvedDirection(cursor));
+  if (!is_atomic_inline) {
+    caret_rect.offset.inline_offset = item_rect.offset.inline_offset;
+  }
+  if (is_ltr != (position_type == InlineCaretPositionType::kBeforeBox)) {
+    caret_rect.offset.inline_offset +=
+        item_rect.size.inline_size - caret_rect.size.inline_size;
+  }
+
+  if (caret_shape != CaretShape::kBar) [[unlikely]] {
+    if (position_type == InlineCaretPositionType::kAfterBox) {
+      auto next = cursor;
+      if (!IsLtr(ResolvedDirection(cursor))) {
+        next.MoveToPrevious();
+      } else {
+        next.MoveToNext();
+      }
+      if (next && next.Current().IsText()) {
+        LogicalSize text_caret_size =
+            ComputeLogicalCaretRectAtTextOffset(
+                next, next.Current().TextStartOffset(), caret_shape)
+                .size;
+        switch (next.Current().Style().GetWritingMode()) {
+          case WritingMode::kHorizontalTb:
+            caret_rect.offset.block_offset +=
+                caret_rect.size.block_size - text_caret_size.block_size;
+            break;
+          case WritingMode::kVerticalLr:
+          case WritingMode::kVerticalRl:
+            if (caret_shape == CaretShape::kBlock) {
+              caret_rect.offset.block_offset +=
+                  (caret_rect.size.block_size - text_caret_size.block_size) / 2;
+            } else {
+              if (next.Current().Style().GetWritingMode() ==
+                  WritingMode::kVerticalLr) {
+                caret_rect.offset.block_offset +=
+                    (caret_rect.size.block_size - next.Current().Size().width) /
+                    2;
+              } else {
+                caret_rect.offset.block_offset +=
+                    (caret_rect.size.block_size + next.Current().Size().width) /
+                        2 -
+                    text_caret_size.block_size;
+              }
+            }
+            break;
+          case WritingMode::kSidewaysRl:
+          case WritingMode::kSidewaysLr:
+            // Get the half-way difference for block_size between line_rect and
+            // item_rect.
+            LayoutUnit adjusted_offset =
+                (caret_rect.size.block_size - item_rect.size.block_size) / 2;
+            if (caret_shape == CaretShape::kBlock) {
+              caret_rect.offset.block_offset += caret_rect.size.block_size -
+                                                text_caret_size.block_size -
+                                                adjusted_offset;
+            } else {
+              caret_rect.offset.block_offset +=
+                  caret_rect.size.block_size - adjusted_offset;
+            }
+            break;
+        }
+        caret_rect.size = text_caret_size;
+      }
+    }
+  }
+
+  return converter.ToPhysical(caret_rect);
 }
 
 }  // namespace
 
-LocalCaretRect ComputeLocalCaretRect(
-    const InlineCaretPosition& caret_position) {
+CaretShape GetCaretShapeFromComputedStyle(const ComputedStyle& style) {
+  CaretShape caret_shape = CaretShape::kBar;
+  if (RuntimeEnabledFeatures::CSSCaretShapeEnabled()) {
+    switch (style.CaretShape()) {
+      case ECaretShape::kAuto:
+      case ECaretShape::kBar:
+        caret_shape = CaretShape::kBar;
+        break;
+      case ECaretShape::kBlock:
+        caret_shape = CaretShape::kBlock;
+        break;
+      case ECaretShape::kUnderscore:
+        caret_shape = CaretShape::kUnderscore;
+        break;
+    }
+  }
+  return caret_shape;
+}
+
+LocalCaretRect ComputeLocalCaretRect(const InlineCaretPosition& caret_position,
+                                     CaretShape caret_shape) {
   if (caret_position.IsNull())
     return LocalCaretRect();
 
   const LayoutObject* const layout_object =
       caret_position.cursor.Current().GetLayoutObject();
+  // Care-shape applies to text or elements that accept text input.
+  const Node* node = layout_object->GetNode();
+  if (!node || !IsEditable(*node)) {
+    caret_shape = CaretShape::kBar;
+  }
   const PhysicalBoxFragment& container_fragment =
       caret_position.cursor.ContainerFragment();
   switch (caret_position.position_type) {
@@ -203,25 +416,25 @@ LocalCaretRect ComputeLocalCaretRect(
     case InlineCaretPositionType::kAfterBox: {
       DCHECK(!caret_position.cursor.Current().IsText());
       const PhysicalRect fragment_local_rect = ComputeLocalCaretRectByBoxSide(
-          caret_position.cursor, caret_position.position_type);
+          caret_position.cursor, caret_position.position_type, caret_shape);
       return {layout_object, fragment_local_rect, &container_fragment};
     }
     case InlineCaretPositionType::kAtTextOffset: {
       DCHECK(caret_position.cursor.Current().IsText());
       DCHECK(caret_position.text_offset.has_value());
       const PhysicalRect caret_rect = ComputeLocalCaretRectAtTextOffset(
-          caret_position.cursor, *caret_position.text_offset);
+          caret_position.cursor, *caret_position.text_offset, caret_shape);
       return {layout_object, caret_rect, &container_fragment};
     }
   }
 
   NOTREACHED();
-  return {layout_object, PhysicalRect()};
 }
 
 LocalCaretRect ComputeLocalSelectionRect(
     const InlineCaretPosition& caret_position) {
-  const LocalCaretRect caret_rect = ComputeLocalCaretRect(caret_position);
+  const LocalCaretRect caret_rect =
+      ComputeLocalCaretRect(caret_position, CaretShape::kBar);
   if (!caret_rect.layout_object)
     return caret_rect;
 
@@ -241,6 +454,12 @@ LocalCaretRect ComputeLocalSelectionRect(
   }
   return {caret_rect.layout_object, rect,
           &caret_position.cursor.ContainerFragment()};
+}
+
+LogicalRect GetCaretRectAtTextOffset(const InlineCursor& cursor,
+                                     unsigned text_offset,
+                                     CaretShape caret_shape) {
+  return ComputeLogicalCaretRectAtTextOffset(cursor, text_offset, caret_shape);
 }
 
 }  // namespace blink

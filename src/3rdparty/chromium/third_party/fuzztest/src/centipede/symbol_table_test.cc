@@ -19,7 +19,7 @@
 
 #include "gtest/gtest.h"
 
-namespace centipede {
+namespace fuzztest::internal {
 namespace {
 
 TEST(SymbolTableTest, SerializesAndDeserializesCorrectly) {
@@ -57,5 +57,15 @@ TEST(SymbolTableTest, SerializesAndDeserializesCorrectlyWithUnknownFile) {
   EXPECT_EQ(input, output_stream.str());
 }
 
+TEST(SymbolTableTest, SerializesEmptyOutput) {
+  std::string input =
+      R"(
+)";
+  std::istringstream input_stream(input);
+  SymbolTable symbol_table;
+
+  symbol_table.ReadFromLLVMSymbolizer(input_stream);
+}
+
 }  // namespace
-}  // namespace centipede
+}  // namespace fuzztest::internal

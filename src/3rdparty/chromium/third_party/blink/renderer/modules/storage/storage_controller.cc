@@ -53,15 +53,13 @@ StorageController* StorageController::GetInstance() {
 // static
 bool StorageController::CanAccessStorageArea(LocalFrame* frame,
                                              StorageArea::StorageType type) {
-  if (auto* settings_client = frame->GetContentSettingsClient()) {
-    switch (type) {
-      case StorageArea::StorageType::kLocalStorage:
-        return settings_client->AllowStorageAccessSync(
-            WebContentSettingsClient::StorageType::kLocalStorage);
-      case StorageArea::StorageType::kSessionStorage:
-        return settings_client->AllowStorageAccessSync(
-            WebContentSettingsClient::StorageType::kSessionStorage);
-    }
+  switch (type) {
+    case StorageArea::StorageType::kLocalStorage:
+      return frame->AllowStorageAccessSyncAndNotify(
+          WebContentSettingsClient::StorageType::kLocalStorage);
+    case StorageArea::StorageType::kSessionStorage:
+      return frame->AllowStorageAccessSyncAndNotify(
+          WebContentSettingsClient::StorageType::kSessionStorage);
   }
   return true;
 }
@@ -69,7 +67,7 @@ bool StorageController::CanAccessStorageArea(LocalFrame* frame,
 StorageController::StorageController(DomStorageConnection connection,
                                      size_t total_cache_limit)
     : namespaces_(MakeGarbageCollected<
-                  HeapHashMap<String, WeakMember<StorageNamespace>>>()),
+                  GCedHeapHashMap<String, WeakMember<StorageNamespace>>>()),
       total_cache_limit_(total_cache_limit),
       dom_storage_remote_(std::move(connection.dom_storage_remote)) {
   // May be null in tests.
@@ -143,13 +141,18 @@ void StorageController::EnsureLocalStorageNamespaceCreated() {
   local_storage_namespace_ = MakeGarbageCollected<StorageNamespace>(this);
 }
 
-void StorageController::ResetStorageAreaAndNamespaceConnections() {
+void StorageController::ResetSessionStorageConnections() {
   for (auto& ns : *namespaces_) {
-    if (ns.value)
+    if (ns.value) {
       ns.value->ResetStorageAreaAndNamespaceConnections();
+    }
   }
-  if (local_storage_namespace_)
+}
+
+void StorageController::ResetLocalStorageConnections() {
+  if (local_storage_namespace_) {
     local_storage_namespace_->ResetStorageAreaAndNamespaceConnections();
+  }
 }
 
 }  // namespace blink

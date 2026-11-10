@@ -15,131 +15,44 @@
  */
 #include "src/trace_processor/importers/proto/statsd_module.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "perfetto/base/logging.h"
+#include "perfetto/base/status.h"
 #include "perfetto/ext/base/string_utils.h"
+#include "perfetto/ext/base/string_view.h"
+#include "perfetto/protozero/field.h"
+#include "perfetto/protozero/proto_decoder.h"
+#include "perfetto/protozero/proto_utils.h"
 #include "perfetto/protozero/scattered_heap_buffer.h"
+#include "perfetto/trace_processor/ref_counted.h"
+#include "perfetto/trace_processor/trace_blob.h"
 #include "protos/perfetto/trace/statsd/statsd_atom.pbzero.h"
 #include "protos/perfetto/trace/trace_packet.pbzero.h"
-#include "src/trace_processor/importers/common/async_track_set_tracker.h"
+#include "src/trace_processor/importers/common/args_tracker.h"
+#include "src/trace_processor/importers/common/parser_types.h"
 #include "src/trace_processor/importers/common/slice_tracker.h"
 #include "src/trace_processor/importers/common/track_tracker.h"
-#include "src/trace_processor/importers/proto/packet_sequence_state.h"
+#include "src/trace_processor/importers/common/tracks.h"
+#include "src/trace_processor/importers/proto/args_parser.h"
+#include "src/trace_processor/importers/proto/atoms.descriptor.h"
+#include "src/trace_processor/importers/proto/packet_sequence_state_generation.h"
+#include "src/trace_processor/importers/proto/proto_importer_module.h"
 #include "src/trace_processor/sorter/trace_sorter.h"
 #include "src/trace_processor/storage/stats.h"
 #include "src/trace_processor/storage/trace_storage.h"
 #include "src/trace_processor/util/descriptors.h"
+#include "src/trace_processor/util/proto_to_args_parser.h"
 
-#include "src/trace_processor/importers/proto/atoms.descriptor.h"
-
-namespace perfetto {
-namespace trace_processor {
+namespace perfetto::trace_processor {
 namespace {
 
 constexpr const char* kAtomProtoName = ".android.os.statsd.Atom";
-
-using BoundInserter = ArgsTracker::BoundInserter;
-
-class InserterDelegate : public util::ProtoToArgsParser::Delegate {
- public:
-  InserterDelegate(BoundInserter& inserter, TraceStorage& storage)
-      : inserter_(inserter), storage_(storage) {}
-  ~InserterDelegate() override = default;
-
-  using Key = util::ProtoToArgsParser::Key;
-
-  void AddInteger(const Key& key, int64_t value) override {
-    StringId flat_key_id =
-        storage_.InternString(base::StringView(key.flat_key));
-    StringId key_id = storage_.InternString(base::StringView(key.key));
-    Variadic variadic_val = Variadic::Integer(value);
-    inserter_.AddArg(flat_key_id, key_id, variadic_val);
-  }
-
-  void AddUnsignedInteger(const Key& key, uint64_t value) override {
-    StringId flat_key_id =
-        storage_.InternString(base::StringView(key.flat_key));
-    StringId key_id = storage_.InternString(base::StringView(key.key));
-    Variadic variadic_val = Variadic::UnsignedInteger(value);
-    inserter_.AddArg(flat_key_id, key_id, variadic_val);
-  }
-
-  void AddString(const Key& key, const protozero::ConstChars& value) override {
-    StringId flat_key_id =
-        storage_.InternString(base::StringView(key.flat_key));
-    StringId key_id = storage_.InternString(base::StringView(key.key));
-    Variadic variadic_val = Variadic::String(storage_.InternString(value));
-    inserter_.AddArg(flat_key_id, key_id, variadic_val);
-  }
-
-  void AddString(const Key& key, const std::string& value) override {
-    StringId flat_key_id =
-        storage_.InternString(base::StringView(key.flat_key));
-    StringId key_id = storage_.InternString(base::StringView(key.key));
-    Variadic variadic_val =
-        Variadic::String(storage_.InternString(base::StringView(value)));
-    inserter_.AddArg(flat_key_id, key_id, variadic_val);
-  }
-
-  void AddDouble(const Key& key, double value) override {
-    StringId flat_key_id =
-        storage_.InternString(base::StringView(key.flat_key));
-    StringId key_id = storage_.InternString(base::StringView(key.key));
-    Variadic variadic_val = Variadic::Real(value);
-    inserter_.AddArg(flat_key_id, key_id, variadic_val);
-  }
-
-  void AddPointer(const Key& key, const void* value) override {
-    StringId flat_key_id =
-        storage_.InternString(base::StringView(key.flat_key));
-    StringId key_id = storage_.InternString(base::StringView(key.key));
-    Variadic variadic_val =
-        Variadic::Pointer(reinterpret_cast<uintptr_t>(value));
-    inserter_.AddArg(flat_key_id, key_id, variadic_val);
-  }
-
-  void AddBoolean(const Key& key, bool value) override {
-    StringId flat_key_id =
-        storage_.InternString(base::StringView(key.flat_key));
-    StringId key_id = storage_.InternString(base::StringView(key.key));
-    Variadic variadic_val = Variadic::Boolean(value);
-    inserter_.AddArg(flat_key_id, key_id, variadic_val);
-  }
-
-  bool AddJson(const Key&, const protozero::ConstChars&) override {
-    PERFETTO_FATAL("Unexpected JSON value when parsing statsd data");
-  }
-
-  void AddNull(const Key& key) override {
-    StringId flat_key_id =
-        storage_.InternString(base::StringView(key.flat_key));
-    StringId key_id = storage_.InternString(base::StringView(key.key));
-    Variadic variadic_val = Variadic::Null();
-    inserter_.AddArg(flat_key_id, key_id, variadic_val);
-  }
-
-  size_t GetArrayEntryIndex(const std::string& array_key) override {
-    base::ignore_result(array_key);
-    return 0;
-  }
-
-  size_t IncrementArrayEntryIndex(const std::string& array_key) override {
-    base::ignore_result(array_key);
-    return 0;
-  }
-
-  PacketSequenceStateGeneration* seq_state() override { return nullptr; }
-
- protected:
-  InternedMessageView* GetInternedMessageView(uint32_t field_id,
-                                              uint64_t iid) override {
-    base::ignore_result(field_id);
-    base::ignore_result(iid);
-    return nullptr;
-  }
-
- private:
-  BoundInserter& inserter_;
-  TraceStorage& storage_;
-};
 
 // If we don't know about the atom format put whatever details we
 // can. This has the following restrictions:
@@ -194,32 +107,26 @@ base::Status ParseGenericEvent(const protozero::ConstBytes& cb,
 using perfetto::protos::pbzero::StatsdAtom;
 using perfetto::protos::pbzero::TracePacket;
 
-PoolAndDescriptor::PoolAndDescriptor(const uint8_t* data,
-                                     size_t size,
-                                     const char* name) {
-  pool_.AddFromFileDescriptorSet(data, size);
-  std::optional<uint32_t> opt_idx = pool_.FindDescriptorIdx(name);
-  if (opt_idx.has_value()) {
-    descriptor_ = &pool_.descriptors()[opt_idx.value()];
-  }
-}
-
-PoolAndDescriptor::~PoolAndDescriptor() = default;
-
 StatsdModule::StatsdModule(TraceProcessorContext* context)
-    : context_(context),
-      pool_(kAtomsDescriptor.data(), kAtomsDescriptor.size(), kAtomProtoName),
-      args_parser_(*(pool_.pool())) {
+    : context_(context), args_parser_(*context_->descriptor_pool_) {
   RegisterForField(TracePacket::kStatsdAtomFieldNumber, context);
+  context_->descriptor_pool_->AddFromFileDescriptorSet(kAtomsDescriptor.data(),
+                                                       kAtomsDescriptor.size());
+  if (auto i = context_->descriptor_pool_->FindDescriptorIdx(kAtomProtoName)) {
+    descriptor_idx_ = *i;
+  } else {
+    PERFETTO_FATAL("Failed to find descriptor for %s", kAtomProtoName);
+  }
 }
 
 StatsdModule::~StatsdModule() = default;
 
-ModuleResult StatsdModule::TokenizePacket(const TracePacket::Decoder& decoder,
-                                          TraceBlobView* /*packet*/,
-                                          int64_t packet_timestamp,
-                                          PacketSequenceState* state,
-                                          uint32_t field_id) {
+ModuleResult StatsdModule::TokenizePacket(
+    const TracePacket::Decoder& decoder,
+    TraceBlobView* /*packet*/,
+    int64_t packet_timestamp,
+    RefPtr<PacketSequenceStateGeneration> state,
+    uint32_t field_id) {
   if (field_id != TracePacket::kStatsdAtomFieldNumber) {
     return ModuleResult::Ignored();
   }
@@ -245,9 +152,9 @@ ModuleResult StatsdModule::TokenizePacket(const TracePacket::Decoder& decoder,
     std::vector<uint8_t> vec = forged.SerializeAsArray();
     TraceBlob blob = TraceBlob::CopyFrom(vec.data(), vec.size());
 
-    context_->sorter->PushTracePacket(atom_timestamp,
-                                      state->current_generation(),
-                                      TraceBlobView(std::move(blob)));
+    context_->sorter->PushTracePacket(atom_timestamp, state,
+                                      TraceBlobView(std::move(blob)),
+                                      context_->machine_id());
   }
 
   return ModuleResult::Handled();
@@ -284,53 +191,50 @@ void StatsdModule::ParseAtom(int64_t ts, protozero::ConstBytes nested_bytes) {
     nested_field_id = field.id();
   }
   StringId atom_name = GetAtomName(nested_field_id);
+  context_->slice_tracker->Scoped(
+      ts, InternTrackId(), kNullStringId, atom_name, 0,
+      [&](ArgsTracker::BoundInserter* inserter) {
+        ArgsParser delegate(ts, *inserter, *context_->storage);
 
-  AsyncTrackSetTracker::TrackSetId track_set = InternAsyncTrackSetId();
-  TrackId track = context_->async_track_set_tracker->Scoped(track_set, ts, 0);
-  std::optional<SliceId> opt_slice =
-      context_->slice_tracker->Scoped(ts, track, kNullStringId, atom_name, 0);
-  if (!opt_slice) {
-    return;
-  }
-  SliceId slice = opt_slice.value();
-  auto inserter = context_->args_tracker->AddArgsTo(slice);
-  InserterDelegate delegate(inserter, *context_->storage.get());
+        const auto& descriptor =
+            context_->descriptor_pool_->descriptors()[descriptor_idx_];
+        const auto& field_it = descriptor.fields().find(nested_field_id);
+        base::Status status;
 
-  const auto& fields = pool_.descriptor()->fields();
-  const auto& field_it = fields.find(nested_field_id);
-  base::Status status;
+        if (field_it == descriptor.fields().end()) {
+          /// Field ids 100000 and over are OEM atoms - we can't have the
+          // descriptor for them so don't report errors. See:
+          // https://cs.android.com/android/platform/superproject/main/+/main:frameworks/proto_logging/stats/atoms.proto;l=1290;drc=a34b11bfebe897259a0340a59f1793ae2dffd762
+          if (nested_field_id < 100000) {
+            context_->storage->IncrementStats(stats::atom_unknown);
+          }
 
-  if (field_it == fields.end()) {
-    /// Field ids 100000 and over are OEM atoms - we can't have the
-    // descriptor for them so don't report errors. See:
-    // https://cs.android.com/android/platform/superproject/main/+/main:frameworks/proto_logging/stats/atoms.proto;l=1290;drc=a34b11bfebe897259a0340a59f1793ae2dffd762
-    if (nested_field_id < 100000) {
-      context_->storage->IncrementStats(stats::atom_unknown);
-    }
+          status = ParseGenericEvent(field.as_bytes(), delegate);
+        } else {
+          status = args_parser_.ParseMessage(nested_bytes, kAtomProtoName,
+                                             nullptr /* parse all fields */,
+                                             delegate);
+        }
 
-    status = ParseGenericEvent(field.as_bytes(), delegate);
-  } else {
-    status = args_parser_.ParseMessage(
-        nested_bytes, kAtomProtoName, nullptr /* parse all fields */, delegate);
-  }
-
-  if (!status.ok()) {
-    context_->storage->IncrementStats(stats::atom_unknown);
-  }
+        if (!status.ok()) {
+          context_->storage->IncrementStats(stats::atom_unknown);
+        }
+      });
 }
 
 StringId StatsdModule::GetAtomName(uint32_t atom_field_id) {
   StringId* cached_name = atom_names_.Find(atom_field_id);
   if (cached_name == nullptr) {
-    if (pool_.descriptor() == nullptr) {
+    if (!descriptor_idx_) {
       context_->storage->IncrementStats(stats::atom_unknown);
       return context_->storage->InternString("Could not load atom descriptor");
     }
 
+    const auto& descriptor =
+        context_->descriptor_pool_->descriptors()[descriptor_idx_];
     StringId name_id;
-    const auto& fields = pool_.descriptor()->fields();
-    const auto& field_it = fields.find(atom_field_id);
-    if (field_it == fields.end()) {
+    const auto& field_it = descriptor.fields().find(atom_field_id);
+    if (field_it == descriptor.fields().end()) {
       base::StackString<255> name("atom_%u", atom_field_id);
       name_id = context_->storage->InternString(name.string_view());
     } else {
@@ -343,14 +247,14 @@ StringId StatsdModule::GetAtomName(uint32_t atom_field_id) {
   return *cached_name;
 }
 
-AsyncTrackSetTracker::TrackSetId StatsdModule::InternAsyncTrackSetId() {
-  if (!track_set_id_) {
-    StringId name = context_->storage->InternString("Statsd Atoms");
-    track_set_id_ =
-        context_->async_track_set_tracker->InternGlobalTrackSet(name);
+TrackId StatsdModule::InternTrackId() {
+  if (!track_id_) {
+    static constexpr auto kBlueprint =
+        tracks::SliceBlueprint("statsd_atoms", tracks::DimensionBlueprints(),
+                               tracks::StaticNameBlueprint("Statsd Atoms"));
+    track_id_ = context_->track_tracker->InternTrack(kBlueprint);
   }
-  return track_set_id_.value();
+  return *track_id_;
 }
 
-}  // namespace trace_processor
-}  // namespace perfetto
+}  // namespace perfetto::trace_processor

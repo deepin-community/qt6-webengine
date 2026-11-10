@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-igemm/MRx16c8-avx512skx.c.in
 //   Generator: tools/xngen
@@ -8,12 +9,16 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <immintrin.h>
 
-#include <xnnpack/igemm.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/math.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/igemm.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
 
 
 void xnn_qd8_f32_qc8w_igemm_minmax_ukernel_8x16c8__avx512skx(
@@ -29,8 +34,8 @@ void xnn_qd8_f32_qc8w_igemm_minmax_ukernel_8x16c8__avx512skx(
     size_t a_offset,
     const int8_t* zero,
     const int8_t* zero_data,
-    const union xnn_f32_minmax_params params[restrict XNN_MIN_ELEMENTS(1)],
-    const struct xnn_qd8_quantization_params quantization_params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f32_minmax_params* restrict params,
+    const struct xnn_qd8_quantization_params* restrict quantization_params) XNN_OOB_READS
 {
   assert(mr != 0);
   assert(mr <= 8);
@@ -77,6 +82,10 @@ void xnn_qd8_f32_qc8w_igemm_minmax_ukernel_8x16c8__avx512skx(
   const __m512 vinput_inv_scale = _mm512_set1_ps(quantization_params->inv_scale);
   const __m512 voutput_min = _mm512_set1_ps(params->scalar.min);
   const __m512 voutput_max = _mm512_set1_ps(params->scalar.max);
+  // XNN_FORCE_REALIZATION(vinput_zero_point);
+  // XNN_FORCE_REALIZATION(vinput_inv_scale);
+  // XNN_FORCE_REALIZATION(voutput_min);
+  // XNN_FORCE_REALIZATION(voutput_max);
   do {
     const __m512i vksum0123 = _mm512_maskz_expandloadu_epi32(vbias_mask, w);
     const __m512i vksum4567 = _mm512_maskz_expandloadu_epi32(vbias_mask, (const int32_t*) w + 4);
@@ -319,7 +328,7 @@ void xnn_qd8_f32_qc8w_igemm_minmax_ukernel_8x16c8__avx512skx(
     vscaled6x0123456789ABCDEF = _mm512_min_ps(vscaled6x0123456789ABCDEF, voutput_max);
     vscaled7x0123456789ABCDEF = _mm512_min_ps(vscaled7x0123456789ABCDEF, voutput_max);
 
-    if(nc >= 16) {
+    if XNN_LIKELY(nc >= 16) {
       _mm512_storeu_ps(c7, vscaled7x0123456789ABCDEF);
       c7 = (float*) ((uintptr_t) c7 + cn_stride);
       _mm512_storeu_ps(c6, vscaled6x0123456789ABCDEF);

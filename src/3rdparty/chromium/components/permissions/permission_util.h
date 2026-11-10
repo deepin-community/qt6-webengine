@@ -11,12 +11,14 @@
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #if !BUILDFLAG(IS_QTWEBENGINE)
+#include "components/permissions/permission_decision.h"
 #include "components/permissions/permission_prompt.h"
+#include "components/permissions/permission_uma_util.h"
 #endif
 #include "content/public/browser/permission_result.h"
 #include "components/permissions/permission_request_enums.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-forward.h"
 #include "third_party/blink/public/mojom/permissions/permission_status.mojom.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom-forward.h"
 
 namespace blink {
 enum class PermissionType;
@@ -31,6 +33,7 @@ class GURL;
 
 namespace permissions {
 class PermissionRequest;
+struct PermissionRequestData;
 
 // This enum backs a UMA histogram, so it must be treated as append-only.
 enum class PermissionAction {
@@ -62,6 +65,16 @@ class PermissionUtil {
   static std::string GetPermissionString(ContentSettingsType);
 
 #if !BUILDFLAG(IS_QTWEBENGINE)
+  // Returns the request type uma value for the given permissions.
+  static RequestTypeForUma GetUmaValueForRequests(
+      const std::vector<std::unique_ptr<PermissionRequest>>& requests);
+
+  static RequestTypeForUma GetUmaValueForRequests(
+      const std::vector<base::WeakPtr<PermissionRequest>>& requests);
+
+  // Returns the request type uma value for the given request type.
+  static RequestTypeForUma GetUmaValueForRequestType(RequestType request_type);
+
   // Returns the gesture type corresponding to whether a permission request is
   // made with or without a user gesture.
   static PermissionRequestGestureType GetGestureType(bool user_gesture);
@@ -77,7 +90,7 @@ class PermissionUtil {
 
   // Returns the corresponding permissions policy feature to the given content
   // settings type, or nullopt if there is none.
-  static absl::optional<blink::mojom::PermissionsPolicyFeature>
+  static std::optional<network::mojom::PermissionsPolicyFeature>
   GetPermissionsPolicyFeature(ContentSettingsType type);
 
   // Checks whether the given ContentSettingsType is a permission. Use this
@@ -90,37 +103,68 @@ class PermissionUtil {
   // acceptance data)
   static bool IsLowPriorityPermissionRequest(const PermissionRequest* request);
 
+#if !BUILDFLAG(IS_QTWEBENGINE)
+  // Check whether the given permission request could prompt a secondary UI, it
+  // means:
+  // - The request is initiated from a permission element.
+  // - The request type is permission element supported type.
+  static bool ShouldCurrentRequestUsePermissionElementSecondaryUI(
+      PermissionPrompt::Delegate* delegate);
+#endif
+
   // Checks whether the given ContentSettingsType is a guard content setting,
   // meaning it does not support allow setting and toggles between "ask" and
   // "block" instead. This is primarily used for chooser-based permissions.
   static bool IsGuardContentSetting(ContentSettingsType type);
 
-  // Checks whether the given ContentSettingsType supports one time grants.
-  static bool CanPermissionBeAllowedOnce(ContentSettingsType type);
+  // Returns true if the permission for `type` can be granted for a short period
+  // of time. This means the following:
+  // - Permission prompts will have a button that is labeled along the lines of
+  //   "Allow this time".
+  // - The `permissions.query` API will report PermissionStatus.state as
+  //   "granted" within this short time window.
+  // - Subsequent requests to the permission-gated API in this time window will
+  //   succeed without user mediation.
+  static bool DoesSupportTemporaryGrants(ContentSettingsType type);
+
+  // For a permission `type` that `DoesSupportTemporaryGrants()`, returns true
+  // if that temporary grant is stored in the `OneTimePermissionProvider` in
+  // `HostContentSettingMap`, and false elsewhere.
+  static bool DoesStoreTemporaryGrantsInHcsm(ContentSettingsType type);
 
   // Returns the authoritative `embedding origin`, as a GURL, to be used for
   // permission decisions in `render_frame_host`.
-  // TODO(crbug.com/1327384): Remove this method when possible.
+  // TODO(crbug.com/40226169): Remove this method when possible.
   static GURL GetLastCommittedOriginAsURL(
       content::RenderFrameHost* render_frame_host);
 
-  // Helper method to convert `PermissionType` to `ContentSettingType`.
+  // Helper method to convert `PermissionType` to `ContentSettingsType`.
   // If `PermissionType` is not supported or found, returns
   // ContentSettingsType::DEFAULT.
-  static ContentSettingsType PermissionTypeToContentSettingTypeSafe(
+  static ContentSettingsType PermissionTypeToContentSettingsTypeSafe(
       blink::PermissionType permission);
 
-  // Helper method to convert `PermissionType` to `ContentSettingType`.
-  static ContentSettingsType PermissionTypeToContentSettingType(
+  // Helper method to convert `PermissionType` to `ContentSettingsType`.
+  static ContentSettingsType PermissionTypeToContentSettingsType(
       blink::PermissionType permission);
 
-  // Helper method to convert `ContentSettingType` to `PermissionType`.
-  static blink::PermissionType ContentSettingTypeToPermissionType(
+  // Helper method to convert `ContentSettingsType` to `PermissionType`.
+  static blink::PermissionType ContentSettingsTypeToPermissionType(
       ContentSettingsType permission);
 
   // Helper method to convert PermissionStatus to ContentSetting.
   static ContentSetting PermissionStatusToContentSetting(
       blink::mojom::PermissionStatus status);
+
+#if !BUILDFLAG(IS_QTWEBENGINE)
+  // Helper method to convert PermissionDecision to PermissionStatus.
+  static content::PermissionStatus PermissionDecisionToPermissionStatus(
+      PermissionDecision decision);
+
+  // Helper method to convert PermissionDecision to ContentSetting.
+  static ContentSetting PermissionDecisionToContentSetting(
+      PermissionDecision decision);
+#endif
 
   // Helper methods to convert ContentSetting to PermissionStatus and vice
   // versa.
@@ -159,7 +203,7 @@ class PermissionUtil {
   static bool HasUserGesture(PermissionPrompt::Delegate* delegate);
 
   static bool CanPermissionRequestIgnoreStatus(
-      const PermissionRequestData& request,
+      const std::unique_ptr<PermissionRequestData>& request,
       content::PermissionStatusSource source);
 #endif
 

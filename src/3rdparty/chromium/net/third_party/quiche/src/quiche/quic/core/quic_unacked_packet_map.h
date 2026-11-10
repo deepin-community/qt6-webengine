@@ -10,11 +10,13 @@
 
 #include "absl/container/inlined_vector.h"
 #include "absl/strings/str_cat.h"
+#include "quiche/quic/core/frames/quic_frame.h"
 #include "quiche/quic/core/quic_packets.h"
 #include "quiche/quic/core/quic_transmission_info.h"
 #include "quiche/quic/core/session_notifier_interface.h"
 #include "quiche/quic/platform/api/quic_export.h"
 #include "quiche/quic/platform/api/quic_flags.h"
+#include "quiche/common/platform/api/quiche_flags.h"
 #include "quiche/common/quiche_circular_deque.h"
 
 namespace quic {
@@ -45,13 +47,20 @@ class QUICHE_EXPORT QuicUnackedPacketMap {
                      bool set_in_flight, bool measure_rtt,
                      QuicEcnCodepoint ecn_codepoint);
 
+  const QuicTransmissionInfo& AddDispatcherSentPacket(
+      const DispatcherSentPacket& packet);
+
   // Returns true if the packet |packet_number| is unacked.
   bool IsUnacked(QuicPacketNumber packet_number) const;
 
-  // Notifies session_notifier that frames have been acked. Returns true if any
-  // new data gets acked, returns false otherwise.
-  bool NotifyFramesAcked(const QuicTransmissionInfo& info,
-                         QuicTime::Delta ack_delay, QuicTime receive_timestamp);
+  // Notifies session_notifier that frames in |packet_number| have been acked.
+  // Returns true if any new data gets acked, returns false otherwise.
+  // Note: The function may cause the QuicTransmissionInfo for |packet_number|
+  // to move, in that case, |info| will be updated to point to the new
+  // QuicTransmissionInfo when the function returns.
+  bool NotifyFramesAcked(QuicPacketNumber packet_number,
+                         QuicTime::Delta ack_delay, QuicTime receive_timestamp,
+                         QuicTransmissionInfo*& info);
 
   // Notifies session_notifier that frames in |info| are considered as lost.
   void NotifyFramesLost(const QuicTransmissionInfo& info,
@@ -183,13 +192,21 @@ class QUICHE_EXPORT QuicUnackedPacketMap {
   // Try to aggregate acked contiguous stream frames. For noncontiguous stream
   // frames or control frames, notify the session notifier they get acked
   // immediately.
-  void MaybeAggregateAckedStreamFrame(const QuicTransmissionInfo& info,
+  // Note: The function may cause the QuicTransmissionInfo for |packet_number|
+  // to move, in that case, |info| will be updated to point to the new
+  // QuicTransmissionInfo when the function returns.
+  void MaybeAggregateAckedStreamFrame(QuicPacketNumber packet_number,
                                       QuicTime::Delta ack_delay,
-                                      QuicTime receive_timestamp);
+                                      QuicTime receive_timestamp,
+                                      QuicTransmissionInfo*& info);
 
   // Notify the session notifier of any stream data aggregated in
   // aggregated_stream_frame_.  No effect if the stream frame has an invalid
   // stream id.
+  // Note: If the caller holds a reference to a QuicTransmissionInfo stored in
+  // unacked_packets_, the reference may be invalidated by this call, so after
+  // the call, caller should use GetTransmissionInfo() or
+  // GetMutableTransmissionInfo() to get a new reference.
   void NotifyAggregatedStreamFrameAcked(QuicTime::Delta ack_delay);
 
   // Returns packet number space that |packet_number| belongs to. Please use
@@ -242,9 +259,7 @@ class QUICHE_EXPORT QuicUnackedPacketMap {
     return supports_multiple_packet_number_spaces_;
   }
 
-  void ReserveInitialCapacity(size_t initial_capacity) {
-    unacked_packets_.reserve(initial_capacity);
-  }
+  void ReserveInitialCapacity(size_t initial_capacity);
 
   std::string DebugString() const {
     return absl::StrCat(
@@ -329,6 +344,9 @@ class QUICHE_EXPORT QuicUnackedPacketMap {
 
   // Latched value of the quic_simple_inflight_time flag.
   bool simple_inflight_time_;
+
+  bool maybe_copy_datagram_frames_ =
+      GetQuicReloadableFlag(quic_maybe_copy_datagram_frames);
 };
 
 }  // namespace quic

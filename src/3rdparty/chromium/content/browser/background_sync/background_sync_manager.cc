@@ -9,6 +9,7 @@
 
 #include "base/barrier_closure.h"
 #include "base/containers/contains.h"
+#include "base/debug/crash_logging.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
@@ -27,6 +28,7 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/permission_controller.h"
+#include "content/public/browser/permission_descriptor_util.h"
 #include "content/public/browser/render_process_host.h"
 #include "third_party/blink/public/common/permissions/permission_utils.h"
 #include "third_party/blink/public/common/service_worker/embedded_worker_status.h"
@@ -48,7 +50,7 @@ using SyncAndNotificationPermissions =
 
 namespace content {
 
-// TODO(crbug.com/932591): Use blink::mojom::BackgroundSyncError
+// TODO(crbug.com/40614176): Use blink::mojom::BackgroundSyncError
 // directly and eliminate these checks.
 #define COMPILE_ASSERT_MATCHING_ENUM(mojo_name, manager_name) \
   static_assert(static_cast<int>(blink::mojo_name) ==         \
@@ -135,13 +137,18 @@ SyncAndNotificationPermissions GetBackgroundSyncPermission(
 
   // The requesting origin always matches the embedding origin.
   auto sync_permission = permission_controller->GetPermissionStatusForWorker(
-      sync_type == BackgroundSyncType::ONE_SHOT
-          ? blink::PermissionType::BACKGROUND_SYNC
-          : blink::PermissionType::PERIODIC_BACKGROUND_SYNC,
+      content::PermissionDescriptorUtil::
+          CreatePermissionDescriptorForPermissionType(
+              sync_type == BackgroundSyncType::ONE_SHOT
+                  ? blink::PermissionType::BACKGROUND_SYNC
+                  : blink::PermissionType::PERIODIC_BACKGROUND_SYNC),
       render_process_host, origin);
   auto notification_permission =
       permission_controller->GetPermissionStatusForWorker(
-          blink::PermissionType::NOTIFICATIONS, render_process_host, origin);
+          content::PermissionDescriptorUtil::
+              CreatePermissionDescriptorForPermissionType(
+                  blink::PermissionType::NOTIFICATIONS),
+          render_process_host, origin);
   return {sync_permission, notification_permission};
 }
 
@@ -318,7 +325,10 @@ std::string GetEventStatusString(blink::ServiceWorkerStatusCode status_code) {
     case blink::ServiceWorkerStatusCode::kErrorTimeout:
       return "timeout";
     default:
-      NOTREACHED();
+      SCOPED_CRASH_KEY_NUMBER("BGSM", "status_code",
+                              static_cast<int>(status_code));
+      DUMP_WILL_BE_NOTREACHED()
+          << "status_code " << static_cast<int>(status_code);
       return "unknown error";
   }
 }
@@ -983,7 +993,7 @@ void BackgroundSyncManager::RegisterDidAskForPermission(
   registration.set_origin(origin);
   *registration.options() = std::move(options);
 
-  // TODO(crbug.com/963487): This section below is really confusing. Add a
+  // TODO(crbug.com/40627578): This section below is really confusing. Add a
   // comment explaining what's going on here, or annotate permission_statuses.
   registration.set_max_attempts(
       permission_statuses.second == PermissionStatus::GRANTED
@@ -1947,7 +1957,7 @@ void BackgroundSyncManager::FireReadyEventsImpl(
   }
 
   if (to_fire.empty()) {
-    // TODO(crbug.com/996166): Reschedule wakeup after a non-zero delay if
+    // TODO(crbug.com/40641360): Reschedule wakeup after a non-zero delay if
     // called from a wakeup task.
     if (reschedule)
       ScheduleOrCancelDelayedProcessing(sync_type);

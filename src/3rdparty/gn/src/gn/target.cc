@@ -6,6 +6,8 @@
 
 #include <stddef.h>
 
+#include <algorithm>
+
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -14,6 +16,7 @@
 #include "gn/deps_iterator.h"
 #include "gn/filesystem_utils.h"
 #include "gn/functions.h"
+#include "gn/rust_tool.h"
 #include "gn/scheduler.h"
 #include "gn/substitution_writer.h"
 #include "gn/tool.h"
@@ -23,6 +26,14 @@
 namespace {
 
 using ConfigSet = std::set<const Config*>;
+
+// Used to optimize the search for a target generating a given output file.
+// Keeps track of the last target and index where the file was found, so that
+// the next search can start from there.
+struct CheckSourceGeneratedCursor {
+  const Target* target = nullptr;
+  size_t index = 0;
+};
 
 // Merges the public configs from the given target to the given config list.
 void MergePublicConfigsFrom(const Target* from_target,
@@ -61,6 +72,29 @@ Err MakeTestOnlyError(const Item* from, const Item* to) {
           "Either mark it test-only or don't do this dependency.");
 }
 
+// Return true if |file| is a direct output of |target|. Uses |cursor| to speed
+// up consecutive calls to this function when files are checked in the same
+// order as a target's real outputs, which happens extremely often.
+bool HasDirectOutput(const Target* target,
+                     const OutputFile& file,
+                     CheckSourceGeneratedCursor* cursor) {
+  const auto& computed_outputs = target->computed_outputs();
+  size_t start_index = target == cursor->target ? cursor->index + 1 : 0;
+  size_t count = computed_outputs.size();
+
+  for (size_t i = 0; i < count; ++i) {
+    size_t idx = (start_index + i) % count;
+
+    const auto& cur = computed_outputs[idx];
+    if (file == cur) {
+      cursor->target = target;
+      cursor->index = idx;
+      return true;
+    }
+  }
+  return false;
+}
+
 // Set check_private_deps to true for the first invocation since a target
 // can see all of its dependencies. For recursive invocations this will be set
 // to false to follow only public dependency paths.
@@ -77,16 +111,13 @@ bool EnsureFileIsGeneratedByDependency(const Target* target,
                                        bool check_private_deps,
                                        bool consider_object_files,
                                        bool check_data_deps,
-                                       TargetSet* seen_targets) {
+                                       TargetSet* seen_targets,
+                                       CheckSourceGeneratedCursor* cursor) {
   if (!seen_targets->add(target))
     return false;  // Already checked this one and it's not found.
 
-  // Assume that we have relatively few generated inputs so brute-force
-  // searching here is OK. If this becomes a bottleneck, consider storing
-  // computed_outputs as a hash set.
-  for (const OutputFile& cur : target->computed_outputs()) {
-    if (file == cur)
-      return true;
+  if (HasDirectOutput(target, file, cursor)) {
+    return true;
   }
 
   if (file == target->write_runtime_deps_output())
@@ -104,12 +135,30 @@ bool EnsureFileIsGeneratedByDependency(const Target* target,
     }
   }
 
+  // Only check private deps if requested.
+  if (check_private_deps) {
+    for (const auto& pair : target->private_deps()) {
+      if (EnsureFileIsGeneratedByDependency(
+              pair.ptr, file, false, consider_object_files, check_data_deps,
+              seen_targets, cursor))
+        return true;  // Found a path.
+    }
+    if (target->output_type() == Target::CREATE_BUNDLE) {
+      for (const auto* dep : target->bundle_data().bundle_deps()) {
+        if (EnsureFileIsGeneratedByDependency(
+                dep, file, false, consider_object_files, check_data_deps,
+                seen_targets, cursor))
+          return true;  // Found a path.
+      }
+    }
+  }
+
   if (check_data_deps) {
     check_data_deps = false;  // Consider only direct data_deps.
     for (const auto& pair : target->data_deps()) {
-      if (EnsureFileIsGeneratedByDependency(pair.ptr, file, false,
-                                            consider_object_files,
-                                            check_data_deps, seen_targets))
+      if (EnsureFileIsGeneratedByDependency(
+              pair.ptr, file, false, consider_object_files, check_data_deps,
+              seen_targets, cursor))
         return true;  // Found a path.
     }
   }
@@ -117,30 +166,57 @@ bool EnsureFileIsGeneratedByDependency(const Target* target,
   // Check all public dependencies (don't do data ones since those are
   // runtime-only).
   for (const auto& pair : target->public_deps()) {
-    if (EnsureFileIsGeneratedByDependency(pair.ptr, file, false,
-                                          consider_object_files,
-                                          check_data_deps, seen_targets))
+    if (EnsureFileIsGeneratedByDependency(
+            pair.ptr, file, false, consider_object_files, check_data_deps,
+            seen_targets, cursor))
       return true;  // Found a path.
   }
 
-  // Only check private deps if requested.
-  if (check_private_deps) {
-    for (const auto& pair : target->private_deps()) {
-      if (EnsureFileIsGeneratedByDependency(pair.ptr, file, false,
-                                            consider_object_files,
-                                            check_data_deps, seen_targets))
-        return true;  // Found a path.
-    }
-    if (target->output_type() == Target::CREATE_BUNDLE) {
-      for (const auto* dep : target->bundle_data().bundle_deps()) {
-        if (EnsureFileIsGeneratedByDependency(dep, file, false,
-                                              consider_object_files,
-                                              check_data_deps, seen_targets))
-          return true;  // Found a path.
-      }
-    }
-  }
   return false;
+}
+
+void CheckSourceGenerated(const Target* source_target,
+                          const SourceFile& source,
+                          CheckSourceGeneratedCursor* cursor) {
+  const auto& build_settings = source_target->settings()->build_settings();
+  if (!IsStringInOutputDir(build_settings->build_dir(), source.value()))
+    return;  // Not in output dir, this is OK.
+
+  // Tell the scheduler about unknown files. This will be noted for later so
+  // the list of files written by the GN build itself (often response files)
+  // can be filtered out of this list.
+  OutputFile out_file(build_settings, source);
+  TargetSet seen_targets;
+  bool check_data_deps = false;
+  bool consider_object_files = false;
+
+  // If this is not the first file, start by looking where the last one was
+  // found.
+  if (cursor->target) {
+    bool check_private_deps = cursor->target == source_target;
+    if (EnsureFileIsGeneratedByDependency(
+            cursor->target, out_file, check_private_deps, consider_object_files,
+            check_data_deps, &seen_targets, cursor))
+      return;
+  }
+
+  bool check_private_deps = true;
+  if (!EnsureFileIsGeneratedByDependency(
+          source_target, out_file, check_private_deps, consider_object_files,
+          check_data_deps, &seen_targets, cursor)) {
+    seen_targets.clear();
+    // Allow dependency to be through data_deps for files generated by gn.
+    check_data_deps =
+        g_scheduler->IsFileGeneratedByWriteRuntimeDeps(out_file) ||
+        g_scheduler->IsFileGeneratedByTarget(source);
+    // Check object files (much slower and very rare) only if the "normal"
+    // output check failed.
+    consider_object_files = !check_data_deps;
+    if (!EnsureFileIsGeneratedByDependency(
+            source_target, out_file, check_private_deps, consider_object_files,
+            check_data_deps, &seen_targets, cursor))
+      g_scheduler->AddUnknownGeneratedInput(source_target, source);
+  }
 }
 
 // check_this indicates if the given target should be matched against the
@@ -212,18 +288,52 @@ Overall build flow
   2. Execute the build config file identified by .gn to set up the global
      variables and default toolchain name. Any arguments, variables, defaults,
      etc. set up in this file will be visible to all files in the build.
+     Any values set in the `default_args` scope will be merged into
+     subsequent `declare_args()` scopes and override the default values.
 
-  3. Load the //BUILD.gn (in the source root directory).
+  3. Process the --args command line option or load the arguments from
+     the args.gn file in the build directory. These values will be merged
+     into any subsequent declare_args() scope (after the `default_args`
+     are merged in) to override the default values. See `help buildargs`
+     for more on how args are handled.
 
-  4. Recursively evaluate rules and load BUILD.gn in other directories as
+  4. Load the BUILDCONFIG.gn file and create a dedicated scope for it.
+
+  5. Load the //BUILD.gn (in the source root directory). The BUILD.gn
+     file is executed in a scope whose parent scope is the BUILDCONFIG.gn
+     file, i.e., only the definitions in the BUILDCONFIG.gn file exist.
+
+  5. If the BUILD.gn file imports other files, each of those other
+     files is executed in a separate scope whose parent is the BUILDCONFIG.gn
+     file, i.e., no definitions from the importing BUILD.gn file are
+     available. When the imported file has been fully processed, its scope
+     is merged into the BUILD.gn file's scope. If there is a conflict
+     (both the BUILD.gn file and the imported file define some variable
+     or rule with the same name but different values), a runtime error
+     will be thrown. See "gn help import" for more on this.
+
+  6. Recursively evaluate rules and load BUILD.gn in other directories as
      necessary to resolve dependencies. If a BUILD file isn't found in the
      specified location, GN will look in the corresponding location inside
      the secondary_source defined in the dotfile (see "gn help dotfile").
+     Each BUILD.gn file will again be executed in a new scope whose only
+     parent is BUILDCONFIG.gn's scope.
 
-  5. When a target's dependencies are resolved, write out the `.ninja`
+  7. If a target is referenced using an alternate toolchain, then
+
+     1. The toolchain file is loaded in a scope whose parent is the
+        BUILDCONFIG.gn file.
+     2. The BUILDCONFIG.gn file is re-loaded and re-parsed into a new
+        scope, with any `toolchain_args` merged into the defaults. See
+        `help buildargs` for more on how args are handled.
+     3. The BUILD.gn containing the target is then parsed as in step 5,
+        only we use the scope from step 7.2 instead of the default
+        BUILDCONFIG.gn scope.
+
+  8. When a target's dependencies are resolved, write out the `.ninja`
      file to disk.
 
-  6. When all targets are resolved, write out the root build.ninja file.
+  9. When all targets are resolved, write out the root build.ninja file.
 
   Note that the BUILD.gn file name may be modulated by .gn arguments such as
   build_file_extension.
@@ -243,9 +353,14 @@ Executing target definitions and templates
     }
 
   There is also a generic "target" function for programmatically defined types
-  (see "gn help target"). You can define new types using templates (see "gn
-  help template"). A template defines some custom code that expands to one or
-  more other targets.
+  (see "gn help target").
+
+  You can define new types using templates (see "gn help template"). A template
+  defines some custom code that expands to one or more other targets. When a
+  template is invoked, it is executed in the scope of the file that defined the
+  template (as described above). To access values from the caller's scope, you
+  must use the `invoker` variable (see "gn help template" for more on the
+  invoker).
 
   Before executing the code inside the target's { }, the target defaults are
   applied (see "gn help set_defaults"). It will inject implicit variable
@@ -629,8 +744,7 @@ bool Target::GetOutputsAsSourceFiles(const LocationRange& loc_for_error,
     if (!bundle_data().GetOutputsAsSourceFiles(settings(), this, outputs, err))
       return false;
   } else if (IsBinary() && output_type() != Target::SOURCE_SET) {
-    // Binary target with normal outputs (source sets have stamp outputs like
-    // groups).
+    // Binary target with normal outputs (source sets have phony targets).
     DCHECK(IsBinary()) << static_cast<int>(output_type());
     if (!build_complete) {
       // Can't access the toolchain for a target before the build is complete.
@@ -650,15 +764,20 @@ bool Target::GetOutputsAsSourceFiles(const LocationRange& loc_for_error,
           output_file.AsSourceFile(settings()->build_settings()));
     }
   } else {
-    // Everything else (like a group or bundle_data) has a stamp output. The
-    // dependency output file should have computed what this is. This won't be
+    // Everything else (like a group or bundle_data) has a phony output. The
+    // dependency output phony should have computed what this is. This won't be
     // valid unless the build is complete.
     if (!build_complete) {
       *err = Err(loc_for_error, kBuildIncompleteMsg);
       return false;
     }
-    outputs->push_back(
-        dependency_output_file().AsSourceFile(settings()->build_settings()));
+
+    // The dependency output might be empty if there is no output file or a
+    // phony alias for a set of inputs.
+    if (has_dependency_output()) {
+      outputs->push_back(
+          dependency_output().AsSourceFile(settings()->build_settings()));
+    }
   }
   return true;
 }
@@ -762,7 +881,7 @@ void Target::PullRecursiveBundleData() {
       bundle_data().AddBundleData(pair.ptr, is_create_bundle);
     }
 
-    // Recursive bundle_data informations from all dependencies.
+    // Recursive bundle_data information from all dependencies.
     if (pair.ptr->has_bundle_data()) {
       for (const auto* target : pair.ptr->bundle_data().forwarded_bundle_deps())
         bundle_data().AddBundleData(target, is_create_bundle);
@@ -773,27 +892,84 @@ void Target::PullRecursiveBundleData() {
     bundle_data().OnTargetResolved(this);
 }
 
+bool Target::HasRealInputs() const {
+  // This check is only necessary if this target will result in a phony target.
+  // Phony targets with no real inputs are treated as always dirty.
+
+  // Actions and generated_file always have at least one input file: the script
+  // used to execute the action or generated file itself. As such, they will
+  // never have an input-less phony target. We check this first to elide the
+  // common checks.
+  if (output_type() == ACTION || output_type() == ACTION_FOREACH ||
+      output_type() == GENERATED_FILE) {
+    return true;
+  }
+
+  // If any of this target's dependencies is non-phony target or a phony target
+  // with real inputs, then this target should be considered to have inputs.
+  for (const auto& pair : GetDeps(DEPS_ALL)) {
+    if (pair.ptr->has_dependency_output()) {
+      return true;
+    }
+  }
+
+  if (output_type() == BUNDLE_DATA) {
+    return !sources().empty();
+  }
+  if (output_type() == CREATE_BUNDLE) {
+    // CREATE_BUNDLE targets pick up most of their inputs in the form of
+    // dependencies on bundle_data targets, which were checked above when
+    // looping through GetDeps. This code handles the remaining possible
+    // CREATE_BUNDLE inputs.
+    return !bundle_data().assets_catalog_sources().empty() ||
+           !bundle_data().partial_info_plist().is_null() ||
+           !bundle_data().post_processing_script().is_null();
+  }
+
+  // If any of this target's sources will result in output files, then this
+  // target should be considered to have real inputs.
+  std::vector<OutputFile> tool_outputs;
+  return std::any_of(
+      sources().begin(), sources().end(), [&, this](const auto& source) {
+        // Swift files always results in output files, but the name cannot
+        // be derived from the source file via GetOutputFilesForSource(...).
+        if (source.GetType() == SourceFile::SOURCE_SWIFT) {
+          return true;
+        }
+        const char* tool_name = Tool::kToolNone;
+        return GetOutputFilesForSource(source, &tool_name, &tool_outputs);
+      });
+}
+
 bool Target::FillOutputFiles(Err* err) {
   const Tool* tool = toolchain_->GetToolForTargetFinalOutput(this);
   bool check_tool_outputs = false;
   switch (output_type_) {
-    case GROUP:
-    case BUNDLE_DATA:
-    case CREATE_BUNDLE:
-    case SOURCE_SET:
-    case COPY_FILES:
     case ACTION:
     case ACTION_FOREACH:
-    case GENERATED_FILE: {
-      // These don't get linked to and use stamps which should be the first
-      // entry in the outputs. These stamps are named
-      // "<target_out_dir>/<targetname>.stamp". Setting "output_name" does not
-      // affect the stamp file name: it is always based on the original target
-      // name.
-      dependency_output_file_ =
-          GetBuildDirForTargetAsOutputFile(this, BuildDirType::OBJ);
-      dependency_output_file_.value().append(label().name());
-      dependency_output_file_.value().append(".stamp");
+    case BUNDLE_DATA:
+    case COPY_FILES:
+    case CREATE_BUNDLE:
+    case GENERATED_FILE:
+    case GROUP:
+    case SOURCE_SET: {
+      if (settings()->build_settings()->no_stamp_files()) {
+        if (HasRealInputs()) {
+          dependency_output_alias_ =
+              GetBuildDirForTargetAsOutputFile(this, BuildDirType::PHONY);
+          dependency_output_alias_.value().append(label().name());
+        }
+      } else {
+        // These don't get linked to and use stamps which should be the first
+        // entry in the outputs. These stamps are named
+        // "<target_out_dir>/<targetname>.stamp". Setting "output_name" does not
+        // affect the stamp file name: it is always based on the original target
+        // name.
+        dependency_output_file_ =
+            GetBuildDirForTargetAsOutputFile(this, BuildDirType::OBJ);
+        dependency_output_file_.value().append(label().name());
+        dependency_output_file_.value().append(".stamp");
+      }
       break;
     }
     case EXECUTABLE:
@@ -828,45 +1004,59 @@ bool Target::FillOutputFiles(Err* err) {
       }
       break;
     case RUST_PROC_MACRO:
-    case SHARED_LIBRARY:
+    case SHARED_LIBRARY: {
       CHECK(tool->outputs().list().size() >= 1);
       check_tool_outputs = true;
+
+      const SubstitutionPattern* link_output_ptr = nullptr;
+      const SubstitutionPattern* depend_output_ptr = nullptr;
+      const SubstitutionList* runtime_outputs_ptr = nullptr;
+
       if (const CTool* ctool = tool->AsC()) {
-        if (ctool->link_output().empty() && ctool->depend_output().empty()) {
-          // Default behavior, use the first output file for both.
-          link_output_file_ = dependency_output_file_ =
-              SubstitutionWriter::ApplyPatternToLinkerAsOutputFile(
-                  this, tool, tool->outputs().list()[0]);
-        } else {
-          // Use the tool-specified ones.
-          if (!ctool->link_output().empty()) {
-            link_output_file_ =
-                SubstitutionWriter::ApplyPatternToLinkerAsOutputFile(
-                    this, tool, ctool->link_output());
-          }
-          if (!ctool->depend_output().empty()) {
-            dependency_output_file_ =
-                SubstitutionWriter::ApplyPatternToLinkerAsOutputFile(
-                    this, tool, ctool->depend_output());
-          }
-        }
-        if (tool->runtime_outputs().list().empty()) {
-          // Default to the link output for the runtime output.
-          runtime_outputs_.push_back(link_output_file_);
-        } else {
-          SubstitutionWriter::ApplyListToLinkerAsOutputFile(
-              this, tool, tool->runtime_outputs(), &runtime_outputs_);
-        }
-      } else if (tool->AsRust()) {
+        link_output_ptr =
+            ctool->link_output().empty() ? nullptr : &ctool->link_output();
+        depend_output_ptr =
+            ctool->depend_output().empty() ? nullptr : &ctool->depend_output();
+        runtime_outputs_ptr = &ctool->runtime_outputs();
+      } else if (const RustTool* rust_tool = tool->AsRust()) {
+        link_output_ptr = rust_tool->link_output().empty()
+                              ? nullptr
+                              : &rust_tool->link_output();
+        depend_output_ptr = rust_tool->depend_output().empty()
+                                ? nullptr
+                                : &rust_tool->depend_output();
+        runtime_outputs_ptr = &rust_tool->runtime_outputs();
+      }
+
+      if (!link_output_ptr && !depend_output_ptr) {
         // Default behavior, use the first output file for both.
         link_output_file_ = dependency_output_file_ =
             SubstitutionWriter::ApplyPatternToLinkerAsOutputFile(
                 this, tool, tool->outputs().list()[0]);
+      } else {
+        if (link_output_ptr) {
+          link_output_file_ =
+              SubstitutionWriter::ApplyPatternToLinkerAsOutputFile(
+                  this, tool, *link_output_ptr);
+        }
+        if (depend_output_ptr) {
+          dependency_output_file_ =
+              SubstitutionWriter::ApplyPatternToLinkerAsOutputFile(
+                  this, tool, *depend_output_ptr);
+        }
+      }
+      if (!runtime_outputs_ptr || runtime_outputs_ptr->list().empty()) {
+        // Default to the link output for the runtime output.
+        runtime_outputs_.push_back(link_output_file_);
+      } else {
+        SubstitutionWriter::ApplyListToLinkerAsOutputFile(
+            this, tool, *runtime_outputs_ptr, &runtime_outputs_);
       }
       if (!rsp_types().empty()) {
           dependency_output_file_ = OutputFile(label().name() + ".stamp");
       }
       break;
+    }
     case UNKNOWN:
     default:
       NOTREACHED();
@@ -1051,44 +1241,17 @@ void Target::CheckSourcesGenerated() const {
   // to the build dir.
   //
   // See Scheduler::AddUnknownGeneratedInput's declaration for more.
+  CheckSourceGeneratedCursor cursor;
   for (const SourceFile& file : sources_)
-    CheckSourceGenerated(file);
+    CheckSourceGenerated(this, file, &cursor);
+
+  cursor.target = nullptr;
   for (ConfigValuesIterator iter(this); !iter.done(); iter.Next()) {
     for (const SourceFile& file : iter.cur().inputs())
-      CheckSourceGenerated(file);
+      CheckSourceGenerated(this, file, &cursor);
   }
   // TODO(agrieve): Check all_libs_ here as well (those that are source files).
   // http://crbug.com/571731
-}
-
-void Target::CheckSourceGenerated(const SourceFile& source) const {
-  if (!IsStringInOutputDir(settings()->build_settings()->build_dir(),
-                           source.value()))
-    return;  // Not in output dir, this is OK.
-
-  // Tell the scheduler about unknown files. This will be noted for later so
-  // the list of files written by the GN build itself (often response files)
-  // can be filtered out of this list.
-  OutputFile out_file(settings()->build_settings(), source);
-  TargetSet seen_targets;
-  bool check_data_deps = false;
-  bool consider_object_files = false;
-  if (!EnsureFileIsGeneratedByDependency(this, out_file, true,
-                                         consider_object_files, check_data_deps,
-                                         &seen_targets)) {
-    seen_targets.clear();
-    // Allow dependency to be through data_deps for files generated by gn.
-    check_data_deps =
-        g_scheduler->IsFileGeneratedByWriteRuntimeDeps(out_file) ||
-        g_scheduler->IsFileGeneratedByTarget(source);
-    // Check object files (much slower and very rare) only if the "normal"
-    // output check failed.
-    consider_object_files = !check_data_deps;
-    if (!EnsureFileIsGeneratedByDependency(this, out_file, true,
-                                           consider_object_files,
-                                           check_data_deps, &seen_targets))
-      g_scheduler->AddUnknownGeneratedInput(this, source);
-  }
 }
 
 bool Target::GetMetadata(const std::vector<std::string>& keys_to_extract,

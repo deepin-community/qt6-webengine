@@ -29,8 +29,8 @@ namespace blink {
 
 namespace {
 
-absl::optional<bool> ToAbslOptionalBool(const absl::optional<bool>& value) {
-  return value ? absl::optional<bool>(*value) : absl::nullopt;
+std::optional<bool> ToAbslOptionalBool(const std::optional<bool>& value) {
+  return value ? std::optional<bool>(*value) : std::nullopt;
 }
 
 webrtc::VideoTrackInterface::ContentHint ContentHintTypeToWebRtcContentHint(
@@ -41,7 +41,6 @@ webrtc::VideoTrackInterface::ContentHint ContentHintTypeToWebRtcContentHint(
     case WebMediaStreamTrack::ContentHintType::kAudioSpeech:
     case WebMediaStreamTrack::ContentHintType::kAudioMusic:
       NOTREACHED();
-      break;
     case WebMediaStreamTrack::ContentHintType::kVideoMotion:
       return webrtc::VideoTrackInterface::ContentHint::kFluid;
     case WebMediaStreamTrack::ContentHintType::kVideoDetail:
@@ -50,7 +49,6 @@ webrtc::VideoTrackInterface::ContentHint ContentHintTypeToWebRtcContentHint(
       return webrtc::VideoTrackInterface::ContentHint::kText;
   }
   NOTREACHED();
-  return webrtc::VideoTrackInterface::ContentHint::kNone;
 }
 
 void RequestRefreshFrameOnRenderTaskRunner(MediaStreamComponent* component) {
@@ -79,7 +77,7 @@ void RequestRefreshFrame(
 // on libjingle's network thread. WebRtcVideoCapturerAdapter implements a video
 // capturer for libjingle.
 class MediaStreamVideoWebRtcSink::WebRtcVideoSourceAdapter
-    : public WTF::ThreadSafeRefCounted<WebRtcVideoSourceAdapter> {
+    : public ThreadSafeRefCounted<WebRtcVideoSourceAdapter> {
  public:
   WebRtcVideoSourceAdapter(
       const scoped_refptr<base::SingleThreadTaskRunner>&
@@ -102,7 +100,7 @@ class MediaStreamVideoWebRtcSink::WebRtcVideoSourceAdapter
   void OnNotifyVideoFrameDroppedOnIO(media::VideoCaptureFrameDropReason);
 
  private:
-  friend class WTF::ThreadSafeRefCounted<WebRtcVideoSourceAdapter>;
+  friend class ThreadSafeRefCounted<WebRtcVideoSourceAdapter>;
 
   void OnVideoFrameOnNetworkThread(scoped_refptr<media::VideoFrame> frame);
 
@@ -161,6 +159,7 @@ void MediaStreamVideoWebRtcSink::WebRtcVideoSourceAdapter::
   // on that thread. However, since |video_source_| was created on the render
   // thread, it should be released on the render thread.
   base::AutoLock auto_lock(video_source_stop_lock_);
+  video_source_->Dispose();
   video_source_ = nullptr;
 }
 
@@ -210,7 +209,7 @@ MediaStreamVideoWebRtcSink::MediaStreamVideoWebRtcSink(
   MediaStreamVideoTrack* video_track = MediaStreamVideoTrack::From(component);
   DCHECK(video_track);
 
-  absl::optional<bool> needs_denoising =
+  std::optional<bool> needs_denoising =
       ToAbslOptionalBool(video_track->noise_reduction());
 
   bool is_screencast = video_track->is_screencast();
@@ -225,9 +224,9 @@ MediaStreamVideoWebRtcSink::MediaStreamVideoWebRtcSink(
              : base::DoNothing();
 
   // TODO(pbos): Consolidate WebRtcVideoCapturerAdapter into WebRtcVideoSource
-  // by removing the need for and dependency on a cricket::VideoCapturer.
+  // by removing the need for and dependency on a webrtc::VideoCapturer.
   video_source_ = scoped_refptr<WebRtcVideoTrackSource>(
-      new rtc::RefCountedObject<WebRtcVideoTrackSource>(
+      new webrtc::RefCountedObject<WebRtcVideoTrackSource>(
           is_screencast, needs_denoising, feedback_cb,
           request_refresh_frame_closure, factory->GetGpuFactories()));
 
@@ -287,8 +286,8 @@ void MediaStreamVideoWebRtcSink::OnContentHintChanged(
 }
 
 void MediaStreamVideoWebRtcSink::OnVideoConstraintsChanged(
-    absl::optional<double> min_fps,
-    absl::optional<double> max_fps) {
+    std::optional<double> min_fps,
+    std::optional<double> max_fps) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DVLOG(3) << __func__ << " min " << min_fps.value_or(-1) << " max "
            << max_fps.value_or(-1);
@@ -296,8 +295,8 @@ void MediaStreamVideoWebRtcSink::OnVideoConstraintsChanged(
       webrtc::VideoTrackSourceConstraints{min_fps, max_fps});
 }
 
-absl::optional<bool>
-MediaStreamVideoWebRtcSink::SourceNeedsDenoisingForTesting() const {
+std::optional<bool> MediaStreamVideoWebRtcSink::SourceNeedsDenoisingForTesting()
+    const {
   return video_source_->needs_denoising();
 }
 

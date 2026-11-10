@@ -1,19 +1,19 @@
 // Copyright (c) 2020 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
 
-import * as ComponentHelpers from '../../../ui/components/helpers/helpers.js';
-import * as LitHtml from '../../../ui/lit-html/lit-html.js';
+import * as Lit from '../../../ui/lit/lit.js';
 import * as VisualLogging from '../../../ui/visual_logging/visual_logging.js';
 
 import {toHexString} from './LinearMemoryInspectorUtils.js';
 import linearMemoryViewerStyles from './linearMemoryViewer.css.js';
-import {type HighlightInfo} from './LinearMemoryViewerUtils.js';
+import type {HighlightInfo} from './LinearMemoryViewerUtils.js';
 
-const {render, html} = LitHtml;
+const {render, html} = Lit;
 
 export interface LinearMemoryViewerData {
-  memory: Uint8Array;
+  memory: Uint8Array<ArrayBuffer>;
   address: number;
   memoryOffset: number;
   focus: boolean;
@@ -45,8 +45,6 @@ const BYTE_GROUP_MARGIN = 8;
 const BYTE_GROUP_SIZE = 4;
 
 export class LinearMemoryViewer extends HTMLElement {
-  static readonly litTagName = LitHtml.literal`devtools-linear-memory-inspector-viewer`;
-
   readonly #shadow = this.attachShadow({mode: 'open'});
 
   readonly #resizeObserver = new ResizeObserver(() => this.#resize());
@@ -84,8 +82,7 @@ export class LinearMemoryViewer extends HTMLElement {
   }
 
   connectedCallback(): void {
-    ComponentHelpers.SetCSSProperty.set(this, '--byte-group-margin', `${BYTE_GROUP_MARGIN}px`);
-    this.#shadow.adoptedStyleSheets = [linearMemoryViewerStyles];
+    this.style.setProperty('--byte-group-margin', `${BYTE_GROUP_MARGIN}px`);
   }
 
   disconnectedCallback(): void {
@@ -184,6 +181,7 @@ export class LinearMemoryViewer extends HTMLElement {
     // Disabled until https://crbug.com/1079231 is fixed.
     // clang-format off
     render(html`
+      <style>${linearMemoryViewerStyles}</style>
       <div class="view" tabindex="0" @keydown=${this.#onKeyDown} jslog=${jslog}>
         ${this.#renderView()}
       </div>
@@ -213,7 +211,7 @@ export class LinearMemoryViewer extends HTMLElement {
     }
   }
 
-  #renderView(): LitHtml.TemplateResult {
+  #renderView(): Lit.TemplateResult {
     const itemTemplates = [];
     for (let i = 0; i < this.#numRows; ++i) {
       itemTemplates.push(this.#renderRow(i));
@@ -221,7 +219,7 @@ export class LinearMemoryViewer extends HTMLElement {
     return html`${itemTemplates}`;
   }
 
-  #renderRow(row: number): LitHtml.TemplateResult {
+  #renderRow(row: number): Lit.TemplateResult {
     const {startIndex, endIndex} = {startIndex: row * this.#numBytesInRow, endIndex: (row + 1) * this.#numBytesInRow};
 
     const classMap = {
@@ -230,7 +228,7 @@ export class LinearMemoryViewer extends HTMLElement {
     };
     return html`
     <div class="row">
-      <span class=${LitHtml.Directives.classMap(classMap)}>${toHexString({number: startIndex + this.#memoryOffset, pad: 8, prefix: false})}</span>
+      <span class=${Lit.Directives.classMap(classMap)}>${toHexString({number: startIndex + this.#memoryOffset, pad: 8, prefix: false})}</span>
       <span class="divider"></span>
       ${this.#renderByteValues(startIndex, endIndex)}
       <span class="divider"></span>
@@ -239,7 +237,7 @@ export class LinearMemoryViewer extends HTMLElement {
     `;
   }
 
-  #renderByteValues(startIndex: number, endIndex: number): LitHtml.TemplateResult {
+  #renderByteValues(startIndex: number, endIndex: number): Lit.TemplateResult {
     const cells = [];
     for (let i = startIndex; i < endIndex; ++i) {
       const actualIndex = i + this.#memoryOffset;
@@ -249,7 +247,7 @@ export class LinearMemoryViewer extends HTMLElement {
       const shouldBeHighlighted = this.#shouldBeHighlighted(actualIndex);
       const focusedMemoryArea = this.#isFocusedArea(actualIndex);
       const classMap = {
-        'cell': true,
+        cell: true,
         'byte-cell': true,
         'byte-group-margin': addMargin,
         selected,
@@ -259,20 +257,20 @@ export class LinearMemoryViewer extends HTMLElement {
       const isSelectableCell = i < this.#memory.length;
       const byteValue = isSelectableCell ? html`${toHexString({number: this.#memory[i], pad: 2, prefix: false})}` : '';
       const onSelectedByte = isSelectableCell ? this.#onSelectedByte.bind(this, actualIndex) : '';
-      const jslog = VisualLogging.tableCell().track({click: true}).context('linear-memory-inspector.byte-cell');
-      cells.push(html`<span class=${LitHtml.Directives.classMap(classMap)} @click=${onSelectedByte} jslog=${jslog}>${byteValue}</span>`);
+      const jslog = VisualLogging.tableCell('linear-memory-inspector.byte-cell').track({click: true});
+      cells.push(html`<span class=${Lit.Directives.classMap(classMap)} @click=${onSelectedByte} jslog=${jslog}>${byteValue}</span>`);
     }
     return html`${cells}`;
   }
 
-  #renderCharacterValues(startIndex: number, endIndex: number): LitHtml.TemplateResult {
+  #renderCharacterValues(startIndex: number, endIndex: number): Lit.TemplateResult {
     const cells = [];
     for (let i = startIndex; i < endIndex; ++i) {
       const actualIndex = i + this.#memoryOffset;
       const shouldBeHighlighted = this.#shouldBeHighlighted(actualIndex);
       const focusedMemoryArea = this.#isFocusedArea(actualIndex);
       const classMap = {
-        'cell': true,
+        cell: true,
         'text-cell': true,
         selected: this.#address - this.#memoryOffset === i,
         'highlight-area': shouldBeHighlighted,
@@ -281,8 +279,8 @@ export class LinearMemoryViewer extends HTMLElement {
       const isSelectableCell = i < this.#memory.length;
       const value = isSelectableCell ? html`${this.#toAscii(this.#memory[i])}` : '';
       const onSelectedByte = isSelectableCell ? this.#onSelectedByte.bind(this, i + this.#memoryOffset) : '';
-      const jslog = VisualLogging.tableCell().track({click: true}).context('linear-memory-inspector.text-cell');
-      cells.push(html`<span class=${LitHtml.Directives.classMap(classMap)} @click=${onSelectedByte} jslog=${jslog}>${value}</span>`);
+      const jslog = VisualLogging.tableCell('linear-memory-inspector.text-cell').track({click: true});
+      cells.push(html`<span class=${Lit.Directives.classMap(classMap)} @click=${onSelectedByte} jslog=${jslog}>${value}</span>`);
     }
     return html`${cells}`;
   }
@@ -315,10 +313,10 @@ export class LinearMemoryViewer extends HTMLElement {
   }
 }
 
-ComponentHelpers.CustomElements.defineComponent('devtools-linear-memory-inspector-viewer', LinearMemoryViewer);
+customElements.define('devtools-linear-memory-inspector-viewer', LinearMemoryViewer);
 
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
 interface HTMLElementTagNameMap {
     'devtools-linear-memory-inspector-viewer': LinearMemoryViewer;
   }

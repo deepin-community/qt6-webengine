@@ -15,24 +15,27 @@
 #include "base/strings/stringprintf.h"
 #include "base/supports_user_data.h"
 #include "build/build_config.h"
-#include "chrome/browser/extensions/api/tabs/tabs_constants.h"
 #if !BUILDFLAG(IS_QTWEBENGINE)
 #include "chrome/browser/extensions/extension_tab_util.h"
 #endif
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
+#include "components/guest_view/buildflags/buildflags.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/web_contents.h"
-#include "extensions/browser/guest_view/web_view/web_view_guest.h"
 #include "extensions/browser/process_manager.h"
 #include "extensions/common/error_utils.h"
 
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
 #include "extensions/common/permissions/permissions_data.h"
+#endif
+
+#if BUILDFLAG(ENABLE_GUEST_VIEW)
+#include "extensions/browser/guest_view/web_view/web_view_guest.h"
 #endif
 
 namespace {
@@ -40,7 +43,7 @@ namespace {
 bool CanEnableAudioDebugRecordingsFromExtension(
     const extensions::Extension* extension) {
   bool enabled_by_permissions = false;
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
   if (extension) {
     enabled_by_permissions =
         extension->permissions_data()->active_permissions().HasAPIPermission(
@@ -102,7 +105,7 @@ content::RenderProcessHost* WebrtcLoggingPrivateFunction::RphFromRequest(
   //  2. From an allowlisted app that hosts a page in a webview. In this case,
   //  the app should call these API functions with the |target_webview| flag
   //  set, from a web contents that has exactly 1 webview .
-
+#if BUILDFLAG(ENABLE_GUEST_VIEW)
   // If |target_webview| is set, lookup the guest content's render process in
   // the sender's web contents. There should be exactly 1 guest.
   if (request.target_webview && *request.target_webview) {
@@ -134,6 +137,7 @@ content::RenderProcessHost* WebrtcLoggingPrivateFunction::RphFromRequest(
     }
     return target_host;
   }
+#endif  // BUILDFLAG(ENABLE_GUEST_VIEW)
 
   // If |guest_process_id| is defined, directly use this id to find the
   // corresponding RenderProcessHost.
@@ -161,7 +165,7 @@ content::RenderProcessHost* WebrtcLoggingPrivateFunction::RphFromRequest(
   if (!ExtensionTabUtil::GetTabById(tab_id, browser_context(), true,
                                     &contents)) {
     *error = extensions::ErrorUtils::FormatErrorMessage(
-        extensions::tabs_constants::kTabNotFoundError,
+        extensions::ExtensionTabUtil::kTabNotFoundError,
         base::NumberToString(tab_id));
     return nullptr;
   }
@@ -594,7 +598,7 @@ void WebrtcLoggingPrivateStartEventLoggingFunction::FireCallback(
 
 ExtensionFunction::ResponseAction
 WebrtcLoggingPrivateGetLogsDirectoryFunction::Run() {
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
   // Unlike other WebrtcLoggingPrivate functions that take a RequestInfo object,
   // this function shouldn't be called by a component extension on behalf of
   // some web code. It returns a DirectoryEntry for use directly in the calling
@@ -617,9 +621,9 @@ WebrtcLoggingPrivateGetLogsDirectoryFunction::Run() {
           &WebrtcLoggingPrivateGetLogsDirectoryFunction::FireErrorCallback,
           this));
   return RespondLater();
-#else   // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#else
   return RespondNow(Error("Not supported on the current OS"));
-#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#endif
 }
 
 void WebrtcLoggingPrivateGetLogsDirectoryFunction::FireCallback(

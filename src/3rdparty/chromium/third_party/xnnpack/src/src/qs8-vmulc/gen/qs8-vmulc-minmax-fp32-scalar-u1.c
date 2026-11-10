@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-vmulc/scalar.c.in
 //   Generator: tools/xngen
@@ -8,9 +9,12 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/math.h>
-#include <xnnpack/vbinary.h>
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vbinary.h"
 
 
 void xnn_qs8_vmulc_minmax_fp32_ukernel__scalar_u1(
@@ -18,7 +22,7 @@ void xnn_qs8_vmulc_minmax_fp32_ukernel__scalar_u1(
     const int8_t* input_a,
     const int8_t* input_b,
     int8_t* output,
-    const union xnn_qs8_mul_minmax_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const union xnn_qs8_mul_minmax_params* restrict params)
 {
   assert(batch != 0);
   assert(batch % sizeof(int8_t) == 0);
@@ -26,14 +30,14 @@ void xnn_qs8_vmulc_minmax_fp32_ukernel__scalar_u1(
   assert(input_b != NULL);
   assert(output != NULL);
 
-  const int32_t va_zero_point = params->fp32_scalar.a_zero_point;
-  const float vscale = params->fp32_scalar.scale;
-  const float voutput_min_less_zero_point = params->fp32_scalar.output_min_less_zero_point;
-  const float voutput_max_less_zero_point = params->fp32_scalar.output_max_less_zero_point;
-  const float vmagic_bias = params->fp32_scalar.magic_bias;
-  const int32_t vmagic_bias_less_output_zero_point = params->fp32_scalar.magic_bias_less_output_zero_point;
+  const int32_t va_zero_point = params->scalar.a_zero_point;
+  const float vscale = params->scalar.scale;
+  const float voutput_min_less_zero_point = (int32_t) params->scalar.output_min - (int32_t) params->scalar.output_zero_point;
+  const float voutput_max_less_zero_point = (int32_t) params->scalar.output_max - (int32_t) params->scalar.output_zero_point;
+  const float vmagic_bias = 12582912.0f;
+  const int32_t vmagic_bias_less_output_zero_point = INT32_C(0x4B400000) - (int32_t) params->scalar.output_zero_point;
 
-  const int32_t vb = (int32_t) *input_b - params->fp32_scalar.b_zero_point;
+  const int32_t vb = (int32_t) *input_b - params->scalar.b_zero_point;
   do {
     const int32_t va = (int32_t) *input_a++ - va_zero_point;
     const int32_t vacc = va * vb;

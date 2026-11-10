@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-f32-vcvt/scalar.c.in
 //   Generator: tools/xngen
@@ -8,17 +9,19 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/math.h>
-#include <xnnpack/vcvt.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vcvt.h"
 
 
 void xnn_qs8_f32_vcvt_ukernel__scalar_u3(
     size_t batch,
     const int8_t* input,
     float* output,
-    const union xnn_qs8_f32_cvt_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const struct xnn_qs8_f32_cvt_params* restrict params)
 {
   assert(batch != 0);
   assert(batch % sizeof(int8_t) == 0);

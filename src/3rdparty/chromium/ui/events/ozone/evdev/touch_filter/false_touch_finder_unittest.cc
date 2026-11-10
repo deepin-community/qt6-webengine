@@ -10,6 +10,7 @@
 #include <memory>
 
 #include "base/command_line.h"
+#include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -45,7 +46,7 @@ class FalseTouchFinderTest : public testing::Test {
     size_t start_index = 0u;
     std::bitset<kNumTouchEvdevSlots> was_touching;
     for (size_t i = 0; i < count; ++i) {
-      const TouchEntry& entry = entries[i];
+      const TouchEntry& entry = UNSAFE_TODO(entries[i]);
 
       InProgressTouchEvdev touch;
       touch.x = entry.location.x();
@@ -57,12 +58,14 @@ class FalseTouchFinderTest : public testing::Test {
       touch.touching = entry.touching;
       touches.push_back(touch);
 
-      if (i == count - 1 || entry.time_ms != entries[i + 1].time_ms) {
+      if (i == count - 1 ||
+          entry.time_ms != UNSAFE_TODO(entries[i + 1]).time_ms) {
         false_touch_finder_->HandleTouches(
             touches, base::TimeTicks() + base::Milliseconds(entry.time_ms));
 
         for (size_t j = 0; j < touches.size(); ++j) {
-          bool expect_delay = entries[j + start_index].expect_delay;
+          bool expect_delay =
+              UNSAFE_TODO(entries[j + start_index]).expect_delay;
           size_t slot = touches[j].slot;
           if (false_touch_finder_->SlotShouldDelay(slot) != expect_delay) {
             LOG(ERROR) << base::StringPrintf(

@@ -11,6 +11,7 @@
 
 #include "components/android_autofill/browser/android_autofill_bridge_factory.h"
 #include "components/android_autofill/browser/form_field_data_android_bridge.h"
+#include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/common/autofill_util.h"
 #include "components/autofill/core/common/form_field_data.h"
 
@@ -20,20 +21,20 @@ using base::android::ScopedJavaLocalRef;
 
 FormFieldDataAndroid::FieldTypes::FieldTypes() = default;
 
-FormFieldDataAndroid::FieldTypes::FieldTypes(AutofillType type)
+FormFieldDataAndroid::FieldTypes::FieldTypes(FieldType type)
     : heuristic_type(type),
       server_type(type),
-      computed_type(type),
-      server_predictions({std::move(type)}) {}
+      computed_type(FieldTypeToStringView(type)),
+      server_predictions({type}) {}
 
 FormFieldDataAndroid::FieldTypes::FieldTypes(
-    AutofillType heuristic_type,
-    AutofillType server_type,
-    AutofillType computed_type,
-    std::vector<AutofillType> server_predictions)
-    : heuristic_type(std::move(heuristic_type)),
-      server_type(std::move(server_type)),
-      computed_type(std::move(computed_type)),
+    FieldType heuristic_type,
+    FieldType server_type,
+    std::string_view computed_type,
+    std::vector<FieldType> server_predictions)
+    : heuristic_type(heuristic_type),
+      server_type(server_type),
+      computed_type(computed_type),
       server_predictions(std::move(server_predictions)) {}
 
 FormFieldDataAndroid::FieldTypes::FieldTypes(FieldTypes&&) = default;
@@ -43,21 +44,17 @@ FormFieldDataAndroid::FieldTypes& FormFieldDataAndroid::FieldTypes::operator=(
 
 FormFieldDataAndroid::FieldTypes::~FieldTypes() = default;
 
-bool FormFieldDataAndroid::FieldTypes::operator==(
-    const AutofillType& type) const {
-  std::string_view target = type.ToStringView();
-  return heuristic_type.ToStringView() == target &&
-         server_type.ToStringView() == target &&
-         computed_type.ToStringView() == target &&
-         server_predictions.size() == 1 &&
-         server_predictions[0].ToStringView() == target;
+bool FormFieldDataAndroid::FieldTypes::operator==(FieldType type) const {
+  return heuristic_type == type && server_type == type &&
+         computed_type == FieldTypeToStringView(type) &&
+         server_predictions.size() == 1 && server_predictions[0] == type;
 }
 
 FormFieldDataAndroid::FormFieldDataAndroid(FormFieldData* field)
     : bridge_(AndroidAutofillBridgeFactory::GetInstance()
                   .CreateFormFieldDataAndroidBridge()),
       field_(*field) {
-  field_types_.heuristic_type = AutofillType(UNKNOWN_TYPE);
+  field_types_.heuristic_type = UNKNOWN_TYPE;
 }
 
 FormFieldDataAndroid::~FormFieldDataAndroid() = default;
@@ -71,15 +68,15 @@ void FormFieldDataAndroid::UpdateFromJava() {
 }
 
 void FormFieldDataAndroid::OnFormFieldDidChange(std::u16string_view value) {
-  field_->value = std::u16string(value);
-  field_->is_autofilled = false;
+  field_->set_value(std::u16string(value));
+  field_->set_is_autofilled(false);
   bridge_->UpdateValue(value);
 }
 
 void FormFieldDataAndroid::OnFormFieldVisibilityDidChange(
     const FormFieldData& field) {
-  field_->is_focusable = field.is_focusable;
-  field_->role = field.role;
+  field_->set_is_focusable(field.is_focusable());
+  field_->set_role(field.role());
   CHECK_EQ(field_->IsFocusable(), field.IsFocusable());
   bridge_->UpdateVisible(field_->IsFocusable());
 }
@@ -87,9 +84,10 @@ void FormFieldDataAndroid::OnFormFieldVisibilityDidChange(
 bool FormFieldDataAndroid::SimilarFieldAs(const FormFieldData& field) const {
   auto SimilarityTuple = [](const FormFieldData& f) {
     return std::tuple_cat(
-        std::tie(f.host_frame, f.unique_renderer_id, f.name, f.name_attribute,
-                 f.id_attribute, f.form_control_type),
-        std::make_tuple(IsCheckable(f.check_status)));
+        std::tie(f.host_frame(), f.name(), f.name_attribute(),
+                 f.id_attribute()),
+        std::make_tuple(f.renderer_id(), f.form_control_type(),
+                        IsCheckable(f.check_status())));
   };
 
   // For Android Autofill, labels are considered similar if they meet one of the
@@ -98,16 +96,16 @@ bool FormFieldDataAndroid::SimilarFieldAs(const FormFieldData& field) const {
   // 2. The labels were inferred from the same type of source and that source
   //    was not `LabelSource::kLabelTag`.
   auto LabelsAreSimilar = [](const FormFieldData& f1, const FormFieldData& f2) {
-    return f1.label == f2.label ||
-           (f1.label_source != FormFieldData::LabelSource::kLabelTag &&
-            f1.label_source == f2.label_source);
+    return f1.label() == f2.label() ||
+           (f1.label_source() != FormFieldData::LabelSource::kLabelTag &&
+            f1.label_source() == f2.label_source());
   };
 
   return SimilarityTuple(*field_) == SimilarityTuple(field) &&
          LabelsAreSimilar(*field_, field);
 }
 
-void FormFieldDataAndroid::UpdateAutofillTypes(FieldTypes field_types) {
+void FormFieldDataAndroid::UpdateFieldTypes(FieldTypes field_types) {
   field_types_ = std::move(field_types);
   bridge_->UpdateFieldTypes(field_types_);
 }

@@ -6,26 +6,34 @@
 #include <stdint.h>
 
 #include <memory>
+#include <optional>
 #include <random>
+#include <string_view>
 
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/run_loop.h"
-#include "base/strings/string_piece.h"
 #include "base/task/single_thread_task_executor.h"
 #include "base/time/time.h"
 #include "media/base/audio_parameters.h"
+#include "media/base/decoder_buffer.h"
 #include "media/base/video_frame.h"
 #include "media/muxers/live_webm_muxer_delegate.h"
 #include "media/muxers/webm_muxer.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 // Min and max number of encodec video/audio packets to send in the WebmMuxer.
 const int kMinNumIterations = 1;
 const int kMaxNumIterations = 10;
 
 static const media::VideoCodec kSupportedVideoCodecs[] = {
-    media::VideoCodec::kVP8, media::VideoCodec::kVP9, media::VideoCodec::kH264};
+    media::VideoCodec::kVP8,
+    media::VideoCodec::kVP9,
+    media::VideoCodec::kH264,
+#if BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
+    media::VideoCodec::kHEVC,
+#endif
+};
 static const media::AudioCodec kSupportedAudioCodecs[] = {
     media::AudioCodec::kOpus, media::AudioCodec::kPCM};
 
@@ -43,7 +51,7 @@ struct Env {
 };
 Env* env = new Env();
 
-void OnWriteCallback(base::StringPiece data) {}
+void OnWriteCallback(base::span<const uint8_t> data) {}
 
 // Entry point for LibFuzzer.
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
@@ -64,9 +72,9 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
                            input_type.has_audio,
                            std::make_unique<media::LiveWebmMuxerDelegate>(
                                base::BindRepeating(&OnWriteCallback)),
-                           absl::nullopt);
+                           std::nullopt);
     base::RunLoop().RunUntilIdle();
-
+    bool is_first_frame = true;
     int num_iterations = kMinNumIterations + rng() % kMaxNumIterations;
     int index = 0;
     do {
@@ -80,11 +88,16 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         const auto has_alpha_frame = rng() % 4;
         auto parameters = media::Muxer::VideoParameters(*video_frame);
         parameters.codec = video_codec;
-        muxer.PutFrame(
-            media::Muxer::EncodedFrame{parameters, absl::nullopt, str,
-                                       has_alpha_frame ? str : std::string(),
-                                       is_key_frame != 0},
-            base::TimeDelta() + base::Milliseconds(index));
+        auto buffer = media::DecoderBuffer::CopyFrom(base::as_byte_span(str));
+        if (has_alpha_frame) {
+          buffer->WritableSideData().alpha_data =
+              base::HeapArray<uint8_t>::CopiedFrom(base::as_byte_span(str));
+        }
+        buffer->set_is_key_frame(is_key_frame != 0 || is_first_frame);
+        muxer.PutFrame(media::Muxer::EncodedFrame{parameters, std::nullopt,
+                                                  std::move(buffer)},
+                       base::TimeDelta() + base::Milliseconds(index));
+        is_first_frame = false;
         base::RunLoop().RunUntilIdle();
       }
 
@@ -98,9 +111,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
         const media::AudioParameters params(
             media::AudioParameters::AUDIO_PCM_LOW_LATENCY, layout, sample_rate,
             60 * sample_rate);
-        muxer.PutFrame(media::Muxer::EncodedFrame{params, absl::nullopt, str,
-                                                  std::string(), true},
-                       base::TimeDelta() + base::Milliseconds(index));
+        auto buffer = media::DecoderBuffer::CopyFrom(base::as_byte_span(str));
+        buffer->set_is_key_frame(true);
+        muxer.PutFrame(
+            media::Muxer::EncodedFrame{params, std::nullopt, std::move(buffer)},
+            base::TimeDelta() + base::Milliseconds(index));
         base::RunLoop().RunUntilIdle();
       }
     } while (num_iterations--);

@@ -6,6 +6,7 @@
 
 #include <cstddef>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
@@ -269,16 +270,12 @@ void BluetoothGattDescriptorServiceProviderImpl::ReadValue(
     // the delegate, which should know how to handle it.
   }
 
-  // GetValue() promises to only call either the success or error callback.
-  auto split_response_sender =
-      base::SplitOnceCallback(std::move(response_sender));
-
   DCHECK(delegate_);
   delegate_->GetValue(
       device_path,
       base::BindOnce(&BluetoothGattDescriptorServiceProviderImpl::OnReadValue,
                      weak_ptr_factory_.GetWeakPtr(), method_call,
-                     std::move(split_response_sender.first)));
+                     std::move(response_sender)));
 }
 
 void BluetoothGattDescriptorServiceProviderImpl::WriteValue(
@@ -299,7 +296,7 @@ void BluetoothGattDescriptorServiceProviderImpl::WriteValue(
                  << method_call->ToString();
   }
   if (bytes)
-    value.assign(bytes, bytes + length);
+    value.assign(bytes, UNSAFE_TODO(bytes + length));
 
   std::map<std::string, dbus::MessageReader> options;
   dbus::ObjectPath device_path;
@@ -342,7 +339,7 @@ void BluetoothGattDescriptorServiceProviderImpl::OnExported(
 void BluetoothGattDescriptorServiceProviderImpl::OnReadValue(
     dbus::MethodCall* method_call,
     dbus::ExportedObject::ResponseSender response_sender,
-    absl::optional<device::BluetoothGattService::GattErrorCode> error_code,
+    std::optional<device::BluetoothGattService::GattErrorCode> error_code,
     const std::vector<uint8_t>& value) {
   if (error_code.has_value()) {
     DVLOG(2) << "Failed to get descriptor value. Report error.";

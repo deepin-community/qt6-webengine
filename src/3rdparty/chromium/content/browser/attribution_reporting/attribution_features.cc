@@ -5,22 +5,27 @@
 #include "content/browser/attribution_reporting/attribution_features.h"
 
 #include "base/feature_list.h"
+#include "base/metrics/field_trial_params.h"
 
 namespace content {
 
-// When enabled, prefer to use the new recovery module to recover the
-// `AttributionStorageSql` database. See https://crbug.com/1385500 for details.
-// This is a kill switch and is not intended to be used in a field trial.
-BASE_FEATURE(kAttributionStorageUseBuiltInRecoveryIfSupported,
-             "AttributionStorageUseBuiltInRecoveryIfSupported",
+BASE_FEATURE(kAttributionReportExpiry,
+             "AttributionReportExpiry",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-BASE_FEATURE(kAttributionVerboseDebugReporting,
-             "AttributionVerboseDebugReporting",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-BASE_FEATURE(kAttributionReportingDeactivateAfterFilterMatch,
-             "AttributionReportingDeactivateAfterFilterMatch",
+BASE_FEATURE(kAttributionReportNavigationBasedRetry,
+             "AttributionReportNavigationBasedRetry",
              base::FEATURE_DISABLED_BY_DEFAULT);
+
+constexpr base::FeatureParam<NavigationRetryAttempt>::Option
+    kNavigationRetryAttemptOptions[] = {
+        {NavigationRetryAttempt::kFirstRetry, "first_retry"},
+        {NavigationRetryAttempt::kSecondRetry, "second_retry"},
+        {NavigationRetryAttempt::kThirdRetry, "third_retry"}};
+
+const base::FeatureParam<NavigationRetryAttempt>
+    kAttributionReportNavigationRetryAttempt{
+        &kAttributionReportNavigationBasedRetry, "navigation_retry_attempt",
+        NavigationRetryAttempt::kThirdRetry, &kNavigationRetryAttemptOptions};
 
 }  // namespace content

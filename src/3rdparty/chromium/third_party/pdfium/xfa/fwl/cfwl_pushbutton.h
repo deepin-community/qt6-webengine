@@ -9,6 +9,8 @@
 
 #include "xfa/fwl/cfwl_widget.h"
 
+namespace pdfium {
+
 #define FWL_STATE_PSB_Hovered (1 << FWL_STATE_WGT_MAX)
 #define FWL_STATE_PSB_Pressed (1 << (FWL_STATE_WGT_MAX + 1))
 #define FWL_STATE_PSB_Default (1 << (FWL_STATE_WGT_MAX + 2))
@@ -45,9 +47,14 @@ class CFWL_PushButton final : public CFWL_Widget {
   void OnMouseLeave(CFWL_MessageMouse* pMsg);
   void OnKeyDown(CFWL_MessageKey* pMsg);
 
-  bool m_bBtnDown = false;
-  CFX_RectF m_ClientRect;
-  CFX_RectF m_CaptionRect;
+  bool btn_down_ = false;
+  CFX_RectF client_rect_;
+  CFX_RectF caption_rect_;
 };
+
+}  // namespace pdfium
+
+// TODO(crbug.com/42271761): Remove.
+using pdfium::CFWL_PushButton;
 
 #endif  // XFA_FWL_CFWL_PUSHBUTTON_H_

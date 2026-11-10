@@ -1,26 +1,33 @@
 // Copyright 2023 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
 
+import '../../../ui/components/menus/menus.js';
+
+import * as Platform from '../../../core/platform/platform.js';
+import type {LocalizedString} from '../../../core/platform/UIString.js';
 import * as Buttons from '../../../ui/components/buttons/buttons.js';
-import * as Dialogs from '../../../ui/components/dialogs/dialogs.js';
 import * as ComponentHelpers from '../../../ui/components/helpers/helpers.js';
-import * as Menus from '../../../ui/components/menus/menus.js';
-import * as LitHtml from '../../../ui/lit-html/lit-html.js';
+import * as UI from '../../../ui/legacy/legacy.js';
+import * as Lit from '../../../ui/lit/lit.js';
+import * as VisualLogging from '../../../ui/visual_logging/visual_logging.js';
 import * as Models from '../models/models.js';
 import type * as Actions from '../recorder-actions/recorder-actions.js';
 
-import selectButtonStyles from './selectButton.css.js';
+import selectButtonStyles from './selectButton.css.js'; // Keep the import for the raw string
+
+const {html, Directives: {ifDefined, classMap}} = Lit;
 
 export const enum Variant {
   PRIMARY = 'primary',
-  SECONDARY = 'secondary',
+  OUTLINED = 'outlined',
 }
 
-type SelectMenuGroup = {
-  name: string,
-  items: SelectButtonItem[],
-};
+interface SelectMenuGroup {
+  name: string;
+  items: SelectButtonItem[];
+}
 
 interface SelectButtonProps {
   /**
@@ -41,7 +48,11 @@ interface SelectButtonProps {
   /**
    * Groups for the select menu of the button.
    */
-  groups: Array<SelectMenuGroup>;
+  buttonLabel: LocalizedString;
+  /**
+   * Groups for the select menu of the button.
+   */
+  groups: SelectMenuGroup[];
   /**
    * Similar to the button variant
    */
@@ -74,24 +85,31 @@ export interface SelectButtonItem {
 export class SelectButtonClickEvent extends Event {
   static readonly eventName = 'selectbuttonclick';
 
-  constructor(public value: string) {
+  constructor(public value?: string) {
     super(SelectButtonClickEvent.eventName, {bubbles: true, composed: true});
   }
 }
 
+export class SelectMenuSelectedEvent extends Event {
+  static readonly eventName = 'selectmenuselected';
+
+  constructor(public value: string) {
+    super(SelectMenuSelectedEvent.eventName, {bubbles: true, composed: true});
+  }
+}
+
 export class SelectButton extends HTMLElement {
-  static readonly litTagName = LitHtml.literal`devtools-select-button`;
   readonly #shadow = this.attachShadow({mode: 'open'});
   readonly #props: SelectButtonProps = {
     disabled: false,
     value: '',
     items: [],
+    buttonLabel: '' as LocalizedString,
     groups: [],
     variant: Variant.PRIMARY,
   };
 
   connectedCallback(): void {
-    this.#shadow.adoptedStyleSheets = [selectButtonStyles];
     void ComponentHelpers.ScheduledRender.scheduleRender(this, this.#render);
   }
 
@@ -113,7 +131,11 @@ export class SelectButton extends HTMLElement {
     void ComponentHelpers.ScheduledRender.scheduleRender(this, this.#render);
   }
 
-  set groups(groups: Array<SelectMenuGroup>) {
+  set buttonLabel(buttonLabel: LocalizedString) {
+    this.#props.buttonLabel = buttonLabel;
+  }
+
+  set groups(groups: SelectMenuGroup[]) {
     this.#props.groups = groups;
     void ComponentHelpers.ScheduledRender.scheduleRender(this, this.#render);
   }
@@ -147,23 +169,29 @@ export class SelectButton extends HTMLElement {
   }
 
   #handleSelectMenuSelect(
-      evt: Menus.SelectMenu.SelectMenuItemSelectedEvent,
+      evt: Event,
       ): void {
-    this.dispatchEvent(new SelectButtonClickEvent(evt.itemValue as string));
-    void ComponentHelpers.ScheduledRender.scheduleRender(this, this.#render);
+    if (evt.target instanceof HTMLSelectElement) {
+      this.dispatchEvent(new SelectMenuSelectedEvent(evt.target.value as string));
+      void ComponentHelpers.ScheduledRender.scheduleRender(this, this.#render);
+    }
   }
 
   #renderSelectItem(
       item: SelectButtonItem,
       selectedItem: SelectButtonItem,
-      ): LitHtml.TemplateResult {
+      ): Lit.TemplateResult {
+    const selected = item.value === selectedItem.value;
     // clang-format off
-    return LitHtml.html`
-      <${Menus.Menu.MenuItem.litTagName} .value=${item.value} .selected=${
-      item.value === selectedItem.value
-    }>
-        ${item.label()}
-      </${Menus.Menu.MenuItem.litTagName}>
+    return html`
+      <option
+      .title=${item.label()}
+      value=${item.value}
+      ?selected=${selected}
+      jslog=${VisualLogging.item(Platform.StringUtilities.toKebabCase(item.value)).track({click: true})}
+      >${
+        (selected && item.buttonLabel) ? item.buttonLabel() : item.label()
+      }</option>
     `;
     // clang-format on
   }
@@ -171,12 +199,12 @@ export class SelectButton extends HTMLElement {
   #renderSelectGroup(
       group: SelectMenuGroup,
       selectedItem: SelectButtonItem,
-      ): LitHtml.TemplateResult {
+      ): Lit.TemplateResult {
     // clang-format off
-    return LitHtml.html`
-      <${Menus.Menu.MenuGroup.litTagName} .name=${group.name}>
+    return html`
+      <optgroup label=${group.name}>
         ${group.items.map(item => this.#renderSelectItem(item, selectedItem))}
-      </${Menus.Menu.MenuGroup.litTagName}>
+      </optgroup>
     `;
     // clang-format on
   }
@@ -195,55 +223,46 @@ export class SelectButton extends HTMLElement {
 
     const classes = {
       primary: this.#props.variant === Variant.PRIMARY,
-      secondary: this.#props.variant === Variant.SECONDARY,
+      secondary: this.#props.variant === Variant.OUTLINED,
     };
 
     const buttonVariant =
-        this.#props.variant === Variant.SECONDARY ? Buttons.Button.Variant.SECONDARY : Buttons.Button.Variant.PRIMARY;
-    const label = selectedItem.buttonLabel ? selectedItem.buttonLabel() : selectedItem.label();
+        this.#props.variant === Variant.OUTLINED ? Buttons.Button.Variant.OUTLINED : Buttons.Button.Variant.PRIMARY;
+    const menuLabel = selectedItem.buttonLabel ? selectedItem.buttonLabel() : selectedItem.label();
 
     // clang-format off
-    LitHtml.render(
-      LitHtml.html`
-      <div class="select-button" title=${
-        this.#getTitle(label) || LitHtml.nothing
-      }>
+    Lit.render(
+      html`
+      <style>${UI.inspectorCommonStyles}</style>
+      <style>${selectButtonStyles}</style>
+      <div class="select-button" title=${ifDefined(this.#getTitle(menuLabel))}>
+      <select
+      class=${classMap(classes)}
+      ?disabled=${this.#props.disabled}
+      jslog=${VisualLogging.dropDown('network-conditions').track({change: true})}
+      @change=${this.#handleSelectMenuSelect}>
+        ${
+          hasGroups
+            ? this.#props.groups.map(group =>
+                this.#renderSelectGroup(group, selectedItem),
+              )
+            : this.#props.items.map(item =>
+                this.#renderSelectItem(item, selectedItem),
+              )
+        }
+    </select>
         ${
           selectedItem
-            ? LitHtml.html`
-        <${Buttons.Button.Button.litTagName}
+            ? html`
+        <devtools-button
             .disabled=${this.#props.disabled}
             .variant=${buttonVariant}
             .iconName=${selectedItem.buttonIconName}
             @click=${this.#handleClick}>
-            ${label}
-        </${Buttons.Button.Button.litTagName}>`
+            ${this.#props.buttonLabel}
+        </devtools-button>`
             : ''
         }
-        <${Menus.SelectMenu.SelectMenu.litTagName}
-          class=${LitHtml.Directives.classMap(classes)}
-          @selectmenuselected=${this.#handleSelectMenuSelect}
-          ?disabled=${this.#props.disabled}
-          .showArrow=${true}
-          .sideButton=${false}
-          .showSelectedItem=${true}
-          .disabled=${this.#props.disabled}
-          .buttonTitle=${LitHtml.html``}
-          .position=${Dialogs.Dialog.DialogVerticalPosition.BOTTOM}
-          .horizontalAlignment=${
-            Dialogs.Dialog.DialogHorizontalAlignment.RIGHT
-          }
-        >
-          ${
-            hasGroups
-              ? this.#props.groups.map(group =>
-                  this.#renderSelectGroup(group, selectedItem),
-                )
-              : this.#props.items.map(item =>
-                  this.#renderSelectItem(item, selectedItem),
-                )
-          }
-        </${Menus.SelectMenu.SelectMenu.litTagName}>
       </div>`,
       this.#shadow,
       { host: this },
@@ -252,7 +271,7 @@ export class SelectButton extends HTMLElement {
   };
 }
 
-ComponentHelpers.CustomElements.defineComponent(
+customElements.define(
     'devtools-select-button',
     SelectButton,
 );

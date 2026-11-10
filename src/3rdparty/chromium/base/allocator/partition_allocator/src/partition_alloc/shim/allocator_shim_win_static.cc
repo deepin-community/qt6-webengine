@@ -2,14 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "build/build_config.h"
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
+#include "partition_alloc/build_config.h"
+#include "partition_alloc/buildflags.h"
 #include "partition_alloc/partition_alloc_base/compiler_specific.h"
 #include "partition_alloc/partition_alloc_base/numerics/checked_math.h"
-#include "partition_alloc/partition_alloc_buildflags.h"
 #include "partition_alloc/shim/allocator_shim.h"
 #include "partition_alloc/shim/checked_multiply_win.h"
 
-#if BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 #include "partition_alloc/shim/allocator_shim_default_dispatch_to_partition_alloc.h"
 #endif
 
@@ -22,7 +27,7 @@
 #include "partition_alloc/shim/allocator_shim_override_ucrt_symbols_win.h"
 
 // Cross-checks.
-#if defined(COMPONENT_BUILD) || !BUILDFLAG(IS_WIN)
+#if defined(COMPONENT_BUILD) || !PA_BUILDFLAG(IS_WIN)
 #error This code is only for Windows static build.
 #endif
 

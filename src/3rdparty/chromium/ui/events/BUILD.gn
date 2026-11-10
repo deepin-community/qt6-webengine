@@ -15,6 +15,7 @@ if (is_android) {
 }
 
 if (is_ios) {
+  import("//build/config/apple/mobile_config.gni")
   import("//ios/build/config.gni")
 }
 
@@ -94,6 +95,37 @@ source_set("platform_event") {
   sources = [ "platform_event.h" ]
 
   public_deps = [ "//base" ]
+
+  if (is_android) {
+    public_deps += [ ":platform_event_android" ]
+  }
+}
+
+if (is_android) {
+  source_set("platform_event_android") {
+    sources = [
+      "android/event_flags_android.cc",
+      "android/event_flags_android.h",
+      "android/event_type_android.cc",
+      "android/event_type_android.h",
+      "android/key_event_android.cc",
+      "android/key_event_android.h",
+      "android/platform_event_android.cc",
+      "android/platform_event_android.h",
+
+      # Allow this target to include events_export.h without depending on the
+      # events target (which would be circular).
+      "events_export.h",
+    ]
+
+    deps = [
+      ":event_constants",
+      ":keyevent_jni_headers",
+      ":motionevent_jni_headers",
+      "//base",
+      "//ui/events/types:headers",
+    ]
+  }
 }
 
 jumbo_component("events_base") {
@@ -104,8 +136,6 @@ jumbo_component("events_base") {
     "event_switches.cc",
     "event_switches.h",
     "events_base_export.h",
-    "events_features.cc",
-    "events_features.h",
     "gesture_curve.h",
     "gesture_event_details.cc",
     "gesture_event_details.h",
@@ -143,11 +173,7 @@ jumbo_component("events_base") {
 
   defines = [ "EVENTS_BASE_IMPLEMENTATION" ]
 
-  deps = [
-    ":dom_keycode_converter",
-    "//base/third_party/dynamic_annotations",
-    "//build:chromeos_buildflags",
-  ]
+  deps = [ ":dom_keycode_converter" ]
 
   public_deps = [
     ":event_constants",
@@ -166,6 +192,15 @@ jumbo_component("events_base") {
     deps += [ "//base:i18n" ]
   }
 
+  if (is_ios && use_blink) {
+    if (target_platform == "iphoneos") {
+      sources += [
+        "keycodes/keyboard_code_conversion_ios.h",
+        "keycodes/keyboard_code_conversion_ios.mm",
+      ]
+    }
+  }
+
   if (is_fuchsia) {
     sources += [
       "keycodes/keyboard_code_conversion_fuchsia.cc",
@@ -178,7 +213,7 @@ jumbo_component("events_base") {
   if (ozone_platform_x11) {
     public_deps += [ "//ui/events/keycodes:x11" ]
 
-    # TODO(https://crbug.com/1076277): This dependency on //ui/gfx/x
+    # TODO(crbug.com/40688148): This dependency on //ui/gfx/x
     # is unnecessary and should be removed.  It is included for now
     # to work around a bug in lld that introduces unnecessary
     # nondeterminism in the DSO (see c#6 on the bug for an
@@ -216,6 +251,7 @@ jumbo_component("events") {
     "event_targeter.h",
     "event_utils.h",
     "events_export.h",
+    "features.h",
     "gestures/gesture_recognizer.h",
     "gestures/gesture_types.h",
     "null_event_targeter.h",
@@ -235,6 +271,7 @@ jumbo_component("events") {
     "event_utils.cc",
     "events_exports.cc",
     "events_stub.cc",
+    "features.cc",
     "gestures/gesture_recognizer.cc",
     "gestures/gesture_types.cc",
     "null_event_targeter.cc",
@@ -244,6 +281,7 @@ jumbo_component("events") {
   if (is_win) {
     public += [
       "win/events_win_utils.h",
+      "win/stylus_handwriting_properties_win.h",
       "win/system_event_state_lookup.h",
     ]
 
@@ -252,6 +290,7 @@ jumbo_component("events") {
       "keycodes/platform_key_map_win.h",
       "win/events_win.cc",
       "win/events_win_utils.cc",
+      "win/stylus_handwriting_properties_win.cc",
       "win/system_event_state_lookup.cc",
     ]
   }
@@ -286,7 +325,6 @@ jumbo_component("events") {
   deps = [
     ":dom_keycode_converter",
     ":gesture_detection",
-    "//base/third_party/dynamic_annotations",
     "//skia",
     "//ui/base:features",
     "//ui/gfx",
@@ -323,6 +361,12 @@ jumbo_component("events") {
     sources -= [ "win/events_win.cc" ]
   }
 
+  # Used for the feature flag check. Should be deleted once the feature is
+  # enabled by default.
+  if (is_win) {
+    deps += [ "//components/stylus_handwriting/win" ]
+  }
+
   if (use_ozone) {
     public += [ "ozone/events_ozone.h" ]
     sources += [ "ozone/events_ozone.cc" ]
@@ -343,11 +387,9 @@ jumbo_component("events") {
       "gestures/gesture_recognizer_impl.cc",
       "gestures/motion_event_aura.cc",
     ]
-
-    deps += [ "//build:chromeos_buildflags" ]
   }
 
-  if (is_win || is_apple || use_ozone) {
+  if (is_win || is_apple || use_ozone || is_android) {
     sources -= [ "events_stub.cc" ]
   }
 
@@ -355,23 +397,35 @@ jumbo_component("events") {
     public += [
       "android/drag_event_android.h",
       "android/event_handler_android.h",
+      "android/events_android_utils.h",
       "android/gesture_event_android.h",
       "android/gesture_event_type.h",
-      "android/key_event_android.h",
       "android/key_event_utils.h",
       "android/motion_event_android.h",
+      "android/motion_event_android_factory.h",
+      "android/motion_event_android_java.h",
+      "android/motion_event_android_native.h",
+      "android/motion_event_android_source.h",
+      "android/motion_event_android_source_java.h",
+      "android/motion_event_android_source_native.h",
 
-      # TODO(crbug.com/1413521): Move this outside is_android block when
+      # TODO(crbug.com/40255699): Move this outside is_android block when
       # consuming cross-platform code which uses it lands.
       "back_gesture_event.h",
     ]
     sources += [
       "android/drag_event_android.cc",
       "android/event_handler_android.cc",
+      "android/events_android.cc",
+      "android/events_android_utils.cc",
       "android/gesture_event_android.cc",
-      "android/key_event_android.cc",
       "android/key_event_utils.cc",
       "android/motion_event_android.cc",
+      "android/motion_event_android_factory.cc",
+      "android/motion_event_android_java.cc",
+      "android/motion_event_android_native.cc",
+      "android/motion_event_android_source_java.cc",
+      "android/motion_event_android_source_native.cc",
       "back_gesture_event.cc",
     ]
     deps += [
@@ -395,6 +449,10 @@ jumbo_component("events") {
       "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.ui.pointer:fuchsia.ui.pointer_cpp",
     ]
   }
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 jumbo_component("keyboard_hook") {
@@ -487,8 +545,6 @@ jumbo_component("gesture_detection") {
   deps = [
     ":events_base",
     "//base",
-    "//base/third_party/dynamic_annotations",
-    "//build:chromeos_buildflags",
     "//ui/base:features",
     "//ui/display",
     "//ui/gfx",
@@ -516,8 +572,6 @@ jumbo_component("velocity_tracker") {
     "velocity_tracker/bitset_32.h",
     "velocity_tracker/motion_event.cc",
     "velocity_tracker/motion_event.h",
-    "velocity_tracker/motion_event_buffer.cc",
-    "velocity_tracker/motion_event_buffer.h",
     "velocity_tracker/motion_event_generic.cc",
     "velocity_tracker/motion_event_generic.h",
     "velocity_tracker/velocity_tracker.cc",
@@ -582,7 +636,6 @@ jumbo_static_library("test_support") {
   ]
   deps = [
     "//base",
-    "//build:chromeos_buildflags",
     "//skia",
     "//ui/events/platform",
     "//ui/gfx",
@@ -633,6 +686,10 @@ jumbo_static_library("test_support") {
 
     deps += [ "//third_party/fuchsia-sdk/sdk/fidl/fuchsia.ui.pointer:fuchsia.ui.pointer_cpp" ]
   }
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 if (use_blink) {
@@ -665,7 +722,6 @@ if (use_blink) {
       "scoped_target_handler_unittest.cc",
       "test/scoped_event_waiter_unittest.cc",
       "velocity_tracker/bitset_32_unittest.cc",
-      "velocity_tracker/motion_event_buffer_unittest.cc",
       "velocity_tracker/motion_event_generic_unittest.cc",
       "velocity_tracker/velocity_tracker_unittest.cc",
     ]
@@ -709,10 +765,16 @@ if (use_blink) {
     ]
 
     if (is_android) {
-      sources += [ "android/motion_event_android_unittest.cc" ]
-      deps += [ "//ui/android:ui_full_java" ]
+      sources += [
+        "android/motion_event_android_unittest.cc",
+        "keycodes/keyboard_code_conversion_android_unittest.cc",
+      ]
+      deps += [
+        ":motionevent_jni_headers",
+        "//ui/android:ui_full_java",
+      ]
     } else {
-      data_deps = [ "//third_party/mesa_headers" ]
+      data_deps = [ "//third_party/angle:includes" ]
     }
 
     if (use_ozone) {
@@ -721,10 +783,12 @@ if (use_blink) {
 
     if (use_ozone) {
       deps += [
-        "//ui/events/devices:unittests",
         "//ui/events/ozone:unittests",
         "//ui/events/ozone/layout",
       ]
+    }
+    if (use_ozone || (is_ios && use_blink)) {
+      deps += [ "//ui/events/devices:unittests" ]
     }
 
     if (use_aura) {
@@ -741,6 +805,7 @@ if (use_blink) {
         "win/event_utils_win_unittest.cc",
         "win/media_keyboard_hook_win_unittest.cc",
         "win/modifier_keyboard_hook_win_unittest.cc",
+        "win/stylus_handwriting_properties_win_unittest.cc",
       ]
       deps += [ "//ui/events:keyboard_hook" ]
     }
@@ -768,6 +833,10 @@ if (use_blink) {
       sources += [ "keycodes/dom/dom_keyboard_layout_map_unittest.cc" ]
       deps += [ ":dom_keyboard_layout" ]
     }
+
+    # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+    # enable the diagnostic by removing this line.
+    configs += [ "//build/config/compiler:no_exit_time_destructors" ]
   }
 }
 

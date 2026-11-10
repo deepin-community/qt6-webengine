@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f16-f32-vcvt/avx512skx.c.in
 //   Generator: tools/xngen
@@ -8,19 +9,21 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <immintrin.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/vcvt.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/vcvt.h"
 
 
 void xnn_f16_f32_vcvt_ukernel__avx512skx_u32(
     size_t batch,
-    const void* input,
+    const xnn_float16* input,
     float* output,
-    const union xnn_f16_f32_cvt_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const void* params)
 {
   assert(batch != 0);
   assert(batch % sizeof(uint16_t) == 0);
@@ -50,7 +53,7 @@ void xnn_f16_f32_vcvt_ukernel__avx512skx_u32(
 
     // Prepare mask for valid 32-bit elements (depends on batch).
     batch >>= XNN_LOG2_SIZEOF_HALF;
-    const __mmask16 vmask = _cvtu32_mask16((uint16_t) ((uint32_t) (UINT32_C(1) << batch) - UINT32_C(1)));
+    const __mmask16 vmask = _cvtu32_mask16((uint32_t) ((UINT32_C(1) << batch) - UINT32_C(1)));
 
     const __m512 vacc = _mm512_cvtph_ps(_mm256_maskz_loadu_epi16(vmask, i));
 

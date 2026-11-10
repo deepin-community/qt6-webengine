@@ -3,8 +3,10 @@
 // found in the LICENSE file.
 
 import {stringToMojoString16} from 'chrome://resources/js/mojo_type_util.js';
+import type {Url} from 'chrome://resources/mojo/url/mojom/url.mojom-webui.js';
 
-import {PageCallbackRouter, PageHandlerFactory, PageHandlerRemote, ProfileData, SwitchToTabInfo, Tab, TabOrganizationSession, UserFeedback} from './tab_search.mojom-webui.js';
+import type {ProfileData, SwitchToTabInfo, Tab, TabOrganizationFeature, TabOrganizationModelStrategy, TabOrganizationSession, TabSearchSection, UnusedTabInfo, UserFeedback} from './tab_search.mojom-webui.js';
+import {PageCallbackRouter, PageHandlerFactory, PageHandlerRemote} from './tab_search.mojom-webui.js';
 
 /**
  * These values are persisted to logs and should not be renumbered or re-used.
@@ -18,20 +20,43 @@ export enum RecentlyClosedItemOpenAction {
 export interface TabSearchApiProxy {
   closeTab(tabId: number): void;
 
-  acceptTabOrganization(
-      sessionId: number, organizationId: number, name: string,
-      tabs: Tab[]): void;
+  closeWebUiTab(): void;
+
+  declutterTabs(tabIds: number[], urls: Url[]): void;
+
+  acceptTabOrganization(sessionId: number, organizationId: number, tabs: Tab[]):
+      void;
 
   rejectTabOrganization(sessionId: number, organizationId: number): void;
 
+  renameTabOrganization(
+      sessionId: number, organizationId: number, name: string): void;
+
+  excludeFromStaleTabs(tabId: number): void;
+
+  excludeFromDuplicateTabs(url: Url): void;
+
   getProfileData(): Promise<{profileData: ProfileData}>;
 
+  getUnusedTabs(): Promise<{tabs: UnusedTabInfo}>;
+
+  getTabSearchSection(): Promise<{section: TabSearchSection}>;
+
+  getTabOrganizationFeature(): Promise<{feature: TabOrganizationFeature}>;
+
   getTabOrganizationSession(): Promise<{session: TabOrganizationSession}>;
+
+  getTabOrganizationModelStrategy():
+      Promise<{strategy: TabOrganizationModelStrategy}>;
+
+  getIsSplit(): Promise<{isSplit: boolean}>;
 
   openRecentlyClosedEntry(
       id: number, withSearch: boolean, isTab: boolean, index: number): void;
 
   requestTabOrganization(): void;
+
+  rejectSession(sessionId: number): void;
 
   restartSession(): void;
 
@@ -42,26 +67,29 @@ export interface TabSearchApiProxy {
   removeTabFromOrganization(
       sessionId: number, organizationId: number, tab: Tab): void;
 
+  replaceActiveSplitTab(replacementTabId: number): void;
+
   saveRecentlyClosedExpandedPref(expanded: boolean): void;
 
-  setTabIndex(index: number): void;
+  setOrganizationFeature(feature: TabOrganizationFeature): void;
 
   startTabGroupTutorial(): void;
 
   triggerFeedback(sessionId: number): void;
 
-  triggerSync(): void;
-
   triggerSignIn(): void;
 
   openHelpPage(): void;
 
-  openSyncSettings(): void;
+  setTabOrganizationModelStrategy(strategy: TabOrganizationModelStrategy): void;
 
-  setUserFeedback(
-      sessionId: number, organizationId: number, feedback: UserFeedback): void;
+  setTabOrganizationUserInstruction(user_instruction: string): void;
 
-  showUi(): void;
+  setUserFeedback(sessionId: number, feedback: UserFeedback): void;
+
+  notifyOrganizationUiReadyToShow(): void;
+
+  notifySearchUiReadyToShow(): void;
 }
 
 export class TabSearchApiProxyImpl implements TabSearchApiProxy {
@@ -79,22 +107,63 @@ export class TabSearchApiProxyImpl implements TabSearchApiProxy {
     this.handler.closeTab(tabId);
   }
 
+  closeWebUiTab() {
+    this.handler.closeWebUiTab();
+  }
+
+  declutterTabs(tabIds: number[], urls: Url[]) {
+    this.handler.declutterTabs(tabIds, urls);
+  }
+
   acceptTabOrganization(
-      sessionId: number, organizationId: number, name: string, tabs: Tab[]) {
-    this.handler.acceptTabOrganization(
-        sessionId, organizationId, stringToMojoString16(name), tabs);
+      sessionId: number, organizationId: number, tabs: Tab[]) {
+    this.handler.acceptTabOrganization(sessionId, organizationId, tabs);
   }
 
   rejectTabOrganization(sessionId: number, organizationId: number) {
     this.handler.rejectTabOrganization(sessionId, organizationId);
   }
 
+  renameTabOrganization(
+      sessionId: number, organizationId: number, name: string) {
+    this.handler.renameTabOrganization(
+        sessionId, organizationId, stringToMojoString16(name));
+  }
+
+  excludeFromStaleTabs(tabId: number) {
+    this.handler.excludeFromStaleTabs(tabId);
+  }
+
+  excludeFromDuplicateTabs(url: Url) {
+    this.handler.excludeFromDuplicateTabs(url);
+  }
+
   getProfileData() {
     return this.handler.getProfileData();
   }
 
+  getUnusedTabs() {
+    return this.handler.getUnusedTabs();
+  }
+
+  getTabSearchSection() {
+    return this.handler.getTabSearchSection();
+  }
+
+  getTabOrganizationFeature() {
+    return this.handler.getTabOrganizationFeature();
+  }
+
   getTabOrganizationSession() {
     return this.handler.getTabOrganizationSession();
+  }
+
+  getTabOrganizationModelStrategy() {
+    return this.handler.getTabOrganizationModelStrategy();
+  }
+
+  getIsSplit() {
+    return this.handler.getIsSplit();
   }
 
   openRecentlyClosedEntry(
@@ -117,6 +186,10 @@ export class TabSearchApiProxyImpl implements TabSearchApiProxy {
     this.handler.requestTabOrganization();
   }
 
+  rejectSession(sessionId: number) {
+    this.handler.rejectSession(sessionId);
+  }
+
   restartSession() {
     this.handler.restartSession();
   }
@@ -134,12 +207,16 @@ export class TabSearchApiProxyImpl implements TabSearchApiProxy {
     this.handler.removeTabFromOrganization(sessionId, organizationId, tab);
   }
 
+  replaceActiveSplitTab(replacementSplitTabId: number) {
+    this.handler.replaceActiveSplitTab(replacementSplitTabId);
+  }
+
   saveRecentlyClosedExpandedPref(expanded: boolean) {
     this.handler.saveRecentlyClosedExpandedPref(expanded);
   }
 
-  setTabIndex(index: number) {
-    this.handler.setTabIndex(index);
+  setOrganizationFeature(feature: TabOrganizationFeature) {
+    this.handler.setOrganizationFeature(feature);
   }
 
   startTabGroupTutorial() {
@@ -150,10 +227,6 @@ export class TabSearchApiProxyImpl implements TabSearchApiProxy {
     this.handler.triggerFeedback(sessionId);
   }
 
-  triggerSync() {
-    this.handler.triggerSync();
-  }
-
   triggerSignIn() {
     this.handler.triggerSignIn();
   }
@@ -162,17 +235,24 @@ export class TabSearchApiProxyImpl implements TabSearchApiProxy {
     this.handler.openHelpPage();
   }
 
-  openSyncSettings() {
-    this.handler.openSyncSettings();
+  setTabOrganizationModelStrategy(strategy: TabOrganizationModelStrategy) {
+    this.handler.setTabOrganizationModelStrategy(strategy);
   }
 
-  setUserFeedback(
-      sessionId: number, organizationId: number, feedback: UserFeedback) {
-    this.handler.setUserFeedback(sessionId, organizationId, feedback);
+  setTabOrganizationUserInstruction(userInstruction: string) {
+    this.handler.setTabOrganizationUserInstruction(userInstruction);
   }
 
-  showUi() {
-    this.handler.showUI();
+  setUserFeedback(sessionId: number, feedback: UserFeedback) {
+    this.handler.setUserFeedback(sessionId, feedback);
+  }
+
+  notifyOrganizationUiReadyToShow() {
+    this.handler.notifyOrganizationUIReadyToShow();
+  }
+
+  notifySearchUiReadyToShow() {
+    this.handler.notifySearchUIReadyToShow();
   }
 
   static getInstance(): TabSearchApiProxy {

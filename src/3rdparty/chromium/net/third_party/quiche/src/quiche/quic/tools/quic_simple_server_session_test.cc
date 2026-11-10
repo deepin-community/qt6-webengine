@@ -38,10 +38,7 @@
 #include "quiche/quic/tools/quic_simple_server_stream.h"
 
 using testing::_;
-using testing::AtLeast;
-using testing::InSequence;
 using testing::Invoke;
-using testing::Return;
 using testing::StrictMock;
 
 namespace quic {
@@ -66,11 +63,6 @@ class QuicSimpleServerSessionPeer {
   static QuicSpdyStream* CreateIncomingStream(QuicSimpleServerSession* s,
                                               QuicStreamId id) {
     return s->CreateIncomingStream(id);
-  }
-
-  static QuicSimpleServerStream* CreateOutgoingUnidirectionalStream(
-      QuicSimpleServerSession* s) {
-    return s->CreateOutgoingUnidirectionalStream();
   }
 };
 
@@ -404,43 +396,6 @@ TEST_P(QuicSimpleServerSessionTest, CreateIncomingStream) {
       session_.get(), GetNthClientInitiatedBidirectionalId(0));
   EXPECT_NE(nullptr, stream);
   EXPECT_EQ(GetNthClientInitiatedBidirectionalId(0), stream->id());
-}
-
-TEST_P(QuicSimpleServerSessionTest, CreateOutgoingDynamicStreamDisconnected) {
-  // EXPECT_QUIC_BUG tests are expensive so only run one instance of them.
-  if (version() != AllSupportedVersions()[0]) {
-    return;
-  }
-
-  // Tests that outgoing stream creation fails when connection is not connected.
-  size_t initial_num_open_stream =
-      QuicSessionPeer::GetNumOpenDynamicStreams(session_.get());
-  QuicConnectionPeer::TearDownLocalConnectionState(connection_);
-  EXPECT_QUIC_BUG(
-      QuicSimpleServerSessionPeer::CreateOutgoingUnidirectionalStream(
-          session_.get()),
-      "ShouldCreateOutgoingUnidirectionalStream called when disconnected");
-
-  EXPECT_EQ(initial_num_open_stream,
-            QuicSessionPeer::GetNumOpenDynamicStreams(session_.get()));
-}
-
-TEST_P(QuicSimpleServerSessionTest, CreateOutgoingDynamicStreamUnencrypted) {
-  // EXPECT_QUIC_BUG tests are expensive so only run one instance of them.
-  if (version() != AllSupportedVersions()[0]) {
-    return;
-  }
-
-  // Tests that outgoing stream creation fails when encryption has not yet been
-  // established.
-  size_t initial_num_open_stream =
-      QuicSessionPeer::GetNumOpenDynamicStreams(session_.get());
-  EXPECT_QUIC_BUG(
-      QuicSimpleServerSessionPeer::CreateOutgoingUnidirectionalStream(
-          session_.get()),
-      "Encryption not established so no outgoing stream created.");
-  EXPECT_EQ(initial_num_open_stream,
-            QuicSessionPeer::GetNumOpenDynamicStreams(session_.get()));
 }
 
 // Tests that calling GetOrCreateStream() on an outgoing stream should result in

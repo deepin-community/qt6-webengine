@@ -1,19 +1,22 @@
-
 // Copyright 2023 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "components/enterprise/idle/action_type.h"
 
+#include <algorithm>
 #include <cstring>
-#include <regex>
 #include <string>
 #include <utility>
 
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/json/values_util.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -42,11 +45,11 @@ const char kSignOut[] = "sign_out";
 const char kCloseTabs[] = "close_tabs";
 #else
 const char kClearSiteSettingsActionName[] = "clear_site_settings";
-#endif  // BUILDFLAG(IS_IOS)
 const char kReloadPagesActionName[] = "reload_pages";
+#endif  // BUILDFLAG(IS_IOS)
 }  // namespace
 
-absl::optional<ActionType> NameToActionType(const std::string& name) {
+std::optional<ActionType> NameToActionType(const std::string& name) {
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
   if (name == kCloseBrowsersActionName) {
     return ActionType::kCloseBrowsers;
@@ -87,29 +90,26 @@ absl::optional<ActionType> NameToActionType(const std::string& name) {
   if (name == kClearSiteSettingsActionName) {
     return ActionType::kClearSiteSettings;
   }
-#endif  // BUILDFLAG(IS_IOS)
   if (name == kReloadPagesActionName) {
     return ActionType::kReloadPages;
   }
-  return absl::nullopt;
+#endif  // BUILDFLAG(IS_IOS)
+  return std::nullopt;
 }
 
 std::string GetActionBrowsingDataTypeName(const std::string& action) {
   // Get the data type to be cleared if the action is to clear browsig data.
-  const char kPrefix[] = "clear_";
-  if (!base::StartsWith(action, kPrefix, base::CompareCase::SENSITIVE)) {
-    return std::string();
-  }
-  return action.substr(std::strlen(kPrefix));
+  auto remainder = base::RemovePrefix(action, "clear_");
+  return remainder ? std::string(*remainder) : std::string();
 }
 
 std::vector<ActionType> GetActionTypesFromPrefs(PrefService* prefs) {
   std::vector<ActionType> actions;
-  base::ranges::transform(prefs->GetList(prefs::kIdleTimeoutActions),
-                          std::back_inserter(actions),
-                          [](const base::Value& action) {
-                            return static_cast<ActionType>(action.GetInt());
-                          });
+  std::ranges::transform(prefs->GetList(prefs::kIdleTimeoutActions),
+                         std::back_inserter(actions),
+                         [](const base::Value& action) {
+                           return static_cast<ActionType>(action.GetInt());
+                         });
   return actions;
 }
 

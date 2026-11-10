@@ -4,7 +4,7 @@
 
 #include "base/process/process.h"
 
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "base/process/internal_linux.h"
 
 namespace base {
@@ -38,13 +38,15 @@ Time Process::CreationTime() const {
                                   internal::VM_STARTTIME)
                             : 0;
 
-  if (!start_ticks)
+  if (!start_ticks) {
     return Time();
+  }
 
   TimeDelta start_offset = internal::ClockTicksToTimeDelta(start_ticks);
   Time boot_time = internal::GetBootTime();
-  if (boot_time.is_null())
+  if (boot_time.is_null()) {
     return Time();
+  }
   return Time(boot_time + start_offset);
 }
 

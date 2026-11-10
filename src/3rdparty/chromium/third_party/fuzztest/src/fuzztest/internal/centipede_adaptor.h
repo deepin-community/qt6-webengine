@@ -23,21 +23,34 @@
 
 namespace fuzztest::internal {
 
+class CentipedeFixtureDriver;
+
 // Adaptor for running FuzzTest fuzzers with the Centipede engine.
 class CentipedeFuzzerAdaptor : public FuzzTestFuzzer {
  public:
   CentipedeFuzzerAdaptor(const FuzzTest& test,
                          std::unique_ptr<UntypedFixtureDriver> fixture_driver);
-  void RunInUnitTestMode(const Configuration& configuration) override;
-  int RunInFuzzingMode(int* argc, char*** argv,
-                       const Configuration& configuration) override;
+  bool RunInUnitTestMode(const Configuration& configuration) override;
+  bool RunInFuzzingMode(int* argc, char*** argv,
+                        const Configuration& configuration) override;
 
  private:
-  const FuzzTest& test_;
-  FuzzTestFuzzerImpl fuzzer_impl_;
+  bool Run(int* argc, char*** argv, RunMode mode,
+           const Configuration& configuration);
+  bool ReplayCrashInSingleProcess(const Configuration& configuration);
 
   Runtime& runtime_ = Runtime::instance();
+  const FuzzTest& test_;
+  CentipedeFixtureDriver* centipede_fixture_driver_;
+  FuzzTestFuzzerImpl fuzzer_impl_;
 };
+
+// Lists crash IDs for `test_name` with `configuration` using Centipede.
+std::vector<std::string> ListCrashIdsUsingCentipede(
+    const Configuration& configuration, absl::string_view test_name);
+
+// Returns whether the current process is a Centipede runner process.
+bool IsCentipedeRunner();
 
 }  // namespace fuzztest::internal
 

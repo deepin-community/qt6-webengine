@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-gemm/c8-neoni8mm.c.in
 //   Generator: tools/xngen
@@ -8,12 +9,16 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <arm_neon.h>
 
-#include <xnnpack/gemm.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/math.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/gemm.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
 
 
 void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_1x8c8__neoni8mm(
@@ -26,7 +31,7 @@ void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_1x8c8__neoni8mm(
     int8_t* restrict c,
     size_t cm_stride,
     size_t cn_stride,
-    const union xnn_qs8_qc8w_conv_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const union xnn_qs8_qc8w_conv_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(mr != 0);
   assert(mr <= 1);
@@ -45,17 +50,8 @@ void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_1x8c8__neoni8mm(
   do {
     // Initialize accumulators with bias. 8 bias values are loaded from the
     // weight matrix, at the start of the group of 8 columns.
-    #if XNN_ARCH_ARM64
-      const uint64x2x2_t vbias01x0123 = vld2q_dup_u64(w); w = (const int32_t*) w + 4;
-      const uint64x2x2_t vbias01x4567 = vld2q_dup_u64(w); w = (const int32_t*) w + 4;
-    #else
-      uint64x2x2_t vbias01x0123;
-      vbias01x0123.val[0] = vld1q_dup_u64(w); w = (const int32_t*) w + 2;
-      vbias01x0123.val[1] = vld1q_dup_u64(w); w = (const int32_t*) w + 2;
-      uint64x2x2_t vbias01x4567;
-      vbias01x4567.val[0] = vld1q_dup_u64(w); w = (const int32_t*) w + 2;
-      vbias01x4567.val[1] = vld1q_dup_u64(w); w = (const int32_t*) w + 2;
-    #endif
+    const uint64x2x2_t vbias01x0123 = vld2q_dup_u64(w); w = (const int32_t*) w + 4;
+    const uint64x2x2_t vbias01x4567 = vld2q_dup_u64(w); w = (const int32_t*) w + 4;
     int32x4_t vacc01x01 = vreinterpretq_s32_u64(vbias01x0123.val[0]);
     int32x4_t vacc01x23 = vreinterpretq_s32_u64(vbias01x0123.val[1]);
     int32x4_t vacc01x45 = vreinterpretq_s32_u64(vbias01x4567.val[0]);
@@ -71,12 +67,7 @@ void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_1x8c8__neoni8mm(
 
     while (k >= 16 * sizeof(int8_t)) {
       // Load a 1x16 block of activations.
-      #if XNN_ARCH_ARM64
-        va01x0123456789ABCDEF = vld2q_lane_u64((const void*) a0, va01x0123456789ABCDEF, 0); a0 += 16;
-      #else
-        va01x0123456789ABCDEF.val[0] = vld1q_lane_u64((const void*) a0, va01x0123456789ABCDEF.val[0], 0); a0 += 8;
-        va01x0123456789ABCDEF.val[1] = vld1q_lane_u64((const void*) a0, va01x0123456789ABCDEF.val[1], 0); a0 += 8;
-      #endif
+      va01x0123456789ABCDEF = vld2q_lane_u64((const void*) a0, va01x0123456789ABCDEF, 0); a0 += 16;
 
       const int8x16_t va01x01234567 = vreinterpretq_s8_u64(va01x0123456789ABCDEF.val[0]);
       const int8x16_t va01x89ABCDEF = vreinterpretq_s8_u64(va01x0123456789ABCDEF.val[1]);
@@ -121,13 +112,8 @@ void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_1x8c8__neoni8mm(
       vacc01x67 = vmmlaq_s32(vacc01x67, vreinterpretq_s8_u64(va01x01234567), vb67x01234567);
     }
 
-    #if XNN_ARCH_ARM64
-      int32x4_t vacc0x0123 = vreinterpretq_s32_u64(vtrn1q_u64(vreinterpretq_u64_s32(vacc01x01), vreinterpretq_u64_s32(vacc01x23)));
-      int32x4_t vacc0x4567 = vreinterpretq_s32_u64(vtrn1q_u64(vreinterpretq_u64_s32(vacc01x45), vreinterpretq_u64_s32(vacc01x67)));
-    #else
-      int32x4_t vacc0x0123 = vcombine_s32(vget_low_s32(vacc01x01), vget_low_s32(vacc01x23));
-      int32x4_t vacc0x4567 = vcombine_s32(vget_low_s32(vacc01x45), vget_low_s32(vacc01x67));
-    #endif
+    int32x4_t vacc0x0123 = vreinterpretq_s32_u64(vtrn1q_u64(vreinterpretq_u64_s32(vacc01x01), vreinterpretq_u64_s32(vacc01x23)));
+    int32x4_t vacc0x4567 = vreinterpretq_s32_u64(vtrn1q_u64(vreinterpretq_u64_s32(vacc01x45), vreinterpretq_u64_s32(vacc01x67)));
 
     float32x4_t vfpacc0x0123 = vcvtq_f32_s32(vacc0x0123);
     float32x4_t vfpacc0x4567 = vcvtq_f32_s32(vacc0x4567);
@@ -140,7 +126,7 @@ void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_1x8c8__neoni8mm(
     vacc0x0123 = vcvtnq_s32_f32(vfpacc0x0123);
     vacc0x4567 = vcvtnq_s32_f32(vfpacc0x4567);
 
-    const int16x8_t voutput_zero_point = vld1q_dup_s16(&params->fp32_neonv8.output_zero_point);
+    const int16x8_t voutput_zero_point = vdupq_n_s16(params->fp32_neonv8.output_zero_point);
     #if XNN_ARCH_ARM64
       const int16x8_t vacc0x01234567 = vqaddq_s16(vqmovn_high_s32(vqmovn_s32(vacc0x0123), vacc0x4567), voutput_zero_point);
 
@@ -150,8 +136,8 @@ void xnn_qs8_qc8w_gemm_minmax_fp32_ukernel_1x8c8__neoni8mm(
 
       int8x8_t vout0x01234567 = vqmovn_s16(vacc0x01234567);
     #endif
-    const int8x8_t voutput_min = vld1_dup_s8(&params->fp32_neonv8.output_min);
-    const int8x8_t voutput_max = vld1_dup_s8(&params->fp32_neonv8.output_max);
+    const int8x8_t voutput_min = vdup_n_s8(params->fp32_neonv8.output_min);
+    const int8x8_t voutput_max = vdup_n_s8(params->fp32_neonv8.output_max);
 
     vout0x01234567 = vmax_s8(vout0x01234567, voutput_min);
 

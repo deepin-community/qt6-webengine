@@ -4,8 +4,9 @@
 
 #include "chrome/browser/ui/webui/ash/settings/pages/storage/storage_section.h"
 
-#include "ash/constants/ash_features.h"
-#include "base/no_destructor.h"
+#include <array>
+
+#include "base/containers/span.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/webui/ash/settings/os_settings_features_util.h"
 #include "chrome/browser/ui/webui/ash/settings/search/search_tag_registry.h"
@@ -18,7 +19,6 @@
 namespace ash::settings {
 
 namespace mojom {
-using ::chromeos::settings::mojom::kDeviceSectionPath;
 using ::chromeos::settings::mojom::kExternalStorageSubpagePath;
 using ::chromeos::settings::mojom::kStorageSubpagePath;
 using ::chromeos::settings::mojom::kSystemPreferencesSectionPath;
@@ -29,8 +29,8 @@ using ::chromeos::settings::mojom::Subpage;
 
 namespace {
 
-const std::vector<SearchConcept>& GetDefaultSearchConcepts() {
-  static const base::NoDestructor<std::vector<SearchConcept>> tags({
+base::span<const SearchConcept> GetDefaultSearchConcepts() {
+  static constexpr auto tags = std::to_array<SearchConcept>({
       {IDS_OS_SETTINGS_TAG_STORAGE,
        mojom::kStorageSubpagePath,
        mojom::SearchResultIcon::kStorage,
@@ -38,13 +38,13 @@ const std::vector<SearchConcept>& GetDefaultSearchConcepts() {
        mojom::SearchResultType::kSubpage,
        {.subpage = mojom::Subpage::kStorage},
        {IDS_OS_SETTINGS_TAG_STORAGE_ALT1, IDS_OS_SETTINGS_TAG_STORAGE_ALT2,
-        SearchConcept::kAltTagEnd}},
+        IDS_OS_SETTINGS_TAG_STORAGE_ALT3, SearchConcept::kAltTagEnd}},
   });
-  return *tags;
+  return tags;
 }
 
-const std::vector<SearchConcept>& GetExternalStorageSearchConcepts() {
-  static const base::NoDestructor<std::vector<SearchConcept>> tags({
+base::span<const SearchConcept> GetExternalStorageSearchConcepts() {
+  static constexpr auto tags = std::to_array<SearchConcept>({
       {IDS_OS_SETTINGS_TAG_EXTERNAL_STORAGE,
        mojom::kExternalStorageSubpagePath,
        mojom::SearchResultIcon::kStorage,
@@ -52,7 +52,7 @@ const std::vector<SearchConcept>& GetExternalStorageSearchConcepts() {
        mojom::SearchResultType::kSubpage,
        {.subpage = mojom::Subpage::kExternalStorage}},
   });
-  return *tags;
+  return tags;
 }
 
 }  // namespace
@@ -74,25 +74,21 @@ StorageSection::StorageSection(Profile* profile,
 StorageSection::~StorageSection() = default;
 
 void StorageSection::AddLoadTimeData(content::WebUIDataSource* html_source) {
-  const bool kIsRevampEnabled =
-      ash::features::IsOsSettingsRevampWayfindingEnabled();
-
   webui::LocalizedString kStorageStrings[] = {
       {"storageExternal", IDS_SETTINGS_STORAGE_EXTERNAL},
       {"storageExternalStorageEmptyListHeader",
        IDS_SETTINGS_STORAGE_EXTERNAL_STORAGE_EMPTY_LIST_HEADER},
       {"storageExternalStorageListHeader",
        IDS_SETTINGS_STORAGE_EXTERNAL_STORAGE_LIST_HEADER},
-      {"storageItemApps", kIsRevampEnabled ? IDS_OS_SETTINGS_STORAGE_ITEM_APPS
-                                           : IDS_SETTINGS_STORAGE_ITEM_APPS},
+      {"storageItemApps", IDS_OS_SETTINGS_STORAGE_ITEM_APPS},
       {"storageItemOffline", IDS_SETTINGS_STORAGE_ITEM_OFFLINE},
       {"storageItemAvailable", IDS_SETTINGS_STORAGE_ITEM_AVAILABLE},
-      {"storageItemBrowsingData", IDS_SETTINGS_STORAGE_ITEM_BROWSING_DATA},
       {"storageItemCrostini", IDS_SETTINGS_STORAGE_ITEM_CROSTINI},
       {"storageItemInUse", IDS_SETTINGS_STORAGE_ITEM_IN_USE},
       {"storageItemMyFiles", IDS_SETTINGS_STORAGE_ITEM_MY_FILES},
       {"storageItemOtherUsers", IDS_SETTINGS_STORAGE_ITEM_OTHER_USERS},
       {"storageItemSystem", IDS_SETTINGS_STORAGE_ITEM_SYSTEM},
+      {"storageItemEncryption", IDS_SETTINGS_STORAGE_ITEM_ENCRYPTION_LABEL},
       {"storageOverviewAriaLabel", IDS_SETTINGS_STORAGE_OVERVIEW_ARIA_LABEL},
       {"storageSizeComputing", IDS_SETTINGS_STORAGE_SIZE_CALCULATING},
       {"storageSizeUnknown", IDS_SETTINGS_STORAGE_SIZE_UNKNOWN},
@@ -118,6 +114,10 @@ void StorageSection::AddLoadTimeData(content::WebUIDataSource* html_source) {
           IDS_SETTINGS_STORAGE_ANDROID_APPS_ACCESS_EXTERNAL_DRIVES_NOTE,
           chrome::kArcExternalStorageLearnMoreURL));
 
+  html_source->AddString(
+      "storageItemBrowsingData",
+      l10n_util::GetStringUTF16(IDS_SETTINGS_STORAGE_ITEM_BROWSING_DATA));
+
   html_source->AddBoolean("isExternalStorageEnabled",
                           IsExternalStorageEnabled(profile()));
 }
@@ -132,14 +132,9 @@ int StorageSection::GetSectionNameMessageId() const {
 }
 
 mojom::Section StorageSection::GetSection() const {
-  // Note: This is a subsection that exists under Device or System Preferences.
-  // This section will no longer exist under the Device section once the
-  // OsSettingsRevampWayfinding feature is fully launched.
   // This is not a top-level section and does not have a respective declaration
   // in chromeos::settings::mojom::Section.
-  return ash::features::IsOsSettingsRevampWayfindingEnabled()
-             ? mojom::Section::kSystemPreferences
-             : mojom::Section::kDevice;
+  return mojom::Section::kSystemPreferences;
 }
 
 mojom::SearchResultIcon StorageSection::GetSectionIcon() const {
@@ -147,9 +142,7 @@ mojom::SearchResultIcon StorageSection::GetSectionIcon() const {
 }
 
 const char* StorageSection::GetSectionPath() const {
-  return ash::features::IsOsSettingsRevampWayfindingEnabled()
-             ? mojom::kSystemPreferencesSectionPath
-             : mojom::kDeviceSectionPath;
+  return mojom::kSystemPreferencesSectionPath;
 }
 
 bool StorageSection::LogMetric(mojom::Setting setting,

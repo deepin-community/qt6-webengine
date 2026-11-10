@@ -1,5 +1,6 @@
 // Copyright (C) 2019 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "display_software_output_surface.h"
 
@@ -21,6 +22,7 @@ class DisplaySoftwareOutputSurface::Device final : public viz::SoftwareOutputDev
 {
 public:
     Device(bool requiresAlpha);
+    ~Device() override;
 
     // Overridden from viz::SoftwareOutputDevice.
     void Resize(const gfx::Size &sizeInPixels, float devicePixelRatio) override;
@@ -50,6 +52,11 @@ DisplaySoftwareOutputSurface::Device::Device(bool requiresAlpha)
 {
 }
 
+DisplaySoftwareOutputSurface::Device::~Device()
+{
+    unbind();
+}
+
 void DisplaySoftwareOutputSurface::Device::Resize(const gfx::Size &sizeInPixels, float devicePixelRatio)
 {
     if (viewport_pixel_size_ == sizeInPixels && m_devicePixelRatio == devicePixelRatio)
@@ -67,8 +74,7 @@ void DisplaySoftwareOutputSurface::Device::OnSwapBuffers(SwapBuffersCallback swa
         m_swapCompletionCallback = std::move(swap_ack_callback);
     }
 
-    if (auto obs = observer())
-        obs->readyToSwap();
+    readyToSwap();
 }
 
 inline QImage::Format imageFormat(SkColorType colorType)
@@ -79,8 +85,7 @@ inline QImage::Format imageFormat(SkColorType colorType)
     case kRGBA_8888_SkColorType:
         return QImage::Format_RGBA8888_Premultiplied;
     default:
-        Q_UNREACHABLE();
-        return QImage::Format_ARGB32_Premultiplied;
+        Q_UNREACHABLE_RETURN(QImage::Format_ARGB32_Premultiplied);
     }
 }
 

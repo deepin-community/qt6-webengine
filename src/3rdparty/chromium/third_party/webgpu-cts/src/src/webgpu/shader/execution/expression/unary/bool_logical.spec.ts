@@ -3,13 +3,13 @@ Execution Tests for the boolean unary logical expression operations
 `;
 
 import { makeTestGroup } from '../../../../../common/framework/test_group.js';
-import { GPUTest } from '../../../../gpu_test.js';
-import { bool, TypeBool } from '../../../../util/conversion.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../../../gpu_test.js';
+import { bool, Type } from '../../../../util/conversion.js';
 import { allInputSources, run } from '../expression.js';
 
 import { unary } from './unary.js';
 
-export const g = makeTestGroup(GPUTest);
+export const g = makeTestGroup(AllFeaturesMaxLimitsGPUTest);
 
 g.test('negation')
   .specURL('https://www.w3.org/TR/WGSL/#logical-expr')
@@ -29,5 +29,5 @@ Logical negation. The result is true when e is false and false when e is true. C
       { input: bool(false), expected: bool(true) },
     ];
 
-    await run(t, unary('!'), [TypeBool], TypeBool, t.params, cases);
+    await run(t, unary('!'), [Type.bool], Type.bool, t.params, cases);
   });

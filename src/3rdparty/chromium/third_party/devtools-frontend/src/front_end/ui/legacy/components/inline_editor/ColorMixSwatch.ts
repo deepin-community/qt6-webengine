@@ -1,26 +1,38 @@
 // Copyright (c) 2022 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
 
+import * as Common from '../../../../core/common/common.js';
 import * as Platform from '../../../../core/platform/platform.js';
-import * as ComponentHelpers from '../../../components/helpers/helpers.js';
-import * as LitHtml from '../../../lit-html/lit-html.js';
+import * as Lit from '../../../lit/lit.js';
 import * as VisualLogging from '../../../visual_logging/visual_logging.js';
 
 import colorMixSwatchStyles from './colorMixSwatch.css.js';
 
-export class ColorMixSwatch extends HTMLElement {
-  static readonly litTagName = LitHtml.literal`devtools-color-mix-swatch`;
-  private readonly shadow = this.attachShadow({mode: 'open'});
-  private colorMixText: string = '';     // color-mix(in srgb, hotpink, white)
-  private firstColorText: string = '';   // hotpink
-  private secondColorText: string = '';  // white
+const {html, render, Directives: {ref}} = Lit;
 
-  constructor() {
-    super();
-    this.shadow.adoptedStyleSheets = [
-      colorMixSwatchStyles,
-    ];
+export class ColorMixChangedEvent extends Event {
+  static readonly eventName = 'colormixchanged';
+
+  data: {text: string};
+
+  constructor(text: string) {
+    super(ColorMixChangedEvent.eventName, {});
+    this.data = {text};
+  }
+}
+
+export class ColorMixSwatch extends HTMLElement {
+  private readonly shadow = this.attachShadow({mode: 'open'});
+  private colorMixText = '';     // color-mix(in srgb, hotpink, white)
+  private firstColorText = '';   // hotpink
+  private secondColorText = '';  // white
+  #icon: HTMLElement|null = null;
+
+  mixedColor(): Common.Color.Color|null {
+    const colorText = this.#icon?.computedStyleMap().get('color')?.toString() ?? null;
+    return colorText ? Common.Color.parse(colorText) : null;
   }
 
   setFirstColor(text: string): void {
@@ -32,6 +44,7 @@ export class ColorMixSwatch extends HTMLElement {
       this.colorMixText = this.colorMixText.replace(this.firstColorText, text);
     }
     this.firstColorText = text;
+    this.dispatchEvent(new ColorMixChangedEvent(this.colorMixText));
     this.#render();
   }
 
@@ -43,17 +56,23 @@ export class ColorMixSwatch extends HTMLElement {
       this.colorMixText = Platform.StringUtilities.replaceLast(this.colorMixText, this.secondColorText, text);
     }
     this.secondColorText = text;
+    this.dispatchEvent(new ColorMixChangedEvent(this.colorMixText));
     this.#render();
   }
 
   setColorMixText(text: string): void {
     this.colorMixText = text;
+    this.dispatchEvent(new ColorMixChangedEvent(this.colorMixText));
     this.#render();
+  }
+
+  getText(): string {
+    return this.colorMixText;
   }
 
   #render(): void {
     if (!this.colorMixText || !this.firstColorText || !this.secondColorText) {
-      LitHtml.render(this.colorMixText, this.shadow, {host: this});
+      render(this.colorMixText, this.shadow, {host: this});
       return;
     }
 
@@ -64,21 +83,27 @@ export class ColorMixSwatch extends HTMLElement {
     // free to append any content to replace what is being shown here.
     // Note also that whitespace between nodes is removed on purpose to avoid pushing these elements apart. Do not
     // re-format the HTML code.
-    LitHtml.render(
-      LitHtml.html`<div class="swatch-icon" jslog=${VisualLogging.cssColorMix()}>
+    render(
+      html`<style>${colorMixSwatchStyles}</style><div class="swatch-icon"
+      ${ref(e => {this.#icon = e as HTMLElement; })}
+      jslog=${VisualLogging.cssColorMix()}
+      style="--color: ${this.colorMixText}">
         <span class="swatch swatch-left" id="swatch-1" style="--color: ${this.firstColorText}"></span>
         <span class="swatch swatch-right" id="swatch-2" style="--color: ${this.secondColorText}"></span>
-        <span class="swatch swatch-mix" id="mix-result" style="--color: ${this.colorMixText}"></span>
-      </div><slot>${this.colorMixText}</slot>`,
+        <span class="swatch swatch-mix" id="mix-result" style="--color: ${this.colorMixText}"></span></div>`,
       this.shadow, {host: this});
     // clang-format on
   }
 }
 
-ComponentHelpers.CustomElements.defineComponent('devtools-color-mix-swatch', ColorMixSwatch);
+customElements.define('devtools-color-mix-swatch', ColorMixSwatch);
 
 declare global {
   interface HTMLElementTagNameMap {
     'devtools-color-mix-swatch': ColorMixSwatch;
+  }
+
+  interface HTMLElementEventMap {
+    [ColorMixChangedEvent.eventName]: ColorMixChangedEvent;
   }
 }

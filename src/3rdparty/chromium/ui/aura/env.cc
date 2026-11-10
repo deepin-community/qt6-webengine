@@ -4,8 +4,9 @@
 
 #include "ui/aura/env.h"
 
+#include <vector>
+
 #include "base/command_line.h"
-#include "base/containers/cxx20_erase.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
@@ -91,8 +92,7 @@ class EventObserverAdapter : public ui::EventHandler,
 // Env, public:
 
 Env::~Env() {
-  for (EnvObserver& observer : observers_)
-    observer.OnWillDestroyEnv();
+  observers_.Notify(&EnvObserver::OnWillDestroyEnv);
 
   if (this == g_primary_instance)
     g_primary_instance = nullptr;
@@ -168,7 +168,7 @@ void Env::SetGestureRecognizer(
 
 gfx::Point Env::GetLastPointerPoint(ui::mojom::DragEventSource event_source,
                                     Window* window,
-                                    absl::optional<gfx::Point> fallback) {
+                                    std::optional<gfx::Point> fallback) {
   if (event_source == ui::mojom::DragEventSource::kTouch) {
     if (is_touch_down()) {
       auto iter = last_touch_locations_.find(window);
@@ -238,7 +238,7 @@ Env::Env()
     : env_controller_(std::make_unique<EnvInputStateController>(this)),
       gesture_recognizer_(std::make_unique<ui::GestureRecognizerImpl>()),
       input_state_lookup_(InputStateLookup::Create()) {
-#if BUILDFLAG(IS_WIN) && !defined(TOOLKIT_QT)
+#if BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_QTWEBENGINE)
   cursor_factory_ = std::make_unique<ui::WinCursorFactory>();
 #endif
 }
@@ -264,20 +264,17 @@ bool Env::Init() {
 }
 
 void Env::NotifyWindowInitialized(Window* window) {
-  for (EnvObserver& observer : observers_)
-    observer.OnWindowInitialized(window);
+  observers_.Notify(&EnvObserver::OnWindowInitialized, window);
 }
 
 void Env::NotifyHostInitialized(WindowTreeHost* host) {
   window_tree_hosts_.push_back(host);
-  for (EnvObserver& observer : observers_)
-    observer.OnHostInitialized(host);
+  observers_.Notify(&EnvObserver::OnHostInitialized, host);
 }
 
 void Env::NotifyHostDestroyed(WindowTreeHost* host) {
-  base::Erase(window_tree_hosts_, host);
-  for (EnvObserver& observer : observers_)
-    observer.OnHostDestroyed(host);
+  std::erase(window_tree_hosts_, host);
+  observers_.Notify(&EnvObserver::OnHostDestroyed, host);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -297,7 +294,6 @@ std::unique_ptr<ui::EventTargetIterator> Env::GetChildIterator() const {
 
 ui::EventTargeter* Env::GetEventTargeter() {
   NOTREACHED();
-  return nullptr;
 }
 
 }  // namespace aura

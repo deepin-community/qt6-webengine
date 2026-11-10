@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-gemm/MRx2c4-sse.c.in
 //   Generator: tools/xngen
@@ -8,11 +9,15 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <smmintrin.h>
 
-#include <xnnpack/gemm.h>
-#include <xnnpack/unaligned.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/gemm.h"
+#include "src/xnnpack/unaligned.h"
 
 
 void xnn_f32_qc8w_gemm_minmax_ukernel_6x2c4__sse41(
@@ -25,7 +30,7 @@ void xnn_f32_qc8w_gemm_minmax_ukernel_6x2c4__sse41(
     float* restrict c,
     size_t cm_stride,
     size_t cn_stride,
-    const union xnn_f32_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f32_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(mr != 0);
   assert(mr <= 6);
@@ -68,6 +73,11 @@ void xnn_f32_qc8w_gemm_minmax_ukernel_6x2c4__sse41(
     a5 = a4;
     c5 = c4;
   }
+
+  const __m128 vmin = _mm_set1_ps(params->scalar.min);
+  const __m128 vmax = _mm_set1_ps(params->scalar.max);
+  XNN_FORCE_REALIZATION(vmin);
+  XNN_FORCE_REALIZATION(vmax);
 
   do {
     __m128 vacc0x0c4 = _mm_load_ss(w);
@@ -172,12 +182,10 @@ void xnn_f32_qc8w_gemm_minmax_ukernel_6x2c4__sse41(
     vacc01x01 = _mm_mul_ps(vacc01x01, vscale2x01);
     vacc23x01 = _mm_mul_ps(vacc23x01, vscale2x01);
     vacc45x01 = _mm_mul_ps(vacc45x01, vscale2x01);
-    const __m128 vmax = _mm_load_ps(params->sse.max);
     vacc01x01 = _mm_min_ps(vacc01x01, vmax);
     vacc23x01 = _mm_min_ps(vacc23x01, vmax);
     vacc45x01 = _mm_min_ps(vacc45x01, vmax);
 
-    const __m128 vmin = _mm_load_ps(params->sse.min);
     vacc01x01 = _mm_max_ps(vacc01x01, vmin);
     vacc23x01 = _mm_max_ps(vacc23x01, vmin);
     vacc45x01 = _mm_max_ps(vacc45x01, vmin);

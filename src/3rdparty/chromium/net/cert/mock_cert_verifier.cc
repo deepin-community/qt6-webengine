@@ -23,6 +23,46 @@
 
 namespace net {
 
+namespace {
+// Helper function for setting the appropriate CertStatus given a net::Error.
+CertStatus MapNetErrorToCertStatus(int error) {
+  switch (error) {
+    case ERR_CERT_COMMON_NAME_INVALID:
+      return CERT_STATUS_COMMON_NAME_INVALID;
+    case ERR_CERT_DATE_INVALID:
+      return CERT_STATUS_DATE_INVALID;
+    case ERR_CERT_AUTHORITY_INVALID:
+      return CERT_STATUS_AUTHORITY_INVALID;
+    case ERR_CERT_NO_REVOCATION_MECHANISM:
+      return CERT_STATUS_NO_REVOCATION_MECHANISM;
+    case ERR_CERT_UNABLE_TO_CHECK_REVOCATION:
+      return CERT_STATUS_UNABLE_TO_CHECK_REVOCATION;
+    case ERR_CERTIFICATE_TRANSPARENCY_REQUIRED:
+      return CERT_STATUS_CERTIFICATE_TRANSPARENCY_REQUIRED;
+    case ERR_CERT_REVOKED:
+      return CERT_STATUS_REVOKED;
+    case ERR_CERT_INVALID:
+      return CERT_STATUS_INVALID;
+    case ERR_CERT_WEAK_SIGNATURE_ALGORITHM:
+      return CERT_STATUS_WEAK_SIGNATURE_ALGORITHM;
+    case ERR_CERT_NON_UNIQUE_NAME:
+      return CERT_STATUS_NON_UNIQUE_NAME;
+    case ERR_CERT_WEAK_KEY:
+      return CERT_STATUS_WEAK_KEY;
+    case ERR_SSL_PINNED_KEY_NOT_IN_CERT_CHAIN:
+      return CERT_STATUS_PINNED_KEY_MISSING;
+    case ERR_CERT_NAME_CONSTRAINT_VIOLATION:
+      return CERT_STATUS_NAME_CONSTRAINT_VIOLATION;
+    case ERR_CERT_VALIDITY_TOO_LONG:
+      return CERT_STATUS_VALIDITY_TOO_LONG;
+    case ERR_CERT_KNOWN_INTERCEPTION_BLOCKED:
+      return (CERT_STATUS_KNOWN_INTERCEPTION_BLOCKED | CERT_STATUS_REVOKED);
+    default:
+      return 0;
+  }
+}
+}  // namespace
+
 struct MockCertVerifier::Rule {
   Rule(scoped_refptr<X509Certificate> cert_arg,
        const std::string& hostname_arg,
@@ -105,6 +145,17 @@ int MockCertVerifier::Verify(const RequestParams& params,
   request->ReturnResultLater(rv, result);
   *out_req = std::move(request);
   return ERR_IO_PENDING;
+}
+
+void MockCertVerifier::Verify2QwacBinding(
+    const std::string& binding,
+    const std::string& hostname,
+    const scoped_refptr<net::X509Certificate>& tls_cert,
+    base::OnceCallback<void(const scoped_refptr<net::X509Certificate>&)>
+        callback,
+    const net::NetLogWithSource& net_log) {
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(std::move(callback), nullptr));
 }
 
 void MockCertVerifier::AddObserver(Observer* observer) {

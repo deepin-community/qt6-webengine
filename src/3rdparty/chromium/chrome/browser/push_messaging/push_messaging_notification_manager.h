@@ -19,6 +19,16 @@
 class GURL;
 class Profile;
 
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class SilentPushEvent {
+  kSilentRequest = 0,
+  kNotificationEnforcementSkipped = 1,
+  kAllowedWithoutNotification = 2,
+  kAllowedWithGenericNotification = 3,
+  kMaxValue = kAllowedWithGenericNotification,
+};
+
 namespace content {
 class WebContents;
 }  // namespace content
@@ -59,11 +69,19 @@ class PushMessagingNotificationManager {
       EnforceRequirementsCallback message_handled_callback,
       bool requested_user_visible_only);
 
-  // Checks if userVisibleOnly can be skipped in certain scenarios. Currently
-  // that is only allowed for extensions that set userVisibleOnly as false on
-  // subscription.
-  bool ShouldSkipUserVisibleOnlyRequirements(const GURL& origin,
-                                             bool requested_user_visible_only);
+  // Checks if the userVisibleOnly: true requirement or the notifications
+  // permission requirement can be bypassed in certain scenarios.
+  //
+  // Currently that is only allowed for extensions with workers that set
+  // userVisibleOnly: false on subscription.
+  bool ShouldBypassUserVisibleOnlyRequirement(const GURL& origin,
+                                              bool requested_user_visible_only);
+  bool ShouldBypassNotificationPermissionRequirement(
+      const GURL& origin,
+      bool requested_user_visible_only) {
+    return ShouldBypassUserVisibleOnlyRequirement(origin,
+                                                  requested_user_visible_only);
+  }
 
  private:
   FRIEND_TEST_ALL_PREFIXES(PushMessagingNotificationManagerTest, IsTabVisible);
@@ -94,10 +112,12 @@ class PushMessagingNotificationManager {
       bool success,
       const std::string& notification_id);
 
+  void LogSilentPushEvent(SilentPushEvent event);
+
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   // For extensions builds, skip userVisibleOnly requirement for worker-based
   // extensions that set it to false.
-  bool ShouldSkipExtensionUserVisibleOnlyRequirements(
+  bool ShouldExtensionsBypassUserVisibleOnlyRequirement(
       const GURL& origin,
       bool requested_user_visible_only);
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)

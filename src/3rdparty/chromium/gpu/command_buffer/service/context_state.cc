@@ -8,8 +8,10 @@
 
 #include <algorithm>
 #include <cmath>
-
 #include <optional>
+
+#include "base/compiler_specific.h"
+#include "base/containers/span.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
 #include "gpu/command_buffer/service/buffer_manager.h"
 #include "gpu/command_buffer/service/framebuffer_manager.h"
@@ -63,13 +65,12 @@ GLuint GetServiceId(const TextureUnit& unit, GLuint target) {
       return Get2dServiceId(unit);
     case GL_TEXTURE_CUBE_MAP:
       return GetCubeServiceId(unit);
-    case GL_TEXTURE_RECTANGLE_ARB:
+    case GL_TEXTURE_RECTANGLE_ANGLE:
       return GetArbServiceId(unit);
     case GL_TEXTURE_EXTERNAL_OES:
       return GetOesServiceId(unit);
     default:
       NOTREACHED();
-      return 0;
   }
 }
 
@@ -79,14 +80,13 @@ bool TargetIsSupported(const FeatureInfo* feature_info, GLuint target) {
       return true;
     case GL_TEXTURE_CUBE_MAP:
       return true;
-    case GL_TEXTURE_RECTANGLE_ARB:
+    case GL_TEXTURE_RECTANGLE_ANGLE:
       return feature_info->feature_flags().arb_texture_rectangle;
     case GL_TEXTURE_EXTERNAL_OES:
       return feature_info->feature_flags().oes_egl_image_external ||
              feature_info->feature_flags().nv_egl_stream_consumer_external;
     default:
       NOTREACHED();
-      return false;
   }
 }
 
@@ -128,7 +128,6 @@ bool Vec4::Equal(const Vec4& other) const {
       break;
     default:
       NOTREACHED();
-      break;
   }
   return true;
 }
@@ -139,19 +138,18 @@ void Vec4::GetValues<GLfloat>(GLfloat* values) const {
   switch (type_) {
     case SHADER_VARIABLE_FLOAT:
       for (size_t ii = 0; ii < 4; ++ii)
-        values[ii] = v_[ii].float_value;
+        UNSAFE_TODO(values[ii]) = v_[ii].float_value;
       break;
     case SHADER_VARIABLE_INT:
       for (size_t ii = 0; ii < 4; ++ii)
-        values[ii] = static_cast<GLfloat>(v_[ii].int_value);
+        UNSAFE_TODO(values[ii]) = static_cast<GLfloat>(v_[ii].int_value);
       break;
     case SHADER_VARIABLE_UINT:
       for (size_t ii = 0; ii < 4; ++ii)
-        values[ii] = static_cast<GLfloat>(v_[ii].uint_value);
+        UNSAFE_TODO(values[ii]) = static_cast<GLfloat>(v_[ii].uint_value);
       break;
     default:
       NOTREACHED();
-      break;
   }
 }
 
@@ -161,19 +159,18 @@ void Vec4::GetValues<GLint>(GLint* values) const {
   switch (type_) {
     case SHADER_VARIABLE_FLOAT:
       for (size_t ii = 0; ii < 4; ++ii)
-        values[ii] = static_cast<GLint>(v_[ii].float_value);
+        UNSAFE_TODO(values[ii]) = static_cast<GLint>(v_[ii].float_value);
       break;
     case SHADER_VARIABLE_INT:
       for (size_t ii = 0; ii < 4; ++ii)
-        values[ii] = v_[ii].int_value;
+        UNSAFE_TODO(values[ii]) = v_[ii].int_value;
       break;
     case SHADER_VARIABLE_UINT:
       for (size_t ii = 0; ii < 4; ++ii)
-        values[ii] = static_cast<GLint>(v_[ii].uint_value);
+        UNSAFE_TODO(values[ii]) = static_cast<GLint>(v_[ii].uint_value);
       break;
     default:
       NOTREACHED();
-      break;
   }
 }
 
@@ -183,19 +180,18 @@ void Vec4::GetValues<GLuint>(GLuint* values) const {
   switch (type_) {
     case SHADER_VARIABLE_FLOAT:
       for (size_t ii = 0; ii < 4; ++ii)
-        values[ii] = static_cast<GLuint>(v_[ii].float_value);
+        UNSAFE_TODO(values[ii]) = static_cast<GLuint>(v_[ii].float_value);
       break;
     case SHADER_VARIABLE_INT:
       for (size_t ii = 0; ii < 4; ++ii)
-        values[ii] = static_cast<GLuint>(v_[ii].int_value);
+        UNSAFE_TODO(values[ii]) = static_cast<GLuint>(v_[ii].int_value);
       break;
     case SHADER_VARIABLE_UINT:
       for (size_t ii = 0; ii < 4; ++ii)
-        values[ii] = v_[ii].uint_value;
+        UNSAFE_TODO(values[ii]) = v_[ii].uint_value;
       break;
     default:
       NOTREACHED();
-      break;
   }
 }
 
@@ -203,7 +199,7 @@ template <>
 void Vec4::SetValues<GLfloat>(const GLfloat* values) {
   DCHECK(values);
   for (size_t ii = 0; ii < 4; ++ii)
-    v_[ii].float_value = values[ii];
+    v_[ii].float_value = UNSAFE_TODO(values[ii]);
   type_ = SHADER_VARIABLE_FLOAT;
 }
 
@@ -211,7 +207,7 @@ template <>
 void Vec4::SetValues<GLint>(const GLint* values) {
   DCHECK(values);
   for (size_t ii = 0; ii < 4; ++ii)
-    v_[ii].int_value = values[ii];
+    v_[ii].int_value = UNSAFE_TODO(values[ii]);
   type_ = SHADER_VARIABLE_INT;
 }
 
@@ -219,7 +215,7 @@ template <>
 void Vec4::SetValues<GLuint>(const GLuint* values) {
   DCHECK(values);
   for (size_t ii = 0; ii < 4; ++ii)
-    v_[ii].uint_value = values[ii];
+    v_[ii].uint_value = UNSAFE_TODO(values[ii]);
   type_ = SHADER_VARIABLE_UINT;
 }
 
@@ -320,7 +316,7 @@ void ContextState::RestoreTextureUnitBindings(
     api()->glBindTextureFn(GL_TEXTURE_EXTERNAL_OES, service_id_oes);
   }
   if (bind_texture_arb) {
-    api()->glBindTextureFn(GL_TEXTURE_RECTANGLE_ARB, service_id_arb);
+    api()->glBindTextureFn(GL_TEXTURE_RECTANGLE_ANGLE, service_id_arb);
   }
   if (bind_texture_2d_array) {
     api()->glBindTextureFn(GL_TEXTURE_2D_ARRAY, service_id_2d_array);
@@ -340,7 +336,7 @@ void ContextState::RestoreSamplerBinding(GLuint unit,
     cur_id = cur_sampler->service_id();
 
   std::optional<GLuint> prev_id;
-  if (prev_state) {
+  if (prev_state && unit < prev_state->sampler_units.size()) {
     const auto& prev_sampler = prev_state->sampler_units[unit];
     prev_id.emplace(prev_sampler ? prev_sampler->service_id() : 0);
   }
@@ -520,7 +516,6 @@ void ContextState::RestoreVertexAttribValues() const {
       } break;
       default:
         NOTREACHED();
-        break;
     }
   }
 }
@@ -657,14 +652,22 @@ size_t ContextState::GetMaxWindowRectangles() const {
   return size / 4;
 }
 
-void ContextState::SetWindowRectangles(GLenum mode,
-                                       size_t count,
-                                       const volatile GLint* box) {
+void ContextState::SetWindowRectangles(
+    GLenum mode,
+    size_t spanification_suspected_redundant_count,
+    base::span<const volatile GLint> box) {
+  // TODO(crbug.com/431824301): Remove unneeded parameter once validated to be
+  // redundant in M143.
+  CHECK(spanification_suspected_redundant_count == box.size() / 4,
+        base::NotFatalUntil::M143);
+  CHECK(box.size() % 4 == 0, base::NotFatalUntil::M143);
   window_rectangles_mode = mode;
-  num_window_rectangles = count;
-  DCHECK_LE(count, GetMaxWindowRectangles());
-  if (count) {
-    std::copy(box, &box[count * 4], window_rectangles_.begin());
+  num_window_rectangles = spanification_suspected_redundant_count;
+  DCHECK_LE(spanification_suspected_redundant_count, GetMaxWindowRectangles());
+  if (spanification_suspected_redundant_count) {
+    std::copy(box.data(),
+              box.subspan(spanification_suspected_redundant_count * 4).data(),
+              window_rectangles_.begin());
   }
 }
 
@@ -768,7 +771,6 @@ void ContextState::SetBoundBuffer(GLenum target, Buffer* buffer) {
       break;
     default:
       NOTREACHED();
-      break;
   }
 }
 
@@ -872,7 +874,7 @@ void ContextState::UnbindTexture(TextureRef* texture) {
         api()->glActiveTextureFn(GL_TEXTURE0 + jj);
         active_unit = jj;
       }
-      api()->glBindTextureFn(GL_TEXTURE_RECTANGLE_ARB, 0);
+      api()->glBindTextureFn(GL_TEXTURE_RECTANGLE_ANGLE, 0);
     } else if (unit.bound_texture_3d.get() == texture) {
       unit.bound_texture_3d = nullptr;
       if (active_unit != jj) {
@@ -929,7 +931,7 @@ PixelStoreParams ContextState::GetUnpackParams(Dimension dimension) {
 void ContextState::EnableDisableFramebufferSRGB(bool enable) {
   if (framebuffer_srgb_valid_ && framebuffer_srgb_ == enable)
     return;
-  EnableDisable(GL_FRAMEBUFFER_SRGB, enable);
+  EnableDisable(GL_FRAMEBUFFER_SRGB_EXT, enable);
   framebuffer_srgb_ = enable;
   framebuffer_srgb_valid_ = true;
 }

@@ -21,7 +21,7 @@
 
 namespace autofill {
 
-extern const base::FilePath::StringPieceType kStrikeDatabaseFileName;
+extern const base::FilePath::StringViewType kStrikeDatabaseFileName;
 
 // Manages data on whether different Autofill opportunities should be offered to
 // the user. Projects can earn strikes in a number of ways; for instance, if a
@@ -98,7 +98,7 @@ class StrikeDatabase : public StrikeDatabaseBase {
                            GetIdForCreditCardSaveTest);
   FRIEND_TEST_ALL_PREFIXES(CreditCardSaveStrikeDatabaseTest,
                            RemoveExpiredStrikesOnLoadTest);
-  friend class SaveCardInfobarEGTestHelper;
+  friend class FakeCreditCardServer;
   friend class StrikeDatabaseTest;
   friend class StrikeDatabaseTester;
 

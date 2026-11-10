@@ -14,23 +14,31 @@
  * limitations under the License.
  */
 
-#include <stdio.h>
-
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iostream>
-#include <limits>
+#include <iterator>
+#include <string>
 #include <vector>
 
+#include "perfetto/base/build_config.h"
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/string_utils.h"
 #include "perfetto/ext/base/version.h"
+#include "src/protozero/text_to_proto/text_to_proto.h"
 #include "src/traceconv/deobfuscate_profile.h"
 #include "src/traceconv/symbolize_profile.h"
+#include "src/traceconv/trace.descriptor.h"
+#include "src/traceconv/trace_to_firefox.h"
 #include "src/traceconv/trace_to_hprof.h"
 #include "src/traceconv/trace_to_json.h"
 #include "src/traceconv/trace_to_profile.h"
 #include "src/traceconv/trace_to_systrace.h"
 #include "src/traceconv/trace_to_text.h"
+#include "src/traceconv/trace_unpack.h"
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
 #include <fcntl.h>
@@ -39,26 +47,27 @@
 #include <unistd.h>
 #endif
 
-namespace perfetto {
-namespace trace_to_text {
+namespace perfetto::trace_to_text {
 namespace {
 
 int Usage(const char* argv0) {
-  fprintf(stderr,
-          "Usage: %s MODE [OPTIONS] [input file] [output file]\n"
-          "modes:\n"
-          "  systrace|json|ctrace|text|profile|hprof|symbolize|deobfuscate\n"
-          "options:\n"
-          "  [--truncate start|end]\n"
-          "  [--full-sort]\n"
-          "\"profile\" mode options:\n"
-          "  [--perf] generate a perf profile instead of a heap profile\n"
-          "  [--no-annotations] do not suffix frame names with derived "
-          "annotations\n"
-          "  [--timestamps TIMESTAMP1,TIMESTAMP2,...] generate profiles "
-          "only for these *specific* timestamps\n"
-          "  [--pid PID] generate profiles only for this process id\n",
-          argv0);
+  fprintf(
+      stderr,
+      "Usage: %s MODE [OPTIONS] [input file] [output file]\n"
+      "modes:\n"
+      "  systrace|json|ctrace|text|profile|hprof|symbolize|deobfuscate|firefox"
+      "|java_heap_profile|decompress_packets|binary\n"
+      "options:\n"
+      "  [--truncate start|end]\n"
+      "  [--full-sort]\n"
+      "\"profile\" mode options:\n"
+      "  [--perf] generate a perf profile instead of a heap profile\n"
+      "  [--no-annotations] do not suffix frame names with derived "
+      "annotations\n"
+      "  [--timestamps TIMESTAMP1,TIMESTAMP2,...] generate profiles "
+      "only for these *specific* timestamps\n"
+      "  [--pid PID] generate profiles only for this process id\n",
+      argv0);
   return 1;
 }
 
@@ -70,6 +79,23 @@ uint64_t StringToUint64OrDie(const char* str) {
     exit(1);
   }
   return number;
+}
+
+int TextToTrace(std::istream* input, std::ostream* output) {
+  std::string trace_text(std::istreambuf_iterator<char>{*input},
+                         std::istreambuf_iterator<char>{});
+  auto proto_status =
+      protozero::TextToProto(kTraceDescriptor.data(), kTraceDescriptor.size(),
+                             ".perfetto.protos.Trace", "trace", trace_text);
+  if (!proto_status.ok()) {
+    PERFETTO_ELOG("Failed to parse trace: %s",
+                  proto_status.status().c_message());
+    return 1;
+  }
+  const std::vector<uint8_t>& trace_proto = proto_status.value();
+  output->write(reinterpret_cast<const char*>(trace_proto.data()),
+                static_cast<int64_t>(trace_proto.size()));
+  return 0;
 }
 
 int Main(int argc, char** argv) {
@@ -84,8 +110,8 @@ int Main(int argc, char** argv) {
     if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
       printf("%s\n", base::GetVersionString());
       return 0;
-    } else if (strcmp(argv[i], "-t") == 0 ||
-               strcmp(argv[i], "--truncate") == 0) {
+    }
+    if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--truncate") == 0) {
       i++;
       if (i <= argc && strcmp(argv[i], "start") == 0) {
         truncate_keep = Keep::kStart;
@@ -160,16 +186,21 @@ int Main(int argc, char** argv) {
 
   std::string format(positional_args[0]);
 
-  if ((format != "profile" && format != "hprof") &&
+  if ((format != "profile" && format != "hprof" &&
+       format != "java_heap_profile") &&
       (pid != 0 || !timestamps.empty())) {
     PERFETTO_ELOG(
-        "--pid and --timestamps are supported only for profile "
-        "formats.");
+        "--pid and --timestamps are supported only for profile, hprof, "
+        "and java_heap_profile formats.");
     return 1;
   }
   if (perf_profile && format != "profile") {
     PERFETTO_ELOG("--perf requires profile format.");
     return 1;
+  }
+
+  if (format == "binary") {
+    return TextToTrace(input_stream, output_stream);
   }
 
   if (format == "json")
@@ -186,13 +217,15 @@ int Main(int argc, char** argv) {
 
   if (truncate_keep != Keep::kAll) {
     PERFETTO_ELOG(
-        "--truncate is unsupported for text|profile|symbolize format.");
+        "--truncate is unsupported for "
+        "text|profile|symbolize|decompress_packets format.");
     return 1;
   }
 
   if (full_sort) {
     PERFETTO_ELOG(
-        "--full-sort is unsupported for text|profile|symbolize format.");
+        "--full-sort is unsupported for "
+        "text|profile|symbolize|decompress_packets format.");
     return 1;
   }
 
@@ -208,6 +241,11 @@ int Main(int argc, char** argv) {
                                     timestamps, !profile_no_annotations);
   }
 
+  if (format == "java_heap_profile") {
+    return TraceToJavaHeapProfile(input_stream, output_stream, pid, timestamps,
+                                  !profile_no_annotations);
+  }
+
   if (format == "hprof")
     return TraceToHprof(input_stream, output_stream, pid, timestamps);
 
@@ -216,12 +254,18 @@ int Main(int argc, char** argv) {
 
   if (format == "deobfuscate")
     return DeobfuscateProfile(input_stream, output_stream);
+
+  if (format == "firefox")
+    return TraceToFirefoxProfile(input_stream, output_stream);
+
+  if (format == "decompress_packets")
+    return UnpackCompressedPackets(input_stream, output_stream);
+
   return Usage(argv[0]);
 }
 
 }  // namespace
-}  // namespace trace_to_text
-}  // namespace perfetto
+}  // namespace perfetto::trace_to_text
 
 int main(int argc, char** argv) {
   return perfetto::trace_to_text::Main(argc, argv);

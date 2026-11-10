@@ -5,6 +5,7 @@
 #ifndef MEDIA_GPU_VAAPI_VP8_VAAPI_VIDEO_ENCODER_DELEGATE_H_
 #define MEDIA_GPU_VAAPI_VP8_VAAPI_VIDEO_ENCODER_DELEGATE_H_
 
+#include <array>
 #include <vector>
 
 #include "media/base/video_bitrate_allocation.h"
@@ -41,7 +42,8 @@ class VP8VaapiVideoEncoderDelegate : public VaapiVideoEncoderDelegate {
 
     // The rate controller drop frame threshold. 0-100 as this is percentage.
     uint8_t drop_frame_thresh = 0;
-
+    // The encoding content is a screen content.
+    bool is_screen = false;
     // Error resilient mode.
     bool error_resilient_mode = false;
   };

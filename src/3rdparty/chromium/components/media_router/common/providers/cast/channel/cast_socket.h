@@ -7,7 +7,7 @@
 
 #include <stdint.h>
 
-#include <queue>
+#include <vector>
 
 #include "base/cancelable_callback.h"
 #include "base/gtest_prod_util.h"
@@ -29,7 +29,7 @@
 #include "net/base/io_buffer.h"
 #include "net/base/ip_endpoint.h"
 #include "net/log/net_log_source.h"
-#include "services/network/public/mojom/network_context.mojom.h"
+#include "services/network/public/cpp/network_context_getter.h"
 #include "services/network/public/mojom/tcp_socket.mojom.h"
 #include "services/network/public/mojom/tls_socket.mojom.h"
 #include "third_party/openscreen/src/cast/common/channel/proto/cast_channel.pb.h"
@@ -40,7 +40,7 @@ class X509Certificate;
 
 namespace cast_channel {
 
-using ::cast::channel::CastMessage;
+using ::openscreen::cast::proto::CastMessage;
 
 class Logger;
 class MojoDataPump;
@@ -69,7 +69,7 @@ class CastSocket {
     virtual void OnReadyStateChanged(const CastSocket& socket) = 0;
   };
 
-  virtual ~CastSocket() {}
+  virtual ~CastSocket();
 
   // Used by BrowserContextKeyedAPIFactory.
   static const char* service_name() { return "CastSocketImplManager"; }
@@ -178,13 +178,11 @@ struct CastSocketOpenParams {
 // code.
 class CastSocketImpl : public CastSocket {
  public:
-  using NetworkContextGetter =
-      base::RepeatingCallback<network::mojom::NetworkContext*()>;
-  CastSocketImpl(NetworkContextGetter network_context_getter,
+  CastSocketImpl(network::NetworkContextGetter network_context_getter,
                  const CastSocketOpenParams& open_params,
                  const scoped_refptr<Logger>& logger);
 
-  CastSocketImpl(NetworkContextGetter network_context_getter,
+  CastSocketImpl(network::NetworkContextGetter network_context_getter,
                  const CastSocketOpenParams& open_params,
                  const scoped_refptr<Logger>& logger,
                  const AuthContext& auth_context);
@@ -315,14 +313,14 @@ class CastSocketImpl : public CastSocket {
 
   // Callback from network::mojom::NetworkContext::CreateTCPConnectedSocket.
   void OnConnect(int result,
-                 const absl::optional<net::IPEndPoint>& local_addr,
-                 const absl::optional<net::IPEndPoint>& peer_addr,
+                 const std::optional<net::IPEndPoint>& local_addr,
+                 const std::optional<net::IPEndPoint>& peer_addr,
                  mojo::ScopedDataPipeConsumerHandle receive_stream,
                  mojo::ScopedDataPipeProducerHandle send_stream);
   void OnUpgradeToTLS(int result,
                       mojo::ScopedDataPipeConsumerHandle receive_stream,
                       mojo::ScopedDataPipeProducerHandle send_stream,
-                      const absl::optional<net::SSLInfo>& ssl_info);
+                      const std::optional<net::SSLInfo>& ssl_info);
   /////////////////////////////////////////////////////////////////////////////
 
   // Resets the cancellable callback used for async invocations of
@@ -352,7 +350,7 @@ class CastSocketImpl : public CastSocket {
   // Shared logging object, used to log CastSocket events for diagnostics.
   scoped_refptr<Logger> logger_;
 
-  NetworkContextGetter network_context_getter_;
+  network::NetworkContextGetter network_context_getter_;
 
   // Owned remote to the underlying TCP socket.
   mojo::Remote<network::mojom::TCPConnectedSocket> tcp_socket_;
@@ -424,9 +422,7 @@ class CastSocketImpl : public CastSocket {
 
   // Raw pointer to the auth handshake delegate. Used to get detailed error
   // information.
-  // This pointer might dangle when running the following test:
-  // PageSpecificSiteDataDialogPrivacySandboxInteractiveUiTest.FirstPartyAllowed
-  raw_ptr<AuthTransportDelegate, AcrossTasksDanglingUntriaged> auth_delegate_;
+  raw_ptr<AuthTransportDelegate> auth_delegate_;
 
   // List of socket observers.
   base::ObserverList<Observer> observers_;

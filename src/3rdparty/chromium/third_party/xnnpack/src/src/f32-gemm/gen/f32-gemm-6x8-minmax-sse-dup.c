@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-gemm/sse-dup.c.in
 //   Generator: tools/xngen
@@ -8,10 +9,14 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <immintrin.h>
 
-#include <xnnpack/gemm.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/gemm.h"
 
 
 void xnn_f32_gemm_minmax_ukernel_6x8__sse_dup(
@@ -24,7 +29,7 @@ void xnn_f32_gemm_minmax_ukernel_6x8__sse_dup(
     float* restrict c,
     size_t cm_stride,
     size_t cn_stride,
-    const union xnn_f32_minmax_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const struct xnn_f32_minmax_params* restrict params)
 {
   assert(mr != 0);
   assert(mr <= 6);
@@ -67,6 +72,11 @@ void xnn_f32_gemm_minmax_ukernel_6x8__sse_dup(
     a5 = a4;
     c5 = c4;
   }
+
+  const __m128 vmin = _mm_set1_ps(params->scalar.min);
+  const __m128 vmax = _mm_set1_ps(params->scalar.max);
+  XNN_FORCE_REALIZATION(vmin);
+  XNN_FORCE_REALIZATION(vmax);
 
   do {
     __m128 vacc0x0123 = _mm_load_ps(w + 0);
@@ -290,7 +300,6 @@ void xnn_f32_gemm_minmax_ukernel_6x8__sse_dup(
       k -= sizeof(float);
     }
 
-    const __m128 vmax = _mm_load_ps(params->sse.max);
     vacc0x0123 = _mm_min_ps(vacc0x0123, vmax);
     vacc1x0123 = _mm_min_ps(vacc1x0123, vmax);
     vacc2x0123 = _mm_min_ps(vacc2x0123, vmax);
@@ -304,7 +313,6 @@ void xnn_f32_gemm_minmax_ukernel_6x8__sse_dup(
     vacc4x4567 = _mm_min_ps(vacc4x4567, vmax);
     vacc5x4567 = _mm_min_ps(vacc5x4567, vmax);
 
-    const __m128 vmin = _mm_load_ps(params->sse.min);
     vacc0x0123 = _mm_max_ps(vacc0x0123, vmin);
     vacc1x0123 = _mm_max_ps(vacc1x0123, vmin);
     vacc2x0123 = _mm_max_ps(vacc2x0123, vmin);

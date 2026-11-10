@@ -4,8 +4,10 @@
 
 #include "gpu/command_buffer/service/transform_feedback_manager.h"
 
+#include "base/check.h"
 #include "base/numerics/checked_math.h"
 #include "gpu/command_buffer/service/buffer_manager.h"
+#include "gpu/command_buffer/service/program_manager.h"
 #include "ui/gl/gl_version_info.h"
 
 namespace gpu {
@@ -33,9 +35,19 @@ TransformFeedback::TransformFeedback(TransformFeedbackManager* manager,
 
 TransformFeedback::~TransformFeedback() {
   if (!manager_->lost_context()) {
-    if (active_)
+    if (active_ && is_bound_) {
       glEndTransformFeedback();
+    }
     glDeleteTransformFeedbacks(1, &service_id_);
+  }
+  // ForceUnbindBuffers() manages purely CPU-side state tracking/refcounting of
+  // the attached buffers. We must run it even if the context is lost (unlike
+  // the GL driver calls above) to ensure that the buffer reference counts are
+  // correctly decremented, preventing state leaks or triggering BufferManager
+  // DCHECKs upon destruction of an active but unbound transform feedback
+  // object.
+  if (active_ && !is_bound_) {
+    ForceUnbindBuffers();
   }
 }
 
@@ -68,6 +80,23 @@ void TransformFeedback::DoBindTransformFeedback(
     }
     SetIsBound(true);
   }
+}
+
+bool TransformFeedback::AttachedBuffersAreLocked() const {
+  return is_bound_ || active_;
+}
+
+void TransformFeedback::SetActiveProgram(Program* program) {
+  CHECK(!active_program_);
+  CHECK(program);
+  active_program_ = program;
+  program->IncrementActiveTransformFeedbackCount();
+}
+
+void TransformFeedback::ClearActiveProgram() {
+  CHECK(active_program_);
+  active_program_->DecrementActiveTransformFeedbackCount();
+  active_program_ = nullptr;
 }
 
 void TransformFeedback::DoBeginTransformFeedback(GLenum primitive_mode) {
@@ -108,8 +137,8 @@ bool TransformFeedback::GetVerticesNeededForDraw(GLenum mode,
   // Transform feedback only outputs complete primitives, so we need to round
   // down to the nearest complete primitive before multiplying by the number of
   // instances.
-  base::CheckedNumeric<GLsizei> checked_vertices =
-      vertices_drawn_ + pending_vertices_drawn;
+  base::CheckedNumeric<GLsizei> checked_vertices = vertices_drawn_;
+  checked_vertices += pending_vertices_drawn;
   base::CheckedNumeric<GLsizei> checked_count = count;
   base::CheckedNumeric<GLsizei> checked_primcount = primcount;
   switch (mode) {
@@ -123,7 +152,6 @@ bool TransformFeedback::GetVerticesNeededForDraw(GLenum mode,
       break;
     default:
       NOTREACHED();
-      [[fallthrough]];
     case GL_POINTS:
       checked_vertices += checked_primcount * checked_count;
   }

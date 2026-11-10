@@ -77,7 +77,6 @@ class AbstractInlineBox {
         return line_cursor_ == other.line_cursor_;
     }
     NOTREACHED();
-    return false;
   }
 
   // Returns containing block rooted cursor instead of line rooted cursor for
@@ -172,7 +171,6 @@ bool IsAtFragmentStart(const InlineCaretPosition& caret_position) {
              caret_position.cursor.Current().TextStartOffset();
   }
   NOTREACHED();
-  return false;
 }
 
 // Returns whether |caret_position| is at the end of its fragment.
@@ -188,7 +186,6 @@ bool IsAtFragmentEnd(const InlineCaretPosition& caret_position) {
              caret_position.cursor.Current().TextEndOffset();
   }
   NOTREACHED();
-  return false;
 }
 
 // Returns whether |caret_position| is at the left or right side of fragment.
@@ -229,7 +226,7 @@ class AbstractInlineBoxAndSideAffinity {
       return {cursor,
               is_at_start ? InlineCaretPositionType::kBeforeBox
                           : InlineCaretPositionType::kAfterBox,
-              absl::nullopt};
+              std::nullopt};
     }
 
     return {cursor, InlineCaretPositionType::kAtTextOffset,

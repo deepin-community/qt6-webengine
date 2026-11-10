@@ -6,8 +6,10 @@
 #define BASE_TASK_SEQUENCE_MANAGER_THREAD_CONTROLLER_WITH_MESSAGE_PUMP_IMPL_H_
 
 #include <memory>
+#include <optional>
 
 #include "base/base_export.h"
+#include "base/compiler_specific.h"
 #include "base/memory/raw_ptr.h"
 #include "base/message_loop/message_pump.h"
 #include "base/message_loop/work_id_provider.h"
@@ -24,7 +26,6 @@
 #include "base/threading/platform_thread.h"
 #include "base/threading/sequence_local_storage_map.h"
 #include "build/build_config.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 namespace sequence_manager {
@@ -61,7 +62,7 @@ class BASE_EXPORT ThreadControllerWithMessagePumpImpl
   void WillQueueTask(PendingTask* pending_task) override;
   void ScheduleWork() override;
   void SetNextDelayedDoWork(LazyNow* lazy_now,
-                            absl::optional<WakeUp> wake_up) override;
+                            std::optional<WakeUp> wake_up) override;
   bool RunsTasksInCurrentSequence() override;
   void SetDefaultTaskRunner(
       scoped_refptr<SingleThreadTaskRunner> task_runner) override;
@@ -69,10 +70,9 @@ class BASE_EXPORT ThreadControllerWithMessagePumpImpl
   void RestoreDefaultTaskRunner() override;
   void AddNestingObserver(RunLoop::NestingObserver* observer) override;
   void RemoveNestingObserver(RunLoop::NestingObserver* observer) override;
-  void SetTaskExecutionAllowed(bool allowed) override;
+  void SetTaskExecutionAllowedInNativeNestedLoop(bool allowed) override;
   bool IsTaskExecutionAllowed() const override;
   MessagePump* GetBoundMessagePump() const override;
-  void PrioritizeYieldingToNative(base::TimeTicks prioritize_until) override;
 #if BUILDFLAG(IS_IOS) || BUILDFLAG(IS_ANDROID)
   void AttachToMessagePump() override;
 #endif
@@ -95,7 +95,7 @@ class BASE_EXPORT ThreadControllerWithMessagePumpImpl
   void BeforeWait() override;
   void BeginNativeWorkBeforeDoWork() override;
   MessagePump::Delegate::NextWorkInfo DoWork() override;
-  bool DoIdleWork() override;
+  void DoIdleWork() override;
   int RunDepth() override;
 
   void OnBeginWorkItemImpl(LazyNow& lazy_now);
@@ -114,6 +114,9 @@ class BASE_EXPORT ThreadControllerWithMessagePumpImpl
     raw_ptr<RunLoop::NestingObserver> nesting_observer = nullptr;  // Not owned.
     std::unique_ptr<SingleThreadTaskRunner::CurrentDefaultHandle>
         thread_task_runner_handle;
+    // Only used if this thread represents the main thread of the process.
+    std::unique_ptr<SingleThreadTaskRunner::MainThreadDefaultHandle>
+        main_thread_default_task_runner_handle;
 
     // Indicates that we should yield DoWork between each task to let a possibly
     // nested RunLoop exit.
@@ -126,10 +129,6 @@ class BASE_EXPORT ThreadControllerWithMessagePumpImpl
     int work_batch_size = 1;
 
     bool can_change_batch_size = true;
-
-    // While Now() is less than |yield_to_native_after_batch| we will request a
-    // yield to the MessagePump after |work_batch_size| work items.
-    base::TimeTicks yield_to_native_after_batch = base::TimeTicks();
 
     // The time after which the runloop should quit.
     TimeTicks quit_runloop_after = TimeTicks::Max();
@@ -152,19 +151,19 @@ class BASE_EXPORT ThreadControllerWithMessagePumpImpl
   // Returns a WakeUp for the next pending task, is_immediate() if the next task
   // can run immediately, or nullopt if there are no more immediate or delayed
   // tasks.
-  absl::optional<WakeUp> DoWorkImpl(LazyNow* continuation_lazy_now);
+  std::optional<WakeUp> DoWorkImpl(LazyNow* continuation_lazy_now);
 
   bool RunsTasksByBatches() const;
 
   void InitializeSingleThreadTaskRunnerCurrentDefaultHandle()
       EXCLUSIVE_LOCKS_REQUIRED(task_runner_lock_);
 
-  MainThreadOnly& main_thread_only() {
+  MainThreadOnly& main_thread_only() LIFETIME_BOUND {
     DCHECK_CALLED_ON_VALID_THREAD(associated_thread_->thread_checker);
     return main_thread_only_;
   }
 
-  const MainThreadOnly& main_thread_only() const {
+  const MainThreadOnly& main_thread_only() const LIFETIME_BOUND {
     DCHECK_CALLED_ON_VALID_THREAD(associated_thread_->thread_checker);
     return main_thread_only_;
   }
@@ -176,7 +175,8 @@ class BASE_EXPORT ThreadControllerWithMessagePumpImpl
       GUARDED_BY(task_runner_lock_);
 
   WorkDeduplicator work_deduplicator_;
-  bool in_native_work_batch_ = false;
+  bool do_work_needed_before_wait_ = false;
+  bool task_execution_allowed_in_native_nested_loop_ = false;
 
   ThreadControllerPowerMonitor power_monitor_;
 
@@ -204,7 +204,7 @@ class BASE_EXPORT ThreadControllerWithMessagePumpImpl
   // the overhead between each work item (no-op if HangWatcher is not enabled
   // on this thread). Cleared when going to sleep and at the end of a Run()
   // (i.e. when Quit()). Nested runs override their parent.
-  absl::optional<WatchHangsInScope> hang_watch_scope_;
+  std::optional<WatchHangsInScope> hang_watch_scope_;
 
   // Can only be set once (just before calling
   // work_deduplicator_.BindToCurrentThread()). After that only read access is
@@ -213,6 +213,8 @@ class BASE_EXPORT ThreadControllerWithMessagePumpImpl
   // |pump_|. This means that it should be destroyed first. This member cannot
   // be moved up.
   std::unique_ptr<MessagePump> pump_;
+
+  const bool is_main_thread_;
 };
 
 }  // namespace internal

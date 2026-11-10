@@ -1,6 +1,16 @@
 // Copyright 2016 The Chromium Authors
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #ifndef BSSL_PKI_PARSE_NAME_H_
 #define BSSL_PKI_PARSE_NAME_H_
@@ -8,12 +18,12 @@
 #include <vector>
 
 #include <openssl/base.h>
+#include <openssl/bytestring.h>
 
 #include "input.h"
 #include "parser.h"
-#include "tag.h"
 
-namespace bssl {
+BSSL_NAMESPACE_BEGIN
 
 // id-at-commonName: 2.5.4.3 (RFC 5280)
 inline constexpr uint8_t kTypeCommonNameOid[] = {0x55, 0x04, 0x03};
@@ -65,7 +75,7 @@ inline constexpr uint8_t kTypeEmailAddressOid[] = {0x2A, 0x86, 0x48, 0x86, 0xF7,
 //     value AttributeValue
 // }
 struct OPENSSL_EXPORT X509NameAttribute {
-  X509NameAttribute(der::Input in_type, der::Tag in_value_tag,
+  X509NameAttribute(der::Input in_type, CBS_ASN1_TAG in_value_tag,
                     der::Input in_value)
       : type(in_type), value_tag(in_value_tag), value(in_value) {}
 
@@ -106,7 +116,7 @@ struct OPENSSL_EXPORT X509NameAttribute {
   [[nodiscard]] bool AsRFC2253String(std::string *out) const;
 
   der::Input type;
-  der::Tag value_tag;
+  CBS_ASN1_TAG value_tag;
   der::Input value;
 };
 
@@ -140,11 +150,11 @@ typedef std::vector<RelativeDistinguishedName> RDNSequence;
 
 // Parses a DER-encoded "Name" as specified by 5280. Returns true on success
 // and sets the results in |out|.
-[[nodiscard]] OPENSSL_EXPORT bool ParseName(const der::Input &name_tlv,
+[[nodiscard]] OPENSSL_EXPORT bool ParseName(der::Input name_tlv,
                                             RDNSequence *out);
 // Parses a DER-encoded "Name" value (without the sequence tag & length) as
 // specified by 5280. Returns true on success and sets the results in |out|.
-[[nodiscard]] OPENSSL_EXPORT bool ParseNameValue(const der::Input &name_value,
+[[nodiscard]] OPENSSL_EXPORT bool ParseNameValue(der::Input name_value,
                                                  RDNSequence *out);
 
 // Formats a RDNSequence |rdn_sequence| per RFC2253 as an ASCII string and
@@ -152,6 +162,6 @@ typedef std::vector<RelativeDistinguishedName> RDNSequence;
 // successful.
 [[nodiscard]] OPENSSL_EXPORT bool ConvertToRFC2253(
     const RDNSequence &rdn_sequence, std::string *out);
-}  // namespace bssl
+BSSL_NAMESPACE_END
 
 #endif  // BSSL_PKI_PARSE_NAME_H_

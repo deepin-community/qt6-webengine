@@ -28,8 +28,6 @@
 #ifndef SRC_DAWN_COMMON_ITYP_SPAN_H_
 #define SRC_DAWN_COMMON_ITYP_SPAN_H_
 
-#include <type_traits>
-
 #include "dawn/common/TypedInteger.h"
 #include "dawn/common/UnderlyingType.h"
 
@@ -48,7 +46,7 @@ class span {
     constexpr span(Value* data, Index size) : mData(data), mSize(size) {}
 
     constexpr Value& operator[](Index i) const {
-        DAWN_ASSERT(i < mSize);
+        DAWN_CHECK(i < mSize);
         return mData[static_cast<I>(i)];
     }
 

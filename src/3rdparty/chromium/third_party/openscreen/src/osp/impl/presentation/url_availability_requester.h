@@ -9,12 +9,13 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "osp/msgs/osp_messages.h"
+#include "osp/public/connect_request.h"
 #include "osp/public/message_demuxer.h"
 #include "osp/public/presentation/presentation_controller.h"
-#include "osp/public/protocol_connection_client.h"
 #include "osp/public/service_info.h"
 #include "platform/api/time.h"
 #include "platform/base/error.h"
@@ -30,25 +31,33 @@ namespace openscreen::osp {
 class UrlAvailabilityRequester {
  public:
   explicit UrlAvailabilityRequester(ClockNowFunctionPtr now_function);
+  UrlAvailabilityRequester(const UrlAvailabilityRequester&) = delete;
+  UrlAvailabilityRequester& operator=(const UrlAvailabilityRequester&) = delete;
+  UrlAvailabilityRequester(UrlAvailabilityRequester&&) noexcept = delete;
+  UrlAvailabilityRequester& operator=(UrlAvailabilityRequester&&) noexcept =
+      delete;
   ~UrlAvailabilityRequester();
 
-  // Adds a persistent availability request for |urls| to all known receivers.
+  void CreateReceiverRequester(std::string_view instance_name,
+                               uint64_t instance_id);
+
+  // Adds a persistent availability request for `urls` to all known receivers.
   // These URLs will also be queried for any receivers discovered in the future.
-  // |observer| will be called back once for the first known availability (which
+  // `observer` will be called back once for the first known availability (which
   // may be cached from previous requests) and when the availability of any of
   // these URLs changes on any receiver.
   void AddObserver(const std::vector<std::string>& urls,
                    ReceiverObserver* observer);
 
-  // Disassociates |observer| from all the URLs in |urls| so it will no longer
-  // receive availability updates for these URLs.  Additionally, if |urls| is
+  // Disassociates `observer` from all the URLs in `urls` so it will no longer
+  // receive availability updates for these URLs.  Additionally, if `urls` is
   // only a subset of the URL list it was originally added with, it will still
   // be observing the URLs not included here.
   void RemoveObserverUrls(const std::vector<std::string>& urls,
                           ReceiverObserver* observer);
 
-  // Disassociates |observer| from all the URLs it is observing.  This
-  // guarantees that it is safe to delete |observer| after this call.
+  // Disassociates `observer` from all the URLs it is observing.  This
+  // guarantees that it is safe to delete `observer` after this call.
   void RemoveObserver(ReceiverObserver* observer);
 
   // Informs the UrlAvailabilityRequester of changes to the set of known
@@ -73,22 +82,15 @@ class UrlAvailabilityRequester {
   // during the following watch period.  Before a watch will expire, it needs to
   // send a new request to restart the watch, as long as there are active
   // observers for a given URL.
-  struct ReceiverRequester final
-      : ProtocolConnectionClient::ConnectionRequestCallback,
-        MessageDemuxer::MessageCallback {
-    struct Request {
-      uint64_t watch_id;
-      std::vector<std::string> urls;
-    };
-
-    struct Watch {
-      Clock::time_point deadline;
-      std::vector<std::string> urls;
-    };
-
-    ReceiverRequester(UrlAvailabilityRequester* listener,
-                      const std::string& service_id,
-                      const IPEndpoint& endpoint);
+  class ReceiverRequester final : public MessageDemuxer::MessageCallback {
+   public:
+    ReceiverRequester(UrlAvailabilityRequester& listener,
+                      std::string_view instance_name,
+                      uint64_t instance_id);
+    ReceiverRequester(const ReceiverRequester&) = delete;
+    ReceiverRequester& operator=(const ReceiverRequester&) = delete;
+    ReceiverRequester(ReceiverRequester&&) noexcept = delete;
+    ReceiverRequester& operator=(ReceiverRequester&&) noexcept = delete;
     ~ReceiverRequester() override;
 
     void GetOrRequestAvailabilities(
@@ -105,45 +107,51 @@ class UrlAvailabilityRequester {
     void RemoveUnobservedWatches(const std::set<std::string>& unobserved_urls);
     void RemoveReceiver();
 
-    // ProtocolConnectionClient::ConnectionRequestCallback overrides.
-    void OnConnectionOpened(
-        uint64_t request_id,
-        std::unique_ptr<ProtocolConnection> connection) override;
-    void OnConnectionFailed(uint64_t request_id) override;
-
     // MessageDemuxer::MessageCallback overrides.
-    ErrorOr<size_t> OnStreamMessage(uint64_t endpoint_id,
+    ErrorOr<size_t> OnStreamMessage(uint64_t instance_id,
                                     uint64_t connection_id,
                                     msgs::Type message_type,
                                     const uint8_t* buffer,
                                     size_t buffer_size,
                                     Clock::time_point now) override;
 
-    UrlAvailabilityRequester* const listener;
+    std::map<std::string, msgs::UrlAvailability>& known_availability_by_url() {
+      return known_availability_by_url_;
+    }
 
-    uint64_t next_watch_id = 1;
+   private:
+    struct Request {
+      uint64_t watch_id = 0;
+      std::vector<std::string> urls;
+    };
 
-    const std::string service_id;
-    uint64_t endpoint_id_{0};
+    struct Watch {
+      Clock::time_point deadline;
+      std::vector<std::string> urls;
+    };
 
-    ProtocolConnectionClient::ConnectRequest connect_request;
+    UrlAvailabilityRequester& listener_;
+
+    uint64_t next_watch_id_ = 1;
+    const std::string instance_name_;
+    const uint64_t instance_id_;
+
     // TODO(btolsch): Observe connection and restart all the things on close.
     std::unique_ptr<ProtocolConnection> connection_;
 
-    MessageDemuxer::MessageWatch response_watch;
-    std::map<uint64_t, Request> request_by_id;
-    MessageDemuxer::MessageWatch event_watch;
-    std::map<uint64_t, Watch> watch_by_id;
+    MessageDemuxer::MessageWatch response_watch_;
+    MessageDemuxer::MessageWatch event_watch_;
 
-    std::map<std::string, msgs::UrlAvailability> known_availability_by_url;
+    std::map<uint64_t, Request> request_by_id_;
+    std::map<uint64_t, Watch> watch_by_id_;
+    std::map<std::string, msgs::UrlAvailability> known_availability_by_url_;
   };
 
   const ClockNowFunctionPtr now_function_;
 
   std::map<std::string, std::vector<ReceiverObserver*>> observers_by_url_;
-
   std::map<std::string, std::unique_ptr<ReceiverRequester>>
-      receiver_by_service_id_;
+      receiver_by_instance_name_;
 };
 
 }  // namespace openscreen::osp

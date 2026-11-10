@@ -5,7 +5,6 @@
 #include "chrome/browser/ui/webui/ash/borealis_installer/borealis_installer_ui.h"
 
 #include "ash/constants/ash_features.h"
-#include "chrome/browser/ui/webui/webui_util.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/borealis_installer_resources.h"
 #include "chrome/grit/borealis_installer_resources_map.h"
@@ -17,13 +16,9 @@
 #include "content/public/browser/web_ui_data_source.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/web_dialogs/web_dialog_ui.h"
+#include "ui/webui/webui_util.h"
 
 namespace ash {
-
-bool BorealisInstallerUIConfig::IsWebUIEnabled(
-    content::BrowserContext* browser_context) {
-  return base::FeatureList::IsEnabled(features::kBorealisWebUIInstaller);
-}
 
 BorealisInstallerUI::BorealisInstallerUI(content::WebUI* web_ui)
     : ui::MojoWebDialogUI{web_ui}, web_ui_(web_ui) {
@@ -34,6 +29,7 @@ BorealisInstallerUI::BorealisInstallerUI(content::WebUI* web_ui)
           chrome::kChromeUIBorealisInstallerHost);
   static constexpr webui::LocalizedString kStrings[] = {
       {"cancel", IDS_CANCEL},
+      {"close", IDS_CLOSE},
       {"install", IDS_INSTALL},
       {"confirmationTitle", IDS_BOREALIS_INSTALLER_CONFIRMATION_TITLE},
       {"confirmationMessage", IDS_BOREALIS_INSTALLER_CONFIRMATION_MESSAGE},
@@ -57,9 +53,7 @@ BorealisInstallerUI::BorealisInstallerUI(content::WebUI* web_ui)
   };
   html_source->AddLocalizedStrings(kStrings);
 
-  webui::SetupWebUIDataSource(html_source,
-                              base::make_span(kBorealisInstallerResources,
-                                              kBorealisInstallerResourcesSize),
+  webui::SetupWebUIDataSource(html_source, kBorealisInstallerResources,
                               IDR_BOREALIS_INSTALLER_BOREALIS_INSTALLER_HTML);
 }
 

@@ -4,7 +4,10 @@
 
 #include "quiche/quic/core/quic_datagram_queue.h"
 
+#include <memory>
 #include <optional>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "absl/strings/string_view.h"
@@ -13,9 +16,9 @@
 #include "quiche/quic/core/quic_types.h"
 #include "quiche/quic/platform/api/quic_test.h"
 #include "quiche/quic/test_tools/quic_test_utils.h"
-#include "quiche/common/platform/api/quiche_mem_slice.h"
 #include "quiche/common/platform/api/quiche_reference_counted.h"
 #include "quiche/common/quiche_buffer_allocator.h"
+#include "quiche/common/quiche_mem_slice.h"
 
 namespace quic {
 namespace test {

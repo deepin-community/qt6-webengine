@@ -13,6 +13,7 @@
 #include "include/core/SkString.h"
 #include "include/private/base/SkAssert.h"
 #include "tools/sk_app/Application.h"
+#include "tools/sksltrace/SkSLTraceUtils.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -23,8 +24,6 @@
 #include <vector>
 
 #include "imgui.h"
-
-#ifdef SKSL_ENABLE_TRACING
 
 using namespace sk_app;
 using LineNumberMap = SkSL::SkSLDebugTracePlayer::LineNumberMap;
@@ -50,14 +49,17 @@ void SkSLDebuggerSlide::showLoadTraceGUI() {
         SkFILEStream file(fTraceFile);
         if (!file.isValid()) {
             ImGui::OpenPopup("Can't Open Trace");
-        } else if (!fTrace->readTrace(&file)) {
-            ImGui::OpenPopup("Invalid Trace");
         } else {
-            // Trace loaded successfully. On the next refresh, the user will see the debug UI.
-            fPlayer.reset(fTrace);
-            fPlayer.step();
-            fRefresh = true;
-            return;
+            fTrace = SkSLTraceUtils::ReadTrace(&file);
+            if (!fTrace) {
+                ImGui::OpenPopup("Invalid Trace");
+            } else {
+                // Trace loaded successfully. On the next refresh, the user will see the debug UI.
+                fPlayer.reset(fTrace);
+                fPlayer.step();
+                fRefresh = true;
+                return;
+            }
         }
     }
 
@@ -292,5 +294,3 @@ void SkSLDebuggerSlide::draw(SkCanvas* canvas) {
 bool SkSLDebuggerSlide::animate(double nanos) {
     return true;
 }
-
-#endif  // SKSL_ENABLE_TRACING

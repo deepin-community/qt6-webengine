@@ -6,17 +6,19 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
 #include <utility>
 
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/task/common/task_annotator.h"
 #include "base/time/time.h"
+#include "base/tracing/protos/chrome_track_event.pbzero.h"
 #include "build/build_config.h"
 #include "cc/metrics/event_metrics.h"
 #include "cc/paint/element_id.h"
 #include "cc/trees/latency_info_swap_promise_monitor.h"
 #include "cc/trees/layer_tree_host.h"
-#include "services/tracing/public/cpp/perfetto/flow_event_utils.h"
 #include "services/tracing/public/cpp/perfetto/macros.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/input/web_gesture_device.h"
@@ -27,7 +29,6 @@
 #include "third_party/blink/public/common/input/web_pointer_event.h"
 #include "third_party/blink/public/common/input/web_touch_event.h"
 #include "third_party/blink/public/mojom/input/input_event_result.mojom-shared.h"
-#include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
 #include "third_party/blink/public/platform/web_input_event_result.h"
 #include "third_party/blink/renderer/platform/widget/input/ime_event_guard.h"
 #include "third_party/blink/renderer/platform/widget/widget_base.h"
@@ -39,7 +40,6 @@
 #include <android/keycodes.h>
 #endif
 
-using perfetto::protos::pbzero::ChromeLatencyInfo;
 using perfetto::protos::pbzero::TrackEvent;
 
 namespace blink {
@@ -81,7 +81,6 @@ void LogPassiveEventListenersUma(WebInputEventResult result,
       break;
     default:
       NOTREACHED();
-      return;
   }
 
   UMA_HISTOGRAM_ENUMERATION("Event.PassiveListeners", enum_value,
@@ -145,13 +144,11 @@ WebCoalescedInputEvent GetCoalescedWebPointerEventForTouch(
                                 std::move(predicted_pointer_events), latency);
 }
 
-mojom::InputEventResultState GetAckResult(WebInputEventResult processed) {
-  if (processed == WebInputEventResult::kNotHandled) {
-    return base::FeatureList::IsEnabled(features::kFixGestureScrollQueuingBug)
-               ? mojom::InputEventResultState::kNotConsumedBlocking
-               : mojom::InputEventResultState::kNotConsumed;
-  }
-  return mojom::InputEventResultState::kConsumed;
+mojom::blink::InputEventResultState GetAckResult(
+    WebInputEventResult processed) {
+  return processed == WebInputEventResult::kNotHandled
+             ? mojom::blink::InputEventResultState::kNotConsumed
+             : mojom::blink::InputEventResultState::kConsumed;
 }
 
 bool IsGestureScrollWBIH(WebInputEvent::Type type) {
@@ -222,7 +219,7 @@ class WidgetBaseInputHandler::HandlingState {
     event_overscroll_ = std::move(params);
   }
 
-  absl::optional<WebTouchAction>& touch_action() { return touch_action_; }
+  std::optional<WebTouchAction>& touch_action() { return touch_action_; }
 
   Vector<WidgetBaseInputHandler::InjectScrollGestureParams>&
   injected_scroll_params() {
@@ -238,7 +235,7 @@ class WidgetBaseInputHandler::HandlingState {
   // supporting overscroll IPC notifications due to fling animation updates.
   std::unique_ptr<InputHandlerProxy::DidOverscrollParams> event_overscroll_;
 
-  absl::optional<WebTouchAction> touch_action_;
+  std::optional<WebTouchAction> touch_action_;
 
   // Used to hold a sequence of parameters corresponding to scroll gesture
   // events that should be injected once the current input event is done
@@ -249,7 +246,7 @@ class WidgetBaseInputHandler::HandlingState {
   // Whether the event we are handling is a touch start or move.
   bool touch_start_or_move_;
 
-  raw_ptr<HandlingState, ExperimentalRenderer> previous_state_;
+  raw_ptr<HandlingState> previous_state_;
   bool previous_was_handling_input_;
   base::WeakPtr<WidgetBaseInputHandler> input_handler_;
 };
@@ -274,17 +271,22 @@ WebInputEventResult WidgetBaseInputHandler::HandleTouchEvent(
 
   const WebTouchEvent touch_event =
       static_cast<const WebTouchEvent&>(input_event);
+  auto weak_self = weak_ptr_factory_.GetWeakPtr();
   for (unsigned i = 0; i < touch_event.touches_length; ++i) {
     const WebTouchPoint& touch_point = touch_event.touches[i];
     if (touch_point.state != WebTouchPoint::State::kStateStationary) {
-      const WebPointerEvent& pointer_event =
-          WebPointerEvent(touch_event, touch_point);
+      WebPointerEvent pointer_event = WebPointerEvent(touch_event, touch_point);
+      // Copy queued timestamp from original WebInputEvent.
+      pointer_event.SetQueuedTimeStamp(input_event.QueuedTimeStamp());
       const WebCoalescedInputEvent& coalesced_pointer_event =
           GetCoalescedWebPointerEventForTouch(
               pointer_event, coalesced_event.GetCoalescedEventsPointers(),
               coalesced_event.GetPredictedEventsPointers(),
               coalesced_event.latency_info());
       widget_->client()->HandleInputEvent(coalesced_pointer_event);
+      if (!weak_self) {
+        return WebInputEventResult::kNotHandled;
+      }
     }
   }
   return widget_->client()->DispatchBufferedTouchEvents();
@@ -306,18 +308,17 @@ void WidgetBaseInputHandler::HandleInputEvent(
   ImeEventGuard guard(widget_->GetWeakPtr());
 #endif
 
-  TRACE_EVENT1("renderer,benchmark,rail",
+  TRACE_EVENT1("renderer,benchmark,rail,input.scrolling",
                "WidgetBaseInputHandler::OnHandleInputEvent", "event",
                WebInputEvent::GetName(input_event.GetType()));
   int64_t trace_id = coalesced_event.latency_info().trace_id();
   TRACE_EVENT("input,benchmark,latencyInfo", "LatencyInfo.Flow",
-              [trace_id](perfetto::EventContext ctx) {
-                ChromeLatencyInfo* info =
-                    ctx.event()->set_chrome_latency_info();
-                info->set_trace_id(trace_id);
-                info->set_step(ChromeLatencyInfo::STEP_HANDLE_INPUT_EVENT_MAIN);
-                tracing::FillFlowEvent(ctx, TrackEvent::LegacyEvent::FLOW_INOUT,
-                                       trace_id);
+              [&](perfetto::EventContext ctx) {
+                base::TaskAnnotator::EmitTaskTimingDetails(ctx);
+                ui::LatencyInfo::FillTraceEvent(
+                    ctx, trace_id,
+                    perfetto::protos::pbzero::ChromeLatencyInfo2::Step::
+                        STEP_HANDLE_INPUT_EVENT_MAIN);
               });
 
   ui::LatencyInfo swap_latency_info(coalesced_event.latency_info());
@@ -349,6 +350,20 @@ void WidgetBaseInputHandler::HandleInputEvent(
           std::move(done_callback));
 
   bool prevent_default = false;
+  WebInputEventResult processed = WebInputEventResult::kNotHandled;
+
+  auto check_was_destroyed = [&]() {
+    if (!weak_self) {
+      if (callback) {
+        std::move(callback).Run(GetAckResult(processed), swap_latency_info,
+                                std::move(handling_state.event_overscroll()),
+                                std::move(handling_state.touch_action()));
+      }
+      return true;
+    }
+    return false;
+  };
+
   bool show_virtual_keyboard_for_mouse = false;
   if (WebInputEvent::IsMouseEventType(input_event.GetType())) {
     const WebMouseEvent& mouse_event =
@@ -358,6 +373,9 @@ void WidgetBaseInputHandler::HandleInputEvent(
                  mouse_event.PositionInWidget().y());
 
     widget_->client()->WillHandleMouseEvent(mouse_event);
+    if (check_was_destroyed()) {
+      return;
+    }
 
     // Reset the last known cursor if mouse has left this widget. So next
     // time that the mouse enters we always set the cursor accordingly.
@@ -394,21 +412,28 @@ void WidgetBaseInputHandler::HandleInputEvent(
       // through to the web app would cause compatibility problems since
       // DPAD_CENTER is also used as a "confirm" button).
       prevent_default = true;
+      processed = WebInputEventResult::kHandledSuppressed;
     }
   }
 #endif
+  if (check_was_destroyed()) {
+    return;
+  }
 
   if (WebInputEvent::IsGestureEventType(input_event.GetType())) {
     const WebGestureEvent& gesture_event =
         static_cast<const WebGestureEvent&>(input_event);
     bool suppress = false;
     widget_->client()->WillHandleGestureEvent(gesture_event, &suppress);
-    prevent_default = prevent_default || suppress;
+    if (suppress) {
+      prevent_default = true;
+      processed = WebInputEventResult::kHandledSuppressed;
+    }
+    if (check_was_destroyed()) {
+      return;
+    }
   }
 
-  WebInputEventResult processed = prevent_default
-                                      ? WebInputEventResult::kHandledSuppressed
-                                      : WebInputEventResult::kNotHandled;
   if (input_event.GetType() != WebInputEvent::Type::kChar ||
       !suppress_next_char_events_) {
     suppress_next_char_events_ = false;
@@ -420,15 +445,7 @@ void WidgetBaseInputHandler::HandleInputEvent(
         processed = widget_->client()->HandleInputEvent(coalesced_event);
     }
 
-    // The associated WidgetBase (and this WidgetBaseInputHandler) could
-    // have been destroyed. If it was return early before accessing any more of
-    // this class.
-    if (!weak_self) {
-      if (callback) {
-        std::move(callback).Run(GetAckResult(processed), swap_latency_info,
-                                std::move(handling_state.event_overscroll()),
-                                std::move(handling_state.touch_action()));
-      }
+    if (check_was_destroyed()) {
       return;
     }
   }
@@ -457,6 +474,9 @@ void WidgetBaseInputHandler::HandleInputEvent(
     HandleInjectedScrollGestures(
         std::move(handling_state.injected_scroll_params()), input_event,
         coalesced_event.latency_info(), cloned_metrics.get());
+    if (check_was_destroyed()) {
+      return;
+    }
   }
 
   // Send gesture scroll events and their dispositions to the compositor thread,
@@ -482,6 +502,10 @@ void WidgetBaseInputHandler::HandleInputEvent(
     }
   }
 
+  if (check_was_destroyed()) {
+    return;
+  }
+
   if (callback) {
     std::move(callback).Run(GetAckResult(processed), swap_latency_info,
                             std::move(handling_state.event_overscroll()),
@@ -489,6 +513,10 @@ void WidgetBaseInputHandler::HandleInputEvent(
   } else {
     DCHECK(!handling_state.event_overscroll())
         << "Unexpected overscroll for un-acked event";
+  }
+
+  if (!weak_self) {
+    return;
   }
 
   // Show the virtual keyboard if enabled and a user gesture triggers a focus
@@ -517,30 +545,6 @@ void WidgetBaseInputHandler::HandleInputEvent(
   // Ensure all injected scrolls were handled or queue up - any remaining
   // injected scrolls at this point would not be processed.
   DCHECK(handling_state.injected_scroll_params().empty());
-}
-
-bool WidgetBaseInputHandler::DidOverscrollFromBlink(
-    const gfx::Vector2dF& overscroll_delta,
-    const gfx::Vector2dF& accumulated_overscroll,
-    const gfx::PointF& position,
-    const gfx::Vector2dF& velocity,
-    const cc::OverscrollBehavior& behavior) {
-  // We aren't currently handling an event. Allow the processing to be
-  // dispatched separately from the ACK.
-  if (!handling_input_state_)
-    return true;
-
-  // If we're currently handling an event, stash the overscroll data such that
-  // it can be bundled in the event ack.
-  std::unique_ptr<InputHandlerProxy::DidOverscrollParams> params =
-      std::make_unique<InputHandlerProxy::DidOverscrollParams>();
-  params->accumulated_overscroll = accumulated_overscroll;
-  params->latest_overscroll_delta = overscroll_delta;
-  params->current_fling_velocity = velocity;
-  params->causal_event_viewport_point = position;
-  params->overscroll_behavior = behavior;
-  handling_input_state_->set_event_overscroll(std::move(params));
-  return false;
 }
 
 void WidgetBaseInputHandler::InjectScrollbarGestureScroll(
@@ -593,6 +597,7 @@ void WidgetBaseInputHandler::HandleInjectedScrollGestures(
       ui::INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, &original_timestamp);
   DCHECK(found_original_component);
 
+  auto weak_self = weak_ptr_factory_.GetWeakPtr();
   gfx::PointF position = PositionInWidgetFromInputEvent(input_event);
   for (const InjectScrollGestureParams& params : injected_scroll_params) {
     // Set up a new `LatencyInfo` for the injected scroll - this is the original
@@ -604,8 +609,6 @@ void WidgetBaseInputHandler::HandleInjectedScrollGestures(
     // allows end to end latency to be logged for the injected scroll, annotated
     // with the correct type.
     ui::LatencyInfo scrollbar_latency_info(original_latency_info);
-    scrollbar_latency_info.set_source_event_type(
-        ui::SourceEventType::SCROLLBAR);
     scrollbar_latency_info.AddLatencyNumber(
         ui::LatencyComponentType::INPUT_EVENT_LATENCY_RENDERER_MAIN_COMPONENT);
 
@@ -687,6 +690,9 @@ void WidgetBaseInputHandler::HandleInjectedScrollGestures(
               std::move(done_callback));
       widget_->client()->HandleInputEvent(
           WebCoalescedInputEvent(*gesture_event, scrollbar_latency_info));
+      if (!weak_self) {
+        return;
+      }
     }
   }
 }

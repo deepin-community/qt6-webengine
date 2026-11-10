@@ -7,6 +7,8 @@
 #ifndef CORE_FXCODEC_JBIG2_JBIG2_DOCUMENTCONTEXT_H_
 #define CORE_FXCODEC_JBIG2_JBIG2_DOCUMENTCONTEXT_H_
 
+#include <stdint.h>
+
 #include <list>
 #include <memory>
 #include <utility>
@@ -25,11 +27,11 @@ class JBig2_DocumentContext {
   ~JBig2_DocumentContext();
 
   std::list<CJBig2_CachePair>* GetSymbolDictCache() {
-    return &m_SymbolDictCache;
+    return &symbol_dict_cache_;
   }
 
  private:
-  std::list<CJBig2_CachePair> m_SymbolDictCache;
+  std::list<CJBig2_CachePair> symbol_dict_cache_;
 };
 
 #endif  // CORE_FXCODEC_JBIG2_JBIG2_DOCUMENTCONTEXT_H_

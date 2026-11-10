@@ -5,8 +5,9 @@
 #include "third_party/blink/renderer/modules/smart_card/smart_card_resource_manager.h"
 
 #include "services/device/public/mojom/smart_card.mojom-blink.h"
-#include "third_party/blink/public/mojom/permissions_policy/permissions_policy_feature.mojom-shared.h"
+#include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-shared.h"
 #include "third_party/blink/public/mojom/smart_card/smart_card.mojom-blink.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/core/execution_context/navigator_base.h"
 #include "third_party/blink/renderer/modules/event_target_modules.h"
 #include "third_party/blink/renderer/modules/smart_card/smart_card_context.h"
@@ -31,11 +32,12 @@ bool ShouldBlockSmartCardServiceCall(ExecutionContext* context,
     exception_state.ThrowDOMException(DOMExceptionCode::kNotSupportedError,
                                       kContextGone);
   } else if (!context->IsIsolatedContext() ||
-             !context->IsFeatureEnabled(mojom::blink::PermissionsPolicyFeature::
-                                            kCrossOriginIsolated)) {
+             !context->IsFeatureEnabled(
+                 network::mojom::PermissionsPolicyFeature::
+                     kCrossOriginIsolated)) {
     exception_state.ThrowSecurityError(kNotSufficientlyIsolated);
   } else if (!context->IsFeatureEnabled(
-                 mojom::blink::PermissionsPolicyFeature::kSmartCard,
+                 network::mojom::PermissionsPolicyFeature::kSmartCard,
                  ReportOptions::kReportOnFailure)) {
     exception_state.ThrowSecurityError(kFeaturePolicyBlocked);
   }
@@ -76,15 +78,16 @@ void SmartCardResourceManager::Trace(Visitor* visitor) const {
   ExecutionContextLifecycleObserver::Trace(visitor);
 }
 
-ScriptPromise SmartCardResourceManager::establishContext(
+ScriptPromise<SmartCardContext> SmartCardResourceManager::establishContext(
     ScriptState* script_state,
     ExceptionState& exception_state) {
   if (ShouldBlockSmartCardServiceCall(GetExecutionContext(), exception_state)) {
-    return ScriptPromise();
+    return EmptyPromise();
   }
 
-  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver>(
-      script_state, exception_state.GetContext());
+  auto* resolver =
+      MakeGarbageCollected<ScriptPromiseResolver<SmartCardContext>>(
+          script_state, exception_state.GetContext());
   create_context_promises_.insert(resolver);
 
   EnsureServiceConnection();
@@ -112,7 +115,7 @@ void SmartCardResourceManager::EnsureServiceConnection() {
 }
 
 void SmartCardResourceManager::OnCreateContextDone(
-    ScriptPromiseResolver* resolver,
+    ScriptPromiseResolver<SmartCardContext>* resolver,
     device::mojom::blink::SmartCardCreateContextResultPtr result) {
   DCHECK(create_context_promises_.Contains(resolver));
   create_context_promises_.erase(resolver);

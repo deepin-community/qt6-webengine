@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/x8-lut/avx512skx-vpshufb.c.in
 //   Generator: tools/xngen
@@ -8,19 +9,21 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <immintrin.h>
 
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/lut.h>
-#include <xnnpack/common.h>
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/lut.h"
+#include "src/xnnpack/common.h"
 
 
 void xnn_x8_lut_ukernel__avx512skx_vpshufb_u192(
     size_t batch,
     const uint8_t* input,
     uint8_t* output,
-    const uint8_t table[restrict XNN_MIN_ELEMENTS(256)])
+    const uint8_t* restrict table)
 {
   assert(batch != 0);
   assert(batch % sizeof(uint8_t) == 0);

@@ -5,6 +5,7 @@
 #include "components/metrics/metrics_service_client.h"
 
 #include <algorithm>
+#include <optional>
 #include <string>
 
 #include "base/command_line.h"
@@ -14,7 +15,7 @@
 #include "build/build_config.h"
 #include "components/metrics/metrics_features.h"
 #include "components/metrics/metrics_switches.h"
-#include "components/metrics/url_constants.h"
+#include "components/metrics/server_urls.h"
 #include "metrics_service_client.h"
 
 namespace metrics {
@@ -91,6 +92,15 @@ ukm::UkmService* MetricsServiceClient::GetUkmService() {
   return nullptr;
 }
 
+metrics::dwa::DwaService* MetricsServiceClient::GetDwaService() {
+  return nullptr;
+}
+
+IdentifiabilityStudyState*
+MetricsServiceClient::GetIdentifiabilityStudyState() {
+  return nullptr;
+}
+
 structured::StructuredMetricsService*
 MetricsServiceClient::GetStructuredMetricsService() {
   return nullptr;
@@ -105,7 +115,8 @@ GURL MetricsServiceClient::GetMetricsServerUrl() {
   if (command_line->HasSwitch(switches::kUmaServerUrl)) {
     return GURL(command_line->GetSwitchValueASCII(switches::kUmaServerUrl));
   }
-  return GURL(kNewMetricsServerUrl);
+  // Explicitly prefix with metrics namespace due to name collision.
+  return metrics::GetMetricsServerUrl();
 }
 
 GURL MetricsServiceClient::GetInsecureMetricsServerUrl() {
@@ -114,7 +125,8 @@ GURL MetricsServiceClient::GetInsecureMetricsServerUrl() {
     return GURL(
         command_line->GetSwitchValueASCII(switches::kUmaInsecureServerUrl));
   }
-  return GURL(kNewMetricsServerUrlInsecure);
+  // Explicitly prefix with metrics namespace due to name collision.
+  return metrics::GetInsecureMetricsServerUrl();
 }
 
 base::TimeDelta MetricsServiceClient::GetUploadInterval() {
@@ -133,10 +145,22 @@ base::TimeDelta MetricsServiceClient::GetUploadInterval() {
     LOG(DFATAL) << "Malformed value for --metrics-upload-interval. "
                 << "Expected int, got: " << switch_value;
   }
+
+  // Use a custom interval if available.
+  if (auto custom_interval = GetCustomUploadInterval();
+      custom_interval.has_value()) {
+    return *custom_interval;
+  }
+
   return GetStandardUploadInterval();
 }
 
-bool MetricsServiceClient::ShouldStartUpFastForTesting() const {
+std::optional<base::TimeDelta> MetricsServiceClient::GetCustomUploadInterval()
+    const {
+  return std::nullopt;
+}
+
+bool MetricsServiceClient::ShouldStartUpFast() const {
   return false;
 }
 
@@ -152,11 +176,11 @@ bool MetricsServiceClient::IsOnCellularConnection() {
   return false;
 }
 
-bool MetricsServiceClient::IsExternalExperimentAllowlistEnabled() {
-  return true;
+bool MetricsServiceClient::IsUkmAllowedForAllProfiles() {
+  return false;
 }
 
-bool MetricsServiceClient::IsUkmAllowedForAllProfiles() {
+bool MetricsServiceClient::IsDwaAllowedForAllProfiles() {
   return false;
 }
 
@@ -220,13 +244,12 @@ bool MetricsServiceClient::IsMetricsReportingForceEnabled() const {
   return ::metrics::IsMetricsReportingForceEnabled();
 }
 
-absl::optional<bool> MetricsServiceClient::GetCurrentUserMetricsConsent()
-    const {
-  return absl::nullopt;
+std::optional<bool> MetricsServiceClient::GetCurrentUserMetricsConsent() const {
+  return std::nullopt;
 }
 
-absl::optional<std::string> MetricsServiceClient::GetCurrentUserId() const {
-  return absl::nullopt;
+std::optional<std::string> MetricsServiceClient::GetCurrentUserId() const {
+  return std::nullopt;
 }
 
 }  // namespace metrics

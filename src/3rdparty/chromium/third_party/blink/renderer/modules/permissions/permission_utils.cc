@@ -7,16 +7,17 @@
 #include <utility>
 
 #include "build/build_config.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/mojom/permissions/permission.mojom-blink.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/renderer/bindings/core/v8/native_value_traits_impl.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_permission_state.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_camera_device_permission_descriptor.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_clipboard_permission_descriptor.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_fullscreen_permission_descriptor.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_midi_permission_descriptor.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_permission_descriptor.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_permission_name.h"
-#include "third_party/blink/renderer/bindings/modules/v8/v8_permission_state.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_push_permission_descriptor.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_top_level_storage_access_permission_descriptor.h"
 #include "third_party/blink/renderer/core/dom/document.h"
@@ -66,8 +67,8 @@ void ConnectToPermissionService(
       std::move(receiver));
 }
 
-String PermissionStatusToString(mojom::blink::PermissionStatus status) {
-  return V8PermissionState(ToPermissionStateEnum(status)).AsString();
+V8PermissionState ToV8PermissionState(mojom::blink::PermissionStatus status) {
+  return V8PermissionState(ToPermissionStateEnum(status));
 }
 
 String PermissionNameToString(PermissionName name) {
@@ -92,8 +93,6 @@ String PermissionNameToString(PermissionName name) {
       return "background_sync";
     case PermissionName::SENSORS:
       return "sensors";
-    case PermissionName::ACCESSIBILITY_EVENTS:
-      return "accessibility_events";
     case PermissionName::CLIPBOARD_READ:
       return "clipboard_read";
     case PermissionName::CLIPBOARD_WRITE:
@@ -115,9 +114,6 @@ String PermissionNameToString(PermissionName name) {
     case PermissionName::STORAGE_ACCESS:
       return "storage-access";
     case PermissionName::WINDOW_MANAGEMENT:
-      if (RuntimeEnabledFeatures::WindowPlacementPermissionAliasEnabled()) {
-        return "window_placement";
-      }
       return "window-management";
     case PermissionName::LOCAL_FONTS:
       return "local_fonts";
@@ -127,9 +123,29 @@ String PermissionNameToString(PermissionName name) {
       return "top-level-storage-access";
     case PermissionName::CAPTURED_SURFACE_CONTROL:
       return "captured-surface-control";
+    case PermissionName::SPEAKER_SELECTION:
+      return "speaker-selection";
+    case PermissionName::KEYBOARD_LOCK:
+      return "keyboard-lock";
+    case PermissionName::POINTER_LOCK:
+      return "pointer-lock";
+    case PermissionName::FULLSCREEN:
+      return "fullscreen";
+    case PermissionName::WEB_APP_INSTALLATION:
+      return "web-app-installation";
+    case PermissionName::LOCAL_NETWORK_ACCESS:
+      return "local-network-access";
+    case PermissionName::VR:
+      return "vr";
+    case PermissionName::AR:
+      return "ar";
+    case PermissionName::HAND_TRACKING:
+      return "hand-tracking";
+    case PermissionName::WEB_PRINTING:
+      return "web-printing";
+    case PermissionName::SMART_CARD:
+      return "smart-card";
   }
-  NOTREACHED();
-  return "unknown";
 }
 
 PermissionDescriptorPtr CreatePermissionDescriptor(PermissionName name) {
@@ -183,6 +199,17 @@ PermissionDescriptorPtr CreateTopLevelStorageAccessPermissionDescriptor(
   descriptor->extension =
       mojom::blink::PermissionDescriptorExtension::NewTopLevelStorageAccess(
           std::move(top_level_storage_access_extension));
+  return descriptor;
+}
+
+PermissionDescriptorPtr CreateFullscreenPermissionDescriptor(
+    bool allow_without_user_gesture) {
+  auto descriptor = CreatePermissionDescriptor(PermissionName::FULLSCREEN);
+  auto fullscreen_extension = mojom::blink::FullscreenPermissionDescriptor::New(
+      allow_without_user_gesture);
+  descriptor->extension =
+      mojom::blink::PermissionDescriptorExtension::NewFullscreen(
+          std::move(fullscreen_extension));
   return descriptor;
 }
 
@@ -268,14 +295,6 @@ PermissionDescriptorPtr ParsePermissionDescriptor(
 
     return CreatePermissionDescriptor(PermissionName::SENSORS);
   }
-  if (name == V8PermissionName::Enum::kAccessibilityEvents) {
-    if (!RuntimeEnabledFeatures::AccessibilityObjectModelEnabled()) {
-      exception_state.ThrowTypeError(
-          "Accessibility Object Model is not enabled.");
-      return nullptr;
-    }
-    return CreatePermissionDescriptor(PermissionName::ACCESSIBILITY_EVENTS);
-  }
   if (name == V8PermissionName::Enum::kClipboardRead ||
       name == V8PermissionName::Enum::kClipboardWrite) {
     PermissionName permission_name = PermissionName::CLIPBOARD_READ;
@@ -345,19 +364,6 @@ PermissionDescriptorPtr ParsePermissionDescriptor(
     return CreateTopLevelStorageAccessPermissionDescriptor(origin_as_kurl);
   }
   if (name == V8PermissionName::Enum::kWindowManagement) {
-    UseCounter::Count(CurrentExecutionContext(script_state->GetIsolate()),
-                      WebFeature::kWindowManagementPermissionDescriptorUsed);
-    return CreatePermissionDescriptor(PermissionName::WINDOW_MANAGEMENT);
-  }
-  if (name == V8PermissionName::Enum::kWindowPlacement) {
-    if (!RuntimeEnabledFeatures::WindowPlacementPermissionAliasEnabled()) {
-      exception_state.ThrowTypeError(
-          "The Window Placement alias is not enabled.");
-      return nullptr;
-    }
-    Deprecation::CountDeprecation(
-        CurrentExecutionContext(script_state->GetIsolate()),
-        WebFeature::kWindowPlacementPermissionDescriptorUsed);
     return CreatePermissionDescriptor(PermissionName::WINDOW_MANAGEMENT);
   }
   if (name == V8PermissionName::Enum::kLocalFonts) {
@@ -379,6 +385,64 @@ PermissionDescriptorPtr ParsePermissionDescriptor(
       return nullptr;
     }
     return CreatePermissionDescriptor(PermissionName::CAPTURED_SURFACE_CONTROL);
+  }
+  if (name == V8PermissionName::Enum::kSpeakerSelection) {
+    if (!RuntimeEnabledFeatures::SpeakerSelectionEnabled(
+            ExecutionContext::From(script_state))) {
+      exception_state.ThrowTypeError(
+          "The Speaker Selection API is not enabled.");
+      return nullptr;
+    }
+    return CreatePermissionDescriptor(PermissionName::SPEAKER_SELECTION);
+  }
+  if (name == V8PermissionName::Enum::kKeyboardLock) {
+#if !BUILDFLAG(IS_ANDROID)
+    return CreatePermissionDescriptor(PermissionName::KEYBOARD_LOCK);
+#else
+    exception_state.ThrowTypeError(
+        "The Keyboard Lock permission isn't available on Android.");
+    return nullptr;
+#endif
+  }
+
+  if (name == V8PermissionName::Enum::kPointerLock) {
+#if !BUILDFLAG(IS_ANDROID)
+    return CreatePermissionDescriptor(PermissionName::POINTER_LOCK);
+#else
+    exception_state.ThrowTypeError(
+        "The Pointer Lock permission isn't available on Android.");
+    return nullptr;
+#endif
+  }
+
+  if (name == V8PermissionName::Enum::kFullscreen) {
+    FullscreenPermissionDescriptor* fullscreen_permission =
+        NativeValueTraits<FullscreenPermissionDescriptor>::NativeValue(
+            script_state->GetIsolate(), raw_descriptor.V8Value(),
+            exception_state);
+    if (exception_state.HadException()) {
+      return nullptr;
+    }
+    if (!fullscreen_permission->allowWithoutGesture()) {
+      // There is no permission state for fullscreen with user gesture.
+      exception_state.ThrowTypeError(
+          "Fullscreen Permission only supports allowWithoutGesture:true.");
+      return nullptr;
+    }
+    return CreateFullscreenPermissionDescriptor(
+        fullscreen_permission->allowWithoutGesture());
+  }
+  if (name == V8PermissionName::Enum::kWebAppInstallation) {
+    if (!RuntimeEnabledFeatures::WebAppInstallationEnabled(
+            ExecutionContext::From(script_state))) {
+      exception_state.ThrowTypeError("The Web App Install API is not enabled.");
+      return nullptr;
+    }
+    return CreatePermissionDescriptor(PermissionName::WEB_APP_INSTALLATION);
+  }
+
+  if (name == V8PermissionName::Enum::kLocalNetworkAccess) {
+    return CreatePermissionDescriptor(PermissionName::LOCAL_NETWORK_ACCESS);
   }
   return nullptr;
 }

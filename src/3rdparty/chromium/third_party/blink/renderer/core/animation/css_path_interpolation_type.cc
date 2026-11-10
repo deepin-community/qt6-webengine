@@ -43,31 +43,29 @@ const StylePath* GetPath(const CSSProperty& property,
     }
     default:
       NOTREACHED();
-      return nullptr;
   }
 }
 
 // Set the property to the given path() value.
 void SetPath(const CSSProperty& property,
              ComputedStyleBuilder& builder,
-             scoped_refptr<blink::StylePath> path) {
+             blink::StylePath* path) {
   switch (property.PropertyID()) {
     case CSSPropertyID::kD:
-      builder.SetD(std::move(path));
+      builder.SetD(path);
       return;
     case CSSPropertyID::kOffsetPath:
       // TODO(sakhapov): handle coord box.
       builder.SetOffsetPath(MakeGarbageCollected<ShapeOffsetPathOperation>(
-          std::move(path), CoordBox::kBorderBox));
+          path, CoordBox::kBorderBox));
       return;
     case CSSPropertyID::kClipPath:
       // TODO(pdr): Handle geometry box.
       builder.SetClipPath(MakeGarbageCollected<ShapeClipPathOperation>(
-          std::move(path), GeometryBox::kBorderBox));
+          path, GeometryBox::kBorderBox));
       return;
     default:
       NOTREACHED();
-      return;
   }
 }
 
@@ -88,7 +86,7 @@ void CSSPathInterpolationType::Composite(
     const InterpolationValue& value,
     double interpolation_fraction) const {
   PathInterpolationFunctions::Composite(underlying_value_owner,
-                                        underlying_fraction, *this, value);
+                                        underlying_fraction, this, value);
 }
 
 InterpolationValue CSSPathInterpolationType::MaybeConvertNeutral(
@@ -107,18 +105,22 @@ InterpolationValue CSSPathInterpolationType::MaybeConvertInitial(
 
 class InheritedPathChecker : public CSSInterpolationType::CSSConversionChecker {
  public:
-  InheritedPathChecker(const CSSProperty& property,
-                       scoped_refptr<const StylePath> style_path)
-      : property_(property), style_path_(std::move(style_path)) {}
+  InheritedPathChecker(const CSSProperty& property, const StylePath* style_path)
+      : property_(property), style_path_(style_path) {}
+
+  void Trace(Visitor* visitor) const override {
+    visitor->Trace(style_path_);
+    CSSInterpolationType::CSSConversionChecker::Trace(visitor);
+  }
 
  private:
   bool IsValid(const StyleResolverState& state,
                const InterpolationValue& underlying) const final {
-    return GetPath(property_, *state.ParentStyle()) == style_path_.get();
+    return GetPath(property_, *state.ParentStyle()) == style_path_.Get();
   }
 
   const CSSProperty& property_;
-  const scoped_refptr<const StylePath> style_path_;
+  const Member<const StylePath> style_path_;
 };
 
 InterpolationValue CSSPathInterpolationType::MaybeConvertInherit(
@@ -127,7 +129,7 @@ InterpolationValue CSSPathInterpolationType::MaybeConvertInherit(
   if (!state.ParentStyle())
     return nullptr;
 
-  conversion_checkers.push_back(std::make_unique<InheritedPathChecker>(
+  conversion_checkers.push_back(MakeGarbageCollected<InheritedPathChecker>(
       CssProperty(), GetPath(CssProperty(), *state.ParentStyle())));
   return PathInterpolationFunctions::ConvertValue(
       GetPath(CssProperty(), *state.ParentStyle()),
@@ -136,7 +138,7 @@ InterpolationValue CSSPathInterpolationType::MaybeConvertInherit(
 
 InterpolationValue CSSPathInterpolationType::MaybeConvertValue(
     const CSSValue& value,
-    const StyleResolverState*,
+    const StyleResolverState&,
     ConversionCheckers&) const {
   const cssvalue::CSSPathValue* path_value = nullptr;
   if (const auto* list = DynamicTo<CSSValueList>(value)) {

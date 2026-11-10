@@ -10,6 +10,9 @@
 
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
+#include "base/functional/callback_forward.h"
+#include "base/process/process.h"
+#include "base/run_loop.h"
 #include "base/strings/strcat.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
@@ -18,7 +21,6 @@
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/component_updater/first_party_sets_component_installer.h"
 #include "chrome/browser/net/stub_resolver_config_reader.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -28,14 +30,18 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/test_launcher_utils.h"
+#include "components/component_updater/installer_policies/first_party_sets_component_installer_policy.h"
 #include "components/prefs/pref_service.h"
 #include "components/version_info/version_info.h"
+#include "content/public/browser/cookie_access_details.h"
+#include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/network_service_instance.h"
 #include "content/public/browser/network_service_util.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/service_process_host.h"
 #include "content/public/browser/service_process_info.h"
+#include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/content_features.h"
-#include "content/public/common/user_agent.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -43,6 +49,9 @@
 #include "mojo/public/cpp/bindings/sync_call_restrictions.h"
 #include "net/base/features.h"
 #include "net/cookies/canonical_cookie_test_helpers.h"
+#include "net/cookies/cookie_access_result.h"
+#include "net/cookies/cookie_constants.h"
+#include "net/cookies/cookie_inclusion_status.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/net_buildflags.h"
 #include "sandbox/policy/features.h"
@@ -56,6 +65,14 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/features.h"
 
+#if BUILDFLAG(IS_WIN)
+#include "base/process/process_info.h"
+#include "base/test/metrics/histogram_tester.h"
+#include "chrome/browser/browser_features.h"
+#include "chrome/common/chrome_version.h"
+#include "content/public/browser/storage_partition.h"
+#endif  // BUILDFLAG(IS_WIN)
+
 #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
 #include "sandbox/policy/linux/sandbox_seccomp_bpf_linux.h"
 #endif  // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
@@ -64,6 +81,7 @@ using SystemNetworkContextManagerBrowsertest = InProcessBrowserTest;
 
 const char* kCookieName = "Cookie";
 const char* kHostA = "a.test";
+const char* kHostB = "b.test";
 
 IN_PROC_BROWSER_TEST_F(SystemNetworkContextManagerBrowsertest,
                        StaticAuthParams) {
@@ -392,6 +410,212 @@ INSTANTIATE_TEST_SUITE_P(
 
 #endif  // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
 
+#if BUILDFLAG(IS_WIN)
+
+class SystemNetworkContextManagerNetworkServiceSandboxBrowsertest
+    : public SystemNetworkContextManagerBrowsertest,
+      public content::ServiceProcessHost::Observer {
+ public:
+  SystemNetworkContextManagerNetworkServiceSandboxBrowsertest() {
+    scoped_feature_list_.InitWithFeatures(
+        {sandbox::policy::features::kNetworkServiceSandbox,
+         features::kRestartNetworkServiceUnsandboxedForFailedLaunch},
+        {});
+  }
+
+  void SetUpOnMainThread() override {
+    SystemNetworkContextManagerBrowsertest::SetUpOnMainThread();
+    launch_run_loop_.emplace();
+    content::ServiceProcessHost::AddObserver(this);
+    auto running_processes =
+        content::ServiceProcessHost::GetRunningProcessInfo();
+    for (const auto& info : running_processes) {
+      if (info.IsService<network::mojom::NetworkService>()) {
+        RecordProcessSandboxState(info.GetProcess());
+        break;
+      }
+    }
+  }
+
+  void TearDownOnMainThread() override {
+    content::ServiceProcessHost::RemoveObserver(this);
+  }
+
+ protected:
+  size_t launches_seen_ = 0;
+  bool network_service_sandboxed_;
+  std::optional<base::RunLoop> launch_run_loop_;
+
+ private:
+  void RecordProcessSandboxState(const base::Process& process) {
+    const auto integrity_level = base::GetProcessIntegrityLevel(process.Pid());
+    CHECK_NE(base::INTEGRITY_UNKNOWN, integrity_level);
+    network_service_sandboxed_ = integrity_level < base::MEDIUM_INTEGRITY;
+  }
+
+  void OnServiceProcessLaunched(
+      const content::ServiceProcessInfo& info) override {
+    if (!info.IsService<network::mojom::NetworkService>()) {
+      return;
+    }
+    RecordProcessSandboxState(info.GetProcess());
+    // Expect two launches, first for the restart due to intentional crash, then
+    // for the restart after the intentional crash at startup.
+    if (++launches_seen_ >= 2u) {
+      launch_run_loop_->Quit();
+    }
+  }
+
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+// This is a four stage test to verify the early launch crash behavior for the
+// network service sandbox on Windows.
+//
+// In the first stage, the network service is already started as normal during
+// browser launch. The test verifies that the service is currently sandboxed.
+//
+// In the second stage, the artificial early crash is added, then the service is
+// crashed to cause a restart. This results in the service starting, crashing
+// immediately then starting again unsandboxed. The test verifies that the
+// service is now unsandboxed and the pref has been set to mark the sandbox as
+// being disabled.
+//
+// In the third stage, a crash is induced again and it's checked that the
+// unsandboxed state is correctly persisted and used on the second restart.
+//
+// In the fourth stage, the crashing milestone is set to one milestone previous
+// to current, and then the service then crashed again to cause a restart. This
+// time the service will start sandboxed again because the early crash was in a
+// previous milestone.
+IN_PROC_BROWSER_TEST_F(
+    SystemNetworkContextManagerNetworkServiceSandboxBrowsertest,
+    NetworkServiceRestartsFailingLaunches) {
+  if (!sandbox::policy::features::IsNetworkSandboxSupported()) {
+    GTEST_SKIP() << "This test requires platform sandbox support.";
+  }
+
+  // Check network service is sandboxed initially.
+  EXPECT_TRUE(network_service_sandboxed_);
+
+  {
+    base::HistogramTester histograms;
+
+    // The next restart will fail to bootstrap correctly.
+    content::SetNetworkServiceCrashOnNextStartupForTesting();
+    // Cause a crash in the network service, which will cause it to restart,
+    // then fail to start, then restart again unsandboxed.
+    SimulateNetworkServiceCrash();
+    // The second restart (unsandboxed) must be ignored otherwise the test will
+    // fail.
+    IgnoreNetworkServiceCrashes();
+    // Make sure the network service is fully up and running after having to
+    // restart twice.
+    browser()
+        ->profile()
+        ->GetDefaultStoragePartition()
+        ->FlushNetworkInterfaceForTesting();
+
+    launch_run_loop_->Run();
+    EXPECT_FALSE(network_service_sandboxed_);
+    EXPECT_TRUE(SystemNetworkContextManager::GetInstance()
+                    ->HasFailedPreviousRecentLaunch());
+    int crashing_major_version = g_browser_process->local_state()->GetInteger(
+        prefs::kNetworkServiceFailedLaunchMajorVersion);
+    CHECK_EQ(crashing_major_version, CHROME_VERSION_MAJOR);
+    histograms.ExpectUniqueSample(
+        "Chrome.SystemNetworkContextManager.NetworkSandboxEarlyLaunchCrashed",
+        true, 1u);
+    // Two sets of histograms are emitted in this part: first the network
+    // service is launched with sandbox enabled, then the second re-launch is
+    // with sandbox disabled because of failed launch. Note these histograms
+    // have varied counts. This is because
+    // Chrome.SystemNetworkContextManager.NetworkSandboxState is logged from
+    // SystemNetworkContextManager::IsNetworkSandboxEnabled which is called from
+    // various places in mojo and service manager. This test merely has to
+    // verify that there exist only entries in the two buckets and no other
+    // bucket.
+    const auto enabled_count = histograms.GetBucketCount(
+        "Chrome.SystemNetworkContextManager.NetworkSandboxState",
+        /*kEnabledByPlatform*/ 1);
+    const auto disabled_because_of_failed_launch_count =
+        histograms.GetBucketCount(
+            "Chrome.SystemNetworkContextManager.NetworkSandboxState",
+            /*kDisabledBecauseOfFailedLaunch*/ 4);
+    CHECK_GT(disabled_because_of_failed_launch_count, 1u);
+    CHECK_GT(enabled_count, 1u);
+    histograms.ExpectTotalCount(
+        "Chrome.SystemNetworkContextManager.NetworkSandboxState",
+        enabled_count + disabled_because_of_failed_launch_count);
+  }
+
+  {
+    base::HistogramTester histograms;
+    // Crash again, this time to verify that the pref persists and causes the
+    // network service to remain unsandboxed even on a second restart.
+    SimulateNetworkServiceCrash();
+
+    // Make sure the network service is fully up and running after having to
+    // restart.
+    browser()
+        ->profile()
+        ->GetDefaultStoragePartition()
+        ->FlushNetworkInterfaceForTesting();
+
+    // Sandbox should still be disabled as the pref stored the state.
+    EXPECT_FALSE(network_service_sandboxed_);
+    EXPECT_TRUE(SystemNetworkContextManager::GetInstance()
+                    ->HasFailedPreviousRecentLaunch());
+    histograms.ExpectTotalCount(
+        "Chrome.SystemNetworkContextManager.NetworkSandboxEarlyLaunchCrashed",
+        0);
+    const auto disabled_because_of_failed_launch_count =
+        histograms.GetBucketCount(
+            "Chrome.SystemNetworkContextManager.NetworkSandboxState",
+            /*kDisabledBecauseOfFailedLaunch*/ 4);
+    CHECK_GT(disabled_because_of_failed_launch_count, 1u);
+    histograms.ExpectTotalCount(
+        "Chrome.SystemNetworkContextManager.NetworkSandboxState",
+        disabled_because_of_failed_launch_count);
+  }
+
+  {
+    base::HistogramTester histograms;
+    // Simulate that a previous milestone was crashing.
+    g_browser_process->local_state()->SetInteger(
+        prefs::kNetworkServiceFailedLaunchMajorVersion,
+        CHROME_VERSION_MAJOR - 1);
+
+    // Crash again, this time to get a sandboxed service again.
+    SimulateNetworkServiceCrash();
+
+    // Make sure the network service is fully up and running after having to
+    // restart.
+    browser()
+        ->profile()
+        ->GetDefaultStoragePartition()
+        ->FlushNetworkInterfaceForTesting();
+
+    // Sandbox should now be engaged again because the major version
+    // incremented.
+    EXPECT_TRUE(network_service_sandboxed_);
+    EXPECT_FALSE(SystemNetworkContextManager::GetInstance()
+                     ->HasFailedPreviousRecentLaunch());
+    histograms.ExpectTotalCount(
+        "Chrome.SystemNetworkContextManager.NetworkSandboxEarlyLaunchCrashed",
+        0);
+    const auto enabled_count = histograms.GetBucketCount(
+        "Chrome.SystemNetworkContextManager.NetworkSandboxState",
+        /*kEnabledByPlatform*/ 1);
+    CHECK_GT(enabled_count, 1u);
+    histograms.ExpectTotalCount(
+        "Chrome.SystemNetworkContextManager.NetworkSandboxState",
+        enabled_count);
+  }
+}
+
+#endif  // BUILDFLAG(IS_WIN)
+
 #if BUILDFLAG(IS_LINUX)
 class SystemNetworkContextManagerHttpNegotiateHeader
     : public SystemNetworkContextManagerBrowsertest {
@@ -435,7 +659,7 @@ class SystemNetworkContextManagerHttpNegotiateHeader
 };
 
 IN_PROC_BROWSER_TEST_F(SystemNetworkContextManagerHttpNegotiateHeader,
-                       SetsPrefOnHttpNegotiateHeader) {
+                       DISABLED_SetsPrefOnHttpNegotiateHeader) {
   PrefService* local_state = g_browser_process->local_state();
 
   // Ensure the pref starts false.
@@ -459,6 +683,83 @@ IN_PROC_BROWSER_TEST_F(SystemNetworkContextManagerHttpNegotiateHeader,
 }
 #endif  // BUILDFLAG(IS_LINUX)
 
+namespace {
+struct CookieAccess {
+  content::CookieAccessDetails::Type type;
+  std::string cookie_name;
+  std::string cookie_value;
+  net::CookieAccessResult cookie_access_result;
+
+  friend std::ostream& operator<<(std::ostream& o, const CookieAccess& d) {
+    o << (d.type == content::CookieAccessDetails::Type::kRead ? "read"
+                                                              : "change");
+    o << " name=" << d.cookie_name;
+    o << " value=" << d.cookie_value;
+    o << " access_result=";
+    net::PrintTo(d.cookie_access_result, &o);
+    return o;
+  }
+
+ public:
+  bool operator==(const CookieAccess&) const = default;
+};
+
+class CookieTracker : public content::WebContentsObserver {
+ public:
+  explicit CookieTracker(content::WebContents* web_contents)
+      : content::WebContentsObserver(web_contents) {}
+
+  void OnCookiesAccessed(content::NavigationHandle* navigation,
+                         const content::CookieAccessDetails& details) override {
+    OnCookiesAccessed(details);
+  }
+
+  void OnCookiesAccessed(content::RenderFrameHost* rfh,
+                         const content::CookieAccessDetails& details) override {
+    OnCookiesAccessed(details);
+  }
+
+  void WaitForCookies(size_t count) {
+    waiting_for_cookies_count_ = count;
+
+    base::RunLoop run_loop;
+    quit_closure_ = run_loop.QuitClosure();
+    QuitIfReady();
+    run_loop.Run();
+  }
+
+  std::vector<CookieAccess>& cookie_accesses() { return cookie_accesses_; }
+
+ private:
+  void OnCookiesAccessed(const content::CookieAccessDetails& details) {
+    for (const auto& cookie_with_access_result :
+         details.cookie_access_result_list) {
+      cookie_accesses_.emplace_back(details.type,
+                                    cookie_with_access_result.cookie.Name(),
+                                    cookie_with_access_result.cookie.Value(),
+                                    cookie_with_access_result.access_result);
+    }
+
+    QuitIfReady();
+  }
+
+  void QuitIfReady() {
+    if (quit_closure_.is_null()) {
+      return;
+    }
+    if (cookie_accesses_.size() < waiting_for_cookies_count_) {
+      return;
+    }
+    std::move(quit_closure_).Run();
+  }
+
+  std::vector<CookieAccess> cookie_accesses_;
+  size_t waiting_for_cookies_count_ = 0;
+  base::OnceClosure quit_closure_;
+};
+
+}  // namespace
+
 class SystemNetworkContextManagerWithFirstPartySetComponentBrowserTest
     : public SystemNetworkContextManagerBrowsertest {
  public:
@@ -478,8 +779,10 @@ class SystemNetworkContextManagerWithFirstPartySetComponentBrowserTest
     SystemNetworkContextManagerBrowsertest::SetUpInProcessBrowserTestFixture();
     // Since we set kWaitForFirstPartySetsInit, all cookie-carrying network
     // requests are blocked until FPS is initialized.
-    feature_list_.InitWithFeatures({net::features::kWaitForFirstPartySetsInit},
-                                   {});
+    feature_list_.InitWithFeatures(
+        {net::features::kWaitForFirstPartySetsInit,
+         net::features::kForceThirdPartyCookieBlocking},
+        {});
     CHECK(component_dir_.CreateUniqueTempDir());
     base::ScopedAllowBlockingForTesting allow_blocking;
 
@@ -491,11 +794,9 @@ class SystemNetworkContextManagerWithFirstPartySetComponentBrowserTest
 
  protected:
   void SetUpDefaultCommandLine(base::CommandLine* command_line) override {
-    base::CommandLine default_command_line(base::CommandLine::NO_PROGRAM);
     SystemNetworkContextManagerBrowsertest::SetUpDefaultCommandLine(
-        &default_command_line);
-    test_launcher_utils::RemoveCommandLineSwitch(
-        default_command_line, switches::kDisableComponentUpdate, command_line);
+        command_line);
+    command_line->RemoveSwitch(switches::kDisableComponentUpdate);
   }
 
   net::test_server::EmbeddedTestServer* https_server() {
@@ -504,10 +805,6 @@ class SystemNetworkContextManagerWithFirstPartySetComponentBrowserTest
 
   content::WebContents* web_contents() {
     return browser()->tab_strip_model()->GetActiveWebContents();
-  }
-
-  GURL EchoCookiesUrl(const std::string& host) {
-    return https_server_.GetURL(host, "/echoheader?Cookie");
   }
 
  private:
@@ -538,7 +835,8 @@ IN_PROC_BROWSER_TEST_F(
   const GURL host_root = https_server()->GetURL(kHostA, "/");
   ASSERT_TRUE(content::SetCookie(
       browser()->profile(), host_root,
-      base::StrCat({kCookieName, "=1; secure; max-age=2147483647"})));
+      base::StrCat(
+          {kCookieName, "=1; SameSite=None; secure; max-age=2147483647"})));
   ASSERT_THAT(content::GetCookies(browser()->profile(), host_root),
               net::CookieStringIs(
                   testing::UnorderedElementsAre(testing::Key(kCookieName))));
@@ -551,24 +849,69 @@ IN_PROC_BROWSER_TEST_F(
   if (!content::IsOutOfProcessNetworkService())
     return;
 
-  const GURL host_root = https_server()->GetURL(kHostA, "/");
-  ASSERT_THAT(content::GetCookies(browser()->profile(), host_root),
-              net::CookieStringIs(
-                  testing::UnorderedElementsAre(testing::Key(kCookieName))));
+  CookieTracker cookie_tracker(web_contents());
 
-  ASSERT_TRUE(content::NavigateToURL(web_contents(), EchoCookiesUrl(kHostA)));
-  EXPECT_THAT(content::EvalJs(web_contents(), "document.body.textContent")
-                  .ExtractString(),
-              net::CookieStringIs(
-                  testing::UnorderedElementsAre(testing::Key(kCookieName))));
+  const GURL url_a = https_server()->GetURL(kHostA, "/title1.html");
+  ASSERT_TRUE(content::NavigateToURL(web_contents(), url_a));
+  cookie_tracker.WaitForCookies(2);
+  const CookieAccess expected_first_party_access{
+      content::CookieAccessDetails::Type::kRead, "Cookie", "1",
+      net::CookieAccessResult(
+          net::CookieEffectiveSameSite::NO_RESTRICTION,
+          net::CookieInclusionStatus::MakeFromReasonsForTesting(
+              /*exclusions=*/{},
+              /*warnings=*/{net::CookieInclusionStatus::WarningReason::
+                                WARN_PORT_MISMATCH}),
+          net::CookieAccessSemantics::NONLEGACY,
+          net::CookieScopeSemantics::NONLEGACY, true)};
+  EXPECT_THAT(cookie_tracker.cookie_accesses(),
+              testing::ElementsAre(
+                  // a.test/title1.html
+                  expected_first_party_access,
+                  // a.test/favicon.ico
+                  expected_first_party_access));
+  cookie_tracker.cookie_accesses().clear();
+
+  const GURL url_b_cross_site(https_server()->GetURL(
+      kHostB, "/cross_site_iframe_factory.html?b.test(a.test)"));
+  EXPECT_TRUE(NavigateToURL(web_contents(), url_b_cross_site));
+  cookie_tracker.WaitForCookies(2);
+  net::CookieInclusionStatus expected_third_party_inclusion_status;
+  // If the sites are in the same Related Website Sets, we're expecting the
+  // EXCLUDE_THIRD_PARTY_BLOCKED_WITHIN_FIRST_PARTY_SET exclusion reason.
+  expected_third_party_inclusion_status.AddExclusionReason(
+      net::CookieInclusionStatus::ExclusionReason::
+          EXCLUDE_THIRD_PARTY_BLOCKED_WITHIN_FIRST_PARTY_SET);
+  expected_third_party_inclusion_status.AddExclusionReason(
+      net::CookieInclusionStatus::ExclusionReason::
+          EXCLUDE_THIRD_PARTY_PHASEOUT);
+  expected_third_party_inclusion_status.AddWarningReason(
+      net::CookieInclusionStatus::WarningReason::WARN_PORT_MISMATCH);
+  const CookieAccess expected_third_party_access{
+      content::CookieAccessDetails::Type::kRead, "Cookie", "1",
+      net::CookieAccessResult(net::CookieEffectiveSameSite::NO_RESTRICTION,
+                              expected_third_party_inclusion_status,
+                              net::CookieAccessSemantics::NONLEGACY,
+                              net::CookieScopeSemantics::NONLEGACY, true)};
+  EXPECT_THAT(cookie_tracker.cookie_accesses(),
+              testing::ElementsAre(
+                  // a.test iframe under b.test
+                  expected_third_party_access,
+                  // a.test/tree_parser_util.js in an iframe under b.test
+                  expected_third_party_access));
+  cookie_tracker.cookie_accesses().clear();
 
   SimulateNetworkServiceCrash();
 
-  ASSERT_TRUE(content::NavigateToURL(web_contents(), EchoCookiesUrl(kHostA)));
-  EXPECT_THAT(content::EvalJs(web_contents(), "document.body.textContent")
-                  .ExtractString(),
-              net::CookieStringIs(
-                  testing::UnorderedElementsAre(testing::Key(kCookieName))));
+  EXPECT_TRUE(NavigateToURL(web_contents(), url_b_cross_site));
+  cookie_tracker.WaitForCookies(2);
+  EXPECT_THAT(cookie_tracker.cookie_accesses(),
+              testing::ElementsAre(
+                  // a.test iframe under b.test
+                  expected_third_party_access,
+                  // a.test/tree_parser_util.js in an iframe under b.test
+                  expected_third_party_access));
+  cookie_tracker.cookie_accesses().clear();
 }
 
 class SystemNetworkContextManagerReferrersFeatureBrowsertest
@@ -635,17 +978,3 @@ IN_PROC_BROWSER_TEST_P(SystemNetworkContextManagerWPADQuickCheckBrowsertest,
 INSTANTIATE_TEST_SUITE_P(All,
                          SystemNetworkContextManagerWPADQuickCheckBrowsertest,
                          ::testing::Bool());
-
-class SystemNetworkContextManagerCertificateTransparencyBrowsertest
-    : public SystemNetworkContextManagerBrowsertest,
-      public testing::WithParamInterface<std::optional<bool>> {
- public:
-  SystemNetworkContextManagerCertificateTransparencyBrowsertest() {
-    SystemNetworkContextManager::SetEnableCertificateTransparencyForTesting(
-        GetParam());
-  }
-  ~SystemNetworkContextManagerCertificateTransparencyBrowsertest() override {
-    SystemNetworkContextManager::SetEnableCertificateTransparencyForTesting(
-        std::nullopt);
-  }
-};

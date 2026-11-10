@@ -3,6 +3,9 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/webui/ash/parent_access/parent_access_metrics_utils.h"
+
+#include <string_view>
+
 #include "base/strings/string_util.h"
 
 namespace parent_access {
@@ -14,7 +17,7 @@ constexpr char kParentAccessSuffixWebApprovals[] = "WebApprovals";
 }  // namespace
 
 std::string GetHistogramTitleForFlowType(
-    base::StringPiece parent_access_histogram_base,
+    std::string_view parent_access_histogram_base,
     std::optional<parent_access_ui::mojom::ParentAccessParams::FlowType>
         flow_type) {
   const std::string separator = ".";

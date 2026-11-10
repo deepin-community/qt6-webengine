@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "third_party/blink/renderer/modules/mediastream/media_stream_video_track.h"
+
 #include <stdint.h>
 
 #include <utility>
@@ -22,7 +24,10 @@
 #include "third_party/blink/public/mojom/mediastream/media_stream.mojom-blink.h"
 #include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
 #include "third_party/blink/public/web/web_heap.h"
-#include "third_party/blink/renderer/modules/mediastream/media_stream_video_track.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_media_track_settings.h"
+#include "third_party/blink/renderer/core/dom/events/native_event_listener.h"
+#include "third_party/blink/renderer/modules/mediastream/media_stream_track_impl.h"
 #include "third_party/blink/renderer/modules/mediastream/mock_encoded_video_frame.h"
 #include "third_party/blink/renderer/modules/mediastream/mock_media_stream_video_sink.h"
 #include "third_party/blink/renderer/modules/mediastream/mock_media_stream_video_source.h"
@@ -71,14 +76,20 @@ class MockEmitLogMessageCb {
   }
 };
 
+class MockEventListener : public NativeEventListener {
+ public:
+  MOCK_METHOD(void, Invoke, (ExecutionContext*, Event*));
+};
+
 class MediaStreamVideoTrackTest
     : public testing::TestWithParam<ContentHintType> {
  public:
-  MediaStreamVideoTrackTest() : mock_source_(nullptr), source_started_(false) {}
+  MediaStreamVideoTrackTest() : mock_source_(nullptr) {}
 
   ~MediaStreamVideoTrackTest() override {}
 
   void TearDown() override {
+    mock_source_ = nullptr;
     source_ = nullptr;
     WebHeap::CollectAllGarbageForTesting();
   }
@@ -132,6 +143,18 @@ class MediaStreamVideoTrackTest
         false /* remote */, std::move(mock_source));
   }
 
+  void InitializeDisplayCaptureSource() {
+    InitializeSource();
+    MediaStreamDevice device = mock_source_->device();
+    device.type = mojom::blink::MediaStreamType::DISPLAY_VIDEO_CAPTURE;
+    device.display_media_info = media::mojom::DisplayMediaInformation::New(
+        media::mojom::DisplayCaptureSurfaceType::BROWSER,
+        /*logical_surface=*/true, media::mojom::CursorCaptureType::NEVER,
+        /*capture_handle=*/nullptr,
+        /*zoom_level=*/100);
+    mock_source_->SetDevice(device);
+  }
+
   // Create a track that's associated with |mock_source_|.
   WebMediaStreamTrack CreateTrack() {
     const bool enabled = true;
@@ -151,7 +174,7 @@ class MediaStreamVideoTrackTest
       const VideoTrackAdapterSettings& adapter_settings) {
     const bool enabled = true;
     WebMediaStreamTrack track = MediaStreamVideoTrack::CreateVideoTrack(
-        mock_source_, adapter_settings, absl::optional<bool>(), false, 0.0,
+        mock_source_, adapter_settings, std::optional<bool>(), false, 0.0,
         nullptr, false, WebPlatformMediaStreamSource::ConstraintsOnceCallback(),
         enabled);
     if (!source_started_) {
@@ -191,8 +214,8 @@ class MediaStreamVideoTrackTest
   ScopedTestingPlatformSupport<IOTaskRunnerTestingPlatformSupport> platform_;
   Persistent<MediaStreamSource> source_;
   // |mock_source_| is owned by |source_|.
-  raw_ptr<MockMediaStreamVideoSource, DanglingUntriaged> mock_source_;
-  bool source_started_;
+  raw_ptr<MockMediaStreamVideoSource> mock_source_;
+  bool source_started_ = false;
 };
 
 TEST_F(MediaStreamVideoTrackTest, AddAndRemoveSink) {
@@ -230,7 +253,7 @@ class CheckThreadHelper {
 
  private:
   base::OnceClosure callback_;
-  raw_ptr<bool, ExperimentalRenderer> correct_;
+  raw_ptr<bool> correct_;
   THREAD_CHECKER(thread_checker_);
 };
 
@@ -268,20 +291,23 @@ TEST_F(MediaStreamVideoTrackTest, SetEnabled) {
 
   DeliverDefaultSizeVideoFrameAndWaitForRenderer(&sink);
   EXPECT_EQ(1, sink.number_of_frames());
-  EXPECT_EQ(kColorValue, *sink.last_frame()->data(media::VideoFrame::kYPlane));
+  EXPECT_EQ(kColorValue,
+            *sink.last_frame()->data(media::VideoFrame::Plane::kY));
 
   video_track->SetEnabled(false);
   EXPECT_FALSE(sink.enabled());
 
   DeliverDefaultSizeVideoFrameAndWaitForRenderer(&sink);
   EXPECT_EQ(2, sink.number_of_frames());
-  EXPECT_EQ(kBlackValue, *sink.last_frame()->data(media::VideoFrame::kYPlane));
+  EXPECT_EQ(kBlackValue,
+            *sink.last_frame()->data(media::VideoFrame::Plane::kY));
 
   video_track->SetEnabled(true);
   EXPECT_TRUE(sink.enabled());
   DeliverDefaultSizeVideoFrameAndWaitForRenderer(&sink);
   EXPECT_EQ(3, sink.number_of_frames());
-  EXPECT_EQ(kColorValue, *sink.last_frame()->data(media::VideoFrame::kYPlane));
+  EXPECT_EQ(kColorValue,
+            *sink.last_frame()->data(media::VideoFrame::Plane::kY));
   sink.DisconnectFromTrack();
 }
 
@@ -426,12 +452,97 @@ TEST_F(MediaStreamVideoTrackTest, DeliverFramesAndGetSettings) {
   native_track->GetSettings(settings);
   EXPECT_EQ(600, settings.width);
   EXPECT_EQ(400, settings.height);
+  EXPECT_EQ(std::nullopt, settings.physical_frame_size);
 
   auto frame2 = media::VideoFrame::CreateBlackFrame(gfx::Size(200, 300));
+
+  media::VideoFrameMetadata metadata = frame2->metadata();
+  metadata.source_size = gfx::Size(600, 400);
+  frame2->set_metadata(metadata);
   DeliverVideoFrameAndWaitForRenderer(std::move(frame2), &sink);
   native_track->GetSettings(settings);
   EXPECT_EQ(200, settings.width);
   EXPECT_EQ(300, settings.height);
+  ASSERT_NE(settings.physical_frame_size, std::nullopt);
+  EXPECT_EQ(600, settings.physical_frame_size->width());
+  EXPECT_EQ(400, settings.physical_frame_size->height());
+
+  sink.DisconnectFromTrack();
+}
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+TEST_F(MediaStreamVideoTrackTest, ScreenPixelRatioDoesNotIncludePageZoom) {
+  V8TestingScope v8_scope;
+  InitializeDisplayCaptureSource();
+  MockMediaStreamVideoSink sink;
+  WebMediaStreamTrack track = CreateTrack();
+  sink.ConnectToTrack(track);
+  Persistent<MediaStreamComponent> media_stream_component = *track;
+  MediaStreamTrackImpl* mst = MakeGarbageCollected<MediaStreamTrackImpl>(
+      v8_scope.GetExecutionContext(), media_stream_component);
+
+  auto frame1 = media::VideoFrame::CreateBlackFrame(gfx::Size(600, 400));
+  media::VideoFrameMetadata metadata = frame1->metadata();
+  metadata.source_size = gfx::Size(600, 400);
+  metadata.device_scale_factor = 2.0f;
+  frame1->set_metadata(metadata);
+  DeliverVideoFrameAndWaitForRenderer(frame1, &sink);
+  MediaTrackSettings* settings = mst->getSettings();
+  ASSERT_TRUE(settings->hasScreenPixelRatio());
+  EXPECT_EQ(mst->GetZoomLevelForTesting(), 100);
+  EXPECT_EQ(settings->screenPixelRatio(), 2.0f);
+
+  // Changing zoom size should not change pixel ratio
+  media_stream_component->Source()->OnZoomLevelChange(*mst->device(), 150);
+  DeliverVideoFrameAndWaitForRenderer(frame1, &sink);
+  settings = mst->getSettings();
+  ASSERT_TRUE(settings->hasScreenPixelRatio());
+  EXPECT_EQ(mst->GetZoomLevelForTesting(), 150);
+  EXPECT_EQ(settings->screenPixelRatio(), 2.0f);
+
+  sink.DisconnectFromTrack();
+}
+#endif
+
+TEST_F(MediaStreamVideoTrackTest,
+       ChangingFrameMetadataTriggersConfigurationChangeEvent) {
+  V8TestingScope v8_scope;
+  InitializeDisplayCaptureSource();
+  MockMediaStreamVideoSink sink;
+  WebMediaStreamTrack track = CreateTrack();
+  sink.ConnectToTrack(track);
+  MediaStreamVideoTrack* const native_track =
+      MediaStreamVideoTrack::From(track);
+  Persistent<MediaStreamComponent> media_stream_component = *track;
+  MediaStreamTrackPlatform::Settings settings;
+  MediaStreamTrackImpl* mst = MakeGarbageCollected<MediaStreamTrackImpl>(
+      v8_scope.GetExecutionContext(), media_stream_component);
+  testing::StrictMock<MockEventListener>* event_listener =
+      MakeGarbageCollected<testing::StrictMock<MockEventListener>>();
+  mst->addEventListener(event_type_names::kConfigurationchange, event_listener);
+
+  EXPECT_CALL(*event_listener, Invoke(_, _)).Times(2);
+
+  // Changing device_scale_factor triggers an event.
+  auto frame1 = media::VideoFrame::CreateBlackFrame(gfx::Size(600, 400));
+  media::VideoFrameMetadata metadata = frame1->metadata();
+  metadata.device_scale_factor = 2.0f;
+  frame1->set_metadata(metadata);
+  DeliverVideoFrameAndWaitForRenderer(std::move(frame1), &sink);
+  native_track->GetSettings(settings);
+  EXPECT_EQ(std::nullopt, settings.physical_frame_size);
+  EXPECT_EQ(2.0f, settings.device_scale_factor);
+
+  // Changing metadata source_size triggers an event.
+  auto frame2 = media::VideoFrame::CreateBlackFrame(gfx::Size(600, 400));
+  metadata.source_size = gfx::Size(600, 400);
+  frame2->set_metadata(metadata);
+  DeliverVideoFrameAndWaitForRenderer(std::move(frame2), &sink);
+  native_track->GetSettings(settings);
+  ASSERT_NE(std::nullopt, settings.physical_frame_size);
+  EXPECT_EQ(600, settings.physical_frame_size->width());
+  EXPECT_EQ(400, settings.physical_frame_size->height());
+  EXPECT_EQ(2.0f, settings.device_scale_factor);
 
   sink.DisconnectFromTrack();
 }
@@ -1035,11 +1146,11 @@ TEST_F(MediaStreamVideoTrackTest, DeliversConstraintsToKnownSinks) {
   WebMediaStreamTrack track = CreateTrack();
   MockMediaStreamVideoSink sink1;
   EXPECT_CALL(sink1,
-              OnVideoConstraintsChanged(Eq(absl::nullopt), Eq(absl::nullopt)));
+              OnVideoConstraintsChanged(Eq(std::nullopt), Eq(std::nullopt)));
   sink1.ConnectToTrack(track);
   MockMediaStreamVideoSink sink2;
   EXPECT_CALL(sink2,
-              OnVideoConstraintsChanged(Eq(absl::nullopt), Eq(absl::nullopt)));
+              OnVideoConstraintsChanged(Eq(std::nullopt), Eq(std::nullopt)));
   sink2.ConnectToTrack(track);
   MediaStreamVideoTrack* const native_track =
       MediaStreamVideoTrack::From(track);
@@ -1047,9 +1158,9 @@ TEST_F(MediaStreamVideoTrackTest, DeliversConstraintsToKnownSinks) {
   Mock::VerifyAndClearExpectations(&sink2);
 
   EXPECT_CALL(sink1,
-              OnVideoConstraintsChanged(Eq(absl::nullopt), Eq(absl::nullopt)));
+              OnVideoConstraintsChanged(Eq(std::nullopt), Eq(std::nullopt)));
   EXPECT_CALL(sink2,
-              OnVideoConstraintsChanged(Eq(absl::nullopt), Eq(absl::nullopt)));
+              OnVideoConstraintsChanged(Eq(std::nullopt), Eq(std::nullopt)));
   native_track->SetTrackAdapterSettings(VideoTrackAdapterSettings());
   native_track->NotifyConstraintsConfigurationComplete();
   Mock::VerifyAndClearExpectations(&sink1);
@@ -1057,9 +1168,9 @@ TEST_F(MediaStreamVideoTrackTest, DeliversConstraintsToKnownSinks) {
 
   native_track->SetMinimumFrameRate(200);
   EXPECT_CALL(sink1,
-              OnVideoConstraintsChanged(Optional(200.0), Eq(absl::nullopt)));
+              OnVideoConstraintsChanged(Optional(200.0), Eq(std::nullopt)));
   EXPECT_CALL(sink2,
-              OnVideoConstraintsChanged(Optional(200.0), Eq(absl::nullopt)));
+              OnVideoConstraintsChanged(Optional(200.0), Eq(std::nullopt)));
   native_track->SetTrackAdapterSettings(VideoTrackAdapterSettings());
   native_track->NotifyConstraintsConfigurationComplete();
   Mock::VerifyAndClearExpectations(&sink1);

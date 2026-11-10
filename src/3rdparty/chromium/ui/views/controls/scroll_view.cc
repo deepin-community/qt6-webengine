@@ -5,13 +5,13 @@
 #include "ui/views/controls/scroll_view.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "base/check_op.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/i18n/rtl.h"
 #include "base/memory/raw_ptr.h"
-#include "base/ranges/algorithm.h"
 #include "build/build_config.h"
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/accessibility/ax_enums.mojom.h"
@@ -19,8 +19,8 @@
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/ui_base_features.h"
-#include "ui/color/color_id.h"
 #include "ui/color/color_provider.h"
+#include "ui/color/color_variant.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_type.h"
@@ -32,6 +32,7 @@
 #include "ui/views/background.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/focus_ring.h"
+#include "ui/views/metadata/type_conversion.h"
 #include "ui/views/style/platform_style.h"
 #include "ui/views/view.h"
 #include "ui/views/view_utils.h"
@@ -67,10 +68,10 @@ class ScrollCornerView : public View {
   void OnPaint(gfx::Canvas* canvas) override {
 #if BUILDFLAG(IS_APPLE)
     ui::NativeTheme::ExtraParams params(
-        absl::in_place_type<ui::NativeTheme::ScrollbarExtraParams>);
+        std::in_place_type<ui::NativeTheme::ScrollbarExtraParams>);
 #else
     ui::NativeTheme::ExtraParams params(
-        absl::in_place_type<ui::NativeTheme::ScrollbarTrackExtraParams>);
+        std::in_place_type<ui::NativeTheme::ScrollbarTrackExtraParams>);
 #endif
     GetNativeTheme()->Paint(canvas->sk_canvas(), GetColorProvider(),
                             ui::NativeTheme::kScrollbarCorner,
@@ -84,7 +85,7 @@ END_METADATA
 // Returns true if any descendants of |view| have a layer (not including
 // |view|).
 bool DoesDescendantHaveLayer(View* view) {
-  return base::ranges::any_of(view->children(), [](View* child) {
+  return std::ranges::any_of(view->children(), [](View* child) {
     return child->layer() || DoesDescendantHaveLayer(child);
   });
 }
@@ -251,10 +252,11 @@ class ScrollView::Viewport : public View {
              contents->layer()->type() == ui::LAYER_TEXTURED;
     }};
 
-    if (!contents || has_textured_layer(contents))
+    if (!contents || has_textured_layer(contents)) {
       return ui::LAYER_NOT_DRAWN;
-    else
+    } else {
       return ui::LAYER_TEXTURED;
+    }
   }
 
   // Initializes or updates the layer of |contents_viewport|.
@@ -274,7 +276,7 @@ class ScrollView::Viewport : public View {
   raw_ptr<ScrollView> scroll_view_;
 };
 
-BEGIN_METADATA(ScrollView, Viewport, View)
+BEGIN_METADATA(ScrollView, Viewport)
 ADD_READONLY_PROPERTY_METADATA(bool, IsContentsViewport)
 END_METADATA
 
@@ -285,8 +287,10 @@ ScrollView::ScrollView()
                      : ScrollWithLayers::kDisabled) {}
 
 ScrollView::ScrollView(ScrollWithLayers scroll_with_layers)
-    : horiz_sb_(AddChildView(PlatformStyle::CreateScrollBar(true))),
-      vert_sb_(AddChildView(PlatformStyle::CreateScrollBar(false))),
+    : horiz_sb_(AddChildView(
+          PlatformStyle::CreateScrollBar(ScrollBar::Orientation::kHorizontal))),
+      vert_sb_(AddChildView(
+          PlatformStyle::CreateScrollBar(ScrollBar::Orientation::kVertical))),
       corner_view_(std::make_unique<ScrollCornerView>()),
       scroll_with_layers_enabled_(scroll_with_layers ==
                                   ScrollWithLayers::kEnabled) {
@@ -309,10 +313,17 @@ ScrollView::ScrollView(ScrollWithLayers scroll_with_layers)
 
   // "Ignored" removes the scrollbar from the accessibility tree.
   // "IsLeaf" removes their children (e.g. the buttons and thumb).
-  horiz_sb_->GetViewAccessibility().OverrideIsIgnored(true);
-  horiz_sb_->GetViewAccessibility().OverrideIsLeaf(true);
-  vert_sb_->GetViewAccessibility().OverrideIsIgnored(true);
-  vert_sb_->GetViewAccessibility().OverrideIsLeaf(true);
+  horiz_sb_->GetViewAccessibility().SetIsIgnored(true);
+  horiz_sb_->GetViewAccessibility().SetIsLeaf(true);
+  vert_sb_->GetViewAccessibility().SetIsIgnored(true);
+  vert_sb_->GetViewAccessibility().SetIsLeaf(true);
+
+  GetViewAccessibility().SetIsScrollable(true);
+  GetViewAccessibility().SetScrollXMin(horiz_sb_->GetMinPosition());
+  GetViewAccessibility().SetScrollXMax(horiz_sb_->GetMaxPosition());
+  GetViewAccessibility().SetScrollYMin(vert_sb_->GetMinPosition());
+  GetViewAccessibility().SetScrollYMax(vert_sb_->GetMaxPosition());
+  GetViewAccessibility().SetRole(ax::mojom::Role::kScrollView);
 
   // Just make sure the more_content indicators aren't visible for now. They'll
   // be added as child controls and appropriately made visible depending on
@@ -387,7 +398,8 @@ void ScrollView::SetContents(std::nullptr_t) {
 void ScrollView::SetContentsLayerType(ui::LayerType layer_type) {
   // This function should only be called when scroll with layers is enabled and
   // before `contents_` is set.
-  DCHECK(ScrollsWithLayers() && !contents_);
+  DCHECK(ScrollsWithLayers());
+  DCHECK(!contents_);
 
   // Currently only allow LAYER_TEXTURED and LAYER_NOT_DRAWN. If other types of
   // layer are needed, consult with the owner.
@@ -421,25 +433,14 @@ void ScrollView::SetViewportRoundedCornerRadius(
   contents_viewport_->layer()->SetRoundedCornerRadius(radii);
 }
 
-void ScrollView::SetBackgroundColor(const absl::optional<SkColor>& color) {
-  if (background_color_ == color && !background_color_id_) {
+void ScrollView::SetBackgroundColor(
+    const std::optional<ui::ColorVariant>& color) {
+  if (background_color_ == color) {
     return;
   }
   background_color_ = color;
-  background_color_id_ = absl::nullopt;
   UpdateBackground();
   OnPropertyChanged(&background_color_, kPropertyEffectsPaint);
-}
-
-void ScrollView::SetBackgroundThemeColorId(
-    const absl::optional<ui::ColorId>& color_id) {
-  if (background_color_id_ == color_id && !background_color_) {
-    return;
-  }
-  background_color_id_ = color_id;
-  background_color_ = absl::nullopt;
-  UpdateBackground();
-  OnPropertyChanged(&background_color_id_, kPropertyEffectsPaint);
 }
 
 gfx::Rect ScrollView::GetVisibleRect() const {
@@ -462,8 +463,8 @@ void ScrollView::SetHorizontalScrollBarMode(
   // "Ignored" removes the scrollbar from the accessibility tree.
   // "IsLeaf" removes their children (e.g. the buttons and thumb).
   bool is_disabled = horizontal_scroll_bar_mode == ScrollBarMode::kDisabled;
-  horiz_sb_->GetViewAccessibility().OverrideIsIgnored(is_disabled);
-  horiz_sb_->GetViewAccessibility().OverrideIsLeaf(is_disabled);
+  horiz_sb_->GetViewAccessibility().SetIsIgnored(is_disabled);
+  horiz_sb_->GetViewAccessibility().SetIsLeaf(is_disabled);
 }
 
 void ScrollView::SetVerticalScrollBarMode(
@@ -483,8 +484,8 @@ void ScrollView::SetVerticalScrollBarMode(
   // "Ignored" removes the scrollbar from the accessibility tree.
   // "IsLeaf" removes their children (e.g. the buttons and thumb).
   bool is_disabled = vertical_scroll_bar_mode == ScrollBarMode::kDisabled;
-  vert_sb_->GetViewAccessibility().OverrideIsIgnored(is_disabled);
-  vert_sb_->GetViewAccessibility().OverrideIsLeaf(is_disabled);
+  vert_sb_->GetViewAccessibility().SetIsIgnored(is_disabled);
+  vert_sb_->GetViewAccessibility().SetIsLeaf(is_disabled);
 }
 
 void ScrollView::SetTreatAllScrollEventsAsHorizontal(
@@ -551,7 +552,7 @@ View* ScrollView::SetCustomOverflowIndicator(OverflowIndicatorAlignment side,
       more_content_bottom_thickness_ = thickness;
       break;
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 
   UpdateOverflowIndicatorVisibility(CurrentOffset());
@@ -561,8 +562,9 @@ View* ScrollView::SetCustomOverflowIndicator(OverflowIndicatorAlignment side,
 }
 
 void ScrollView::ClipHeightTo(int min_height, int max_height) {
-  if (min_height != min_height_ || max_height != max_height_)
+  if (min_height != min_height_ || max_height != max_height_) {
     PreferredSizeChanged();
+  }
 
   min_height_ = min_height;
   max_height_ = max_height;
@@ -582,6 +584,8 @@ ScrollBar* ScrollView::SetHorizontalScrollBar(
   horiz_sb->set_controller(this);
   RemoveChildViewT(horiz_sb_.ExtractAsDangling());
   horiz_sb_ = AddChildView(std::move(horiz_sb));
+  GetViewAccessibility().SetScrollXMin(horiz_sb_->GetMinPosition());
+  GetViewAccessibility().SetScrollXMax(horiz_sb_->GetMaxPosition());
   return horiz_sb_;
 }
 
@@ -592,6 +596,8 @@ ScrollBar* ScrollView::SetVerticalScrollBar(
   vert_sb->set_controller(this);
   RemoveChildViewT(vert_sb_.ExtractAsDangling());
   vert_sb_ = AddChildView(std::move(vert_sb));
+  GetViewAccessibility().SetScrollYMin(vert_sb_->GetMinPosition());
+  GetViewAccessibility().SetScrollYMax(vert_sb_->GetMaxPosition());
   return vert_sb_;
 }
 
@@ -616,30 +622,22 @@ base::CallbackListSubscription ScrollView::AddContentsScrollEndedCallback(
   return on_contents_scroll_ended_.Add(std::move(callback));
 }
 
-gfx::Size ScrollView::CalculatePreferredSize() const {
-  gfx::Size size = contents_ ? contents_->GetPreferredSize() : gfx::Size();
+gfx::Size ScrollView::CalculatePreferredSize(
+    const SizeBounds& available_size) const {
+  gfx::Insets insets = GetInsets();
+  gfx::Size size =
+      contents_ ? contents_->GetPreferredSize(available_size.Inset(insets))
+                : gfx::Size();
+  size.Enlarge(insets.width(), insets.height());
+
   if (is_bounded()) {
     size.SetToMax(gfx::Size(size.width(), min_height_));
     size.SetToMin(gfx::Size(size.width(), max_height_));
   }
-  gfx::Insets insets = GetInsets();
-  size.Enlarge(insets.width(), insets.height());
   return size;
 }
 
-int ScrollView::GetHeightForWidth(int width) const {
-  if (!is_bounded()) {
-    return View::GetHeightForWidth(width);
-  }
-
-  gfx::Insets insets = GetInsets();
-  width = std::max(0, width - insets.width());
-  int height = contents_ ? contents_->GetHeightForWidth(width) + insets.height()
-                         : insets.height();
-  return std::clamp(height, min_height_, max_height_);
-}
-
-void ScrollView::Layout() {
+void ScrollView::Layout(PassKey) {
   // When either scrollbar is disabled, it should not matter
   // if its OverlapsContent matches other bar's.
   if (horizontal_scroll_bar_mode_ == ScrollBarMode::kEnabled &&
@@ -655,11 +653,11 @@ void ScrollView::Layout() {
   }
 
   if (views::FocusRing::Get(this)) {
-    views::FocusRing::Get(this)->Layout();
+    views::FocusRing::Get(this)->DeprecatedLayoutImmediately();
   }
 
   gfx::Rect available_rect = GetContentsBounds();
-  if (is_bounded()) {
+  if (is_bounded() && contents_) {
     int content_width = available_rect.width();
     int content_height = contents_->GetHeightForWidth(content_width);
     if (content_height > available_rect.height()) {
@@ -691,7 +689,7 @@ void ScrollView::Layout() {
 
   const int header_height =
       std::min(viewport_bounds.height(),
-               header_ ? header_->GetPreferredSize().height() : 0);
+               header_ ? header_->GetPreferredSize({}).height() : 0);
   viewport_bounds.set_height(
       std::max(0, viewport_bounds.height() - header_height));
   viewport_bounds.set_y(viewport_bounds.y() + header_height);
@@ -699,14 +697,14 @@ void ScrollView::Layout() {
   gfx::Size viewport_size = viewport_bounds.size();
 
   // Assume both a vertical and horizontal scrollbar exist before calling
-  // contents_->Layout(). This is because some contents_ will set their own size
-  // to the contents_viewport_'s bounds. Failing to pre-allocate space for
-  // the scrollbars will [non-intuitively] cause scrollbars to appear in
-  // ComputeScrollBarsVisibility. This solution is also not perfect - if
-  // scrollbars turn out *not* to be necessary, the contents will have slightly
-  // less horizontal/vertical space than it otherwise would have had access to.
-  // Unfortunately, there's no way to determine this without introducing a
-  // circular dependency.
+  // contents_->DeprecatedLayoutImmediately(). This is because some contents_
+  // will set their own size to the contents_viewport_'s bounds. Failing to
+  // pre-allocate space for the scrollbars will [non-intuitively] cause
+  // scrollbars to appear in ComputeScrollBarsVisibility. This solution is also
+  // not perfect - if scrollbars turn out *not* to be necessary, the contents
+  // will have slightly less horizontal/vertical space than it otherwise would
+  // have had access to. Unfortunately, there's no way to determine this without
+  // introducing a circular dependency.
   const int horiz_sb_layout_height = GetScrollBarLayoutHeight();
   const int vert_sb_layout_width = GetScrollBarLayoutWidth();
   viewport_bounds.set_width(viewport_bounds.width() - vert_sb_layout_width);
@@ -718,7 +716,7 @@ void ScrollView::Layout() {
   // Give |contents_| a chance to update its bounds if it depends on the
   // viewport.
   if (contents_) {
-    contents_->Layout();
+    contents_->DeprecatedLayoutImmediately();
   }
 
   bool should_layout_contents = false;
@@ -784,7 +782,7 @@ void ScrollView::Layout() {
   // Update to the real client size with the visible scrollbars.
   contents_viewport_->SetBoundsRect(viewport_bounds);
   if (should_layout_contents && contents_) {
-    contents_->Layout();
+    contents_->DeprecatedLayoutImmediately();
   }
 
   // Even when |contents_| needs to scroll, it can still be narrower or wider
@@ -824,7 +822,7 @@ void ScrollView::Layout() {
   header_viewport_->SetBounds(contents_x, contents_y, viewport_bounds.width(),
                               header_height);
   if (header_) {
-    header_->Layout();
+    header_->DeprecatedLayoutImmediately();
   }
 
   ConstrainScrollToBounds(header_viewport_, header_,
@@ -835,6 +833,15 @@ void ScrollView::Layout() {
   UpdateScrollBarPositions();
   if (contents_) {
     UpdateOverflowIndicatorVisibility(CurrentOffset());
+  }
+
+  // If registered, run the post-layout callback. This is used to move the
+  // scroll view contents to the appropriate position that's different from the
+  // position assigned above.
+  if (post_layout_callback_) {
+    const bool layout_needed = needs_layout();
+    post_layout_callback_.Run(this);
+    CHECK_EQ(layout_needed, needs_layout());
   }
 }
 
@@ -850,8 +857,9 @@ bool ScrollView::OnKeyPressed(const ui::KeyEvent& event) {
     processed = vert_sb_->OnKeyPressed(event);
   }
 
-  if (!processed && IsHorizontalScrollEnabled())
+  if (!processed && IsHorizontalScrollEnabled()) {
     processed = horiz_sb_->OnKeyPressed(event);
+  }
 
   return processed;
 }
@@ -865,9 +873,10 @@ bool ScrollView::OnMouseWheel(const ui::MouseWheelEvent& e) {
                 e, CombineScrollOffsets(e.x_offset(), e.y_offset()), 0)
           : e;
 
-  // TODO(https://crbug.com/615948): Use composited scrolling.
-  if (IsVerticalScrollEnabled())
+  // TODO(crbug.com/40471184): Use composited scrolling.
+  if (IsVerticalScrollEnabled()) {
     processed = vert_sb_->OnMouseWheel(to_propagate);
+  }
 
   if (IsHorizontalScrollEnabled()) {
     // When there is no vertical scrollbar, allow vertical scroll events to be
@@ -927,16 +936,16 @@ void ScrollView::OnGestureEvent(ui::GestureEvent* event) {
   // If the event happened on one of the scrollbars, then those events are
   // sent directly to the scrollbars. Otherwise, only scroll events are sent to
   // the scrollbars.
-  bool scroll_event = event->type() == ui::ET_GESTURE_SCROLL_UPDATE ||
-                      event->type() == ui::ET_GESTURE_SCROLL_BEGIN ||
-                      event->type() == ui::ET_GESTURE_SCROLL_END ||
-                      event->type() == ui::ET_SCROLL_FLING_START;
+  bool scroll_event = event->type() == ui::EventType::kGestureScrollUpdate ||
+                      event->type() == ui::EventType::kGestureScrollBegin ||
+                      event->type() == ui::EventType::kGestureScrollEnd ||
+                      event->type() == ui::EventType::kScrollFlingStart;
 
   // Note: we will not invert gesture events because it will be confusing to
   // have a vertical finger gesture on a touchscreen cause the scroll pane to
   // scroll horizontally.
 
-  // TODO(https://crbug.com/615948): Use composited scrolling.
+  // TODO(crbug.com/40471184): Use composited scrolling.
   if (IsVerticalScrollEnabled() &&
       (scroll_event || (vert_sb_->GetVisible() &&
                         vert_sb_->bounds().Contains(event->location())))) {
@@ -953,28 +962,6 @@ void ScrollView::OnThemeChanged() {
   View::OnThemeChanged();
   UpdateBorder();
   UpdateBackground();
-}
-
-void ScrollView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  View::GetAccessibleNodeData(node_data);
-  if (!contents_) {
-    return;
-  }
-
-  node_data->role = ax::mojom::Role::kScrollView;
-  node_data->AddIntAttribute(ax::mojom::IntAttribute::kScrollX,
-                             CurrentOffset().x());
-  node_data->AddIntAttribute(ax::mojom::IntAttribute::kScrollXMin,
-                             horiz_sb_->GetMinPosition());
-  node_data->AddIntAttribute(ax::mojom::IntAttribute::kScrollXMax,
-                             horiz_sb_->GetMaxPosition());
-  node_data->AddIntAttribute(ax::mojom::IntAttribute::kScrollY,
-                             CurrentOffset().y());
-  node_data->AddIntAttribute(ax::mojom::IntAttribute::kScrollYMin,
-                             vert_sb_->GetMinPosition());
-  node_data->AddIntAttribute(ax::mojom::IntAttribute::kScrollYMax,
-                             vert_sb_->GetMaxPosition());
-  node_data->AddBoolAttribute(ax::mojom::BoolAttribute::kScrollable, true);
 }
 
 bool ScrollView::HandleAccessibleAction(const ui::AXActionData& action_data) {
@@ -1022,14 +1009,16 @@ void ScrollView::ScrollToPosition(ScrollBar* source, int position) {
   }
   ScrollToOffset(offset);
 
-  if (!ScrollsWithLayers())
+  if (!ScrollsWithLayers()) {
     contents_->SchedulePaintInRect(contents_->GetVisibleBounds());
+  }
 }
 
 int ScrollView::GetScrollIncrement(ScrollBar* source,
                                    bool is_page,
                                    bool is_positive) {
-  bool is_horizontal = source->IsHorizontal();
+  bool is_horizontal =
+      source->GetOrientation() == ScrollBar::Orientation::kHorizontal;
   if (is_page) {
     return is_horizontal ? contents_viewport_->width()
                          : contents_viewport_->height();
@@ -1056,10 +1045,11 @@ void ScrollView::UpdateViewportLayerForClipping() {
   if (has_layer == needs_layer) {
     return;
   }
-  if (needs_layer)
+  if (needs_layer) {
     EnableViewportLayer();
-  else
+  } else {
     contents_viewport_->DestroyLayer();
+  }
 }
 
 View* ScrollView::ReplaceChildView(View* parent,
@@ -1173,7 +1163,7 @@ void ScrollView::SetControlVisibility(View* control, bool should_show) {
   }
   if (should_show) {
     if (!control->GetVisible()) {
-      AddChildView(control);
+      AddChildViewRaw(control);
       control->SetVisible(true);
     }
   } else {
@@ -1198,11 +1188,10 @@ void ScrollView::UpdateScrollBarPositions() {
     int ch = contents_->height();
     vert_sb_->Update(vh, ch, offset.y());
   }
-}
-
-gfx::PointF ScrollView::CurrentOffset() const {
-  return ScrollsWithLayers() ? contents_->layer()->CurrentScrollOffset()
-                             : gfx::PointF(-contents_->x(), -contents_->y());
+  GetViewAccessibility().SetScrollXMin(horiz_sb_->GetMinPosition());
+  GetViewAccessibility().SetScrollXMax(horiz_sb_->GetMaxPosition());
+  GetViewAccessibility().SetScrollYMin(vert_sb_->GetMinPosition());
+  GetViewAccessibility().SetScrollYMax(vert_sb_->GetMaxPosition());
 }
 
 void ScrollView::ScrollByOffset(const gfx::PointF& offset) {
@@ -1221,7 +1210,14 @@ void ScrollView::ScrollToOffset(const gfx::PointF& offset) {
   } else {
     contents_->SetPosition(gfx::Point(-offset.x(), -offset.y()));
   }
+  GetViewAccessibility().SetScrollX(offset.x());
+  GetViewAccessibility().SetScrollY(offset.y());
   OnScrolled(offset);
+}
+
+gfx::PointF ScrollView::CurrentOffset() const {
+  return ScrollsWithLayers() ? contents_->layer()->CurrentScrollOffset()
+                             : gfx::PointF(-contents_->x(), -contents_->y());
 }
 
 bool ScrollView::ScrollsWithLayers() const {
@@ -1270,8 +1266,8 @@ void ScrollView::OnScrolled(const gfx::PointF& offset) {
 
   on_contents_scrolled_.Notify();
 
-  NotifyAccessibilityEvent(ax::mojom::Event::kScrollPositionChanged,
-                           /*send_native_event=*/true);
+  NotifyAccessibilityEventDeprecated(ax::mojom::Event::kScrollPositionChanged,
+                                     /*send_native_event=*/true);
 }
 
 void ScrollView::ScrollHeader() {
@@ -1296,10 +1292,9 @@ void ScrollView::UpdateBorder() {
     return;
   }
 
-  SetBorder(CreateSolidBorder(
-      1, GetColorProvider()->GetColor(
-             draw_focus_indicator_ ? ui::kColorFocusableBorderFocused
-                                   : ui::kColorFocusableBorderUnfocused)));
+  SetBorder(CreateSolidBorder(1, draw_focus_indicator_
+                                     ? ui::kColorFocusableBorderFocused
+                                     : ui::kColorFocusableBorderUnfocused));
 }
 
 void ScrollView::UpdateBackground() {
@@ -1307,7 +1302,7 @@ void ScrollView::UpdateBackground() {
     return;
   }
 
-  const absl::optional<SkColor> background_color = GetBackgroundColor();
+  const std::optional<ui::ColorVariant> background_color = GetBackgroundColor();
 
   auto create_background = [background_color]() {
     return background_color ? CreateSolidBackground(background_color.value())
@@ -1332,18 +1327,12 @@ void ScrollView::UpdateBackground() {
   }
 }
 
-absl::optional<SkColor> ScrollView::GetBackgroundColor() const {
-  return background_color_id_
-             ? GetColorProvider()->GetColor(background_color_id_.value())
-             : background_color_;
-}
-
-absl::optional<ui::ColorId> ScrollView::GetBackgroundThemeColorId() const {
-  return background_color_id_;
+std::optional<ui::ColorVariant> ScrollView::GetBackgroundColor() const {
+  return background_color_;
 }
 
 void ScrollView::PositionOverflowIndicators() {
-  // TODO(https://crbug.com/1166949): Use a layout manager to position these.
+  // TODO(crbug.com/40742414): Use a layout manager to position these.
   const gfx::Rect contents_bounds = GetContentsBounds();
   const int x = contents_bounds.x();
   const int y = contents_bounds.y();
@@ -1382,6 +1371,11 @@ void ScrollView::UpdateOverflowIndicatorVisibility(const gfx::PointF& offset) {
           offset.x() < horiz_sb_->GetMaxPosition() && draw_overflow_indicator_);
 }
 
+void ScrollView::RegisterPostLayoutCallback(
+    base::RepeatingCallback<void(ScrollView*)> post_layout_callback) {
+  post_layout_callback_ = post_layout_callback;
+}
+
 View* ScrollView::GetContentsViewportForTest() const {
   return contents_viewport_;
 }
@@ -1390,8 +1384,7 @@ BEGIN_METADATA(ScrollView)
 ADD_READONLY_PROPERTY_METADATA(int, MinHeight)
 ADD_READONLY_PROPERTY_METADATA(int, MaxHeight)
 ADD_PROPERTY_METADATA(bool, AllowKeyboardScrolling)
-ADD_PROPERTY_METADATA(absl::optional<SkColor>, BackgroundColor)
-ADD_PROPERTY_METADATA(absl::optional<ui::ColorId>, BackgroundThemeColorId)
+ADD_PROPERTY_METADATA(std::optional<ui::ColorVariant>, BackgroundColor)
 ADD_PROPERTY_METADATA(bool, DrawOverflowIndicator)
 ADD_PROPERTY_METADATA(bool, HasFocusIndicator)
 ADD_PROPERTY_METADATA(ScrollView::ScrollBarMode, HorizontalScrollBarMode)
@@ -1428,8 +1421,9 @@ int VariableRowHeightScrollHelper::GetPageScrollIncrement(
     // Align the row on the previous page to to the top of the view.
     int last_page_y = y - vis_height;
     RowInfo last_page_info = GetRowInfo(std::max(0, last_page_y));
-    if (last_page_y != last_page_info.origin)
+    if (last_page_y != last_page_info.origin) {
       return std::max(0, y - last_page_info.origin - last_page_info.height);
+    }
     return std::max(0, y - last_page_info.origin);
   }
 }
@@ -1479,3 +1473,9 @@ VariableRowHeightScrollHelper::RowInfo FixedRowHeightScrollHelper::GetRowInfo(
 }
 
 }  // namespace views
+
+DEFINE_ENUM_CONVERTERS(
+    views::ScrollView::ScrollBarMode,
+    {views::ScrollView::ScrollBarMode::kDisabled, u"kDisabled"},
+    {views::ScrollView::ScrollBarMode::kHiddenButEnabled, u"kHiddenButEnabled"},
+    {views::ScrollView::ScrollBarMode::kEnabled, u"kEnabled"})

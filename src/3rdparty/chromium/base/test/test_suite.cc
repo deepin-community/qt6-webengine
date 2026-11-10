@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "base/test/test_suite.h"
 
 #include <signal.h>
@@ -9,10 +14,9 @@
 #include <algorithm>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
-#include "base/allocator/partition_allocator/src/partition_alloc/partition_alloc_buildflags.h"
-#include "base/allocator/partition_allocator/src/partition_alloc/tagging.h"
 #include "base/at_exit.h"
 #include "base/base_paths.h"
 #include "base/base_switches.h"
@@ -37,7 +41,7 @@
 #include "base/process/memory.h"
 #include "base/process/process.h"
 #include "base/process/process_handle.h"
-#include "base/strings/string_piece.h"
+#include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/test/gtest_xml_unittest_result_printer.h"
@@ -48,14 +52,17 @@
 #include "base/test/multiprocess_test.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_run_loop_timeout.h"
+#include "base/test/test_suite_helper.h"
 #include "base/test/test_switches.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "base/tracing_buildflags.h"
 #include "build/build_config.h"
+#include "partition_alloc/buildflags.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "testing/libfuzzer/fuzztest_init_helper.h"
 #include "testing/multiprocess_func_list.h"
 
 #if BUILDFLAG(IS_APPLE)
@@ -91,9 +98,9 @@
 #include "base/debug/handle_hooks_win.h"
 #endif  // BUILDFLAG(IS_WIN)
 
-#if BUILDFLAG(USE_PARTITION_ALLOC)
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC)
 #include "base/allocator/partition_alloc_support.h"
-#endif  // BUILDFLAG(USE_PARTITION_ALLOC)
+#endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC)
 
 #if GTEST_HAS_DEATH_TEST
 #include "base/gtest_prod_util.h"
@@ -123,7 +130,7 @@ class DisableMaybeTests : public testing::EmptyTestEventListener {
 class ResetCommandLineBetweenTests : public testing::EmptyTestEventListener {
  public:
   ResetCommandLineBetweenTests() : old_command_line_(CommandLine::NO_PROGRAM) {
-    // TODO(crbug.com/1123627): Remove this after A/B test is done.
+    // TODO(crbug.com/40053215): Remove this after A/B test is done.
     // Workaround a test-specific race conditon with StatisticsRecorder lock
     // initialization checking CommandLine by ensuring it's created here (when
     // we start the test process), rather than in some arbitrary test. This
@@ -160,41 +167,11 @@ class FeatureListScopedToEachTest : public testing::EmptyTestEventListener {
       delete;
 
   void OnTestStart(const testing::TestInfo& test_info) override {
-    const CommandLine* command_line = CommandLine::ForCurrentProcess();
+    test::InitScopedFeatureListForTesting(scoped_feature_list_);
 
-    // We set up a FeatureList via ScopedFeatureList::InitFromCommandLine().
-    // This ensures that code using that API will not hit an error that it's
-    // not set. It will be cleared by ~ScopedFeatureList().
-
-    // TestFeatureForBrowserTest1 and TestFeatureForBrowserTest2 used in
-    // ContentBrowserTestScopedFeatureListTest to ensure ScopedFeatureList keeps
-    // features from command line.
-    std::string enabled =
-        command_line->GetSwitchValueASCII(switches::kEnableFeatures);
-    std::string disabled =
-        command_line->GetSwitchValueASCII(switches::kDisableFeatures);
-    enabled += ",TestFeatureForBrowserTest1";
-    disabled += ",TestFeatureForBrowserTest2";
-    scoped_feature_list_.InitFromCommandLine(enabled, disabled);
-
-    // The enable-features and disable-features flags were just slurped into a
-    // FeatureList, so remove them from the command line. Tests should enable
-    // and disable features via the ScopedFeatureList API rather than
-    // command-line flags.
-    CommandLine new_command_line(command_line->GetProgram());
-    CommandLine::SwitchMap switches = command_line->GetSwitches();
-
-    switches.erase(switches::kEnableFeatures);
-    switches.erase(switches::kDisableFeatures);
-
-    for (const auto& iter : switches)
-      new_command_line.AppendSwitchNative(iter.first, iter.second);
-
-    *CommandLine::ForCurrentProcess() = new_command_line;
-
-    // TODO(https://crbug.com/1413674): Enable PartitionAlloc in unittests with
+    // TODO(crbug.com/40255771): Enable PartitionAlloc in unittests with
     // ASAN.
-#if BUILDFLAG(USE_PARTITION_ALLOC) && !defined(ADDRESS_SANITIZER)
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC) && !defined(ADDRESS_SANITIZER)
     allocator::PartitionAllocSupport::Get()->ReconfigureAfterFeatureListInit(
         "",
         /*configure_dangling_pointer_detector=*/true);
@@ -278,12 +255,13 @@ class CheckProcessPriority : public testing::EmptyTestEventListener {
 #endif  // !BUILDFLAG(IS_APPLE)
 
 const std::string& GetProfileName() {
-  static const NoDestructor<std::string> profile_name([]() {
+  static const NoDestructor<std::string> profile_name([] {
     const CommandLine& command_line = *CommandLine::ForCurrentProcess();
-    if (command_line.HasSwitch(switches::kProfilingFile))
+    if (command_line.HasSwitch(switches::kProfilingFile)) {
       return command_line.GetSwitchValueASCII(switches::kProfilingFile);
-    else
+    } else {
       return std::string("test-profile-{pid}");
+    }
   }());
   return *profile_name;
 }
@@ -337,6 +315,31 @@ void AbortHandler(int signal) {
 }
 #endif
 
+#if GTEST_HAS_DEATH_TEST
+// Returns a friendly message to tell developers how to see the stack traces for
+// unexpected crashes in death test child processes. Since death tests generate
+// stack traces as a consequence of their expected crashes and stack traces are
+// expensive to compute, stack traces in death test child processes are
+// suppressed unless `--with-stack-traces` is on the command line.
+std::string GetStackTraceMessage() {
+  // When Google Test launches a "threadsafe" death test's child proc, it uses
+  // `--gtest_filter` to convey the test to be run. It appendeds it to the end
+  // of the command line, so Chromium's `CommandLine` will preserve only the
+  // value of interest.
+  auto filter_switch =
+      CommandLine::ForCurrentProcess()->GetSwitchValueNative("gtest_filter");
+  return StrCat({"Stack trace suppressed; retry with `--",
+                 switches::kWithDeathTestStackTraces, " --gtest_filter=",
+#if BUILDFLAG(IS_WIN)
+                 WideToUTF8(filter_switch)
+#else
+                 filter_switch
+#endif
+                     ,
+                 "`."});
+}
+#endif  // GTEST_HAS_DEATH_TEST
+
 }  // namespace
 
 int RunUnitTestsUsingBaseTestSuite(int argc, char** argv) {
@@ -367,8 +370,9 @@ TestSuite::TestSuite(int argc, wchar_t** argv) : argc_(argc) {
 #endif  // BUILDFLAG(IS_WIN)
 
 TestSuite::~TestSuite() {
-  if (initialized_command_line_)
+  if (initialized_command_line_) {
     CommandLine::Reset();
+  }
 }
 
 // Don't add additional code to this method.  Instead add it to
@@ -388,15 +392,17 @@ int TestSuite::Run() {
   // services, so skip this if that switch was present.
   // This must be called before Initialize() because, for example,
   // content::ContentTestSuite::Initialize() may use the cached values.
-  if (client_func.empty())
+  if (client_func.empty()) {
     CHECK(FetchAndCacheSystemInfo());
+  }
 #endif
 
   Initialize();
 
   // Check to see if we are being run as a client process.
-  if (!client_func.empty())
+  if (!client_func.empty()) {
     return multi_process_function_list::InvokeChildProcessTest(client_func);
+  }
 
 #if BUILDFLAG(IS_IOS)
   test_listener_ios::RegisterTestEndListener();
@@ -409,18 +415,17 @@ int TestSuite::Run() {
   ::partition_alloc::ChangeMemoryTaggingModeForCurrentThread(
       ::partition_alloc::TagViolationReportingMode::kSynchronous);
 #elif BUILDFLAG(IS_ANDROID)
-    // On Android, the tests are opted into synchronous MTE mode by the
-    // memtagMode attribute in an AndroidManifest.xml file or via an `am compat`
-    // command, so and explicit call to ChangeMemoryTaggingModeForCurrentThread
-    // is not needed.
+  // On Android, the tests are opted into synchronous MTE mode by the
+  // memtagMode attribute in an AndroidManifest.xml file or via an `am compat`
+  // command, so and explicit call to ChangeMemoryTaggingModeForCurrentThread
+  // is not needed.
 #endif
 
   int result = RunAllTests();
 
 #if BUILDFLAG(IS_APPLE)
-  // This MUST happen before Shutdown() since Shutdown() tears down
-  // objects (such as NotificationService::current()) that Cocoa
-  // objects use to remove themselves as observers.
+  // This MUST happen before Shutdown() since Shutdown() tears down objects that
+  // Cocoa objects use to remove themselves as observers.
   scoped_pool.Recycle();
 #endif
 
@@ -441,8 +446,8 @@ void TestSuite::DisableCheckForLeakedGlobals() {
 
 void TestSuite::UnitTestAssertHandler(const char* file,
                                       int line,
-                                      const StringPiece summary,
-                                      const StringPiece stack_trace) {
+                                      std::string_view summary,
+                                      std::string_view stack_trace) {
 #if BUILDFLAG(IS_ANDROID)
   // Correlating test stdio with logcat can be difficult, so we emit this
   // helpful little hint about what was running.  Only do this for Android
@@ -504,6 +509,21 @@ void TestSuite::Initialize() {
 
   InitializeFromCommandLine(&argc_, argv_);
 
+#if GTEST_HAS_DEATH_TEST
+  if (::testing::internal::InDeathTestChild() &&
+      !CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kWithDeathTestStackTraces)) {
+    // For death tests using the "threadsafe" style (which includes all such
+    // tests on Windows and Fuchsia, and is the default for all Chromium tests
+    // on all platforms except Android; see `PreInitialize`),
+    //
+    // For more information, see
+    // https://github.com/google/googletest/blob/main/docs/advanced.md#death-test-styles.
+    debug::StackTrace::SuppressStackTracesWithMessageForTesting(
+        GetStackTraceMessage());
+  }
+#endif
+
   // Logging must be initialized before any thread has a chance to call logging
   // functions.
   InitializeLogging();
@@ -515,13 +535,27 @@ void TestSuite::Initialize() {
   base::debug::AsanService::GetInstance()->Initialize();
 #endif
 
-  // TODO(https://crbug.com/1400058): Enable BackupRefPtr in unittests on
+  // TODO(crbug.com/40250141): Enable BackupRefPtr in unittests on
   // Android too. Same for ASAN.
-  // TODO(https://crbug.com/1413674): Enable PartitionAlloc in unittests with
+  // TODO(crbug.com/40255771): Enable PartitionAlloc in unittests with
   // ASAN.
-#if BUILDFLAG(USE_PARTITION_ALLOC) && !defined(ADDRESS_SANITIZER)
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC) && !defined(ADDRESS_SANITIZER)
   allocator::PartitionAllocSupport::Get()->ReconfigureForTests();
-#endif  // BUILDFLAG(IS_WIN)
+
+#if GTEST_HAS_DEATH_TEST
+  // Unfortunately GTEST does not call event listeners at all inside child
+  // processes. In such case do reconfiguration here instead of inside
+  // `FeatureListScopedToEachTest`. FeatureList is not fully initialized but
+  // better than never reconfigured.
+  // TODO(https://crbug.com/432019338): Remove this once fixed.
+  if (::testing::internal::InDeathTestChild()) {
+    allocator::PartitionAllocSupport::Get()->ReconfigureAfterFeatureListInit(
+        "",
+        /*configure_dangling_pointer_detector=*/true,
+        /*is_in_death_test_child=*/true);
+  }
+#endif  // GTEST_HAS_DEATH_TEST
+#endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC) && !defined(ADDRESS_SANITIZER)
 
   test::ScopedRunLoopTimeout::SetAddGTestFailureOnTimeout();
 
@@ -535,11 +569,12 @@ void TestSuite::Initialize() {
 #if BUILDFLAG(DCHECK_IS_CONFIGURABLE)
   // Default the configurable DCHECK level to FATAL when running death tests'
   // child process, so that they behave as expected.
-  // TODO(crbug.com/1057995): Remove this in favor of the codepath in
+  // TODO(crbug.com/40120934): Remove this in favor of the codepath in
   // FeatureList::SetInstance() when/if OnTestStart() TestEventListeners
   // are fixed to be invoked in the child process as expected.
-  if (command_line->HasSwitch("gtest_internal_run_death_test"))
+  if (command_line->HasSwitch("gtest_internal_run_death_test")) {
     logging::LOGGING_DCHECK = logging::LOGGING_FATAL;
+  }
 #endif  // BUILDFLAG(DCHECK_IS_CONFIGURABLE)
 
 #if BUILDFLAG(IS_IOS)
@@ -588,8 +623,9 @@ void TestSuite::Initialize() {
   listeners.Append(new DisableMaybeTests);
   listeners.Append(new ResetCommandLineBetweenTests);
   listeners.Append(new FeatureListScopedToEachTest);
-  if (check_for_leaked_globals_)
+  if (check_for_leaked_globals_) {
     listeners.Append(new CheckForLeakedGlobals);
+  }
   if (check_for_thread_and_process_priority_) {
 #if !BUILDFLAG(IS_APPLE)
     listeners.Append(new CheckProcessPriority);
@@ -600,9 +636,7 @@ void TestSuite::Initialize() {
 
   TestTimeouts::Initialize();
 
-#if BUILDFLAG(ENABLE_BASE_TRACING)
   trace_to_file_.BeginTracingFromCommandLineOptions();
-#endif  // BUILDFLAG(ENABLE_BASE_TRACING)
 
   debug::StartProfiling(GetProfileName());
 
@@ -612,13 +646,10 @@ void TestSuite::Initialize() {
 }
 
 void TestSuite::InitializeFromCommandLine(int* argc, char** argv) {
-#if GTEST_HAS_DEATH_TEST
-  internal::SetInDeathTestChildFn(&::testing::internal::InDeathTestChild);
-#endif
-
   // CommandLine::Init() is called earlier from PreInitialize().
   testing::InitGoogleTest(argc, argv);
   testing::InitGoogleMock(argc, argv);
+  MaybeInitFuzztest(*argc, argv);
 
 #if BUILDFLAG(IS_IOS)
   InitIOSArgs(*argc, argv);
@@ -631,6 +662,11 @@ int TestSuite::RunAllTests() {
 
 void TestSuite::Shutdown() {
   DCHECK(is_initialized_);
+#if GTEST_HAS_DEATH_TEST
+  if (::testing::internal::InDeathTestChild()) {
+    debug::StackTrace::SuppressStackTracesWithMessageForTesting({});
+  }
+#endif
   debug::StopProfiling();
 }
 
@@ -646,12 +682,11 @@ void TestSuite::PreInitialize() {
   // fork() but before exec() is unsafe. Using the threadsafe style by default
   // alleviates these concerns.
   //
-  // However, the threasafe style does not work reliably on Android, so that
-  // will keep the default of "fast". See https://crbug.com/815537,
-  // https://github.com/google/googletest/issues/1496, and
-  // https://github.com/google/googletest/issues/2093.
-  // TODO(danakj): Determine if all death tests should be skipped on Android
-  // (many already are, such as for DCHECK-death tests).
+  // However, the threadsafe style does not work reliably on Android, so for
+  // that we will keep the default of "fast". For more information, see:
+  // https://crbug.com/41372437#comment12.
+  // TODO(https://crbug.com/41372437): Use "threadsafe" on Android once it is
+  // supported.
 #if !BUILDFLAG(IS_ANDROID)
   GTEST_FLAG_SET(death_test_style, "threadsafe");
 #endif

@@ -10,10 +10,12 @@
 
 #include "common_video/h265/h265_vps_parser.h"
 
+#include <cstdint>
+#include <optional>
+
+#include "api/array_view.h"
 #include "common_video/h265/h265_common.h"
-#include "rtc_base/bit_buffer.h"
 #include "rtc_base/bitstream_reader.h"
-#include "rtc_base/logging.h"
 
 namespace webrtc {
 
@@ -24,15 +26,13 @@ H265VpsParser::VpsState::VpsState() = default;
 // http://www.itu.int/rec/T-REC-H.265
 
 // Unpack RBSP and parse VPS state from the supplied buffer.
-absl::optional<H265VpsParser::VpsState> H265VpsParser::ParseVps(
-    const uint8_t* data,
-    size_t length) {
-  RTC_DCHECK(data);
-  return ParseInternal(H265::ParseRbsp(data, length));
+std::optional<H265VpsParser::VpsState> H265VpsParser::ParseVps(
+    ArrayView<const uint8_t> data) {
+  return ParseInternal(H265::ParseRbsp(data));
 }
 
-absl::optional<H265VpsParser::VpsState> H265VpsParser::ParseInternal(
-    rtc::ArrayView<const uint8_t> buffer) {
+std::optional<H265VpsParser::VpsState> H265VpsParser::ParseInternal(
+    ArrayView<const uint8_t> buffer) {
   BitstreamReader reader(buffer);
 
   // Now, we need to use a bit buffer to parse through the actual H265 VPS
@@ -44,7 +44,7 @@ absl::optional<H265VpsParser::VpsState> H265VpsParser::ParseInternal(
   vps.id = reader.ReadBits(4);
 
   if (!reader.Ok()) {
-    return absl::nullopt;
+    return std::nullopt;
   }
 
   return vps;

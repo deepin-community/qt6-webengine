@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "partition_alloc/partition_alloc_base/ios/ios_util.h"
 
 #include <array>
@@ -9,26 +14,6 @@
 #include "partition_alloc/partition_alloc_base/system/sys_info.h"
 
 namespace partition_alloc::internal::base::ios {
-
-bool IsRunningOnIOS12OrLater() {
-  static const bool is_running_on_or_later = IsRunningOnOrLater(12, 0, 0);
-  return is_running_on_or_later;
-}
-
-bool IsRunningOnIOS13OrLater() {
-  static const bool is_running_on_or_later = IsRunningOnOrLater(13, 0, 0);
-  return is_running_on_or_later;
-}
-
-bool IsRunningOnIOS14OrLater() {
-  static const bool is_running_on_or_later = IsRunningOnOrLater(14, 0, 0);
-  return is_running_on_or_later;
-}
-
-bool IsRunningOnIOS15OrLater() {
-  static const bool is_running_on_or_later = IsRunningOnOrLater(15, 0, 0);
-  return is_running_on_or_later;
-}
 
 bool IsRunningOnOrLater(int32_t major, int32_t minor, int32_t bug_fix) {
   static const class OSVersion {

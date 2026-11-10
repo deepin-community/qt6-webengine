@@ -7,6 +7,7 @@
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/strings/to_string.h"
 #include "components/gwp_asan/crash_handler/crash.pb.h"
 #include "components/gwp_asan/crash_handler/crash_handler.h"
 #include "third_party/crashpad/crashpad/minidump/minidump_extensions.h"
@@ -29,8 +30,6 @@ std::string ErrorTypeToString(Crash::ErrorType error_type) {
       return "UNKNOWN";
     case Crash::FREE_INVALID_ADDRESS:
       return "FREE_INVALID_ADDRESS";
-    case Crash::LIGHTWEIGHT_USE_AFTER_FREE:
-      return "LIGHTWEIGHT_USE_AFTER_FREE";
     default:
       return "UNKNOWN";
   }
@@ -42,6 +41,21 @@ std::string AllocatorToString(Crash::Allocator allocator) {
       return "MALLOC";
     case Crash::PARTITIONALLOC:
       return "PARTITIONALLOC";
+    default:
+      return "UNKNOWN";
+  }
+}
+
+std::string ModeToString(Crash::Mode mode) {
+  switch (mode) {
+    case Crash::CLASSIC:
+      return "CLASSIC";
+    case Crash::LIGHTWEIGHT_DETECTOR_BRP:
+      return "LIGHTWEIGHT_DETECTOR_BRP";
+    case Crash::LIGHTWEIGHT_DETECTOR_RANDOM:
+      return "LIGHTWEIGHT_DETECTOR_RANDOM";
+    case Crash::EXTREME_LIGHTWEIGHT_DETECTOR:
+      return "EXTREME_LIGHTWEIGHT_DETECTOR";
     default:
       return "UNKNOWN";
   }
@@ -93,14 +107,17 @@ std::string CrashToString(const Crash& crash) {
        << std::endl;
   }
   if (crash.has_missing_metadata()) {
-    ss << "  missing_metadata: "
-       << (crash.missing_metadata() ? "true" : "false") << std::endl;
+    ss << "  missing_metadata: " << base::ToString(crash.missing_metadata())
+       << std::endl;
   }
   if (crash.has_internal_error()) {
     ss << "  internal_error: " << crash.internal_error() << std::endl;
   }
   if (crash.has_allocator()) {
     ss << "  allocator: " << AllocatorToString(crash.allocator()) << std::endl;
+  }
+  if (crash.has_mode()) {
+    ss << "  mode: " << ModeToString(crash.mode()) << std::endl;
   }
   ss << "}";
   return ss.str();

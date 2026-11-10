@@ -11,6 +11,7 @@
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkSpan.h"
 #include "src/core/SkGlyph.h"
+#include "src/core/SkStrike.h"   // IWYU pragma: keep
 #include "src/gpu/AtlasTypes.h"
 #include "src/text/StrikeForGPU.h"
 #include "src/text/gpu/StrikeCache.h"
@@ -67,7 +68,7 @@ public:
     // the sub runs.
     int unflattenSize() const { return GlyphVectorSize(fGlyphs.size()); }
 
-    void packedGlyphIDToGlyph(StrikeCache* cache);
+    void packedGlyphIDToGlyph(StrikeCache* cache, skgpu::MaskFormat);
 
     static size_t GlyphVectorSize(size_t count) {
         return sizeof(Variant) * count;

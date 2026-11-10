@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 // based on chrome/browser/net/system_network_context_manager.cc:
 // Copyright 2017 The Chromium Authors. All rights reserved.
@@ -19,8 +20,11 @@
 #include "content/public/common/content_switches.h"
 #include "crypto/sha2.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
+#include "net/base/features.h"
 #include "net/base/port_util.h"
 #include "net/net_buildflags.h"
+#include "net/ssl/ssl_cipher_suite_names.h"
+#include "net/ssl/ssl_config_service.h"
 #include "services/cert_verifier/public/mojom/cert_verifier_service_factory.mojom.h"
 #include "services/network/network_service.h"
 #include "services/network/public/cpp/cross_thread_pending_shared_url_loader_factory.h"
@@ -65,6 +69,27 @@ network::mojom::HttpAuthDynamicParamsPtr CreateHttpAuthDynamicParams()
 //    auth_dynamic_params->enable_negotiate_port = command_line->HasSwitch(switches::kEnableAuthNegotiatePort);
 
     return auth_dynamic_params;
+}
+
+// from ssl_config_service_manager.cc:
+// Parses a vector of cipher suite strings, returning a sorted vector
+// containing the underlying SSL/TLS cipher suites. Unrecognized/invalid
+// cipher suites will be ignored.
+std::vector<uint16_t> ParseCipherSuites(const std::vector<std::string> &cipher_strings)
+{
+    std::vector<uint16_t> cipher_suites;
+    cipher_suites.reserve(cipher_strings.size());
+
+    for (auto it = cipher_strings.begin(); it != cipher_strings.end(); ++it) {
+        uint16_t cipher_suite = 0;
+        if (!net::ParseSSLCipherString(*it, &cipher_suite)) {
+            LOG(ERROR) << "Ignoring unrecognized or unparsable cipher suite: " << *it;
+            continue;
+        }
+        cipher_suites.push_back(cipher_suite);
+    }
+    std::sort(cipher_suites.begin(), cipher_suites.end());
+    return cipher_suites;
 }
 
 } // namespace
@@ -150,7 +175,7 @@ network::mojom::URLLoaderFactory *SystemNetworkContextManager::GetURLLoaderFacto
 
     network::mojom::URLLoaderFactoryParamsPtr params = network::mojom::URLLoaderFactoryParams::New();
     params->process_id = network::mojom::kBrowserProcessId;
-    params->is_corb_enabled = false;
+    params->is_orb_enabled = false;
     GetContext()->CreateURLLoaderFactory(url_loader_factory_.BindNewPipeAndPassReceiver(), std::move(params));
     return url_loader_factory_.get();
 }
@@ -273,7 +298,14 @@ void SystemNetworkContextManager::OnNetworkServiceCreated(network::mojom::Networ
 void SystemNetworkContextManager::AddSSLConfigToNetworkContextParams(network::mojom::NetworkContextParams *network_context_params)
 {
     network_context_params->initial_ssl_config = network::mojom::SSLConfig::New();
-    network_context_params->initial_ssl_config->symantec_enforcement_disabled = true;
+    const base::CommandLine& command_line =
+            *base::CommandLine::ForCurrentProcess();
+    if (command_line.HasSwitch(switches::kCipherSuiteBlacklist)) {
+        const std::vector<std::string> str_list = base::SplitString(
+                command_line.GetSwitchValueASCII(switches::kCipherSuiteBlacklist),
+                ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+        network_context_params->initial_ssl_config->disabled_cipher_suites = ParseCipherSuites(str_list);
+    }
 }
 
 void SystemNetworkContextManager::ConfigureDefaultNetworkContextParams(network::mojom::NetworkContextParams *network_context_params,
@@ -330,7 +362,7 @@ network::mojom::NetworkContextParamsPtr SystemNetworkContextManager::CreateNetwo
 
 bool isValidTemplates(std::string templates)
 {
-    absl::optional<net::DnsOverHttpsConfig> dnsOverHttpsConfig =
+    std::optional<net::DnsOverHttpsConfig> dnsOverHttpsConfig =
             net::DnsOverHttpsConfig::FromString(templates);
     return dnsOverHttpsConfig.has_value();
 }
@@ -343,10 +375,11 @@ void configureStubHostResolver(QWebEngineGlobalSettings::SecureDnsMode dnsMode,
     if (content::IsNetworkServiceCreated()) {
         network::mojom::NetworkService *networkService = content::GetNetworkService();
         if (networkService) {
-            absl::optional<net::DnsOverHttpsConfig> dohConfig = dnsOverHttpsTemplates.empty()
+            std::optional<net::DnsOverHttpsConfig> dohConfig = dnsOverHttpsTemplates.empty()
                     ? net::DnsOverHttpsConfig()
                     : net::DnsOverHttpsConfig::FromString(dnsOverHttpsTemplates);
             networkService->ConfigureStubHostResolver(insecureDnsClientEnabled,
+                                                      base::FeatureList::IsEnabled(net::features::kHappyEyeballsV3),
                                                       net::SecureDnsMode(dnsMode), *dohConfig,
                                                       additionalInsecureDnsTypesEnabled);
         }

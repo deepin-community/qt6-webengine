@@ -46,9 +46,9 @@ Reduction WasmTyper::Reduce(Node* node) {
   switch (node->opcode()) {
     case IrOpcode::kTypeGuard: {
       if (!AllInputsTyped(node)) return NoChange();
-      Type guarded_type = TypeGuardTypeOf(node->op());
+      compiler::Type guarded_type = TypeGuardTypeOf(node->op());
       if (!guarded_type.IsWasm()) return NoChange();
-      Type input_type =
+      compiler::Type input_type =
           NodeProperties::GetType(NodeProperties::GetValueInput(node, 0));
       if (!input_type.IsWasm()) return NoChange();
       TypeInModule guarded_wasm_type = guarded_type.AsWasm();
@@ -56,7 +56,9 @@ Reduction WasmTyper::Reduce(Node* node) {
       // Note: The intersection type might be bottom. In this case, we are in a
       // dead branch: Type this node as bottom and wait for the
       // WasmGCOperatorReducer to remove it.
-      computed_type = wasm::Intersection(guarded_wasm_type, input_wasm_type);
+      DCHECK_EQ(guarded_wasm_type.module, input_wasm_type.module);
+      computed_type = wasm::Intersection(
+          guarded_wasm_type.type, input_wasm_type.type, input_wasm_type.module);
       break;
     }
     case IrOpcode::kWasmTypeCast:
@@ -66,9 +68,8 @@ Reduction WasmTyper::Reduce(Node* node) {
           NodeProperties::GetType(NodeProperties::GetValueInput(node, 0))
               .AsWasm();
       wasm::ValueType to_type = OpParameter<WasmTypeCheckConfig>(node->op()).to;
-      // TODO(12166): Change module parameters if we have cross-module inlining.
-      computed_type = wasm::Intersection(
-          object_type.type, to_type, object_type.module, object_type.module);
+      computed_type =
+          wasm::Intersection(object_type.type, to_type, object_type.module);
       break;
     }
     case IrOpcode::kAssertNotNull: {
@@ -98,13 +99,13 @@ Reduction WasmTyper::Reduce(Node* node) {
         break;
       }
 
-      Type first_input_type =
+      compiler::Type first_input_type =
           NodeProperties::GetType(NodeProperties::GetValueInput(node, 0));
       if (!first_input_type.IsWasm()) return NoChange();
       computed_type = first_input_type.AsWasm();
       for (int i = 1; i < node->op()->ValueInputCount(); i++) {
         Node* input = NodeProperties::GetValueInput(node, i);
-        Type input_type = NodeProperties::GetType(input);
+        compiler::Type input_type = NodeProperties::GetType(input);
         if (!input_type.IsWasm()) return NoChange();
         TypeInModule wasm_type = input_type.AsWasm();
         if (computed_type.type.is_bottom()) {
@@ -112,7 +113,9 @@ Reduction WasmTyper::Reduce(Node* node) {
           computed_type = wasm_type;
         } else if (!wasm_type.type.is_bottom()) {
           // We do not want union of types from unreachable branches.
-          computed_type = wasm::Union(computed_type, wasm_type);
+          DCHECK_EQ(computed_type.module, wasm_type.module);
+          computed_type =
+              wasm::Union(computed_type.type, wasm_type.type, wasm_type.module);
         }
       }
       TRACE(
@@ -146,10 +149,10 @@ Reduction WasmTyper::Reduce(Node* node) {
         computed_type = {wasm::kWasmBottom, object_type.module};
         break;
       }
-      uint32_t ref_index = object_type.type.ref_index();
+      wasm::ModuleTypeIndex ref_index = object_type.type.ref_index();
       DCHECK(object_type.module->has_array(ref_index));
       const wasm::ArrayType* type_from_object =
-          object_type.module->types[ref_index].array_type;
+          object_type.module->type(ref_index).array_type;
       computed_type = {type_from_object->element_type().Unpacked(),
                        object_type.module};
       break;
@@ -167,12 +170,12 @@ Reduction WasmTyper::Reduce(Node* node) {
       }
       WasmFieldInfo info = OpParameter<WasmFieldInfo>(node->op());
 
-      uint32_t ref_index = object_type.type.ref_index();
+      wasm::ModuleTypeIndex ref_index = object_type.type.ref_index();
 
       DCHECK(object_type.module->has_struct(ref_index));
 
       const wasm::StructType* struct_type_from_object =
-          object_type.module->types[ref_index].struct_type;
+          object_type.module->type(ref_index).struct_type;
 
       computed_type = {
           struct_type_from_object->field(info.field_index).Unpacked(),
@@ -220,7 +223,7 @@ Reduction WasmTyper::Reduce(Node* node) {
             : "<untyped>",
         computed_type.type.name().c_str());
 
-  NodeProperties::SetType(node, Type::Wasm(computed_type, graph_zone_));
+  NodeProperties::SetType(node, compiler::Type::Wasm(computed_type, graph_zone_));
   return Changed(node);
 }
 

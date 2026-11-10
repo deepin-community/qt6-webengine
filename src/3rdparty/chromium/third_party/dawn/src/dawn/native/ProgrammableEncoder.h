@@ -35,6 +35,7 @@
 #include "dawn/native/Forward.h"
 #include "dawn/native/IntegerTypes.h"
 #include "dawn/native/ObjectBase.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 #include "dawn/native/dawn_platform.h"
 
@@ -45,11 +46,12 @@ class DeviceBase;
 // Base class for shared functionality between programmable encoders.
 class ProgrammableEncoder : public ApiObjectBase {
   public:
-    ProgrammableEncoder(DeviceBase* device, const char* label, EncodingContext* encodingContext);
+    ProgrammableEncoder(DeviceBase* device, StringView label, EncodingContext* encodingContext);
 
-    void APIInsertDebugMarker(const char* groupLabel);
+    void APIInsertDebugMarker(StringView groupLabel);
     void APIPopDebugGroup();
-    void APIPushDebugGroup(const char* groupLabel);
+    void APIPushDebugGroup(StringView groupLabel);
+    void APISetImmediateData(uint32_t offset, const void* data, size_t size);
 
   protected:
     bool IsValidationEnabled() const;
@@ -71,9 +73,9 @@ class ProgrammableEncoder : public ApiObjectBase {
     ProgrammableEncoder(DeviceBase* device,
                         EncodingContext* encodingContext,
                         ErrorTag errorTag,
-                        const char* label);
+                        StringView label);
 
-    EncodingContext* mEncodingContext = nullptr;
+    raw_ptr<EncodingContext> mEncodingContext = nullptr;
 
     uint64_t mDebugGroupStackSize = 0;
 

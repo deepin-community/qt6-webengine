@@ -25,7 +25,7 @@
 // OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include "src/tint/lang/core/builtin_value.h"
+#include "src/tint/lang/core/enums.h"
 #include "src/tint/lang/wgsl/ast/builtin_attribute.h"
 #include "src/tint/lang/wgsl/ast/location_attribute.h"
 #include "src/tint/lang/wgsl/ast/return_statement.h"
@@ -119,7 +119,7 @@ TEST_F(ResolverEntryPointValidationTest, ReturnTypeAttribute_Multiple) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(), R"(14:52 error: multiple entry point IO attributes
-13:43 note: previously consumed @location)");
+13:43 note: previously consumed '@location')");
 }
 
 TEST_F(ResolverEntryPointValidationTest, ReturnType_Struct_Valid) {
@@ -171,7 +171,7 @@ TEST_F(ResolverEntryPointValidationTest, ReturnType_Struct_MemberMultipleAttribu
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(), R"(14:52 error: multiple entry point IO attributes
-13:43 note: previously consumed @location
+13:43 note: previously consumed '@location'
 12:34 note: while analyzing entry point 'main')");
 }
 
@@ -227,7 +227,7 @@ TEST_F(ResolverEntryPointValidationTest, ReturnType_Struct_DuplicateBuiltins) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              R"(12:34 error: @builtin(frag_depth) appears multiple times as pipeline output
+              R"(12:34 error: '@builtin(frag_depth)' appears multiple times as pipeline output
 12:34 note: while analyzing entry point 'main')");
 }
 
@@ -286,7 +286,7 @@ TEST_F(ResolverEntryPointValidationTest, ParameterAttribute_Multiple) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(), R"(14:52 error: multiple entry point IO attributes
-13:43 note: previously consumed @location)");
+13:43 note: previously consumed '@location')");
 }
 
 TEST_F(ResolverEntryPointValidationTest, Parameter_Struct_Valid) {
@@ -338,7 +338,7 @@ TEST_F(ResolverEntryPointValidationTest, Parameter_Struct_MemberMultipleAttribut
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(), R"(14:52 error: multiple entry point IO attributes
-13:43 note: previously consumed @location
+13:43 note: previously consumed '@location'
 12:34 note: while analyzing entry point 'main')");
 }
 
@@ -393,7 +393,7 @@ TEST_F(ResolverEntryPointValidationTest, Parameter_DuplicateBuiltins) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              "12:34 error: @builtin(sample_index) appears multiple times as pipeline input");
+              "12:34 error: '@builtin(sample_index)' appears multiple times as pipeline input");
 }
 
 TEST_F(ResolverEntryPointValidationTest, Parameter_Struct_DuplicateBuiltins) {
@@ -427,7 +427,7 @@ TEST_F(ResolverEntryPointValidationTest, Parameter_Struct_DuplicateBuiltins) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              R"(12:34 error: @builtin(sample_index) appears multiple times as pipeline input
+              R"(12:34 error: '@builtin(sample_index)' appears multiple times as pipeline input
 12:34 note: while analyzing entry point 'main')");
 }
 
@@ -445,41 +445,33 @@ TEST_F(ResolverEntryPointValidationTest, VertexShaderMustReturnPosition) {
               "in its return type");
 }
 
-TEST_F(ResolverEntryPointValidationTest, PushConstantAllowedWithEnable) {
-    // enable chromium_experimental_push_constant;
-    // var<push_constant> a : u32;
-    Enable(wgsl::Extension::kChromiumExperimentalPushConstant);
-    GlobalVar("a", ty.u32(), core::AddressSpace::kPushConstant);
+TEST_F(ResolverEntryPointValidationTest, ImmediateAllowedWithEnable) {
+    // enable chromium_experimental_immediate;
+    // var<immediate> a : u32;
+    Enable(wgsl::Extension::kChromiumExperimentalImmediate);
+    GlobalVar("a", ty.u32(), core::AddressSpace::kImmediate);
 
     EXPECT_TRUE(r()->Resolve());
 }
 
-TEST_F(ResolverEntryPointValidationTest, PushConstantDisallowedWithoutEnable) {
-    // var<push_constant> a : u32;
-    GlobalVar(Source{{1, 2}}, "a", ty.u32(), core::AddressSpace::kPushConstant);
+TEST_F(ResolverEntryPointValidationTest, ImmediateDisallowedWithoutEnable) {
+    // var<immediate> a : u32;
+    GlobalVar(Source{{1, 2}}, "a", ty.u32(), core::AddressSpace::kImmediate);
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              "1:2 error: use of variable address space 'push_constant' requires enabling "
-              "extension 'chromium_experimental_push_constant'");
+              "1:2 error: use of variable address space 'immediate' requires enabling extension "
+              "'chromium_experimental_immediate'");
 }
 
-TEST_F(ResolverEntryPointValidationTest, PushConstantAllowedWithIgnoreAddressSpaceAttribute) {
-    // var<push_constant> a : u32; // With ast::DisabledValidation::kIgnoreAddressSpace
-    GlobalVar("a", ty.u32(), core::AddressSpace::kPushConstant,
-              Vector{Disable(ast::DisabledValidation::kIgnoreAddressSpace)});
-
-    EXPECT_TRUE(r()->Resolve());
-}
-
-TEST_F(ResolverEntryPointValidationTest, PushConstantOneVariableUsedInEntryPoint) {
-    // enable chromium_experimental_push_constant;
-    // var<push_constant> a : u32;
+TEST_F(ResolverEntryPointValidationTest, ImmediateOneVariableUsedInEntryPoint) {
+    // enable chromium_experimental_immediate;
+    // var<immediate> a : u32;
     // @compute @workgroup_size(1) fn main() {
     //   _ = a;
     // }
-    Enable(wgsl::Extension::kChromiumExperimentalPushConstant);
-    GlobalVar("a", ty.u32(), core::AddressSpace::kPushConstant);
+    Enable(wgsl::Extension::kChromiumExperimentalImmediate);
+    GlobalVar("a", ty.u32(), core::AddressSpace::kImmediate);
 
     Func("main", {}, ty.void_(), Vector{Assign(Phony(), "a")},
          Vector{Stage(ast::PipelineStage::kCompute), WorkgroupSize(1_a)});
@@ -487,33 +479,32 @@ TEST_F(ResolverEntryPointValidationTest, PushConstantOneVariableUsedInEntryPoint
     EXPECT_TRUE(r()->Resolve());
 }
 
-TEST_F(ResolverEntryPointValidationTest, PushConstantTwoVariablesUsedInEntryPoint) {
-    // enable chromium_experimental_push_constant;
-    // var<push_constant> a : u32;
-    // var<push_constant> b : u32;
+TEST_F(ResolverEntryPointValidationTest, ImmediateTwoVariablesUsedInEntryPoint) {
+    // enable chromium_experimental_immediate;
+    // var<immediate> a : u32;
+    // var<immediate> b : u32;
     // @compute @workgroup_size(1) fn main() {
     //   _ = a;
     //   _ = b;
     // }
-    Enable(wgsl::Extension::kChromiumExperimentalPushConstant);
-    GlobalVar(Source{{1, 2}}, "a", ty.u32(), core::AddressSpace::kPushConstant);
-    GlobalVar(Source{{3, 4}}, "b", ty.u32(), core::AddressSpace::kPushConstant);
+    Enable(wgsl::Extension::kChromiumExperimentalImmediate);
+    GlobalVar(Source{{1, 2}}, "a", ty.u32(), core::AddressSpace::kImmediate);
+    GlobalVar(Source{{3, 4}}, "b", ty.u32(), core::AddressSpace::kImmediate);
 
     Func(Source{{5, 6}}, "main", {}, ty.void_(), Vector{Assign(Phony(), "a"), Assign(Phony(), "b")},
          Vector{Stage(ast::PipelineStage::kCompute), WorkgroupSize(1_a)});
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              R"(5:6 error: entry point 'main' uses two different 'push_constant' variables.
-3:4 note: first 'push_constant' variable declaration is here
-1:2 note: second 'push_constant' variable declaration is here)");
+              R"(5:6 error: entry point 'main' uses two different 'immediate' variables.
+3:4 note: first 'immediate' variable declaration is here
+1:2 note: second 'immediate' variable declaration is here)");
 }
 
-TEST_F(ResolverEntryPointValidationTest,
-       PushConstantTwoVariablesUsedInEntryPointWithFunctionGraph) {
-    // enable chromium_experimental_push_constant;
-    // var<push_constant> a : u32;
-    // var<push_constant> b : u32;
+TEST_F(ResolverEntryPointValidationTest, ImmediateTwoVariablesUsedInEntryPointWithFunctionGraph) {
+    // enable chromium_experimental_immediate;
+    // var<immediate> a : u32;
+    // var<immediate> b : u32;
     // fn uses_a() {
     //   _ = a;
     // }
@@ -524,9 +515,9 @@ TEST_F(ResolverEntryPointValidationTest,
     //   uses_a();
     //   uses_b();
     // }
-    Enable(wgsl::Extension::kChromiumExperimentalPushConstant);
-    GlobalVar(Source{{1, 2}}, "a", ty.u32(), core::AddressSpace::kPushConstant);
-    GlobalVar(Source{{3, 4}}, "b", ty.u32(), core::AddressSpace::kPushConstant);
+    Enable(wgsl::Extension::kChromiumExperimentalImmediate);
+    GlobalVar(Source{{1, 2}}, "a", ty.u32(), core::AddressSpace::kImmediate);
+    GlobalVar(Source{{3, 4}}, "b", ty.u32(), core::AddressSpace::kImmediate);
 
     Func(Source{{5, 6}}, "uses_a", {}, ty.void_(), Vector{Assign(Phony(), "a")});
     Func(Source{{7, 8}}, "uses_b", {}, ty.void_(), Vector{Assign(Phony(), "b")});
@@ -537,28 +528,28 @@ TEST_F(ResolverEntryPointValidationTest,
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              R"(9:10 error: entry point 'main' uses two different 'push_constant' variables.
-3:4 note: first 'push_constant' variable declaration is here
+              R"(9:10 error: entry point 'main' uses two different 'immediate' variables.
+3:4 note: first 'immediate' variable declaration is here
 7:8 note: called by function 'uses_b'
 9:10 note: called by entry point 'main'
-1:2 note: second 'push_constant' variable declaration is here
+1:2 note: second 'immediate' variable declaration is here
 5:6 note: called by function 'uses_a'
 9:10 note: called by entry point 'main')");
 }
 
-TEST_F(ResolverEntryPointValidationTest, PushConstantTwoVariablesUsedInDifferentEntryPoint) {
-    // enable chromium_experimental_push_constant;
-    // var<push_constant> a : u32;
-    // var<push_constant> b : u32;
+TEST_F(ResolverEntryPointValidationTest, ImmediateTwoVariablesUsedInDifferentEntryPoint) {
+    // enable chromium_experimental_immediate;
+    // var<immediate> a : u32;
+    // var<immediate> b : u32;
     // @compute @workgroup_size(1) fn uses_a() {
     //   _ = a;
     // }
     // @compute @workgroup_size(1) fn uses_b() {
     //   _ = a;
     // }
-    Enable(wgsl::Extension::kChromiumExperimentalPushConstant);
-    GlobalVar("a", ty.u32(), core::AddressSpace::kPushConstant);
-    GlobalVar("b", ty.u32(), core::AddressSpace::kPushConstant);
+    Enable(wgsl::Extension::kChromiumExperimentalImmediate);
+    GlobalVar("a", ty.u32(), core::AddressSpace::kImmediate);
+    GlobalVar("b", ty.u32(), core::AddressSpace::kImmediate);
 
     Func("uses_a", {}, ty.void_(), Vector{Assign(Phony(), "a")},
          Vector{Stage(ast::PipelineStage::kCompute), WorkgroupSize(1_a)});
@@ -772,8 +763,8 @@ TEST_F(LocationAttributeTests, BadType_Input_bool) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              R"(12:34 error: cannot apply @location to declaration of type 'bool'
-34:56 note: @location must only be applied to declarations of numeric scalar or numeric vector type)");
+              R"(12:34 error: cannot apply '@location' to declaration of type 'bool'
+34:56 note: '@location' must only be applied to declarations of numeric scalar or numeric vector type)");
 }
 
 TEST_F(LocationAttributeTests, BadType_Output_Array) {
@@ -793,8 +784,8 @@ TEST_F(LocationAttributeTests, BadType_Output_Array) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              R"(12:34 error: cannot apply @location to declaration of type 'array<f32, 2>'
-34:56 note: @location must only be applied to declarations of numeric scalar or numeric vector type)");
+              R"(12:34 error: cannot apply '@location' to declaration of type 'array<f32, 2>'
+34:56 note: '@location' must only be applied to declarations of numeric scalar or numeric vector type)");
 }
 
 TEST_F(LocationAttributeTests, BadType_Input_Struct) {
@@ -821,8 +812,8 @@ TEST_F(LocationAttributeTests, BadType_Input_Struct) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              R"(12:34 error: cannot apply @location to declaration of type 'Input'
-13:43 note: @location must only be applied to declarations of numeric scalar or numeric vector type)");
+              R"(12:34 error: cannot apply '@location' to declaration of type 'Input'
+13:43 note: '@location' must only be applied to declarations of numeric scalar or numeric vector type)");
 }
 
 TEST_F(LocationAttributeTests, BadType_Input_Struct_NestedStruct) {
@@ -879,8 +870,8 @@ TEST_F(LocationAttributeTests, BadType_Input_Struct_RuntimeArray) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              R"(13:43 error: cannot apply @location to declaration of type 'array<f32>'
-note: @location must only be applied to declarations of numeric scalar or numeric vector type)");
+              R"(13:43 error: cannot apply '@location' to declaration of type 'array<f32>'
+note: '@location' must only be applied to declarations of numeric scalar or numeric vector type)");
 }
 
 TEST_F(LocationAttributeTests, BadMemberType_Input) {
@@ -906,8 +897,8 @@ TEST_F(LocationAttributeTests, BadMemberType_Input) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              R"(34:56 error: cannot apply @location to declaration of type 'array<i32>'
-12:34 note: @location must only be applied to declarations of numeric scalar or numeric vector type)");
+              R"(34:56 error: cannot apply '@location' to declaration of type 'array<i32>'
+12:34 note: '@location' must only be applied to declarations of numeric scalar or numeric vector type)");
 }
 
 TEST_F(LocationAttributeTests, BadMemberType_Output) {
@@ -931,8 +922,8 @@ TEST_F(LocationAttributeTests, BadMemberType_Output) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              R"(34:56 error: cannot apply @location to declaration of type 'atomic<i32>'
-12:34 note: @location must only be applied to declarations of numeric scalar or numeric vector type)");
+              R"(34:56 error: cannot apply '@location' to declaration of type 'atomic<i32>'
+12:34 note: '@location' must only be applied to declarations of numeric scalar or numeric vector type)");
 }
 
 TEST_F(LocationAttributeTests, BadMemberType_Unused) {
@@ -946,8 +937,8 @@ TEST_F(LocationAttributeTests, BadMemberType_Unused) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              R"(34:56 error: cannot apply @location to declaration of type 'mat3x2<f32>'
-12:34 note: @location must only be applied to declarations of numeric scalar or numeric vector type)");
+              R"(34:56 error: cannot apply '@location' to declaration of type 'mat3x2<f32>'
+12:34 note: '@location' must only be applied to declarations of numeric scalar or numeric vector type)");
 }
 
 TEST_F(LocationAttributeTests, ReturnType_Struct_Valid) {
@@ -998,8 +989,8 @@ TEST_F(LocationAttributeTests, ReturnType_Struct) {
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), R"(12:34 error: cannot apply @location to declaration of type 'Output'
-13:43 note: @location must only be applied to declarations of numeric scalar or numeric vector type)");
+    EXPECT_EQ(r()->error(), R"(12:34 error: cannot apply '@location' to declaration of type 'Output'
+13:43 note: '@location' must only be applied to declarations of numeric scalar or numeric vector type)");
 }
 
 TEST_F(LocationAttributeTests, ReturnType_Struct_NestedStruct) {
@@ -1054,8 +1045,8 @@ TEST_F(LocationAttributeTests, ReturnType_Struct_RuntimeArray) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              R"(13:43 error: cannot apply @location to declaration of type 'array<f32>'
-12:34 note: @location must only be applied to declarations of numeric scalar or numeric vector type)");
+              R"(13:43 error: cannot apply '@location' to declaration of type 'array<f32>'
+12:34 note: '@location' must only be applied to declarations of numeric scalar or numeric vector type)");
 }
 
 TEST_F(LocationAttributeTests, ComputeShaderLocation_Input) {
@@ -1072,7 +1063,7 @@ TEST_F(LocationAttributeTests, ComputeShaderLocation_Input) {
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), R"(12:34 error: @location cannot be used by compute shaders)");
+    EXPECT_EQ(r()->error(), R"(12:34 error: '@location' cannot be used by compute shaders)");
 }
 
 TEST_F(LocationAttributeTests, ComputeShaderLocation_Output) {
@@ -1087,7 +1078,7 @@ TEST_F(LocationAttributeTests, ComputeShaderLocation_Output) {
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), R"(12:34 error: @location cannot be used by compute shaders)");
+    EXPECT_EQ(r()->error(), R"(12:34 error: '@location' cannot be used by compute shaders)");
 }
 
 TEST_F(LocationAttributeTests, ComputeShaderLocationStructMember_Output) {
@@ -1106,9 +1097,8 @@ TEST_F(LocationAttributeTests, ComputeShaderLocationStructMember_Output) {
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(),
-              "12:34 error: @location cannot be used by compute shaders\n"
-              "56:78 note: while analyzing entry point 'main'");
+    EXPECT_EQ(r()->error(), R"(12:34 error: '@location' cannot be used by compute shaders
+56:78 note: while analyzing entry point 'main')");
 }
 
 TEST_F(LocationAttributeTests, ComputeShaderLocationStructMember_Input) {
@@ -1125,9 +1115,8 @@ TEST_F(LocationAttributeTests, ComputeShaderLocationStructMember_Input) {
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(),
-              "12:34 error: @location cannot be used by compute shaders\n"
-              "56:78 note: while analyzing entry point 'main'");
+    EXPECT_EQ(r()->error(), R"(12:34 error: '@location' cannot be used by compute shaders
+56:78 note: while analyzing entry point 'main')");
 }
 
 TEST_F(LocationAttributeTests, Duplicate_input) {
@@ -1153,7 +1142,7 @@ TEST_F(LocationAttributeTests, Duplicate_input) {
          });
 
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(), R"(12:34 error: @location(1) appears multiple times)");
+    EXPECT_EQ(r()->error(), R"(12:34 error: '@location(1)' appears multiple times)");
 }
 
 TEST_F(LocationAttributeTests, Duplicate_struct) {
@@ -1186,7 +1175,7 @@ TEST_F(LocationAttributeTests, Duplicate_struct) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              R"(34:56 error: @location(1) appears multiple times
+              R"(34:56 error: '@location(1)' appears multiple times
 12:34 note: while analyzing entry point 'main')");
 }
 

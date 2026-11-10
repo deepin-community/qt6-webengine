@@ -23,6 +23,7 @@
 #ifndef SQLITE_MAX_LENGTH
 # define SQLITE_MAX_LENGTH 1000000000
 #endif
+#define SQLITE_MIN_LENGTH 30   /* Minimum value for the length limit */
 
 /*
 ** This is the maximum number of
@@ -35,14 +36,22 @@
 **    * Terms in the GROUP BY or ORDER BY clauses of a SELECT statement.
 **    * Terms in the VALUES clause of an INSERT statement
 **
-** The hard upper limit here is 32676.  Most database people will
+** The hard upper limit here is 32767.  Most database people will
 ** tell you that in a well-normalized database, you usually should
 ** not have more than a dozen or so columns in any table.  And if
 ** that is the case, there is no point in having more than a few
 ** dozen values in any of the other situations described above.
+**
+** An index can only have SQLITE_MAX_COLUMN columns from the user
+** point of view, but the underlying b-tree that implements the index
+** might have up to twice as many columns in a WITHOUT ROWID table,
+** since must also store the primary key at the end.  Hence the
+** column count for Index is u16 instead of i16.
 */
-#ifndef SQLITE_MAX_COLUMN
+#if !defined(SQLITE_MAX_COLUMN)
 # define SQLITE_MAX_COLUMN 2000
+#elif SQLITE_MAX_COLUMN>32767
+# error SQLITE_MAX_COLUMN may not exceed 32767
 #endif
 
 /*
@@ -88,9 +97,13 @@
 
 /*
 ** The maximum number of arguments to an SQL function.
+**
+** This value has a hard upper limit of 32767 due to storage
+** constraints (it needs to fit inside a i16).  We keep it
+** lower than that to prevent abuse.
 */
 #ifndef SQLITE_MAX_FUNCTION_ARG
-# define SQLITE_MAX_FUNCTION_ARG 127
+# define SQLITE_MAX_FUNCTION_ARG 1000
 #endif
 
 /*
@@ -187,7 +200,7 @@
 ** max_page_count macro.
 */
 #ifndef SQLITE_MAX_PAGE_COUNT
-# define SQLITE_MAX_PAGE_COUNT 1073741823
+# define SQLITE_MAX_PAGE_COUNT 0xfffffffe /* 4294967294 */
 #endif
 
 /*

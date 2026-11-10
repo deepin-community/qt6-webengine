@@ -37,7 +37,7 @@ typedef struct FIO_prefs_s {
     int sparseFileSupport;   /* 0: no sparse allowed; 1: auto (file yes, stdout no); 2: force sparse */
     int dictIDFlag;
     int checksumFlag;
-    int blockSize;
+    int jobSize;
     int overlapLog;
     int adaptiveMode;
     int useRowMatchFinder;
@@ -53,7 +53,7 @@ typedef struct FIO_prefs_s {
     size_t targetCBlockSize;
     int srcSizeHint;
     int testMode;
-    ZSTD_paramSwitch_e literalCompressionMode;
+    ZSTD_ParamSwitch_e literalCompressionMode;
 
     /* IO preferences */
     int removeSrcFile;
@@ -69,7 +69,7 @@ typedef struct FIO_prefs_s {
     int contentSize;
     int allowBlockDevices;
     int passThrough;
-    ZSTD_paramSwitch_e mmapDict;
+    ZSTD_ParamSwitch_e mmapDict;
 } FIO_prefs_t;
 
 typedef enum {FIO_mallocDict, FIO_mmapDict} FIO_dictBufferType_t;

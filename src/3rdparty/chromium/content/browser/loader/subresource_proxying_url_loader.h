@@ -85,8 +85,6 @@ class CONTENT_EXPORT SubresourceProxyingURLLoader
       const std::optional<GURL>& new_url) override;
   void SetPriority(net::RequestPriority priority,
                    int intra_priority_value) override;
-  void PauseReadingBodyFromNet() override;
-  void ResumeReadingBodyFromNet() override;
 
   // network::mojom::URLLoaderClient overrides:
   void OnReceiveEarlyHints(network::mojom::EarlyHintsPtr early_hints) override;
@@ -116,6 +114,10 @@ class CONTENT_EXPORT SubresourceProxyingURLLoader
   std::vector<std::unique_ptr<Interceptor>> interceptors_;
 
   mojo::Receiver<network::mojom::URLLoaderClient> client_receiver_{this};
+
+  // Whether a redirect is currently pending. If true, the next call from the
+  // renderer should be FollowRedirect().
+  bool redirect_pending_ = false;
 };
 
 }  // namespace content

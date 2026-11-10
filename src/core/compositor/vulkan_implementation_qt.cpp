@@ -1,10 +1,12 @@
 // Copyright (C) 2022 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:critical reason:execute-external-code
 
 #include "vulkan_implementation_qt.h"
 
 #include "base/environment.h"
 #include "base/logging.h"
+#include "base/notimplemented.h"
 #include "gpu/vulkan/vulkan_image.h"
 #include "gpu/vulkan/vulkan_surface.h"
 #include "gpu/vulkan/vulkan_util.h"
@@ -27,7 +29,9 @@ bool VulkanImplementationQt::InitializeVulkanInstance(bool /*using_surface*/)
 
     auto env = base::Environment::Create();
     std::string vulkan_path;
-    if (!env->GetVar("QT_VULKAN_LIB", &vulkan_path)) {
+    if (auto opt = env->GetVar("QT_VULKAN_LIB")) {
+        vulkan_path = *opt;
+    } else {
 #if BUILDFLAG(IS_WIN)
         vulkan_path = "vulkan-1.dll";
 #else
@@ -146,7 +150,7 @@ std::unique_ptr<VulkanImage> VulkanImplementationQt::CreateImageFromGpuMemoryHan
     constexpr auto kUsage =
         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
         VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-    auto tiling = gmb_handle.native_pixmap_handle.modifier ==
+    auto tiling = gmb_handle.native_pixmap_handle().modifier ==
                           gfx::NativePixmapHandle::kNoModifier
                       ? VK_IMAGE_TILING_OPTIMAL
                       : VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;

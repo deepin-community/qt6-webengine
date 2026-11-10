@@ -6,18 +6,16 @@ import * as Common from '../../core/common/common.js';
 import * as Host from '../../core/host/host.js';
 import * as Platform from '../../core/platform/platform.js';
 import * as SDK from '../../core/sdk/sdk.js';
+import * as TextUtils from '../../models/text_utils/text_utils.js';
 import * as Workspace from '../../models/workspace/workspace.js';
 import * as LighthouseReport from '../../third_party/lighthouse/report/report.js';
 import * as Components from '../../ui/legacy/components/utils/utils.js';
 import * as UI from '../../ui/legacy/legacy.js';
 import * as ThemeSupport from '../../ui/legacy/theme_support/theme_support.js';
-import * as Timeline from '../timeline/timeline.js';
-import {
-  type RunnerResultArtifacts,
-  type NodeDetailsJSON,
-  type SourceLocationDetailsJSON,
-  type ReportJSON,
-} from './LighthouseReporterTypes.js';
+import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
+
+import type {
+  NodeDetailsJSON, ReportJSON, RunnerResultArtifacts, SourceLocationDetailsJSON} from './LighthouseReporterTypes.js';
 
 const MaxLengthForLinks = 40;
 
@@ -31,11 +29,10 @@ export class LighthouseReportRenderer {
       HTMLElement {
     let onViewTrace: (() => Promise<void>)|undefined = undefined;
     if (artifacts) {
-      onViewTrace = async(): Promise<void> => {
-        const defaultPassTrace = artifacts.traces.defaultPass;
+      onViewTrace = async () => {
         Host.userMetrics.actionTaken(Host.UserMetrics.Action.LighthouseViewTrace);
-        await UI.InspectorView.InspectorView.instance().showPanel('timeline');
-        Timeline.TimelinePanel.TimelinePanel.instance().loadFromEvents(defaultPassTrace.traceEvents);
+        const trace = new SDK.TraceObject.TraceObject(artifacts.Trace.traceEvents);
+        void Common.Revealer.reveal(trace);
       };
     }
 
@@ -45,8 +42,10 @@ export class LighthouseReportRenderer {
       const timestamp = Platform.DateUtilities.toISO8601Compact(new Date(lhr.fetchTime));
       const ext = blob.type.match('json') ? '.json' : '.html';
       const basename = `${sanitizedDomain}-${timestamp}${ext}` as Platform.DevToolsPath.RawPathString;
-      const text = await blob.text();
-      await Workspace.FileManager.FileManager.instance().save(basename, text, true /* forceSaveAs */);
+      const base64 = await blob.arrayBuffer().then(Common.Base64.encode);
+      await Workspace.FileManager.FileManager.instance().save(
+          basename, new TextUtils.ContentData.ContentData(base64, /* isBase64= */ true, blob.type),
+          /* forceSaveAs=*/ true);
       Workspace.FileManager.FileManager.instance().close(basename);
     }
 
@@ -90,10 +89,14 @@ export class LighthouseReportRenderer {
         ThemeSupport.ThemeChangeEvent.eventName, updateDarkModeIfNecessary);
     updateDarkModeIfNecessary();
 
-    // @ts-ignore Expose LHR on DOM for e2e tests
+    // @ts-expect-error Expose LHR on DOM for e2e tests
     reportEl._lighthouseResultForTesting = lhr;
-    // @ts-ignore Expose Artifacts on DOM for e2e tests
+    // @ts-expect-error Expose Artifacts on DOM for e2e tests
     reportEl._lighthouseArtifactsForTesting = artifacts;
+
+    // This should block the report rendering as we need visual logging ready
+    // before the user starts interacting with the report.
+    LighthouseReportRenderer.installVisualLogging(reportEl);
 
     // Linkifying requires the target be loaded. Do not block the report
     // from rendering, as this is just an embellishment and the main target
@@ -178,6 +181,47 @@ export class LighthouseReportRenderer {
       UI.Tooltip.Tooltip.install(origHTMLElement, '');
       origHTMLElement.textContent = '';
       origHTMLElement.appendChild(element);
+    }
+  }
+
+  static installVisualLogging(el: Element): void {
+    for (const auditEl of el.getElementsByClassName('lh-audit')) {
+      const summaryEl = auditEl.querySelector('summary');
+      if (!summaryEl) {
+        continue;
+      }
+
+      const id = auditEl.id;
+      if (!id) {
+        continue;
+      }
+
+      auditEl.setAttribute('jslog', `${VisualLogging.item(`lighthouse.audit.${id}`)}`);
+
+      let state: string|undefined;
+      for (const className of auditEl.classList) {
+        switch (className) {
+          case 'lh-audit--pass':
+            state = 'pass';
+            break;
+          case 'lh-audit--average':
+            state = 'average';
+            break;
+          case 'lh-audit--fail':
+            state = 'fail';
+            break;
+          case 'lh-audit--informative':
+            state = 'informative';
+            break;
+        }
+      }
+
+      if (!state) {
+        continue;
+      }
+
+      summaryEl.setAttribute(
+          'jslog', `${VisualLogging.expand(`lighthouse.audit-summary.${state}`).track({click: true})}`);
     }
   }
 }

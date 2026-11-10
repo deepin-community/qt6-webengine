@@ -46,6 +46,7 @@ import (
 	"dawn.googlesource.com/dawn/tools/src/container"
 	"dawn.googlesource.com/dawn/tools/src/cts/query"
 	"dawn.googlesource.com/dawn/tools/src/fileutils"
+	"dawn.googlesource.com/dawn/tools/src/oswrapper"
 	"dawn.googlesource.com/dawn/tools/src/subcmd"
 	luciauth "go.chromium.org/luci/auth"
 	"go.chromium.org/luci/auth/client/authcli"
@@ -60,6 +61,7 @@ type cmd struct {
 		source    common.ResultSource
 		auth      authcli.Flags
 		keepAlive bool
+		testQuery string
 	}
 }
 
@@ -82,11 +84,14 @@ mode:
 
 func (c *cmd) RegisterFlags(ctx context.Context, cfg common.Config) ([]string, error) {
 	c.flags.source.RegisterFlags(cfg)
-	c.flags.auth.Register(flag.CommandLine, auth.DefaultAuthOptions())
+	c.flags.auth.Register(flag.CommandLine, auth.DefaultAuthOptions(cfg.OsWrapper))
 	flag.BoolVar(&c.flags.keepAlive, "keep-alive", false, "keep the server alive after the page has been closed")
+	flag.StringVar(&c.flags.testQuery, "test-query", "webgpu:*", "cts test query to generate test list")
 	return []string{"[cases | timing]"}, nil
 }
 
+// TODO(crbug.com/344014313): Split this up into testable helper functions and
+// add coverage (browser.Open() likely prevents testing of Run() itself).
 func (c *cmd) Run(ctx context.Context, cfg common.Config) error {
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
@@ -96,7 +101,7 @@ func (c *cmd) Run(ctx context.Context, cfg common.Config) error {
 	var err error
 	switch flag.Arg(0) {
 	case "case", "cases":
-		data, err = loadCasesData()
+		data, err = loadCasesData(c.flags.testQuery, cfg.OsWrapper)
 
 	case "time", "times", "timing":
 		// Validate command line arguments
@@ -153,19 +158,16 @@ func (c *cmd) Run(ctx context.Context, cfg common.Config) error {
 	}
 }
 
+// TODO(crbug.com/344014313): Add unittests for this function.
 // loadCasesData creates the JSON payload for a cases visualization
-func loadCasesData() (string, error) {
-	testListPath := filepath.Join(fileutils.DawnRoot(), common.TestListRelPath)
-
-	file, err := os.Open(testListPath)
+func loadCasesData(testQuery string, fsReader oswrapper.FilesystemReader) (string, error) {
+	testlist, err := common.GenTestList(context.Background(), common.DefaultCTSPath(fsReader), fileutils.NodePath(fsReader), testQuery)
 	if err != nil {
-		return "", fmt.Errorf("failed to open test list: %w", err)
+		return "", err
 	}
-	defer file.Close()
-
 	queryCounts := container.NewMap[string, int]()
 
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(strings.NewReader(testlist))
 	for scanner.Scan() {
 		if name := strings.TrimSpace(scanner.Text()); name != "" {
 			q := query.Parse(name)
@@ -184,7 +186,7 @@ func loadCasesData() (string, error) {
 	data := &strings.Builder{}
 	fmt.Fprint(data, `{`)
 	fmt.Fprint(data, `"desc":"Treemap visualization of the CTS test cases.<br>Area represents total number of test cases.<br>Color represents the number of parameterized test cases for a single test.",`)
-	fmt.Fprint(data, `"limit": 5000,`)
+	fmt.Fprintf(data, `"limit": 1000,`)
 	fmt.Fprint(data, `"data":[`)
 	fmt.Fprint(data, `["Query", "Parent", "Number of tests", "Color"],`)
 	fmt.Fprint(data, `["root", null, 0, 0]`)

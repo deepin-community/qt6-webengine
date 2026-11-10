@@ -9,14 +9,16 @@
 #include "base/process/process.h"
 #include "base/process/process_handle.h"
 #include "base/process/process_metrics.h"
+#include "base/types/expected.h"
 #include "build/build_config.h"
 #include "components/performance_manager/public/graph/process_node.h"
 #include "components/performance_manager/resource_attribution/cpu_measurement_monitor.h"
+#include "components/performance_manager/resource_attribution/performance_manager_aliases.h"
 #include "components/performance_manager/resource_attribution/query_scheduler.h"
 #include "content/public/browser/browser_child_process_host.h"
 #include "content/public/common/process_type.h"
 
-namespace performance_manager::resource_attribution {
+namespace resource_attribution {
 
 namespace {
 
@@ -27,7 +29,8 @@ class CPUMeasurementDelegateImpl final : public CPUMeasurementDelegate {
   explicit CPUMeasurementDelegateImpl(const ProcessNode* process_node);
   ~CPUMeasurementDelegateImpl() final = default;
 
-  base::TimeDelta GetCumulativeCPUUsage() final;
+  base::expected<base::TimeDelta, ProcessCPUUsageError> GetCumulativeCPUUsage()
+      final;
 
  private:
   std::unique_ptr<base::ProcessMetrics> process_metrics_;
@@ -44,12 +47,9 @@ CPUMeasurementDelegateImpl::CPUMeasurementDelegateImpl(
 #endif
 }
 
-base::TimeDelta CPUMeasurementDelegateImpl::GetCumulativeCPUUsage() {
-#if BUILDFLAG(IS_WIN)
-  return process_metrics_->GetPreciseCumulativeCPUUsage();
-#else
+base::expected<base::TimeDelta, CPUMeasurementDelegate::ProcessCPUUsageError>
+CPUMeasurementDelegateImpl::GetCumulativeCPUUsage() {
   return process_metrics_->GetCumulativeCPUUsage();
-#endif
 }
 
 // The default production factory for CPUMeasurementDelegateImpl objects.
@@ -66,20 +66,17 @@ class CPUMeasurementDelegateFactoryImpl final
 
 bool CPUMeasurementDelegateFactoryImpl::ShouldMeasureProcess(
     const ProcessNode* process_node) {
-  // The process start time is not available until the ProcessId is assigned.
-  if (process_node->GetProcessId() == base::kNullProcessId) {
+#if BUILDFLAG(IS_ANDROID)
+  // On Android, sandbox restrictions prevent the browser process from reading
+  // /proc/<pid>/stat of other processes. Bail out early to avoid the overhead
+  // of trying and failing to read the file.
+  // TODO(crbug.com/421901748): Implement CPU measurement of child processes on
+  // Android.
+  if (process_node->GetProcessId() != base::GetCurrentProcId()) {
     return false;
   }
-  // This can be called from OnProcessLifetimeChange after a process exits.
-  // Only handle process start notifications (which is when the pid is
-  // assigned), not exit notifications. Note the pid can be reassigned if a
-  // process dies and a new one is started for the same ProcessNode - in that
-  // case MonitorCPUUsage will reset the measurements and start monitoring the
-  // new process from scratch.
-  if (!process_node->GetProcess().IsValid()) {
-    return false;
-  }
-  return true;
+#endif
+  return ProcessNodeHasRunningProcess(process_node);
 }
 
 std::unique_ptr<CPUMeasurementDelegate>
@@ -107,4 +104,23 @@ CPUMeasurementDelegate::Factory* CPUMeasurementDelegate::GetDefaultFactory() {
   return default_factory.get();
 }
 
-}  // namespace performance_manager::resource_attribution
+// static
+bool CPUMeasurementDelegate::Factory::ProcessNodeHasRunningProcess(
+    const performance_manager::ProcessNode* process_node) {
+  // The process start time is not available until the ProcessId is assigned.
+  if (process_node->GetProcessId() == base::kNullProcessId) {
+    return false;
+  }
+  // ShouldMeasureProcess() can be called from OnProcessLifetimeChange after a
+  // process exits. Only handle process start notifications (which is when the
+  // pid is assigned), not exit notifications. Note the pid can be reassigned if
+  // a process dies and a new one is started for the same ProcessNode - in that
+  // case MonitorCPUUsage will reset the measurements and start monitoring the
+  // new process from scratch.
+  if (!process_node->GetProcess().IsValid()) {
+    return false;
+  }
+  return true;
+}
+
+}  // namespace resource_attribution

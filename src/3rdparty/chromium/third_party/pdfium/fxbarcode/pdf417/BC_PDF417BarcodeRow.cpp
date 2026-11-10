@@ -22,8 +22,9 @@
 
 #include "fxbarcode/pdf417/BC_PDF417BarcodeRow.h"
 
-#include "core/fxcrt/span_util.h"
-#include "third_party/base/check_op.h"
+#include <algorithm>
+
+#include "core/fxcrt/check_op.h"
 
 CBC_BarcodeRow::CBC_BarcodeRow(size_t width)
     : row_(FixedSizeDataVector<uint8_t>::Zeroed(width)) {}
@@ -33,6 +34,6 @@ CBC_BarcodeRow::~CBC_BarcodeRow() = default;
 void CBC_BarcodeRow::AddBar(bool black, size_t width) {
   pdfium::span<uint8_t> available = row_.subspan(offset_);
   CHECK_LE(width, available.size());
-  fxcrt::spanset(available.first(width), black ? 1 : 0);
+  std::ranges::fill(available.first(width), black ? 1 : 0);
   offset_ += width;
 }

@@ -5,6 +5,8 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_BINDINGS_CORE_V8_ITERABLE_H_
 #define THIRD_PARTY_BLINK_RENDERER_BINDINGS_CORE_V8_ITERABLE_H_
 
+#include <concepts>
+
 #include "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_for_each_iterator_callback.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
@@ -20,7 +22,7 @@ namespace {
 
 // Helper class to construct a type T without an argument. Note that IDL
 // enumeration types are not default-constructible on purpose.
-template <typename T, typename unused = void>
+template <typename T>
 class IDLTypeDefaultConstructible {
   STACK_ALLOCATED();
 
@@ -29,9 +31,8 @@ class IDLTypeDefaultConstructible {
 };
 
 template <typename T>
-class IDLTypeDefaultConstructible<
-    T,
-    std::enable_if_t<std::is_base_of_v<EnumerationBase, T>>> {
+  requires(std::derived_from<T, EnumerationBase>)
+class IDLTypeDefaultConstructible<T> {
   STACK_ALLOCATED();
 
  public:
@@ -91,7 +92,6 @@ class PairSyncIterationSource : public SyncIteratorBase::IterationSourceBase {
     }
 
     NOTREACHED();
-    return {};
   }
 
   void ForEach(ScriptState* script_state,
@@ -99,7 +99,7 @@ class PairSyncIterationSource : public SyncIteratorBase::IterationSourceBase {
                V8ForEachIteratorCallback* callback,
                const ScriptValue& this_arg,
                ExceptionState& exception_state) {
-    v8::TryCatch try_catch(script_state->GetIsolate());
+    TryRethrowScope rethrow_scope(script_state->GetIsolate(), exception_state);
 
     v8::Local<v8::Value> v8_callback_this_value = this_arg.V8Value();
     IDLTypeDefaultConstructible<KeyType> key;
@@ -121,7 +121,6 @@ class PairSyncIterationSource : public SyncIteratorBase::IterationSourceBase {
                        ScriptValue(script_state->GetIsolate(), v8_key),
                        this_value)
               .IsNothing()) {
-        exception_state.RethrowV8Exception(try_catch.Exception());
         return;
       }
     }
@@ -161,7 +160,6 @@ class ValueSyncIterationSource : public SyncIteratorBase::IterationSourceBase {
     }
 
     NOTREACHED();
-    return {};
   }
 
   void ForEach(ScriptState* script_state,
@@ -169,7 +167,7 @@ class ValueSyncIterationSource : public SyncIteratorBase::IterationSourceBase {
                V8ForEachIteratorCallback* callback,
                const ScriptValue& this_arg,
                ExceptionState& exception_state) {
-    v8::TryCatch try_catch(script_state->GetIsolate());
+    TryRethrowScope rethrow_scope(script_state->GetIsolate(), exception_state);
 
     v8::Local<v8::Value> v8_callback_this_value = this_arg.V8Value();
     IDLTypeDefaultConstructible<ValueType> value;
@@ -186,7 +184,6 @@ class ValueSyncIterationSource : public SyncIteratorBase::IterationSourceBase {
               ->Invoke(v8_callback_this_value, script_value, script_value,
                        this_value)
               .IsNothing()) {
-        exception_state.RethrowV8Exception(try_catch.Exception());
         return;
       }
     }

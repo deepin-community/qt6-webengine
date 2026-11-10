@@ -12,6 +12,7 @@
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "./vp9_rtcd.h"
 #include "./vpx_dsp_rtcd.h"
@@ -128,15 +129,24 @@ static int mv_refs_rt(VP9_COMP *cpi, const VP9_COMMON *cm, const MACROBLOCK *x,
       !cpi->svc.layer_context[cpi->svc.temporal_layer_id].is_key_frame &&
       ref_frame == LAST_FRAME) {
     // Get base layer mv.
-    MV_REF *candidate =
-        &cm->prev_frame
-             ->mvs[(mi_col >> 1) + (mi_row >> 1) * (cm->mi_cols >> 1)];
-    if (candidate->mv[0].as_int != INVALID_MV) {
-      base_mv->as_mv.row = (candidate->mv[0].as_mv.row * 2);
-      base_mv->as_mv.col = (candidate->mv[0].as_mv.col * 2);
-      clamp_mv_ref(&base_mv->as_mv, xd);
-    } else {
-      base_mv->as_int = INVALID_MV;
+    const int prev_layer = cpi->svc.spatial_layer_id - 1;
+    const int index =
+        (mi_col >> 1) + (mi_row >> 1) * cpi->svc.mi_cols[prev_layer];
+    // prev_frame->mvs[] is allocated to size mi_cols * mi_rows corresponding
+    // to the previous spatial layer, so the index check is against
+    // svc.mi_col/rows[prev_layer].
+    if (index < cpi->svc.mi_cols[prev_layer] * cpi->svc.mi_rows[prev_layer]) {
+      MV_REF *candidate = &cm->prev_frame->mvs[index];
+      // Avoid using base_mv if scaled mv is out of range, for either component.
+      if (candidate->mv[0].as_int != INVALID_MV &&
+          abs(candidate->mv[0].as_mv.row) <= INT16_MAX >> 1 &&
+          abs(candidate->mv[0].as_mv.col) <= INT16_MAX >> 1) {
+        base_mv->as_mv.row = candidate->mv[0].as_mv.row * 2;
+        base_mv->as_mv.col = candidate->mv[0].as_mv.col * 2;
+        clamp_mv_ref(&base_mv->as_mv, xd);
+      } else {
+        base_mv->as_int = INVALID_MV;
+      }
     }
   }
 
@@ -173,6 +183,8 @@ static int combined_motion_search(VP9_COMP *cpi, MACROBLOCK *x,
   const YV12_BUFFER_CONFIG *scaled_ref_frame =
       vp9_get_scaled_ref_frame(cpi, ref);
   if (scaled_ref_frame) {
+    assert(scaled_ref_frame->y_width == cpi->Source->y_width &&
+           scaled_ref_frame->y_height == cpi->Source->y_height);
     int i;
     // Swap out the reference frame for a version that's been scaled to
     // match the resolution of the current frame, allowing the existing
@@ -1169,6 +1181,7 @@ void vp9_pick_intra_mode(VP9_COMP *cpi, MACROBLOCK *x, RD_COST *rd_cost,
   const PREDICTION_MODE A = vp9_above_block_mode(mic, above_mi, 0);
   const PREDICTION_MODE L = vp9_left_block_mode(mic, left_mi, 0);
   bmode_costs = cpi->y_mode_costs[A][L];
+  assert(bsize >= BLOCK_8X8);
 
   (void)ctx;
   vp9_rd_cost_reset(&best_rdc);
@@ -1698,7 +1711,7 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
   MV_REFERENCE_FRAME usable_ref_frame, second_ref_frame;
   int_mv frame_mv[MB_MODE_COUNT][MAX_REF_FRAMES];
   uint8_t mode_checked[MB_MODE_COUNT][MAX_REF_FRAMES];
-  struct buf_2d yv12_mb[4][MAX_MB_PLANE];
+  struct buf_2d yv12_mb[4][MAX_MB_PLANE] = { 0 };
   RD_COST this_rdc, best_rdc;
   // var_y and sse_y are saved to be used in skipping checking
   unsigned int var_y = UINT_MAX;
@@ -2198,8 +2211,9 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
           if (!force_skip_low_temp_var && usable_ref_frame > LAST_FRAME) {
             i = (ref_frame == LAST_FRAME) ? GOLDEN_FRAME : LAST_FRAME;
             if ((cpi->ref_frame_flags & ref_frame_to_flag(i)))
-              if (x->pred_mv_sad[ref_frame] > (x->pred_mv_sad[i] << 1))
-                ref_frame_skip_mask |= (1 << ref_frame);
+              if (x->pred_mv_sad[i] < INT_MAX)
+                if (x->pred_mv_sad[ref_frame] > (x->pred_mv_sad[i] << 1))
+                  ref_frame_skip_mask |= (1 << ref_frame);
           }
         } else if (!cpi->rc.is_src_frame_alt_ref &&
                    !(frame_mv[this_mode][ref_frame].as_int == 0 &&
@@ -2207,8 +2221,10 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
           int ref1 = (ref_frame == GOLDEN_FRAME) ? LAST_FRAME : GOLDEN_FRAME;
           int ref2 = (ref_frame == ALTREF_FRAME) ? LAST_FRAME : ALTREF_FRAME;
           if (((cpi->ref_frame_flags & ref_frame_to_flag(ref1)) &&
+               x->pred_mv_sad[ref1] < INT_MAX &&
                (x->pred_mv_sad[ref_frame] > (x->pred_mv_sad[ref1] << 1))) ||
               ((cpi->ref_frame_flags & ref_frame_to_flag(ref2)) &&
+               x->pred_mv_sad[ref2] < INT_MAX &&
                (x->pred_mv_sad[ref_frame] > (x->pred_mv_sad[ref2] << 1))))
             ref_frame_skip_mask |= (1 << ref_frame);
         }
@@ -2272,6 +2288,18 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
     // need to compute best_pred_sad which is only used to skip golden NEWMV.
     if (use_golden_nonzeromv && this_mode == NEWMV && ref_frame == LAST_FRAME &&
         frame_mv[NEWMV][LAST_FRAME].as_int != INVALID_MV) {
+      struct buf_2d backup_yv12[MAX_MB_PLANE] = { { 0, 0 } };
+      const YV12_BUFFER_CONFIG *scaled_ref_frame =
+          vp9_get_scaled_ref_frame(cpi, ref_frame);
+      if (scaled_ref_frame) {
+        assert(scaled_ref_frame->y_width == cpi->Source->y_width &&
+               scaled_ref_frame->y_height == cpi->Source->y_height);
+        // Swap out the reference frame for a version that's been scaled to
+        // match the resolution of the current frame, allowing the existing
+        // motion search code to be used without additional modifications.
+        for (i = 0; i < MAX_MB_PLANE; i++) backup_yv12[i] = xd->plane[i].pre[0];
+        vp9_setup_pre_planes(xd, 0, scaled_ref_frame, mi_row, mi_col, NULL);
+      }
       const int pre_stride = xd->plane[0].pre[0].stride;
       const uint8_t *const pre_buf =
           xd->plane[0].pre[0].buf +
@@ -2280,6 +2308,9 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
       best_pred_sad = cpi->fn_ptr[bsize].sdf(
           x->plane[0].src.buf, x->plane[0].src.stride, pre_buf, pre_stride);
       x->pred_mv_sad[LAST_FRAME] = best_pred_sad;
+      if (scaled_ref_frame) {
+        for (i = 0; i < MAX_MB_PLANE; i++) xd->plane[i].pre[0] = backup_yv12[i];
+      }
     }
 
     if (this_mode != NEARESTMV && !comp_pred &&

@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:critical reason:data-parser
 
 #ifndef QWEBENGINEVIEW_P_H
 #define QWEBENGINEVIEW_P_H
@@ -70,7 +71,7 @@ public:
     QWebEngineContextMenuRequest *lastContextMenuRequest() const override;
     QWebEnginePage *createPageForWindow(QWebEnginePage::WebWindowType type) override;
     QObject *accessibilityParentObject() override;
-    void didPrintPage(QPrinter *&printer, QSharedPointer<QByteArray> result) override;
+    QThread *didPrintPage(QPrinter *&printer, std::shared_ptr<QByteArray> result) override;
     void didPrintPageToPdf(const QString &filePath, bool success) override;
     void printRequested() override;
     void printRequestedByFrame(QWebEngineFrame frame) override;

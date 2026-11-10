@@ -35,7 +35,8 @@ enum class ElementOfImplCorpusType : size_t;
 
 template <typename T>
 class ElementOfImpl
-    : public DomainBase<ElementOfImpl<T>, T, ElementOfImplCorpusType> {
+    : public domain_implementor::DomainBase<ElementOfImpl<T>, T,
+                                            ElementOfImplCorpusType> {
  public:
   using typename ElementOfImpl::DomainBase::corpus_type;
   using typename ElementOfImpl::DomainBase::value_type;
@@ -50,7 +51,8 @@ class ElementOfImpl
     return corpus_type{absl::Uniform<size_t>(prng, 0, values_.size())};
   }
 
-  void Mutate(corpus_type& val, absl::BitGenRef prng, bool only_shrink) {
+  void Mutate(corpus_type& val, absl::BitGenRef prng,
+              const domain_implementor::MutationMetadata&, bool only_shrink) {
     if (values_.size() <= 1) return;
     if (only_shrink) {
       size_t index = static_cast<size_t>(val);

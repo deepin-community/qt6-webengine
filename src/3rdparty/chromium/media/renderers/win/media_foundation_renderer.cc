@@ -8,6 +8,7 @@
 #include <mferror.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -17,17 +18,21 @@
 #include "base/numerics/clamped_math.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/process/process_handle.h"
+#include "base/profiler/frame.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/time/time.h"
 #include "base/win/scoped_bstr.h"
 #include "base/win/scoped_hdc.h"
 #include "base/win/scoped_propvariant.h"
 #include "base/win/wrapped_window_proc.h"
+#include "media/base/buffering_state.h"
 #include "media/base/cdm_context.h"
 #include "media/base/media_log.h"
 #include "media/base/media_switches.h"
+#include "media/base/pipeline_status.h"
 #include "media/base/timestamp_constants.h"
 #include "media/base/win/dxgi_device_manager.h"
 #include "media/base/win/hresults.h"
@@ -93,6 +98,12 @@ const std::string GetErrorReasonString(
     STRINGIFY(kFailedToInitDCompTextureWrapper);
     STRINGIFY(kFailedToSetPlaybackRate);
     STRINGIFY(kFailedToGetMediaEngineEx);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    // "This return value is no longer used, but may occur in older versions of
+    // windows."
+    STRINGIFY(kOnDCompSurfaceReceivedError);
+#pragma clang diagnostic pop
   }
 #undef STRINGIFY
 }
@@ -226,12 +237,23 @@ HRESULT MediaFoundationRenderer::CreateMediaEngine(
     }
   }
 
-  // TODO(frankli): Only call the followings when there is a video stream.
-  RETURN_IF_FAILED(InitializeDXGIDeviceManager());
-  RETURN_IF_FAILED(InitializeVirtualVideoWindow());
+  std::optional<media::VideoDecoderConfig> video_decoder_config = std::nullopt;
+  std::optional<media::AudioDecoderConfig> audio_decoder_config = std::nullopt;
+
+  // Only call the following when there is a video stream.
+  for (media::DemuxerStream* stream : media_resource->GetAllStreams()) {
+    if (stream->type() == media::DemuxerStream::VIDEO) {
+      video_decoder_config = stream->video_decoder_config();
+      RETURN_IF_FAILED(InitializeDXGIDeviceManager());
+      RETURN_IF_FAILED(InitializeVirtualVideoWindow());
+      break;
+    } else if (stream->type() == media::DemuxerStream::AUDIO) {
+      audio_decoder_config = stream->audio_decoder_config();
+    }
+  }
 
   // The OnXxx() callbacks are invoked by MF threadpool thread, we would like
-  // to bind the callbacks to |task_runner_| MessgaeLoop.
+  // to bind the callbacks to |task_runner_| MessageLoop.
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
   auto weak_this = weak_factory_.GetWeakPtr();
   RETURN_IF_FAILED(MakeAndInitialize<MediaEngineNotifyImpl>(
@@ -253,7 +275,8 @@ HRESULT MediaFoundationRenderer::CreateMediaEngine(
       base::BindPostTaskToCurrentDefault(base::BindRepeating(
           &MediaFoundationRenderer::OnFrameStepCompleted, weak_this)),
       base::BindPostTaskToCurrentDefault(base::BindRepeating(
-          &MediaFoundationRenderer::OnTimeUpdate, weak_this))));
+          &MediaFoundationRenderer::OnTimeUpdate, weak_this)),
+      video_decoder_config, audio_decoder_config));
 
   ComPtr<IMFAttributes> creation_attributes;
   RETURN_IF_FAILED(MFCreateAttributes(&creation_attributes, 6));
@@ -274,8 +297,8 @@ HRESULT MediaFoundationRenderer::CreateMediaEngine(
     RETURN_IF_FAILED(creation_attributes->SetUnknown(
         MF_MEDIA_ENGINE_DXGI_MANAGER, dxgi_device_manager_.Get()));
 
-    // TODO(crbug.com/1276067): We'll investigate scenarios to see if we can use
-    // the on-screen video window size and not the native video size.
+    // TODO(crbug.com/40808656): We'll investigate scenarios to see if we can
+    // use the on-screen video window size and not the native video size.
     if (rendering_mode_ == MediaFoundationRenderingMode::FrameServer) {
       gfx::Size max_video_size;
       bool has_video = false;
@@ -308,16 +331,21 @@ HRESULT MediaFoundationRenderer::CreateMediaEngine(
   RETURN_IF_FAILED(CoCreateInstance(CLSID_MFMediaEngineClassFactory, nullptr,
                                     CLSCTX_INPROC_SERVER,
                                     IID_PPV_ARGS(&class_factory)));
-  // TODO(frankli): Use MF_MEDIA_ENGINE_REAL_TIME_MODE for low latency hint
-  // instead of 0.
-  RETURN_IF_FAILED(class_factory->CreateInstance(0, creation_attributes.Get(),
-                                                 &mf_media_engine_));
 
-  auto media_resource_type_ = media_resource->GetType();
-  if (media_resource_type_ != MediaResource::Type::kStream) {
-    DLOG(ERROR) << "MediaResource is not of STREAM";
-    return E_INVALIDARG;
+  DWORD creation_flags = 0;
+  // Enable low-latency mode if latency hint is low.
+  if (latency_hint_.has_value() && (*latency_hint_ <= base::Milliseconds(50))) {
+    creation_flags |= MF_MEDIA_ENGINE_REAL_TIME_MODE;
   }
+  RETURN_IF_FAILED(class_factory->CreateInstance(
+      creation_flags, creation_attributes.Get(), &mf_media_engine_));
+
+  // The Media Foundation Media Engine has an initial playback rate of 1.0, but
+  // chromium uses an initial playback rate of 0.0. The Media Engine's topology
+  // may not be completely loaded at this point - so we use
+  // SetDefaultPlaybackRate as using SetPlaybackRate may be overwritten while
+  // the topology is loading.
+  RETURN_IF_FAILED(mf_media_engine_->SetDefaultPlaybackRate(0.0));
 
   RETURN_IF_FAILED(MakeAndInitialize<MediaFoundationSourceWrapper>(
       &mf_source_, media_resource, media_log_.get(), task_runner_));
@@ -405,7 +433,7 @@ HRESULT MediaFoundationRenderer::InitializeDXGIDeviceManager() {
   RETURN_IF_FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)));
 
   Microsoft::WRL::ComPtr<IDXGIAdapter> adapter_to_use;
-  // TODO(crbug.com/1426249): Need to handle the case when Adapter LUID is
+  // TODO(crbug.com/40899242): Need to handle the case when Adapter LUID is
   // specific per instance of the video playback. This will now allow all
   // instances to use the default DXGI device manager.
   if (gpu_process_adapter_luid_.LowPart || gpu_process_adapter_luid_.HighPart) {
@@ -421,11 +449,33 @@ HRESULT MediaFoundationRenderer::InitializeDXGIDeviceManager() {
     }
   }
 
-  RETURN_IF_FAILED(D3D11CreateDevice(
+  HRESULT hr = D3D11CreateDevice(
       adapter_to_use.Get(),
       adapter_to_use ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE, 0,
       creation_flags, feature_levels, std::size(feature_levels),
-      D3D11_SDK_VERSION, &d3d11_device, nullptr, nullptr));
+      D3D11_SDK_VERSION, &d3d11_device, nullptr, nullptr);
+  if (FAILED(hr)) {
+    base::UmaHistogramSparse(
+        "Media.MediaFoundationRenderer.D3D11CreateDeviceFailed", hr);
+    if (hr == DXGI_ERROR_UNSUPPORTED) {
+      // If hardware device creation fails, try creating a software device.
+      // HWDRM cases require hardware security, which is not applicable for a
+      // basic software GPU adapter without hardware-level security. Using 0 for
+      // creation_flags is acceptable for basic video rendering, as warp devices
+      // lack video support, and the warp adapter is a software GPU so
+      // D3D11_CREATE_DEVICE_BGRA_SUPPORT and
+      // D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS don't
+      // apply.
+      RETURN_IF_FAILED(D3D11CreateDevice(
+          adapter_to_use.Get(),
+          adapter_to_use ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE,
+          0,
+          /*creation_flags=*/0, feature_levels, std::size(feature_levels),
+          D3D11_SDK_VERSION, &d3d11_device, nullptr, nullptr));
+    } else {
+      RETURN_IF_FAILED(hr);
+    }
+  }
   RETURN_IF_FAILED(media::SetDebugName(d3d11_device.Get(), "Media_MFRenderer"));
 
   ComPtr<ID3D10Multithread> multithreaded_device;
@@ -482,9 +532,15 @@ void MediaFoundationRenderer::SetCdm(CdmContext* cdm_context,
 }
 
 void MediaFoundationRenderer::SetLatencyHint(
-    absl::optional<base::TimeDelta> /*latency_hint*/) {
-  // TODO(frankli): Ensure MFMediaEngine rendering pipeine is in real time mode.
-  NOTIMPLEMENTED() << "We do not use the latency hint today";
+    std::optional<base::TimeDelta> latency_hint) {
+  DVLOG_FUNC(1);
+
+  if (latency_hint.has_value()) {
+    DLOG_IF(WARNING, mf_media_engine_)
+        << "Latency hint is not utilized after MF media engine creation.";
+    CHECK(*latency_hint >= base::Milliseconds(0));
+  }
+  latency_hint_ = latency_hint;
 }
 
 void MediaFoundationRenderer::OnCdmProxyReceived() {
@@ -552,6 +608,16 @@ void MediaFoundationRenderer::SetMediaFoundationRenderingMode(
       hr = mf_media_engine_ex->EnableWindowlessSwapchainMode(
           render_mode == MediaFoundationRenderingMode::DirectComposition);
       if (SUCCEEDED(hr)) {
+        // Set the start time for the rendered video frame detection if for some
+        // reason EnableWindowlessSwapChainMode was set to 0 and back to 1
+        // during playback.
+        if (has_reported_playing_ == true &&
+            rendering_mode_ !=
+                MediaFoundationRenderingMode::DirectComposition &&
+            render_mode == MediaFoundationRenderingMode::DirectComposition) {
+          RestartRenderedVideoFrameDetectionTimerInNotReported();
+        }
+
         rendering_mode_ = render_mode;
         MEDIA_LOG(INFO, media_log_)
             << "Set MediaFoundationRenderingMode: " << rendering_mode_;
@@ -594,9 +660,27 @@ void MediaFoundationRenderer::StartPlayingFrom(base::TimeDelta time) {
 void MediaFoundationRenderer::SetPlaybackRate(double playback_rate) {
   DVLOG_FUNC(2) << "playback_rate=" << playback_rate;
 
-  HRESULT hr = mf_media_engine_->SetPlaybackRate(playback_rate);
+  // If the Media Engine's topology has not finished loading then
+  // the call to SetPlaybackRate may be overwritten. To work around this
+  // we call SetDefaultPlaybackRate which would be picked up when transitioning
+  // to the Play state.
+  HRESULT hr = mf_media_engine_->SetDefaultPlaybackRate(playback_rate);
+  if (FAILED(hr)) {
+    DVLOG(1) << "Failed to set default playback rate: " << PrintHr(hr);
+    OnError(PIPELINE_ERROR_COULD_NOT_RENDER,
+            ErrorReason::kFailedToSetPlaybackRate, hr);
+    return;
+  }
+
+  hr = mf_media_engine_->SetPlaybackRate(playback_rate);
 
   if (SUCCEEDED(hr)) {
+    // Set the start time for the rendered video frame detection if playback
+    // rate was set to 0 and changed to non-zero.
+    if (playback_rate_ == 0.0 && playback_rate > 0.0) {
+      RestartRenderedVideoFrameDetectionTimerInNotReported();
+    }
+
     playback_rate_ = playback_rate;
   } else {
     DVLOG_IF(1, FAILED(hr)) << "Failed to set playback rate: " << PrintHr(hr);
@@ -647,7 +731,7 @@ void MediaFoundationRenderer::GetDCompSurface(GetDCompSurfaceCB callback) {
   std::move(callback).Run(base::win::ScopedHandle(duplicated_handle), "");
 }
 
-// TODO(crbug.com/1070030): Investigate if we need to add
+// TODO(crbug.com/40126181): Investigate if we need to add
 // OnSelectedVideoTracksChanged() to media renderer.mojom.
 void MediaFoundationRenderer::SetVideoStreamEnabled(bool enabled) {
   DVLOG_FUNC(1) << "enabled=" << enabled;
@@ -694,7 +778,7 @@ HRESULT MediaFoundationRenderer::InitializeTexturePool(const gfx::Size& size) {
     return E_UNEXPECTED;
   }
 
-  // TODO(crbug.com/1276067): change |size| to instead use the required
+  // TODO(crbug.com/40808656): change |size| to instead use the required
   // size of the output (for example if the video is only 1280x720 instead
   // of a source frame of 1920x1080 we'd use the 1280x720 texture size).
   // However we also need to investigate the scenario of WebGL and 360 video
@@ -726,6 +810,10 @@ HRESULT MediaFoundationRenderer::UpdateVideoStream(const gfx::Size rect_size) {
   // rect set in SetWindowPos.
   RETURN_IF_FAILED(mf_media_engine_ex->UpdateVideoStream(
       /*pSrc=*/nullptr, &dest_rect, /*pBorderClr=*/nullptr));
+
+  // Set the start time for the rendered video frame detection.
+  RestartRenderedVideoFrameDetectionTimerInNotReported();
+
   if (rendering_mode_ == MediaFoundationRenderingMode::FrameServer) {
     RETURN_IF_FAILED(InitializeTexturePool(native_video_size_));
   }
@@ -787,6 +875,8 @@ void MediaFoundationRenderer::SendStatistics() {
     cdm_proxy_->OnSignificantPlayback();
   }
 
+  CheckRenderedVideoFrame(new_stats);
+
   if (statistics_ != new_stats) {
     // OnStatisticsUpdate() expects delta values.
     PipelineStatistics delta;
@@ -809,11 +899,104 @@ void MediaFoundationRenderer::StartSendingStatistics() {
   const auto kPipelineStatsPollingPeriod = base::Milliseconds(500);
   statistics_timer_.Start(FROM_HERE, kPipelineStatsPollingPeriod, this,
                           &MediaFoundationRenderer::SendStatistics);
+
+  // Set the start time for the rendered video frame detection.
+  RestartRenderedVideoFrameDetectionTimerInNotReported();
 }
 
-void MediaFoundationRenderer::StopSendingStatistics() {
-  DVLOG_FUNC(2);
+void MediaFoundationRenderer::StopSendingStatistics(
+    bool conclude_rendered_video_frame_detection) {
+  DVLOG_FUNC(2) << "conclude_rendered_video_frame_detection="
+                << conclude_rendered_video_frame_detection;
   statistics_timer_.Stop();
+
+  // Conclude the rendered video frame detection only when needed. Otherwise,
+  // just reset the start time.
+  if (conclude_rendered_video_frame_detection &&
+      NeedRenderedVideoFrameDetection()) {
+    DVLOG_FUNC(1) << "First rendered video frame check has not done yet. But "
+                     "video is ended or paused!";
+    ReportRenderedVideoFrameDetectionResult(
+        RenderedVideoFrameDetectionResult::kUnknown);
+  }
+  rendered_video_frame_detection_start_time_.reset();
+}
+
+bool MediaFoundationRenderer::NeedRenderedVideoFrameDetection() {
+  // We need to check rendered video frame only if the detection check has never
+  // done before and the start time is set.
+  return !has_reported_rendered_video_frame_detection_ &&
+         rendered_video_frame_detection_start_time_.has_value();
+}
+
+void MediaFoundationRenderer::CheckRenderedVideoFrame(
+    const PipelineStatistics& stats) {
+  if (!NeedRenderedVideoFrameDetection()) {
+    return;
+  }
+
+  // Minimally required number of rendered video frames. 1 means any frame.
+  const int kMinRenderedViedoFrames = 1;
+  // Minimum 5 seconds to be considered something is rendered on the screen
+  // regardless of the current playback rate.
+  const base::TimeDelta kMinPlaybackTimeout = base::Seconds(5);
+  auto elapsed_time = base::TimeTicks::Now() -
+                      rendered_video_frame_detection_start_time_.value();
+  DVLOG_FUNC(3) << "elapsed_time=" << elapsed_time
+                << ", stats.video_frames_decoded=" << stats.video_frames_decoded
+                << ", stats.video_frames_dropped="
+                << stats.video_frames_dropped;
+
+  // If the elapsed time is greater than or equal to `kMinPlaybackTimeout`,
+  // conclude the rendered video frame detection.
+  if (elapsed_time >= kMinPlaybackTimeout) {
+    has_reported_rendered_video_frame_detection_ = true;
+    rendered_video_frame_detection_start_time_.reset();
+
+    // Use the number of rendered frames instead since frames dropped would
+    // count towards "hanging". video_frames_decoded = rendered_frame +
+    // video_frames_dropped.
+    const uint32_t rendered_frame =
+        stats.video_frames_decoded - stats.video_frames_dropped;
+
+    // If the number of rendered frames is smaller than
+    // `kMinRenderedViedoFrames`, consider it as no decode video frame detected.
+    if (rendered_frame < kMinRenderedViedoFrames) {
+      DVLOG_FUNC(1) << "No rendered video frame detected within the given time "
+                    << kMinPlaybackTimeout.InSeconds() << " seconds!";
+      ReportRenderedVideoFrameDetectionResult(
+          RenderedVideoFrameDetectionResult::kNotDetected);
+    } else {
+      DVLOG_FUNC(1) << "First rendered video frame detected!";
+      ReportRenderedVideoFrameDetectionResult(
+          RenderedVideoFrameDetectionResult::kDetected);
+    }
+  }
+}
+
+void MediaFoundationRenderer::
+    RestartRenderedVideoFrameDetectionTimerInNotReported() {
+  rendered_video_frame_detection_start_time_.reset();
+
+  // Don't set the start time if the current playback rate is 0.0. For example,
+  // format/size change can trigger this call while `playback_rate_` is still
+  // zero.
+  if (playback_rate_ == 0.0) {
+    return;
+  }
+
+  if (!has_reported_rendered_video_frame_detection_) {
+    rendered_video_frame_detection_start_time_ = base::TimeTicks::Now();
+  }
+}
+
+void MediaFoundationRenderer::ReportRenderedVideoFrameDetectionResult(
+    RenderedVideoFrameDetectionResult result) {
+  DVLOG_FUNC(2) << "result=" << static_cast<int>(result);
+
+  base::UmaHistogramSparse(
+      "Media.MediaFoundationRenderer.RenderedVideoFrameDetectionResult",
+      static_cast<int>(result));
 }
 
 void MediaFoundationRenderer::SetVolume(float volume) {
@@ -878,6 +1061,9 @@ void MediaFoundationRenderer::OnPlaybackEnded() {
 void MediaFoundationRenderer::OnFormatChange() {
   DVLOG_FUNC(2);
   OnVideoNaturalSizeChange();
+
+  // Set the start time for the rendered video frame detection.
+  RestartRenderedVideoFrameDetectionTimerInNotReported();
 }
 
 void MediaFoundationRenderer::OnLoadedData() {
@@ -1001,7 +1187,9 @@ HRESULT MediaFoundationRenderer::PauseInternal() {
   // transition to the Pause state & then back to Play state. To try and
   // avoid cases where we may get Media Engine's reset statistics call
   // StopSendingStatistics before transitioning to Pause.
-  StopSendingStatistics();
+  // Note that `conclude_rendered_video_frame_detection` should be false since
+  // PauseInternal() can be called by flush or restart.
+  StopSendingStatistics(/*conclude_rendered_video_frame_detection=*/false);
   return mf_media_engine_->Pause();
 }
 
@@ -1069,7 +1257,7 @@ void MediaFoundationRenderer::OnError(PipelineStatus status,
   // it here.
   PipelineStatus new_status = status;
   if (hresult == DRM_E_TEE_INVALID_HWDRM_STATE) {
-    // TODO(crbug.com/1370844): Remove these after the investigation is done.
+    // TODO(crbug.com/40870069): Remove these after the investigation is done.
     base::UmaHistogramBoolean(
         "Media.MediaFoundationRenderer.InvalidHwdrmState.HasReportedPlaying",
         has_reported_playing_);
@@ -1113,8 +1301,8 @@ void MediaFoundationRenderer::RequestNextFrame() {
     return;
   }
 
-  // TODO(crbug.com/1276067): Change the |native_video_size_| to get the correct
-  // output video size as determined by the output texture requirements.
+  // TODO(crbug.com/40808656): Change the |native_video_size_| to get the
+  // correct output video size as determined by the output texture requirements.
   gfx::Size video_size = native_video_size_;
 
   base::UnguessableToken frame_token;

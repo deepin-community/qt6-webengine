@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/filters/hls_data_source_provider.h"
 #include "base/trace_event/trace_event.h"
 
@@ -29,6 +34,15 @@ HlsDataSourceStream::~HlsDataSourceStream() {
   std::move(on_destructed_cb_).Run();
 }
 
+void HlsDataSourceStream::MergeSecurityMetadata(
+    const hls::SecurityMetadata& other) {
+  security_info_.MergeFrom(other);
+}
+
+void HlsDataSourceStream::TrackOrigin(const url::Origin& origin) {
+  security_info_.response_origins.insert(origin);
+}
+
 std::string_view HlsDataSourceStream::AsString() const {
   return std::string_view(reinterpret_cast<const char*>(buffer_.data()),
                           buffer_.size());
@@ -41,20 +55,28 @@ bool HlsDataSourceStream::RequiresNextDataSource() const {
 
 GURL HlsDataSourceStream::GetNextSegmentURI() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return std::get<0>(GetNextSegmentURIAndCacheStatus());
+}
+
+std::tuple<GURL, DataSource::CacheMode, DataSource::RangeMode>
+HlsDataSourceStream::GetNextSegmentURIAndCacheStatus() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   CHECK(requires_next_data_source_);
   CHECK(!segments_.empty());
   const auto& first = segments_.front();
+  auto range_mode = DataSource::RangeMode::kFullRequest;
   if (first.range) {
+    range_mode = DataSource::RangeMode::kRangeRequest;
     read_position_ = first.range->GetOffset();
     max_read_position_ = first.range->GetEnd();
   } else {
     read_position_ = 0;
-    max_read_position_ = absl::nullopt;
+    max_read_position_ = std::nullopt;
   }
   GURL new_url = std::move(first.uri);
   segments_.pop();
   requires_next_data_source_ = false;
-  return new_url;
+  return std::make_tuple(new_url, first.cache_mode, range_mode);
 }
 
 bool HlsDataSourceStream::CanReadMore() const {

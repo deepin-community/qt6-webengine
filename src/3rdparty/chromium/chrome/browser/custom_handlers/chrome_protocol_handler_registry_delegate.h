@@ -8,7 +8,8 @@
 #include <set>
 #include <string>
 
-#ifndef TOOLKIT_QT
+#include "build/build_config.h"
+#if !BUILDFLAG(IS_QTWEBENGINE)
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/shell_integration.h"
 #endif
@@ -32,7 +33,7 @@ class ChromeProtocolHandlerRegistryDelegate
   // ProtocolHandlerRegistry::Delegate:
   void RegisterExternalHandler(const std::string& protocol) override;
   bool IsExternalHandlerRegistered(const std::string& protocol) override;
-#ifndef TOOLKIT_QT
+#if !BUILDFLAG(IS_QTWEBENGINE)
   void RegisterWithOSAsDefaultClient(const std::string& protocol,
                                      DefaultClientCallback callback) override;
   void CheckDefaultClientWithOS(const std::string& protocol,
@@ -41,7 +42,7 @@ class ChromeProtocolHandlerRegistryDelegate
 #endif
 
  private:
-#ifndef TOOLKIT_QT
+#if !BUILDFLAG(IS_QTWEBENGINE)
   // Gets the callback for DefaultSchemeClientWorker.
   shell_integration::DefaultWebClientWorkerCallback GetDefaultWebClientCallback(
       const std::string& protocol,

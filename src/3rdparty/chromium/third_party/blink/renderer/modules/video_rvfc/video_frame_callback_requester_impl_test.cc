@@ -41,7 +41,7 @@ class MockWebMediaPlayer : public EmptyWebMediaPlayer {
                std::unique_ptr<VideoFramePresentationMetadata>());
 };
 
-class MockFunction : public ScriptFunction::Callable {
+class MockFunction : public ScriptFunction {
  public:
   MockFunction() = default;
 
@@ -102,11 +102,11 @@ VideoFramePresentationMetadata MetadataHelper::metadata_;
 class VfcRequesterParameterVerifierCallback
     : public VideoFrameRequestCallbackCollection::VideoFrameCallback {
  public:
-  explicit VfcRequesterParameterVerifierCallback(DocumentLoadTiming& timing)
-      : timing_(timing) {}
+  explicit VfcRequesterParameterVerifierCallback(DocumentLoader* loader)
+      : loader_(loader) {}
   ~VfcRequesterParameterVerifierCallback() override = default;
 
-  void Invoke(double now, const VideoFrameMetadata* metadata) override {
+  void Invoke(double now, const VideoFrameCallbackMetadata* metadata) override {
     was_invoked_ = true;
     now_ = now;
 
@@ -140,6 +140,11 @@ class VfcRequesterParameterVerifierCallback
   double last_now() const { return now_; }
   bool was_invoked() const { return was_invoked_; }
 
+  void Trace(Visitor* visitor) const override {
+    visitor->Trace(loader_);
+    VideoFrameRequestCallbackCollection::VideoFrameCallback::Trace(visitor);
+  }
+
  private:
   void VerifyTicksClamping(base::TimeTicks reference,
                            double actual,
@@ -152,12 +157,13 @@ class VfcRequesterParameterVerifierCallback
 
   double TicksToClampedMillisecondsF(base::TimeTicks ticks) {
     return Performance::ClampTimeResolution(
-        timing_->MonotonicTimeToZeroBasedDocumentTime(ticks),
+        loader_->GetTiming().MonotonicTimeToZeroBasedDocumentTime(ticks),
         /*cross_origin_isolated_capability_=*/false);
   }
 
   double TicksToMillisecondsF(base::TimeTicks ticks) {
-    return timing_->MonotonicTimeToZeroBasedDocumentTime(ticks)
+    return loader_->GetTiming()
+        .MonotonicTimeToZeroBasedDocumentTime(ticks)
         .InMillisecondsF();
   }
 
@@ -167,7 +173,7 @@ class VfcRequesterParameterVerifierCallback
 
   double now_;
   bool was_invoked_ = false;
-  const raw_ref<DocumentLoadTiming, ExperimentalRenderer> timing_;
+  const Member<DocumentLoader> loader_;
 };
 
 }  // namespace
@@ -212,8 +218,7 @@ class VideoFrameCallbackRequesterImplTest : public PageTestBase {
   V8VideoFrameRequestCallback* GetCallback(ScriptState* script_state,
                                            MockFunction* function) {
     return V8VideoFrameRequestCallback::Create(
-        MakeGarbageCollected<ScriptFunction>(script_state, function)
-            ->V8Function());
+        function->ToV8Function(script_state));
   }
 
   void RegisterCallbackDirectly(
@@ -331,11 +336,12 @@ TEST_F(VideoFrameCallbackRequesterImplTest,
 }
 
 TEST_F(VideoFrameCallbackRequesterImplTest, VerifyParameters_WindowRaf) {
-  auto timing = GetDocument().Loader()->GetTiming();
+  DocumentLoader* loader = GetDocument().Loader();
+  DocumentLoadTiming& timing = loader->GetTiming();
   MetadataHelper::ReinitializeFields(timing.ReferenceMonotonicTime());
 
   auto* callback =
-      MakeGarbageCollected<VfcRequesterParameterVerifierCallback>(timing);
+      MakeGarbageCollected<VfcRequesterParameterVerifierCallback>(loader);
 
   // Register the non-V8 callback.
   RegisterCallbackDirectly(callback);

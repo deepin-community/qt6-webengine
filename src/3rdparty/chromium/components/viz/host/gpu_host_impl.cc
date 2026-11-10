@@ -55,40 +55,35 @@ class FontRenderParams {
   FontRenderParams(const FontRenderParams&) = delete;
   FontRenderParams& operator=(const FontRenderParams&) = delete;
 
-  void Set(const gfx::FontRenderParams& params);
-  void Reset();
-  const absl::optional<gfx::FontRenderParams>& Get();
+  void Set(const gfx::FontRenderParams& params) {
+    DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+    params_ = params;
+    if (gpu_host_impl_) {
+      gpu_host_impl_->MaybeSendFontRenderParams();
+    }
+  }
+
+  const std::optional<gfx::FontRenderParams>& Get() {
+    DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+    return params_;
+  }
+
+  void SetGpuHostImpl(GpuHostImpl* gpu_host_impl) {
+    DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+    gpu_host_impl_ = gpu_host_impl;
+  }
 
  private:
   friend class base::NoDestructor<FontRenderParams>;
 
-  FontRenderParams();
-  ~FontRenderParams();
+  FontRenderParams() = default;
+
+  ~FontRenderParams() { NOTREACHED(); }
 
   THREAD_CHECKER(thread_checker_);
-  absl::optional<gfx::FontRenderParams> params_;
+  std::optional<gfx::FontRenderParams> params_;
+  raw_ptr<GpuHostImpl> gpu_host_impl_ = nullptr;
 };
-
-void FontRenderParams::Set(const gfx::FontRenderParams& params) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  params_ = params;
-}
-
-void FontRenderParams::Reset() {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  params_ = absl::nullopt;
-}
-
-const absl::optional<gfx::FontRenderParams>& FontRenderParams::Get() {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  return params_;
-}
-
-FontRenderParams::FontRenderParams() = default;
-
-FontRenderParams::~FontRenderParams() {
-  NOTREACHED();
-}
 
 FontRenderParams& GetFontRenderParams() {
   static base::NoDestructor<FontRenderParams> instance;
@@ -108,9 +103,7 @@ GpuHostImpl::GpuHostImpl(Delegate* delegate,
                          InitParams params)
     : delegate_(delegate),
       viz_main_(std::move(viz_main)),
-      params_(std::move(params)),
-      shared_bitmap_to_shared_image_flag_(
-          base::FeatureList::IsEnabled(features::kSharedBitmapToSharedImage)) {
+      params_(std::move(params)) {
   // Create a special GPU info collection service if the GPU process is used for
   // info collection only.
 #if BUILDFLAG(IS_WIN)
@@ -128,7 +121,6 @@ GpuHostImpl::GpuHostImpl(Delegate* delegate,
   delegate_->BindDiscardableMemoryReceiver(
       discardable_manager_remote.InitWithNewPipeAndPassReceiver());
 
-  DCHECK(GetFontRenderParams().Get());
   scoped_refptr<base::SequencedTaskRunner> task_runner = nullptr;
 #if BUILDFLAG(IS_MAC)
   if (params_.main_thread_task_runner->BelongsToCurrentThread())
@@ -139,12 +131,36 @@ GpuHostImpl::GpuHostImpl(Delegate* delegate,
   viz_main_->SetHostProcessId(base::GetCurrentProcId());
 #endif
 
+  mojom::GpuServiceCreationParamsPtr gpu_service_params =
+      mojom::GpuServiceCreationParams::New();
+#if BUILDFLAG(IS_OZONE)
+
+#if BUILDFLAG(IS_LINUX)
+  // Linux has an issue when running in single-process mode wherein
+  // GetPlatformRuntimeProperties() browser-side calls can have a data race with
+  // in-process GPU service initialization. The call to
+  // GetPlatformRuntimeProperties() below tickles that data race. Note that
+  // running in single-process mode on Linux is done only in test contexts.
+  const bool can_initialize_supports_overlays =
+      !params_.gpu_service_running_in_process;
+#else
+  constexpr bool can_initialize_supports_overlays = true;
+#endif
+
+  if (can_initialize_supports_overlays) {
+    gpu_service_params->supports_overlays = ui::OzonePlatform::GetInstance()
+                                                ->GetPlatformRuntimeProperties()
+                                                .supports_overlays;
+  }
+#endif
+
   viz_main_->CreateGpuService(
       gpu_service_remote_.BindNewPipeAndPassReceiver(task_runner),
       gpu_host_receiver_.BindNewPipeAndPassRemote(task_runner),
+      gpu_logging_receiver_.BindNewPipeAndPassRemote(task_runner),
       std::move(discardable_manager_remote),
-      use_shader_cache_shm_count_.CloneRegion(),
-      GetFontRenderParams().Get()->subpixel_rendering);
+      use_shader_cache_shm_count_.CloneRegion(), std::move(gpu_service_params));
+  MaybeSendFontRenderParams();
 
 #if BUILDFLAG(IS_OZONE)
   InitOzone();
@@ -152,6 +168,7 @@ GpuHostImpl::GpuHostImpl(Delegate* delegate,
 }
 
 GpuHostImpl::~GpuHostImpl() {
+  GetFontRenderParams().SetGpuHostImpl(nullptr);
   SendOutstandingReplies();
 }
 
@@ -159,12 +176,6 @@ GpuHostImpl::~GpuHostImpl() {
 void GpuHostImpl::InitFontRenderParams(const gfx::FontRenderParams& params) {
   DCHECK(!GetFontRenderParams().Get());
   GetFontRenderParams().Set(params);
-}
-
-// static
-void GpuHostImpl::ResetFontRenderParams() {
-  DCHECK(GetFontRenderParams().Get());
-  GetFontRenderParams().Reset();
 }
 
 void GpuHostImpl::SetProcessId(base::ProcessId pid) {
@@ -234,19 +245,6 @@ void GpuHostImpl::EstablishGpuChannel(int client_id,
   TRACE_EVENT0("gpu", "GpuHostImpl::EstablishGpuChannel");
 
   shutdown_timeout_.Stop();
-
-  // If GPU features are already blocklisted, no need to establish the channel.
-  bool gpu_channel_allowed = shared_bitmap_to_shared_image_flag_
-                                 ? true
-                                 : delegate_->GpuAccessAllowed();
-  if (!gpu_channel_allowed) {
-    DVLOG(1) << "GPU access blocked, refusing to open a GPU channel.";
-    std::move(callback).Run(mojo::ScopedMessagePipeHandle(), gpu::GPUInfo(),
-                            gpu::GpuFeatureInfo(),
-                            gpu::SharedImageCapabilities(),
-                            EstablishChannelStatus::kGpuAccessDenied);
-    return;
-  }
 
   if (gpu::IsReservedClientId(client_id)) {
     // The display-compositor/GrShaderCache in the gpu process uses these
@@ -426,13 +424,6 @@ std::string GpuHostImpl::GetShaderPrefixKey() {
     std::string build_fp =
         base::android::BuildInfo::GetInstance()->android_build_fp();
     shader_prefix_key_ += "-" + build_fp;
-#elif BUILDFLAG(IS_CHROMEOS_LACROS)
-    // ChromeOS can update independently of Lacros and the GPU driver
-    // information is not enough to ensure blob compatibility. See
-    // crbug.com/1444684
-    std::string chromeos_version = base::SysInfo::OperatingSystemName() + " " +
-                                   base::SysInfo::OperatingSystemVersion();
-    shader_prefix_key_ += "-" + chromeos_version;
 #endif
   }
 
@@ -446,31 +437,7 @@ void GpuHostImpl::LoadedBlob(const gpu::GpuDiskCacheHandle& handle,
 
   TRACE_EVENT1("gpu", "GpuHostImpl::LoadedBlob", "handle_type",
                GetHandleType(handle));
-
-  // If cache key prefix is being generated in service side, we don't need to
-  // generate it here.
-  if (base::FeatureList::IsEnabled(
-          features::kGenGpuDiskCacheKeyPrefixInGpuService)) {
-    gpu_service_remote_->LoadedBlob(handle, key, data);
-  } else {
-    switch (gpu::GetHandleType(handle)) {
-      case gpu::GpuDiskCacheType::kGlShaders: {
-        std::string prefix = GetShaderPrefixKey();
-        bool prefix_ok = !key.compare(0, prefix.length(), prefix);
-        UMA_HISTOGRAM_BOOLEAN("GPU.ShaderLoadPrefixOK", prefix_ok);
-        if (prefix_ok) {
-          // Remove the prefix from the key before load.
-          std::string key_no_prefix = key.substr(prefix.length() + 1);
-          gpu_service_remote_->LoadedBlob(handle, key_no_prefix, data);
-        }
-        break;
-      }
-      case gpu::GpuDiskCacheType::kDawnWebGPU: {
-        gpu_service_remote_->LoadedBlob(handle, key, data);
-        break;
-      }
-    }
-  }
+  gpu_service_remote_->LoadedBlob(handle, key, data);
 }
 
 void GpuHostImpl::OnDiskCacheHandleDestoyed(
@@ -496,19 +463,13 @@ void GpuHostImpl::OnChannelEstablished(
   auto callback = std::move(it->second);
   channel_requests_.erase(it);
 
-  // Currently if any of the GPU features are blocklisted, we don't establish a
-  // GPU channel.
-  bool gpu_channel_allowed = shared_bitmap_to_shared_image_flag_
-                                 ? true
-                                 : delegate_->GpuAccessAllowed();
-  if (channel_handle.is_valid() && !gpu_channel_allowed) {
-    gpu_service_remote_->CloseChannel(client_id);
+  // If the GPU process sent an empty handle back, it could be a transient error
+  // in which case the client should try again so return kGpuHostInvalid.
+  if (!channel_handle.is_valid()) {
     std::move(callback).Run(mojo::ScopedMessagePipeHandle(), gpu::GPUInfo(),
                             gpu::GpuFeatureInfo(),
                             gpu::SharedImageCapabilities(),
-                            EstablishChannelStatus::kGpuAccessDenied);
-    RecordLogMessage(logging::LOGGING_WARNING, "WARNING",
-                     "Hardware acceleration is unavailable.");
+                            EstablishChannelStatus::kGpuHostInvalid);
     return;
   }
 
@@ -532,9 +493,8 @@ void GpuHostImpl::OnChannelEstablished(
 void GpuHostImpl::DidInitialize(
     const gpu::GPUInfo& gpu_info,
     const gpu::GpuFeatureInfo& gpu_feature_info,
-    const absl::optional<gpu::GPUInfo>& gpu_info_for_hardware_gpu,
-    const absl::optional<gpu::GpuFeatureInfo>&
-        gpu_feature_info_for_hardware_gpu,
+    const std::optional<gpu::GPUInfo>& gpu_info_for_hardware_gpu,
+    const std::optional<gpu::GpuFeatureInfo>& gpu_feature_info_for_hardware_gpu,
     const gfx::GpuExtraInfo& gpu_extra_info) {
   delegate_->DidInitialize(gpu_info, gpu_feature_info,
                            gpu_info_for_hardware_gpu,
@@ -658,6 +618,15 @@ void GpuHostImpl::AddChildWindow(gpu::SurfaceHandle parent_window,
 }
 #endif  // BUILDFLAG(IS_WIN)
 
+void GpuHostImpl::MaybeSendFontRenderParams() {
+  if (const auto& params = GetFontRenderParams().Get()) {
+    viz_main_->SetRenderParams(params->subpixel_rendering,
+                               params->text_contrast, params->text_gamma);
+  } else {
+    GetFontRenderParams().SetGpuHostImpl(this);
+  }
+}
+
 void GpuHostImpl::StoreBlobToDisk(const gpu::GpuDiskCacheHandle& handle,
                                   const std::string& key,
                                   const std::string& blob) {
@@ -669,23 +638,21 @@ void GpuHostImpl::StoreBlobToDisk(const gpu::GpuDiskCacheHandle& handle,
 
   TRACE_EVENT1("gpu", "GpuHostImpl::StoreBlobToDisk", "handle_type",
                GetHandleType(handle));
+  cache->Cache(key, blob);
+}
 
-  // If cache key prefix is being generated in service side, we don't need to
-  // generate it here.
-  if (base::FeatureList::IsEnabled(
-          features::kGenGpuDiskCacheKeyPrefixInGpuService)) {
-    cache->Cache(key, blob);
-  } else {
-    switch (GetHandleType(handle)) {
-      case gpu::GpuDiskCacheType::kGlShaders: {
-        std::string prefix = GetShaderPrefixKey();
-        cache->Cache(base::StrCat({prefix, ":", key}), blob);
-        break;
-      }
-      case gpu::GpuDiskCacheType::kDawnWebGPU: {
-        cache->Cache(key, blob);
-        break;
-      }
+void GpuHostImpl::ClearGrShaderDiskCache() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  auto* gpu_disk_cache_factory = delegate_->GetGpuDiskCacheFactory();
+  for (auto& [client_id, cache] : client_id_to_caches_) {
+    // This call will temporarily extend the lifetime of the cache (kept
+    // alive in the factory), and may drop loads of cached shader binaries if
+    // it takes a while to complete. As we are intentionally dropping all
+    // binaries, this behavior is fine.
+    if (client_id == gpu::kGrShaderCacheClientId) {
+      gpu_disk_cache_factory->ClearByCache(
+          cache, base::Time(), base::Time::Max(), base::DoNothing());
     }
   }
 }

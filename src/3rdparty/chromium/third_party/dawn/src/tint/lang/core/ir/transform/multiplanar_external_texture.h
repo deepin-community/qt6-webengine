@@ -28,10 +28,9 @@
 #ifndef SRC_TINT_LANG_CORE_IR_TRANSFORM_MULTIPLANAR_EXTERNAL_TEXTURE_H_
 #define SRC_TINT_LANG_CORE_IR_TRANSFORM_MULTIPLANAR_EXTERNAL_TEXTURE_H_
 
-#include <string>
-
-#include "src/tint/api/options/external_texture.h"
-#include "src/tint/utils/result/result.h"
+#include "src/tint/lang/core/ir/transform/multiplanar_options.h"
+#include "src/tint/lang/core/ir/validator.h"
+#include "src/tint/utils/result.h"
 
 // Forward declarations.
 namespace tint::core::ir {
@@ -40,14 +39,18 @@ class Module;
 
 namespace tint::core::ir::transform {
 
+/// The capabilities that the transform can support.
+const Capabilities kMultiplanarExternalTextureCapabilities{Capability::kAllowDuplicateBindings};
+
 /// MultiplanarExternalTexture is a transform that splits texture_external bindings into two
 /// separate texture_2d<f32> bindings for two possible planes, along with a uniform buffer of
 /// parameters that describe how the texture should be sampled.
 /// @param module the module to transform
 /// @param options the external texture options
 /// @returns success or failure
-Result<SuccessType> MultiplanarExternalTexture(Module& module,
-                                               const ExternalTextureOptions& options);
+Result<SuccessType> MultiplanarExternalTexture(
+    Module& module,
+    const tint::transform::multiplanar::BindingsMap& options);
 
 }  // namespace tint::core::ir::transform
 

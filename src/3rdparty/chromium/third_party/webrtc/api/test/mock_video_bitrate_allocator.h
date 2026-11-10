@@ -11,12 +11,13 @@
 #ifndef API_TEST_MOCK_VIDEO_BITRATE_ALLOCATOR_H_
 #define API_TEST_MOCK_VIDEO_BITRATE_ALLOCATOR_H_
 
+#include "api/video/video_bitrate_allocation.h"
 #include "api/video/video_bitrate_allocator.h"
 #include "test/gmock.h"
 
 namespace webrtc {
 
-class MockVideoBitrateAllocator : public webrtc::VideoBitrateAllocator {
+class MockVideoBitrateAllocator : public VideoBitrateAllocator {
   MOCK_METHOD(VideoBitrateAllocation,
               Allocate,
               (VideoBitrateAllocationParameters parameters),

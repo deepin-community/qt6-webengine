@@ -24,14 +24,20 @@ class CSSCustomTransformInterpolationType
   InterpolationValue MaybeConvertNeutral(const InterpolationValue& underlying,
                                          ConversionCheckers&) const final;
   InterpolationValue MaybeConvertValue(const CSSValue&,
-                                       const StyleResolverState*,
+                                       const StyleResolverState&,
                                        ConversionCheckers&) const final;
 
   const CSSValue* CreateCSSValue(const InterpolableValue&,
                                  const NonInterpolableValue*,
                                  const StyleResolverState&) const final;
+  InterpolationValue MaybeConvertCustomPropertyUnderlyingValue(
+      const CSSValue&) const final;
 
  private:
+  InterpolationValue MaybeConvertTransformList(
+      const CSSValue&,
+      const CSSToLengthConversionData&) const;
+
   // These methods only apply to CSSInterpolationTypes used by standard CSS
   // properties.
   // CSSCustomTransformInterpolationType is only accessible via registered
@@ -39,7 +45,6 @@ class CSSCustomTransformInterpolationType
   InterpolationValue MaybeConvertStandardPropertyUnderlyingValue(
       const ComputedStyle&) const final {
     NOTREACHED();
-    return nullptr;
   }
   void ApplyStandardPropertyValue(const InterpolableValue&,
                                   const NonInterpolableValue*,
@@ -49,12 +54,10 @@ class CSSCustomTransformInterpolationType
   InterpolationValue MaybeConvertInitial(const StyleResolverState&,
                                          ConversionCheckers&) const final {
     NOTREACHED();
-    return nullptr;
   }
   InterpolationValue MaybeConvertInherit(const StyleResolverState&,
                                          ConversionCheckers&) const final {
     NOTREACHED();
-    return nullptr;
   }
 };
 

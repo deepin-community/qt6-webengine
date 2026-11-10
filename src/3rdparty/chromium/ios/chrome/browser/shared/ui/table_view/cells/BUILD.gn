@@ -58,20 +58,19 @@ source_set("cells") {
   ]
 
   deps = [
-    "resources:table_view_cell_chevron",
     "//base",
     "//base:i18n",
     "//components/url_formatter",
     "//ios/chrome/app/strings",
     "//ios/chrome/browser/net/model:crurl",
+    "//ios/chrome/browser/settings/ui_bundled/cells:public",
     "//ios/chrome/browser/shared/public/features",
     "//ios/chrome/browser/shared/ui/elements",
     "//ios/chrome/browser/shared/ui/list_model",
     "//ios/chrome/browser/shared/ui/symbols",
     "//ios/chrome/browser/shared/ui/table_view:styler",
-    "//ios/chrome/browser/ui/settings/cells:public",
-    "//ios/chrome/browser/ui/tab_switcher/tab_grid/suggested_actions/resources",
-    "//ios/chrome/common:button_config",
+    "//ios/chrome/browser/shared/ui/table_view/cells/resources",
+    "//ios/chrome/browser/tab_switcher/tab_grid/base_grid/suggested_actions/resources",
     "//ios/chrome/common:string_util",
     "//ios/chrome/common/ui/colors",
     "//ios/chrome/common/ui/favicon",
@@ -112,8 +111,8 @@ source_set("unit_tests") {
     "//ios/chrome/browser/shared/ui/table_view:styler",
     "//ios/chrome/common/ui/colors",
     "//ios/chrome/common/ui/table_view:cells_constants",
-    "//net:net",
+    "//net",
     "//testing/gtest",
-    "//third_party/ocmock:ocmock",
+    "//third_party/ocmock",
   ]
 }

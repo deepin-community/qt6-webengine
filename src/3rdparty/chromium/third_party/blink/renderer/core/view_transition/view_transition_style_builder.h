@@ -8,8 +8,6 @@
 #include "base/containers/flat_map.h"
 #include "third_party/blink/renderer/core/css/css_property_names.h"
 #include "third_party/blink/renderer/core/view_transition/view_transition_style_tracker.h"
-#include "third_party/blink/renderer/platform/geometry/layout_size.h"
-#include "third_party/blink/renderer/platform/graphics/graphics_types.h"
 #include "third_party/blink/renderer/platform/text/writing_mode.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
@@ -34,11 +32,25 @@ class ViewTransitionStyleBuilder {
   void AddAnimations(AnimationType type,
                      const String& tag,
                      const ContainerProperties& source_properties,
-                     const CapturedCssProperties& animated_css_properties);
+                     const CapturedCssProperties& animated_css_properties,
+                     const gfx::Transform& parent_transform);
+
+  void AddGroupChildrenAnimations(
+      const String& tag,
+      const CapturedCssProperties& animated_properties);
 
   void AddContainerStyles(const String& tag,
                           const ContainerProperties& properties,
-                          const CapturedCssProperties& captured_css_properites);
+                          const CapturedCssProperties& captured_css_properites,
+                          const gfx::Transform& parent_transform);
+
+  void AddGroupChildrenStyles(
+      const String& name,
+      const CapturedCssProperties& captured_css_properites);
+
+  // Adds styles that normally would go into transition_animation.css, except
+  // that they are currently being flag guarded.
+  void AddFlagGuardedDefaultAnimationStyles();
 
   String Build();
 
@@ -46,7 +58,10 @@ class ViewTransitionStyleBuilder {
   // Adds the needed keyframes and returns the animation name to use.
   String AddKeyframes(const String& tag,
                       const ContainerProperties& source_properties,
-                      const CapturedCssProperties& captured_css_properties);
+                      const CapturedCssProperties& captured_css_properties,
+                      const gfx::Transform& parent_transform);
+  String AddGroupChildrenKeyframes(const String& tag,
+                                   const CapturedCssProperties& properties);
   void AddRules(const String& selector, const String& tag, const String& rules);
   void AddSelector(const String& name, const String& tag);
 

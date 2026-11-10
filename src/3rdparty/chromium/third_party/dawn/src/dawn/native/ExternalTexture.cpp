@@ -35,6 +35,7 @@
 #include "dawn/native/ObjectType_autogen.h"
 #include "dawn/native/Queue.h"
 #include "dawn/native/Texture.h"
+#include "dawn/native/utils/WGPUHelpers.h"
 
 #include "dawn/native/dawn_platform.h"
 
@@ -42,9 +43,9 @@ namespace dawn::native {
 
 MaybeError ValidateExternalTexturePlane(const TextureViewBase* textureView) {
     DAWN_INVALID_IF(
-        (textureView->GetTexture()->GetUsage() & wgpu::TextureUsage::TextureBinding) == 0,
+        (textureView->GetUsage() & wgpu::TextureUsage::TextureBinding) == 0,
         "The external texture plane (%s) usage (%s) doesn't include the required usage (%s)",
-        textureView, textureView->GetTexture()->GetUsage(), wgpu::TextureUsage::TextureBinding);
+        textureView, textureView->GetUsage(), wgpu::TextureUsage::TextureBinding);
 
     DAWN_INVALID_IF(textureView->GetDimension() != wgpu::TextureViewDimension::e2D,
                     "The external texture plane (%s) dimension (%s) is not 2D.", textureView,
@@ -111,73 +112,35 @@ MaybeError ValidateExternalTextureDescriptor(const DeviceBase* device,
                          "validating the format of plane 0 (%s)", descriptor->plane0);
     }
 
-    DAWN_INVALID_IF(descriptor->visibleSize.width == 0 || descriptor->visibleSize.height == 0,
-                    "VisibleSize %s have 0 on width or height.", &descriptor->visibleSize);
+    DAWN_INVALID_IF(descriptor->cropSize.width == 0 || descriptor->cropSize.height == 0,
+                    "cropSize %s has 0 on width or height.", &descriptor->cropSize);
 
     const Extent3D textureSize = descriptor->plane0->GetSingleSubresourceVirtualSize();
-    DAWN_INVALID_IF(descriptor->visibleSize.width > textureSize.width ||
-                        descriptor->visibleSize.height > textureSize.height,
-                    "VisibleSize %s is exceed the texture size, defined by Plane0 size (%u, %u).",
-                    &descriptor->visibleSize, textureSize.width, textureSize.height);
-    DAWN_INVALID_IF(
-        descriptor->visibleOrigin.x > textureSize.width - descriptor->visibleSize.width ||
-            descriptor->visibleOrigin.y > textureSize.height - descriptor->visibleSize.height,
-        "VisibleRect[Origin: %s, Size: %s] is exceed the texture size, defined by "
-        "Plane0 size (%u, %u).",
-        &descriptor->visibleOrigin, &descriptor->visibleSize, textureSize.width,
-        textureSize.height);
+    DAWN_INVALID_IF(descriptor->cropSize.width > textureSize.width ||
+                        descriptor->cropSize.height > textureSize.height,
+                    "cropSize %s exceeds the texture size, defined by Plane0 size (%u, %u).",
+                    &descriptor->cropSize, textureSize.width, textureSize.height);
+    DAWN_INVALID_IF(descriptor->cropOrigin.x > textureSize.width - descriptor->cropSize.width ||
+                        descriptor->cropOrigin.y > textureSize.height - descriptor->cropSize.height,
+                    "cropRect[Origin: %s, Size: %s] exceeds plane0's size (%u, %u).",
+                    &descriptor->cropOrigin, &descriptor->cropSize, textureSize.width,
+                    textureSize.height);
+
+    DAWN_INVALID_IF(descriptor->apparentSize.width == 0 || descriptor->apparentSize.height == 0,
+                    "apparentSize (%u, %u) is empty.", descriptor->apparentSize.width,
+                    descriptor->apparentSize.height);
+    DAWN_INVALID_IF(descriptor->apparentSize.width > device->GetLimits().v1.maxTextureDimension2D,
+                    "apparentSize.width (%u) is larger than maxTextureDimension2D (%u)",
+                    descriptor->apparentSize.width, device->GetLimits().v1.maxTextureDimension2D);
+    DAWN_INVALID_IF(descriptor->apparentSize.height > device->GetLimits().v1.maxTextureDimension2D,
+                    "apparentSize.height (%u) is larger than maxTextureDimension2D (%u)",
+                    descriptor->apparentSize.height, device->GetLimits().v1.maxTextureDimension2D);
 
     return {};
 }
 
-// static
-ResultOrError<Ref<ExternalTextureBase>> ExternalTextureBase::Create(
-    DeviceBase* device,
-    const ExternalTextureDescriptor* descriptor) {
-    Ref<ExternalTextureBase> externalTexture =
-        AcquireRef(new ExternalTextureBase(device, descriptor));
-    DAWN_TRY(externalTexture->Initialize(device, descriptor));
-    return std::move(externalTexture);
-}
-
-ExternalTextureBase::ExternalTextureBase(DeviceBase* device,
-                                         const ExternalTextureDescriptor* descriptor)
-    : ApiObjectBase(device, descriptor->label),
-      mVisibleOrigin(descriptor->visibleOrigin),
-      mVisibleSize(descriptor->visibleSize),
-      mState(ExternalTextureState::Active) {
-    GetObjectTrackingList()->Track(this);
-}
-
-// Error external texture cannot be used in bind group.
-ExternalTextureBase::ExternalTextureBase(DeviceBase* device,
-                                         ObjectBase::ErrorTag tag,
-                                         const char* label)
-    : ApiObjectBase(device, tag, label), mState(ExternalTextureState::Destroyed) {}
-
-ExternalTextureBase::~ExternalTextureBase() = default;
-
-MaybeError ExternalTextureBase::Initialize(DeviceBase* device,
-                                           const ExternalTextureDescriptor* descriptor) {
-    // Store any passed in TextureViews associated with individual planes.
-    mTextureViews[0] = descriptor->plane0;
-
-    if (descriptor->plane1) {
-        mTextureViews[1] = descriptor->plane1;
-    } else {
-        DAWN_TRY_ASSIGN(mTextureViews[1],
-                        device->GetOrCreatePlaceholderTextureViewForExternalTexture());
-    }
-
-    // We must create a buffer to store parameters needed by a shader that operates on this
-    // external texture.
-    BufferDescriptor bufferDesc;
-    bufferDesc.size = sizeof(ExternalTextureParams);
-    bufferDesc.usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
-    bufferDesc.label = "Dawn_External_Texture_Params_Buffer";
-
-    DAWN_TRY_ASSIGN(mParamsBuffer, device->CreateBuffer(&bufferDesc));
-
+namespace {
+ExternalTextureParams ComputeExternalTextureParams(const ExternalTextureDescriptor* descriptor) {
     ExternalTextureParams params;
     params.numPlanes = descriptor->plane1 == nullptr ? 1 : 2;
 
@@ -215,16 +178,23 @@ MaybeError ExternalTextureBase::Initialize(DeviceBase* device,
 
     // Unlike WGSL, which stores matrices in column vectors, the following arithmetic uses row
     // vectors, so elements are stored in the following order:
+    //
     // ┌         ┐
     // │ 0, 1, 2 │
     // │ 3, 4, 5 │
     // └         ┘
+    //
     // The matrix is transposed at the end.
+    //
+    // Note that we are working in homogeneous coordinates so there is an implied third row
+    // containing [0, 0, 1].
     using mat2x3 = std::array<float, 6>;
+    // Likewise the vectors have an implicit last element that's 1.
+    using vec2 = std::array<float, 2>;
 
     // Multiplies the two mat2x3 matrices, by treating the RHS matrix as a mat3x3 where the last row
     // is [0, 0, 1].
-    auto Mul = [&](const mat2x3& lhs, const mat2x3& rhs) {
+    auto Mul = [](const mat2x3& lhs, const mat2x3& rhs) -> mat2x3 {
         auto& a = lhs[0];
         auto& b = lhs[1];
         auto& c = lhs[2];
@@ -251,83 +221,177 @@ MaybeError ExternalTextureBase::Initialize(DeviceBase* device,
             d * i + e * l + f,  //
         };
     };
-
-    auto Scale = [&](const mat2x3& m, float x, float y) {
-        return Mul(mat2x3{x, 0, 0, 0, y, 0}, m);
+    auto Scale = [](float x, float y) -> mat2x3 { return {x, 0, 0, 0, y, 0}; };
+    auto ScaleVec = [&](vec2 v) -> mat2x3 { return Scale(v[0], v[1]); };
+    auto Translate = [](float x, float y) -> mat2x3 { return mat2x3{1, 0, x, 0, 1, y}; };
+    auto TranslateVec = [&](vec2 v) -> mat2x3 { return Translate(v[0], v[1]); };
+    auto TransposeForWGSL = [](const mat2x3& m) -> std::array<float, 6> {
+        return {m[0], m[3], m[1], m[4], m[2], m[5]};
     };
 
-    auto Translate = [&](const mat2x3& m, float x, float y) {
-        return Mul(mat2x3{1, 0, x, 0, 1, y}, m);
-    };
+    // Vector operations
+    auto Add = [](const vec2& a, const vec2& b) -> vec2 { return {a[0] + b[0], a[1] + b[1]}; };
+    auto Sub = [](const vec2& a, const vec2& b) -> vec2 { return {a[0] - b[0], a[1] - b[1]}; };
+    auto Div = [](const vec2& a, const vec2& b) -> vec2 { return {a[0] / b[0], a[1] / b[1]}; };
 
-    mat2x3 coordTransformMatrix = {
-        1, 0, 0,  //
-        0, 1, 0,  //
-    };
+    // Extract all the relevant sizes as float to avoid extra casts in later computations.
+    Extent3D plane0Extent = descriptor->plane0->GetSingleSubresourceVirtualSize();
+    Extent3D plane1Extent = {1, 1, 1};
+    if (params.numPlanes == 2) {
+        plane1Extent = descriptor->plane1->GetSingleSubresourceVirtualSize();
+    }
+    vec2 plane0Size = {static_cast<float>(plane0Extent.width),
+                       static_cast<float>(plane0Extent.height)};
+    vec2 plane1Size = {static_cast<float>(plane1Extent.width),
+                       static_cast<float>(plane1Extent.height)};
+    vec2 cropOrigin = {static_cast<float>(descriptor->cropOrigin.x),
+                       static_cast<float>(descriptor->cropOrigin.y)};
+    vec2 cropSize = {static_cast<float>(descriptor->cropSize.width),
+                     static_cast<float>(descriptor->cropSize.height)};
 
     // Offset the coordinates so the center texel is at the origin, so we can apply rotations and
     // y-flips. After translation, coordinates range from [-0.5 .. +0.5] in both U and V.
-    coordTransformMatrix = Translate(coordTransformMatrix, -0.5, -0.5);
+    mat2x3 sampleTransform = Translate(-0.5, -0.5);
 
-    // If the texture needs flipping, mirror in Y.
-    if (descriptor->flipY) {
-        coordTransformMatrix = Scale(coordTransformMatrix, 1, -1);
+    // The video frame metadata both rotation and mirroring information. The rotation happens before
+    // the mirroring when processing the video frame, so do the inverse order when converting UV
+    // coordinates.
+    if (descriptor->mirrored) {
+        sampleTransform = Mul(Scale(-1, 1), sampleTransform);
     }
 
-    // Apply rotations as needed.
+    // Apply rotations as needed for the sampling coordinate. This may also rotate the
+    // shader-apparent size of the texture.
+    std::array<uint32_t, 2> loadBounds = {descriptor->apparentSize.width - 1,
+                                          descriptor->apparentSize.height - 1};
     switch (descriptor->rotation) {
         case wgpu::ExternalTextureRotation::Rotate0Degrees:
             break;
         case wgpu::ExternalTextureRotation::Rotate90Degrees:
-            coordTransformMatrix = Mul(mat2x3{0, +1, 0,   // x' = y
-                                              -1, 0, 0},  // y' = -x
-                                       coordTransformMatrix);
+            std::swap(loadBounds[0], loadBounds[1]);
+            sampleTransform = Mul(mat2x3{0, +1, 0,   // x' = y
+                                         -1, 0, 0},  // y' = -x
+                                  sampleTransform);
             break;
         case wgpu::ExternalTextureRotation::Rotate180Degrees:
-            coordTransformMatrix = Mul(mat2x3{-1, 0, 0,   // x' = -x
-                                              0, -1, 0},  // y' = -y
-                                       coordTransformMatrix);
+            sampleTransform = Mul(mat2x3{-1, 0, 0,   // x' = -x
+                                         0, -1, 0},  // y' = -y
+                                  sampleTransform);
             break;
         case wgpu::ExternalTextureRotation::Rotate270Degrees:
-
-            coordTransformMatrix = Mul(mat2x3{0, -1, 0,   // x' = -y
-                                              +1, 0, 0},  // y' = x
-                                       coordTransformMatrix);
+            std::swap(loadBounds[0], loadBounds[1]);
+            sampleTransform = Mul(mat2x3{0, -1, 0,   // x' = -y
+                                         +1, 0, 0},  // y' = x
+                                  sampleTransform);
             break;
     }
 
     // Offset the coordinates so the bottom-left texel is at origin.
     // After translation, coordinates range from [0 .. 1] in both U and V.
-    coordTransformMatrix = Translate(coordTransformMatrix, 0.5, 0.5);
+    sampleTransform = Mul(Translate(0.5, 0.5), sampleTransform);
 
-    // Calculate scale factors and offsets from the specified visibleSize.
-    DAWN_ASSERT(descriptor->visibleSize.width > 0);
-    DAWN_ASSERT(descriptor->visibleSize.height > 0);
-    uint32_t frameWidth = descriptor->plane0->GetSingleSubresourceVirtualSize().width;
-    uint32_t frameHeight = descriptor->plane0->GetSingleSubresourceVirtualSize().height;
-    float xScale =
-        static_cast<float>(descriptor->visibleSize.width) / static_cast<float>(frameWidth);
-    float yScale =
-        static_cast<float>(descriptor->visibleSize.height) / static_cast<float>(frameHeight);
-    float xOffset =
-        static_cast<float>(descriptor->visibleOrigin.x) / static_cast<float>(frameWidth);
-    float yOffset =
-        static_cast<float>(descriptor->visibleOrigin.y) / static_cast<float>(frameHeight);
+    // Finally, scale and translate based on the crop rect.
+    vec2 rectScale = Div(cropSize, plane0Size);
+    vec2 rectOffset = Div(cropOrigin, plane0Size);
+    sampleTransform = Mul(TranslateVec(rectOffset), Mul(ScaleVec(rectScale), sampleTransform));
 
-    // Finally, scale and translate based on the visible rect. This applies cropping.
-    coordTransformMatrix = Scale(coordTransformMatrix, xScale, yScale);
-    coordTransformMatrix = Translate(coordTransformMatrix, xOffset, yOffset);
+    params.sampleTransform = TransposeForWGSL(sampleTransform);
 
-    // Transpose the mat2x3 into column vectors for use by WGSL.
-    params.coordTransformMatrix[0] = coordTransformMatrix[0];
-    params.coordTransformMatrix[1] = coordTransformMatrix[3];
-    params.coordTransformMatrix[2] = coordTransformMatrix[1];
-    params.coordTransformMatrix[3] = coordTransformMatrix[4];
-    params.coordTransformMatrix[4] = coordTransformMatrix[2];
-    params.coordTransformMatrix[5] = coordTransformMatrix[5];
+    // Compute the load transformation matrix by using toTexels * sampleTransform * toNormalized
+    // Note that coords starts from 0 so the max value is size - 1.
+    {
+        mat2x3 toTexels = ScaleVec(Sub(plane0Size, {1.0f, 1.0f}));
+        mat2x3 toNormalized = Scale(1.0f / loadBounds[0], 1.0f / loadBounds[1]);
+        mat2x3 loadTransform = Mul(toTexels, Mul(sampleTransform, toNormalized));
 
-    DAWN_TRY(device->GetQueue()->WriteBuffer(mParamsBuffer.Get(), 0, &params,
-                                             sizeof(ExternalTextureParams)));
+        params.loadTransform = TransposeForWGSL(loadTransform);
+    }
+
+    // Compute the clamping for each plane individually: to avoid bleeding of OOB texels due to
+    // interpolation we need to offset by a half texel in, which depends on the size of the plane.
+    {
+        vec2 plane0HalfTexel = Div({0.5f, 0.5f}, plane0Size);
+        vec2 plane1HalfTexel = Div({0.5f, 0.5f}, plane1Size);
+
+        params.samplePlane0RectMin = Add(rectOffset, plane0HalfTexel);
+        params.samplePlane1RectMin = Add(rectOffset, plane1HalfTexel);
+        params.samplePlane0RectMax = Sub(Add(rectOffset, rectScale), plane0HalfTexel);
+        params.samplePlane1RectMax = Sub(Add(rectOffset, rectScale), plane1HalfTexel);
+    }
+
+    params.plane1CoordFactor = Div(plane1Size, plane0Size);
+    params.apparentSize = loadBounds;
+
+    return params;
+}
+}  // anonymous namespace
+
+ResultOrError<Ref<BufferBase>> MakeParamsBufferForSimpleView(DeviceBase* device,
+                                                             Ref<TextureViewBase> textureView) {
+    const Extent3D textureSize = textureView->GetSingleSubresourceVirtualSize();
+    std::array<float, 12> placeholderConstantArray;
+
+    // Make a fake ExternalTextureDescriptor for the view that reuses the code computing uniform
+    // parameters passed to the shader.
+    ExternalTextureDescriptor desc = {};
+    desc.plane0 = textureView.Get();
+    desc.cropOrigin = {0, 0};
+    desc.cropSize = {textureSize.width, textureSize.height};
+    desc.apparentSize = {textureSize.width, textureSize.height};
+    desc.doYuvToRgbConversionOnly = true;
+    desc.srcTransferFunctionParameters = placeholderConstantArray.data();
+    desc.dstTransferFunctionParameters = placeholderConstantArray.data();
+    desc.gamutConversionMatrix = placeholderConstantArray.data();
+
+    ExternalTextureParams params = ComputeExternalTextureParams(&desc);
+    return utils::CreateBufferFromData(device, "Dawn_Simple_Texture_View_Params_Buffer",
+                                       wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst,
+                                       {params});
+}
+
+// static
+ResultOrError<Ref<ExternalTextureBase>> ExternalTextureBase::Create(
+    DeviceBase* device,
+    const ExternalTextureDescriptor* descriptor) {
+    Ref<ExternalTextureBase> externalTexture =
+        AcquireRef(new ExternalTextureBase(device, descriptor));
+    DAWN_TRY(externalTexture->Initialize(device, descriptor));
+    return std::move(externalTexture);
+}
+
+ExternalTextureBase::ExternalTextureBase(DeviceBase* device,
+                                         const ExternalTextureDescriptor* descriptor)
+    : ApiObjectBase(device, descriptor->label), mState(ExternalTextureState::Active) {
+    GetObjectTrackingList()->Track(this);
+}
+
+// Error external texture cannot be used in bind group.
+ExternalTextureBase::ExternalTextureBase(DeviceBase* device,
+                                         ObjectBase::ErrorTag tag,
+                                         StringView label)
+    : ApiObjectBase(device, tag, label), mState(ExternalTextureState::Destroyed) {}
+
+ExternalTextureBase::~ExternalTextureBase() = default;
+
+MaybeError ExternalTextureBase::Initialize(DeviceBase* device,
+                                           const ExternalTextureDescriptor* descriptor) {
+    // Store any passed in TextureViews associated with individual planes.
+    mTextureViews[0] = descriptor->plane0;
+
+    if (descriptor->plane1) {
+        mTextureViews[1] = descriptor->plane1;
+    } else {
+        DAWN_TRY_ASSIGN(mTextureViews[1],
+                        device->GetOrCreatePlaceholderTextureViewForExternalTexture());
+    }
+
+    // We must create a buffer to store parameters needed by a shader that operates on this
+    // external texture.
+    ExternalTextureParams params = ComputeExternalTextureParams(descriptor);
+    DAWN_TRY_ASSIGN(mParamsBuffer,
+                    utils::CreateBufferFromData(
+                        device, "Dawn_External_Texture_Params_Buffer",
+                        wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst, {params}));
 
     return {};
 }
@@ -393,7 +457,7 @@ void ExternalTextureBase::DestroyImpl() {
 }
 
 // static
-Ref<ExternalTextureBase> ExternalTextureBase::MakeError(DeviceBase* device, const char* label) {
+Ref<ExternalTextureBase> ExternalTextureBase::MakeError(DeviceBase* device, StringView label) {
     return AcquireRef(new ExternalTextureBase(device, ObjectBase::kError, label));
 }
 
@@ -403,16 +467,6 @@ BufferBase* ExternalTextureBase::GetParamsBuffer() const {
 
 ObjectType ExternalTextureBase::GetType() const {
     return ObjectType::ExternalTexture;
-}
-
-const Extent2D& ExternalTextureBase::GetVisibleSize() const {
-    DAWN_ASSERT(!IsError());
-    return mVisibleSize;
-}
-
-const Origin2D& ExternalTextureBase::GetVisibleOrigin() const {
-    DAWN_ASSERT(!IsError());
-    return mVisibleOrigin;
 }
 
 }  // namespace dawn::native

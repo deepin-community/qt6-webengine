@@ -6,11 +6,13 @@
 #include <assert.h>
 
 #include <emmintrin.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/math.h>
-#include <xnnpack/transpose.h>
-#include <xnnpack/unaligned.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/transpose.h"
+#include "src/xnnpack/unaligned.h"
 
 
 void xnn_x16_transposec_ukernel__4x8_sse2(
@@ -19,8 +21,7 @@ void xnn_x16_transposec_ukernel__4x8_sse2(
     size_t input_stride,
     size_t output_stride,
     size_t block_width,
-    size_t block_height,
-    const union xnn_x16_transpose_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    size_t block_height) XNN_OOB_READS
 {
   assert(output_stride >= block_height * sizeof(uint16_t));
   assert(input_stride >= block_width * sizeof(uint16_t));

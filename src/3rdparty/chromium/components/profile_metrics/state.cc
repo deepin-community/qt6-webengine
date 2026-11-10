@@ -30,6 +30,10 @@ std::string GetStateSuffix(StateSuffix suffix) {
       return "_SingleProfile";
     case StateSuffix::kUponDeletion:
       return "_UponDeletion";
+    case StateSuffix::kManagementDisclaimerAccepted:
+      return "_ManagementDisclaimerAccepted";
+    case StateSuffix::kManagementDisclaimerNotAccepted:
+      return "_ManagementDisclaimerNotAccepted";
   }
 }
 
@@ -45,11 +49,6 @@ enum class DeleteProfileContext {
 };
 
 }  // namespace
-
-void LogProfileAvatar(AvatarState avatar_state, StateSuffix suffix) {
-  base::UmaHistogramEnumeration("Profile.State.Avatar" + GetStateSuffix(suffix),
-                                avatar_state);
-}
 
 void LogProfileAccountType(UnconsentedPrimaryAccountType account_type,
                            StateSuffix suffix) {

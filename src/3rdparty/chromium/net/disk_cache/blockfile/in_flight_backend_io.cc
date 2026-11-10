@@ -385,7 +385,6 @@ void BackendIO::ExecuteBackendOperation() {
       break;
     default:
       NOTREACHED() << "Invalid Operation";
-      result_ = net::ERR_UNEXPECTED;
   }
   DCHECK_NE(net::ERR_IO_PENDING, result_);
   NotifyController();
@@ -429,7 +428,6 @@ void BackendIO::ExecuteEntryOperation() {
       break;
     default:
       NOTREACHED() << "Invalid Operation";
-      result_ = net::ERR_UNEXPECTED;
   }
   buf_ = nullptr;
   if (result_ != net::ERR_IO_PENDING)

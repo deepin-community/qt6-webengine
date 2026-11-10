@@ -20,11 +20,11 @@ namespace views {
 class Button;
 
 // Constants for the size of the combobox arrow.
-constexpr gfx::Size ComboboxArrowSize() {
+inline constexpr gfx::Size ComboboxArrowSize() {
   return gfx::Size(/*width=*/8, /*height=*/4);
 }
-extern const int kComboboxArrowPaddingWidth;
-extern const int kComboboxArrowPaddingWidthChromeRefresh2023;
+
+inline constexpr int kComboboxArrowPaddingWidth = 4;
 
 int GetComboboxArrowContainerWidthAndMargins();
 

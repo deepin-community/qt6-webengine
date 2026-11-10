@@ -15,6 +15,7 @@ enum DangerType {
   kDangerousFile,
   kDangerousUrl,
   kDangerousContent,
+  kCookieTheft,
   kUncommonContent,
   kDangerousHost,
   kPotentiallyUnwanted,
@@ -27,7 +28,14 @@ enum DangerType {
   kDeepScannedFailed,
   kDeepScannedSafe,
   kDeepScannedOpenedDangerous,
-  kBlockedUnsupportedFileType,
+  kBlockedScanFailed,
+};
+
+// This corresponds to DownloadUIModel::TailoredWarningType.
+enum TailoredWarningType {
+  kNoApplicableTailoredWarningType,
+  kCookieTheft,
+  kSuspiciousArchive,
 };
 
 // Represents the state of a download in the UI.
@@ -71,6 +79,7 @@ struct Data {
   string by_ext_id;
   string by_ext_name;
   DangerType danger_type;
+  TailoredWarningType tailored_warning_type;
   string date_string;
   string file_name;
   string file_path;
@@ -86,6 +95,12 @@ struct Data {
   // confirmation, the state will indicate the download is in progress, complete
   // or cancelled.
   State state;
+  // The display string for the initiator origin of the download request in the
+  // UI. This is an empty string unless the download had an initiator origin,
+  // and the download was initiated by user gesture. IDN domains may be
+  // converted to Unicode.
+  mojo_base.mojom.String16 display_initiator_origin;
+
   // The URL of the download item. Present if this field is populated with the
   // original URL. Omitted if the URL should not be clickable on the downloads
   // page, due to URL size limits requiring truncation.
@@ -101,20 +116,18 @@ struct Data {
   bool has_safe_browsing_verdict;
 };
 
+// The parameter "id" is the id of the current download
 interface PageHandlerFactory {
   CreatePageHandler(pending_remote<Page> page,
                     pending_receiver<PageHandler> handler);
 };
 
+// TODO(crbug.com/351865738): Consider combining methods that take an id
+// into their own stateless interface.
 interface PageHandler {
   GetDownloads(array<string> search_terms);
   OpenFileRequiringGesture(string id);
   Drag(string id);
-
-  // This shows the DownloadDangerPrompt (native UI dialog) and is obsoleted by
-  // the following four methods.
-  // TODO(chlily): Remove this when cleaning up ImprovedDownloadPageWarnings.
-  SaveDangerousRequiringGesture(string id);
 
   // Called when "Download suspicious file" is clicked from the
   // chrome://downloads overflow menu, for suspicious/unverified files. Does not
@@ -122,18 +135,18 @@ interface PageHandler {
   SaveSuspiciousRequiringGesture(string id);
 
   // Called when "Download dangerous file" is clicked from the
-  // chrome://downloads overflow menu to open the warning bypass prompt, for
-  // dangerous files. Only records the opening of the warning bypass prompt.
-  RecordOpenBypassWarningPrompt(string id);
+  // chrome://downloads overflow menu to open the warning bypass dialog, for
+  // dangerous files. Only records the opening of the warning bypass dialog.
+  RecordOpenBypassWarningDialog(string id);
 
   // Called when "Download dangerous file" is clicked from the
-  // chrome://downloads warning bypass prompt, for dangerous files.
-  SaveDangerousFromPromptRequiringGesture(string id);
+  // chrome://downloads warning dialog, for dangerous files.
+  SaveDangerousFromDialogRequiringGesture(string id);
 
   // Called when "Cancel" is clicked on the chrome://downloads warning bypass
-  // prompt, or the prompt is closed by dismissing it. Only records the event
+  // dialog, or the dialog is closed by dismissing it. Only records the event
   // and potentially sends a report.
-  RecordCancelBypassWarningPrompt(string id);
+  RecordCancelBypassWarningDialog(string id);
 
   DiscardDangerous(string id);
   RetryDownload(string id);
@@ -145,6 +158,14 @@ interface PageHandler {
   Cancel(string id);
   ClearAll();
   OpenDownloadsFolderRequiringGesture();
+
+  // The two methods below are for the ESB Download Row Promo.
+  // Opens the chrome://settings/security page with a IPH Promotion
+  // on the ESB radio button.
+  OpenEsbSettings();
+
+  // Logs when the user actually sees the ESB Download Row Promo.
+  LogEsbPromotionRowViewed();
 
   // Opens this download with the given |id| while it is being scanned by Safe
   // Browsing. This completes the scan early. This requires a user gesture on
@@ -162,6 +183,9 @@ interface PageHandler {
   // Bypass deep scan for download with the given |id|. This requires a user
   // gesture on the WebUI.
   BypassDeepScanRequiringGesture(string id);
+
+  // Checks whether an ESB Promotion can be shown on this profile.
+  IsEligibleForEsbPromo() => (bool result);
 };
 
 interface Page {

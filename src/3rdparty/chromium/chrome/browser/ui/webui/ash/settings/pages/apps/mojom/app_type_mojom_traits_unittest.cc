@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "chrome/browser/ui/webui/ash/settings/pages/apps/mojom/app_type_mojom_traits.h"
+
 #include "chrome/browser/ui/webui/ash/settings/pages/apps/mojom/app_notification_handler.mojom.h"
 #include "components/services/app_service/public/cpp/app_types.h"
 #include "mojo/public/cpp/test_support/test_utils.h"
@@ -19,7 +20,8 @@ TEST(AppTypeMojomTraitsTest, RoundTripReadiness) {
       apps::Readiness::kTerminated,
       apps::Readiness::kUninstalledByUser,
       apps::Readiness::kRemoved,
-      apps::Readiness::kUninstalledByNonUser};
+      apps::Readiness::kUninstalledByNonUser,
+      apps::Readiness::kDisabledByLocalSettings};
 
   for (auto readiness_in : kTestReadiness) {
     apps::Readiness readiness_out;

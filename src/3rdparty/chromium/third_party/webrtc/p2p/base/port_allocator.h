@@ -11,28 +11,29 @@
 #ifndef P2P_BASE_PORT_ALLOCATOR_H_
 #define P2P_BASE_PORT_ALLOCATOR_H_
 
-#include <deque>
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "absl/strings/string_view.h"
+#include "api/candidate.h"
 #include "api/sequence_checker.h"
 #include "api/transport/enums.h"
 #include "p2p/base/port.h"
 #include "p2p/base/port_interface.h"
-#include "rtc_base/helpers.h"
-#include "rtc_base/proxy_info.h"
+#include "p2p/base/transport_description.h"
+#include "rtc_base/checks.h"
+#include "rtc_base/network.h"
+#include "rtc_base/socket_address.h"
 #include "rtc_base/ssl_certificate.h"
 #include "rtc_base/system/rtc_export.h"
 #include "rtc_base/third_party/sigslot/sigslot.h"
-#include "rtc_base/thread.h"
 
 namespace webrtc {
-class TurnCustomizer;
-}  // namespace webrtc
 
-namespace cricket {
+class TurnCustomizer;
 
 // PortAllocator is responsible for allocating Port types for a given
 // P2PSocket. It also handles port freeing.
@@ -151,7 +152,7 @@ typedef std::vector<ProtocolAddress> PortList;
 // TODO(deadbeef): Rename to TurnServerConfig.
 struct RTC_EXPORT RelayServerConfig {
   RelayServerConfig();
-  RelayServerConfig(const rtc::SocketAddress& address,
+  RelayServerConfig(const SocketAddress& address,
                     absl::string_view username,
                     absl::string_view password,
                     ProtocolType proto);
@@ -180,7 +181,7 @@ struct RTC_EXPORT RelayServerConfig {
   TlsCertPolicy tls_cert_policy = TlsCertPolicy::TLS_CERT_POLICY_SECURE;
   std::vector<std::string> tls_alpn_protocols;
   std::vector<std::string> tls_elliptic_curves;
-  rtc::SSLCertificateVerifier* tls_cert_verifier = nullptr;
+  SSLCertificateVerifier* tls_cert_verifier = nullptr;
   std::string turn_logging_id;
 };
 
@@ -203,10 +204,6 @@ class RTC_EXPORT PortAllocatorSession : public sigslot::has_slots<> {
   const std::string& ice_ufrag() const { return ice_ufrag_; }
   const std::string& ice_pwd() const { return ice_pwd_; }
   bool pooled() const { return pooled_; }
-
-  // TODO(bugs.webrtc.org/14605): move this to the constructor
-  void set_ice_tiebreaker(uint64_t tiebreaker) { tiebreaker_ = tiebreaker; }
-  uint64_t ice_tiebreaker() const { return tiebreaker_; }
 
   // Setting this filter should affect not only candidates gathered in the
   // future, but candidates already gathered and ports already "ready",
@@ -246,13 +243,13 @@ class RTC_EXPORT PortAllocatorSession : public sigslot::has_slots<> {
   // Get candidate-level stats from all candidates on the ready ports and return
   // the stats to the given list.
   virtual void GetCandidateStatsFromReadyPorts(
-      CandidateStatsList* candidate_stats_list) const {}
+      CandidateStatsList* /* candidate_stats_list */) const {}
   // Set the interval at which STUN candidates will resend STUN binding requests
   // on the underlying ports to keep NAT bindings open.
   // The default value of the interval in implementation is restored if a null
   // optional value is passed.
   virtual void SetStunKeepaliveIntervalForReadyPorts(
-      const absl::optional<int>& stun_keepalive_interval) {}
+      const std::optional<int>& /* stun_keepalive_interval */) {}
   // Another way of getting the information provided by the signals below.
   //
   // Ports and candidates are not guaranteed to be in the same order as the
@@ -324,9 +321,6 @@ class RTC_EXPORT PortAllocatorSession : public sigslot::has_slots<> {
 
   bool pooled_ = false;
 
-  // TODO(bugs.webrtc.org/14605): move this to the constructor
-  uint64_t tiebreaker_;
-
   // SetIceParameters is an implementation detail which only PortAllocator
   // should be able to call.
   friend class PortAllocator;
@@ -368,19 +362,16 @@ class RTC_EXPORT PortAllocator : public sigslot::has_slots<> {
                         const std::vector<RelayServerConfig>& turn_servers,
                         int candidate_pool_size,
                         bool prune_turn_ports,
-                        webrtc::TurnCustomizer* turn_customizer = nullptr,
-                        const absl::optional<int>&
-                            stun_candidate_keepalive_interval = absl::nullopt);
+                        TurnCustomizer* turn_customizer = nullptr,
+                        const std::optional<int>&
+                            stun_candidate_keepalive_interval = std::nullopt);
   bool SetConfiguration(const ServerAddresses& stun_servers,
                         const std::vector<RelayServerConfig>& turn_servers,
                         int candidate_pool_size,
-                        webrtc::PortPrunePolicy turn_port_prune_policy,
-                        webrtc::TurnCustomizer* turn_customizer = nullptr,
-                        const absl::optional<int>&
-                            stun_candidate_keepalive_interval = absl::nullopt);
-
-  void SetIceTiebreaker(uint64_t tiebreaker);
-  uint64_t IceTiebreaker() const { return tiebreaker_; }
+                        PortPrunePolicy turn_port_prune_policy,
+                        TurnCustomizer* turn_customizer = nullptr,
+                        const std::optional<int>&
+                            stun_candidate_keepalive_interval = std::nullopt);
 
   const ServerAddresses& stun_servers() const {
     CheckRunOnValidThreadIfInitialized();
@@ -397,7 +388,7 @@ class RTC_EXPORT PortAllocator : public sigslot::has_slots<> {
     return candidate_pool_size_;
   }
 
-  const absl::optional<int>& stun_candidate_keepalive_interval() const {
+  const std::optional<int>& stun_candidate_keepalive_interval() const {
     CheckRunOnValidThreadIfInitialized();
     return stun_candidate_keepalive_interval_;
   }
@@ -411,13 +402,13 @@ class RTC_EXPORT PortAllocator : public sigslot::has_slots<> {
 
   // Set whether VPN connections should be preferred, avoided, mandated or
   // blocked.
-  virtual void SetVpnPreference(webrtc::VpnPreference preference) {
+  virtual void SetVpnPreference(VpnPreference preference) {
     vpn_preference_ = preference;
   }
 
   // Set list of <ipaddress, mask> that shall be categorized as VPN.
   // Implemented by BasicPortAllocator.
-  virtual void SetVpnList(const std::vector<rtc::NetworkMask>& vpn_list) {}
+  virtual void SetVpnList(const std::vector<NetworkMask>& /* vpn_list */) {}
 
   std::unique_ptr<PortAllocatorSession> CreateSession(
       absl::string_view content_name,
@@ -453,6 +444,8 @@ class RTC_EXPORT PortAllocator : public sigslot::has_slots<> {
   // 3. mDNS concealment of private IPs is enabled.
   Candidate SanitizeCandidate(const Candidate& c) const;
 
+  uint64_t ice_tiebreaker() const { return tiebreaker_; }
+
   uint32_t flags() const {
     CheckRunOnValidThreadIfInitialized();
     return flags_;
@@ -461,25 +454,6 @@ class RTC_EXPORT PortAllocator : public sigslot::has_slots<> {
   void set_flags(uint32_t flags) {
     CheckRunOnValidThreadIfInitialized();
     flags_ = flags;
-  }
-
-  // These three methods are deprecated. If connections need to go through a
-  // proxy, the application should create a BasicPortAllocator given a custom
-  // PacketSocketFactory that creates proxy sockets.
-  const std::string& user_agent() const {
-    CheckRunOnValidThreadIfInitialized();
-    return agent_;
-  }
-
-  const rtc::ProxyInfo& proxy() const {
-    CheckRunOnValidThreadIfInitialized();
-    return proxy_;
-  }
-
-  void set_proxy(absl::string_view agent, const rtc::ProxyInfo& proxy) {
-    CheckRunOnValidThreadIfInitialized();
-    agent_ = std::string(agent);
-    proxy_ = proxy;
   }
 
   // Gets/Sets the port range to use when choosing client ports.
@@ -573,15 +547,15 @@ class RTC_EXPORT PortAllocator : public sigslot::has_slots<> {
   // Deprecated (by the next method).
   bool prune_turn_ports() const {
     CheckRunOnValidThreadIfInitialized();
-    return turn_port_prune_policy_ == webrtc::PRUNE_BASED_ON_PRIORITY;
+    return turn_port_prune_policy_ == PRUNE_BASED_ON_PRIORITY;
   }
 
-  webrtc::PortPrunePolicy turn_port_prune_policy() const {
+  PortPrunePolicy turn_port_prune_policy() const {
     CheckRunOnValidThreadIfInitialized();
     return turn_port_prune_policy_;
   }
 
-  webrtc::TurnCustomizer* turn_customizer() {
+  TurnCustomizer* turn_customizer() {
     CheckRunOnValidThreadIfInitialized();
     return turn_customizer_;
   }
@@ -629,8 +603,6 @@ class RTC_EXPORT PortAllocator : public sigslot::has_slots<> {
 
   bool initialized_ = false;
   uint32_t flags_;
-  std::string agent_;
-  rtc::ProxyInfo proxy_;
   int min_port_;
   int max_port_;
   int max_ipv6_networks_;
@@ -638,22 +610,22 @@ class RTC_EXPORT PortAllocator : public sigslot::has_slots<> {
   bool allow_tcp_listen_;
   uint32_t candidate_filter_;
   std::string origin_;
-  webrtc::SequenceChecker thread_checker_;
-  webrtc::VpnPreference vpn_preference_ = webrtc::VpnPreference::kDefault;
+  SequenceChecker thread_checker_;
+  VpnPreference vpn_preference_ = VpnPreference::kDefault;
 
  private:
   ServerAddresses stun_servers_;
   std::vector<RelayServerConfig> turn_servers_;
   int candidate_pool_size_ = 0;  // Last value passed into SetConfiguration.
   std::vector<std::unique_ptr<PortAllocatorSession>> pooled_sessions_;
-  webrtc::PortPrunePolicy turn_port_prune_policy_ = webrtc::NO_PRUNE;
+  PortPrunePolicy turn_port_prune_policy_ = NO_PRUNE;
 
   // Customizer for TURN messages.
   // The instance is owned by application and will be shared among
   // all TurnPort(s) created.
-  webrtc::TurnCustomizer* turn_customizer_ = nullptr;
+  TurnCustomizer* turn_customizer_ = nullptr;
 
-  absl::optional<int> stun_candidate_keepalive_interval_;
+  std::optional<int> stun_candidate_keepalive_interval_;
 
   // If true, TakePooledSession() will only return sessions that has same ice
   // credentials as requested.
@@ -668,6 +640,7 @@ class RTC_EXPORT PortAllocator : public sigslot::has_slots<> {
   uint64_t tiebreaker_;
 };
 
-}  // namespace cricket
+}  //  namespace webrtc
+
 
 #endif  // P2P_BASE_PORT_ALLOCATOR_H_

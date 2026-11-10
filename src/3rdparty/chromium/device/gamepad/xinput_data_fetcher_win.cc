@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "device/gamepad/xinput_data_fetcher_win.h"
 
 #include <stddef.h>
@@ -13,6 +18,7 @@
 #include "base/containers/fixed_flat_map.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
+#include "base/no_destructor.h"
 #include "base/strings/strcat.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
@@ -121,7 +127,7 @@ void XInputDataFetcherWin::EnumerateDevices() {
                   {kDeviceSubTypeGuitarBass, u"GUITAR_BASS"},
                   {kDeviceSubTypeArcadePad, u"ARCADE_PAD"},
               });
-          auto const it = kNames.find(sub_type);
+          const auto it = kNames.find(sub_type);
           return (it == kNames.end()) ? u"<UNKNOWN>" : it->second;
         }(caps.SubType);
         pad.SetID(base::StrCat(

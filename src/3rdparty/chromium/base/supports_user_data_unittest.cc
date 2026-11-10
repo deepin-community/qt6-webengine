@@ -21,9 +21,7 @@ struct TestSupportsUserData : public SupportsUserData {
 
 struct UsesItself : public SupportsUserData::Data {
   UsesItself(SupportsUserData* supports_user_data, const void* key)
-      : supports_user_data_(supports_user_data),
-        key_(key) {
-  }
+      : supports_user_data_(supports_user_data), key_(key) {}
 
   ~UsesItself() override {
     EXPECT_EQ(nullptr, supports_user_data_->GetUserData(key_));
@@ -134,7 +132,7 @@ TEST_F(SupportsUserDataTest, ReentrantSetUserDataDuringRemoval) {
     raw_ref<TestSupportsUserData> supports_user_data_;
   };
   {
-    absl::optional<TestSupportsUserData> supports_user_data;
+    std::optional<TestSupportsUserData> supports_user_data;
     supports_user_data.emplace();
     // This awkward construction is required since death tests are typically
     // implemented using `fork()`, so calling `SetUserData()` outside the

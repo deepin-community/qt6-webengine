@@ -4,12 +4,15 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/v8_code_cache.h"
 
+#include <optional>
+
+#include "base/containers/span_reader.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "build/build_config.h"
 #include "components/miracle_parameter/common/public/miracle_parameter.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/common/loader/code_cache_util.h"
 #include "third_party/blink/public/mojom/v8_cache_options.mojom-blink.h"
 #include "third_party/blink/public/web/web_settings.h"
 #include "third_party/blink/renderer/bindings/core/v8/module_record.h"
@@ -61,15 +64,14 @@ uint32_t CacheTag(CacheTagKind kind, const String& encoding) {
   // later load the script from the cache and interpret it with a different
   // encoding, the cached data is not valid for that encoding.
   return (v8_cache_data_version | kind) +
-         (encoding.IsNull() ? 0 : WTF::GetHash(encoding));
+         (encoding.IsNull() ? 0 : GetHash(encoding));
 }
 
-bool TimestampIsRecent(CachedMetadata* cached_metadata) {
+bool TimestampIsRecent(const CachedMetadata* cached_metadata) {
   const base::TimeDelta kHotHours = base::Hours(GetV8CodeCacheHotHours());
+  base::SpanReader reader(cached_metadata->Data());
   uint64_t time_stamp_ms;
-  const uint32_t size = sizeof(time_stamp_ms);
-  CHECK_GE(cached_metadata->size(), size);
-  memcpy(&time_stamp_ms, cached_metadata->Data(), size);
+  CHECK(reader.ReadU64NativeEndian(time_stamp_ms));
   base::TimeTicks time_stamp =
       base::TimeTicks() + base::Milliseconds(time_stamp_ms);
   return (base::TimeTicks::Now() - time_stamp) < kHotHours;
@@ -83,23 +85,107 @@ enum class DetailFlags : uint64_t {
   kFull = 1,
 };
 
+V8CodeCache::GetMetadataType ReadGetMetadataType(
+    const CachedMetadataHandler* cache_handler) {
+  // Check the metadata types in the same preference order they're checked in
+  // the code: code cache, local compile hints, timestamp. That way we get the
+  // right sample in case several metadata types are set.
+  uint32_t code_cache_tag = V8CodeCache::TagForCodeCache(cache_handler);
+  if (cache_handler
+          ->GetCachedMetadata(code_cache_tag,
+                              CachedMetadataHandler::kAllowUnchecked)
+          .get()) {
+    return V8CodeCache::GetMetadataType::kCodeCache;
+  }
+  scoped_refptr<CachedMetadata> cached_metadata =
+      cache_handler->GetCachedMetadata(
+          V8CodeCache::TagForCompileHints(cache_handler),
+          CachedMetadataHandler::kAllowUnchecked);
+  if (cached_metadata) {
+    return TimestampIsRecent(cached_metadata.get())
+               ? V8CodeCache::GetMetadataType::
+                     kLocalCompileHintsWithHotTimestamp
+               : V8CodeCache::GetMetadataType::
+                     kLocalCompileHintsWithColdTimestamp;
+  }
+  cached_metadata = cache_handler->GetCachedMetadata(
+      V8CodeCache::TagForTimeStamp(cache_handler),
+      CachedMetadataHandler::kAllowUnchecked);
+  if (cached_metadata) {
+    return TimestampIsRecent(cached_metadata.get())
+               ? V8CodeCache::GetMetadataType::kHotTimestamp
+               : V8CodeCache::GetMetadataType::kColdTimestamp;
+  }
+  return V8CodeCache::GetMetadataType::kNone;
+}
+
+V8CodeCache::GetMetadataType ReadGetMetadataType(
+    const CachedMetadata* cached_metadata,
+    const String& encoding) {
+  if (!cached_metadata) {
+    return V8CodeCache::GetMetadataType::kNone;
+  }
+
+  // Check the metadata types in the same preference order they're checked in
+  // the code: code cache, local compile hints, timestamp. That way we get the
+  // right sample in case several metadata types are set.
+  if (cached_metadata->DataTypeID() == CacheTag(kCacheTagCode, encoding)) {
+    return V8CodeCache::GetMetadataType::kCodeCache;
+  }
+
+  if (cached_metadata->DataTypeID() ==
+      CacheTag(kCacheTagCompileHints, encoding)) {
+    return TimestampIsRecent(cached_metadata)
+               ? V8CodeCache::GetMetadataType::
+                     kLocalCompileHintsWithHotTimestamp
+               : V8CodeCache::GetMetadataType::
+                     kLocalCompileHintsWithColdTimestamp;
+  }
+
+  if (cached_metadata->DataTypeID() == CacheTag(kCacheTagTimeStamp, encoding)) {
+    return TimestampIsRecent(cached_metadata)
+               ? V8CodeCache::GetMetadataType::kHotTimestamp
+               : V8CodeCache::GetMetadataType::kColdTimestamp;
+  }
+  return V8CodeCache::GetMetadataType::kNone;
+}
+
+constexpr const char* kCacheGetHistogram =
+    "WebCore.Scripts.V8CodeCacheMetadata.Get";
+constexpr const char* kCacheSetHistogram =
+    "WebCore.Scripts.V8CodeCacheMetadata.Set";
+
 }  // namespace
 
 // Check previously stored timestamp (either from the code cache or compile
 // hints cache).
 bool V8CodeCache::HasHotTimestamp(const CachedMetadataHandler* cache_handler) {
+  if (!cache_handler) {
+    return false;
+  }
   scoped_refptr<CachedMetadata> cached_metadata =
       cache_handler->GetCachedMetadata(
-          V8CodeCache::TagForTimeStamp(cache_handler));
+          V8CodeCache::TagForTimeStamp(cache_handler),
+          CachedMetadataHandler::kAllowUnchecked);
   if (cached_metadata) {
     return TimestampIsRecent(cached_metadata.get());
   }
   cached_metadata = cache_handler->GetCachedMetadata(
-      V8CodeCache::TagForCompileHints(cache_handler));
+      V8CodeCache::TagForCompileHints(cache_handler),
+      CachedMetadataHandler::kAllowUnchecked);
   if (cached_metadata) {
     return TimestampIsRecent(cached_metadata.get());
   }
   return false;
+}
+
+bool V8CodeCache::HasHotTimestamp(const CachedMetadata& data,
+                                  const String& encoding) {
+  if (data.DataTypeID() != CacheTag(kCacheTagCompileHints, encoding) &&
+      data.DataTypeID() != CacheTag(kCacheTagTimeStamp, encoding)) {
+    return false;
+  }
+  return TimestampIsRecent(&data);
 }
 
 bool V8CodeCache::HasCodeCache(
@@ -110,6 +196,11 @@ bool V8CodeCache::HasCodeCache(
 
   uint32_t code_cache_tag = V8CodeCache::TagForCodeCache(cache_handler);
   return cache_handler->GetCachedMetadata(code_cache_tag, behavior).get();
+}
+
+bool V8CodeCache::HasCodeCache(const CachedMetadata& data,
+                               const String& encoding) {
+  return data.DataTypeID() == CacheTag(kCacheTagCode, encoding);
 }
 
 bool V8CodeCache::HasCompileHints(
@@ -128,6 +219,14 @@ bool V8CodeCache::HasCompileHints(
   return true;
 }
 
+bool V8CodeCache::HasHotCompileHints(const CachedMetadata& data,
+                                     const String& encoding) {
+  if (data.DataTypeID() != CacheTag(kCacheTagCompileHints, encoding)) {
+    return false;
+  }
+  return TimestampIsRecent(&data);
+}
+
 std::unique_ptr<v8::ScriptCompiler::CachedData> V8CodeCache::CreateCachedData(
     const CachedMetadataHandler* cache_handler) {
   return V8CodeCache::CreateCachedData(GetCachedMetadata(cache_handler));
@@ -136,10 +235,10 @@ std::unique_ptr<v8::ScriptCompiler::CachedData> V8CodeCache::CreateCachedData(
 std::unique_ptr<v8::ScriptCompiler::CachedData> V8CodeCache::CreateCachedData(
     scoped_refptr<CachedMetadata> cached_metadata) {
   DCHECK(cached_metadata);
-  const uint8_t* data = cached_metadata->Data();
-  int length = cached_metadata->size();
+  base::span<const uint8_t> metadata = cached_metadata->Data();
   return std::make_unique<v8::ScriptCompiler::CachedData>(
-      data, length, v8::ScriptCompiler::CachedData::BufferNotOwned);
+      metadata.data(), base::checked_cast<int>(metadata.size()),
+      v8::ScriptCompiler::CachedData::BufferNotOwned);
 }
 
 scoped_refptr<CachedMetadata> V8CodeCache::GetCachedMetadata(
@@ -164,38 +263,115 @@ scoped_refptr<CachedMetadata> V8CodeCache::GetCachedMetadataForCompileHints(
   return cached_metadata;
 }
 
-std::tuple<v8::ScriptCompiler::CompileOptions,
-           V8CodeCache::ProduceCacheOptions,
-           v8::ScriptCompiler::NoCacheReason>
-V8CodeCache::GetCompileOptions(mojom::blink::V8CacheOptions cache_options,
-                               const ClassicScript& classic_script,
-                               bool might_generate_compile_hints,
-                               bool can_use_compile_hints) {
-  return GetCompileOptions(cache_options, classic_script.CacheHandler(),
-                           classic_script.SourceText().length(),
-                           classic_script.SourceLocationType(),
-                           classic_script.SourceUrl(),
-                           might_generate_compile_hints, can_use_compile_hints);
+namespace {
+
+bool CanAddCompileHintsMagicToCompileOption(
+    v8::ScriptCompiler::CompileOptions compile_options) {
+  // Adding compile hints to kConsumeCodeCache or kEagerCompile doesn't make
+  // sense. kProduceCompileHints and kConsumeCompileHints can be combined with
+  // kFollowCompileHintsMagicComment / kFollowCompileHintsPerFunctionMagic,
+  // since they still affect scripts which don't have the magic comment.
+
+  // This fails if new compile options are added.
+  DCHECK((compile_options &
+          ~(v8::ScriptCompiler::CompileOptions::kConsumeCodeCache |
+            v8::ScriptCompiler::CompileOptions::kEagerCompile |
+            v8::ScriptCompiler::CompileOptions::kProduceCompileHints |
+            v8::ScriptCompiler::CompileOptions::kConsumeCompileHints)) == 0);
+
+  return (compile_options &
+          (v8::ScriptCompiler::CompileOptions::kConsumeCodeCache |
+           v8::ScriptCompiler::CompileOptions::kEagerCompile)) == 0;
 }
 
 std::tuple<v8::ScriptCompiler::CompileOptions,
            V8CodeCache::ProduceCacheOptions,
            v8::ScriptCompiler::NoCacheReason>
-V8CodeCache::GetCompileOptions(mojom::blink::V8CacheOptions cache_options,
-                               const CachedMetadataHandler* cache_handler,
-                               size_t source_text_length,
-                               ScriptSourceLocationType source_location_type,
-                               const KURL& url,
-                               bool might_generate_compile_hints,
-                               bool can_use_compile_hints) {
+MaybeAddCompileHintsMagic(
+    std::tuple<v8::ScriptCompiler::CompileOptions,
+               V8CodeCache::ProduceCacheOptions,
+               v8::ScriptCompiler::NoCacheReason> input,
+    v8_compile_hints::MagicCommentMode magic_comment_mode) {
+  auto [compile_options, produce_cache_options, no_cache_reason] = input;
+  if (CanAddCompileHintsMagicToCompileOption(compile_options)) {
+    if (magic_comment_mode ==
+        v8_compile_hints::MagicCommentMode::kOnlyTopLevel) {
+      return std::make_tuple(
+          v8::ScriptCompiler::CompileOptions(
+              compile_options |
+              v8::ScriptCompiler::kFollowCompileHintsMagicComment),
+          produce_cache_options, no_cache_reason);
+    } else if (magic_comment_mode ==
+               v8_compile_hints::MagicCommentMode::kTopLevelAndFunctions) {
+      return std::make_tuple(
+          v8::ScriptCompiler::CompileOptions(
+              compile_options |
+              v8::ScriptCompiler::kFollowCompileHintsMagicComment |
+              v8::ScriptCompiler::kFollowCompileHintsPerFunctionMagicComment),
+          produce_cache_options, no_cache_reason);
+    }
+  }
+  return input;
+}
+
+}  // namespace
+
+std::tuple<v8::ScriptCompiler::CompileOptions,
+           V8CodeCache::ProduceCacheOptions,
+           v8::ScriptCompiler::NoCacheReason>
+V8CodeCache::GetCompileOptions(
+    mojom::blink::V8CacheOptions cache_options,
+    const ClassicScript& classic_script,
+    bool might_generate_crowdsourced_compile_hints,
+    bool can_use_crowdsourced_compile_hints,
+    v8_compile_hints::MagicCommentMode magic_comment_mode) {
+  return MaybeAddCompileHintsMagic(
+      GetCompileOptionsInternal(cache_options, classic_script.CacheHandler(),
+                                classic_script.SourceText().length(),
+                                classic_script.SourceLocationType(),
+                                classic_script.SourceUrl(),
+                                might_generate_crowdsourced_compile_hints,
+                                can_use_crowdsourced_compile_hints),
+      magic_comment_mode);
+}
+
+std::tuple<v8::ScriptCompiler::CompileOptions,
+           V8CodeCache::ProduceCacheOptions,
+           v8::ScriptCompiler::NoCacheReason>
+V8CodeCache::GetCompileOptions(
+    mojom::blink::V8CacheOptions cache_options,
+    const CachedMetadataHandler* cache_handler,
+    size_t source_text_length,
+    ScriptSourceLocationType source_location_type,
+    const KURL& url,
+    bool might_generate_crowdsourced_compile_hints,
+    bool can_use_crowdsourced_compile_hints,
+    v8_compile_hints::MagicCommentMode magic_comment_mode) {
+  return MaybeAddCompileHintsMagic(
+      GetCompileOptionsInternal(cache_options, cache_handler,
+                                source_text_length, source_location_type, url,
+                                might_generate_crowdsourced_compile_hints,
+                                can_use_crowdsourced_compile_hints),
+      magic_comment_mode);
+}
+
+std::tuple<v8::ScriptCompiler::CompileOptions,
+           V8CodeCache::ProduceCacheOptions,
+           v8::ScriptCompiler::NoCacheReason>
+V8CodeCache::GetCompileOptionsInternal(
+    mojom::blink::V8CacheOptions cache_options,
+    const CachedMetadataHandler* cache_handler,
+    size_t source_text_length,
+    ScriptSourceLocationType source_location_type,
+    const KURL& url,
+    bool might_generate_crowdsourced_compile_hints,
+    bool can_use_crowdsourced_compile_hints) {
   static const int kMinimalCodeLength = 1024;
   v8::ScriptCompiler::NoCacheReason no_cache_reason;
 
   auto no_code_cache_compile_options = v8::ScriptCompiler::kNoCompileOptions;
 
-  if (might_generate_compile_hints && url.ProtocolIsInHTTPFamily()) {
-    DCHECK(base::FeatureList::IsEnabled(features::kProduceCompileHints2));
-
+  if (might_generate_crowdsourced_compile_hints) {
     // If we end up compiling the script without forced eager compilation, we'll
     // also produce compile hints. This is orthogonal to producing the code
     // cache: if we don't want to create a code cache for some reason
@@ -211,7 +387,7 @@ V8CodeCache::GetCompileOptions(mojom::blink::V8CacheOptions cache_options,
     // cached scripts (especially if they've been eagerly compiled by a
     // ServiceWorker) and omitting cached scripts would deteriorate the data.
     no_code_cache_compile_options = v8::ScriptCompiler::kProduceCompileHints;
-  } else if (url.ProtocolIsInHTTPFamily() && can_use_compile_hints) {
+  } else if (can_use_crowdsourced_compile_hints) {
     // This doesn't need to be gated behind a runtime flag, because there won't
     // be any data unless the v8_compile_hints::kConsumeCompileHints
     // flag is on.
@@ -249,6 +425,18 @@ V8CodeCache::GetCompileOptions(mojom::blink::V8CacheOptions cache_options,
                            no_cache_reason);
   }
 
+  // Handlers managing bundled webui cached metadata do not require production
+  // of cached metadata following compilation, and only metadata consume tasks
+  // should be issued when the metadata is available.
+  if (cache_handler->GetServingSource() ==
+      CachedMetadataHandler::ServingSource::kWebUIBundledCache) {
+    return std::make_tuple(HasCodeCache(cache_handler)
+                               ? v8::ScriptCompiler::kConsumeCodeCache
+                               : v8::ScriptCompiler::kNoCompileOptions,
+                           ProduceCacheOptions::kNoProduceCache,
+                           v8::ScriptCompiler::kNoCacheBecauseStaticCodeCache);
+  }
+
   if (source_text_length < kMinimalCodeLength) {
     no_cache_reason = v8::ScriptCompiler::kNoCacheBecauseScriptTooSmall;
     return std::make_tuple(no_code_cache_compile_options,
@@ -256,9 +444,13 @@ V8CodeCache::GetCompileOptions(mojom::blink::V8CacheOptions cache_options,
                            no_cache_reason);
   }
 
+  // By recording statistics at this point we exclude scripts for which we're
+  // not going to generate metadata.
+  RecordCacheGetStatistics(cache_handler);
+
   if (HasCodeCache(cache_handler) &&
-      no_code_cache_compile_options !=
-          v8::ScriptCompiler::kProduceCompileHints) {
+      (no_code_cache_compile_options &
+       v8::ScriptCompiler::kProduceCompileHints) == 0) {
     return std::make_tuple(v8::ScriptCompiler::kConsumeCodeCache,
                            ProduceCacheOptions::kNoProduceCache,
                            no_cache_reason);
@@ -266,12 +458,15 @@ V8CodeCache::GetCompileOptions(mojom::blink::V8CacheOptions cache_options,
 
   // If the resource is served from CacheStorage, generate the V8 code cache in
   // the first load.
-  if (cache_handler->IsServedFromCacheStorage())
+  if (cache_handler->GetServingSource() ==
+      CachedMetadataHandler::ServingSource::kCacheStorage) {
     cache_options = mojom::blink::V8CacheOptions::kCodeWithoutHeatCheck;
+  }
 
-  // Call FeatureList::IsEnabled only once.
-  static bool local_compile_hints_enabled =
-      base::FeatureList::IsEnabled(features::kLocalCompileHints);
+  bool local_compile_hints_enabled =
+      base::FeatureList::IsEnabled(features::kLocalCompileHints) &&
+      !might_generate_crowdsourced_compile_hints &&
+      !can_use_crowdsourced_compile_hints;
 
   switch (cache_options) {
     case mojom::blink::V8CacheOptions::kDefault:
@@ -324,15 +519,10 @@ V8CodeCache::GetCompileOptions(mojom::blink::V8CacheOptions cache_options,
       // Shouldn't happen, as this is handled above.
       // Case is here so that compiler can check all cases are handled.
       NOTREACHED();
-      break;
   }
 
   // All switch branches should return and we should never get here.
-  // But some compilers aren't sure, hence this default.
   NOTREACHED();
-  return std::make_tuple(no_code_cache_compile_options,
-                         ProduceCacheOptions::kNoProduceCache,
-                         v8::ScriptCompiler::kNoCacheNoReason);
 }
 
 bool V8CodeCache::IsFull(const CachedMetadata* metadata) {
@@ -372,13 +562,13 @@ static void ProduceCacheInternal(
       std::unique_ptr<v8::ScriptCompiler::CachedData> cached_data(
           v8::ScriptCompiler::CreateCodeCache(unbound_script));
       if (cached_data) {
-        const uint8_t* data = cached_data->data;
-        int length = cached_data->length;
+        V8CodeCache::RecordCacheSetStatistics(
+            V8CodeCache::SetMetadataType::kCodeCache);
         cache_handler->ClearCachedMetadata(
             code_cache_host, CachedMetadataHandler::kClearLocally);
         cache_handler->SetCachedMetadata(
-            code_cache_host, V8CodeCache::TagForCodeCache(cache_handler), data,
-            length);
+            code_cache_host, V8CodeCache::TagForCodeCache(cache_handler),
+            ToSpan(*cached_data));
         base::UmaHistogramMicrosecondsTimes("V8.ProduceCodeCacheMicroseconds",
                                             timer.Elapsed());
       }
@@ -424,6 +614,11 @@ void V8CodeCache::ProduceCache(v8::Isolate* isolate,
       produce_cache_data->GetProduceCacheOptions());
 }
 
+uint32_t V8CodeCache::TagForBundledCodeCache() {
+  // The bundled code cache will operate only on utf-8 formatted scripts.
+  return CacheTag(kCacheTagCode, Utf8Encoding().GetName());
+}
+
 uint32_t V8CodeCache::TagForCodeCache(
     const CachedMetadataHandler* cache_handler) {
   return CacheTag(kCacheTagCode, cache_handler->Encoding());
@@ -442,12 +637,17 @@ uint32_t V8CodeCache::TagForCompileHints(
 // Store a timestamp to the cache as hint.
 void V8CodeCache::SetCacheTimeStamp(CodeCacheHost* code_cache_host,
                                     CachedMetadataHandler* cache_handler) {
+  RecordCacheSetStatistics(V8CodeCache::SetMetadataType::kTimestamp);
   uint64_t now_ms = GetTimestamp();
   cache_handler->ClearCachedMetadata(code_cache_host,
                                      CachedMetadataHandler::kClearLocally);
-  cache_handler->SetCachedMetadata(
-      code_cache_host, TagForTimeStamp(cache_handler),
-      reinterpret_cast<uint8_t*>(&now_ms), sizeof(now_ms));
+  // Ensure that the type used for storing the timestamp (uint64_t)
+  // matches the defined constant for the timestamp size. This helps
+  // maintain consistency if the underlying type or constant ever changes.
+  static_assert(sizeof(now_ms) == kCodeCacheTimestampSize);
+  cache_handler->SetCachedMetadata(code_cache_host,
+                                   TagForTimeStamp(cache_handler),
+                                   base::byte_span_from_ref(now_ms));
 }
 
 uint64_t V8CodeCache::GetTimestamp() {
@@ -459,7 +659,7 @@ scoped_refptr<CachedMetadata> V8CodeCache::GenerateFullCodeCache(
     ScriptState* script_state,
     const String& script_string,
     const KURL& source_url,
-    const WTF::TextEncoding& encoding,
+    const TextEncoding& encoding,
     OpaqueMode opaque_mode) {
   const String file_name = source_url.GetString();
 
@@ -474,12 +674,12 @@ scoped_refptr<CachedMetadata> V8CodeCache::GenerateFullCodeCache(
   v8::TryCatch block(isolate);
   ReferrerScriptInfo referrer_info;
   v8::ScriptOrigin origin(
-      isolate, V8String(isolate, file_name),
+      V8String(isolate, file_name),
       0,                                      // line_offset
       0,                                      // column_offset
       opaque_mode == OpaqueMode::kNotOpaque,  // is_shared_cross_origin
       -1,                                     // script_id
-      V8String(isolate, String("")),          // source_map_url
+      V8String(isolate, g_empty_string),      // source_map_url
       opaque_mode == OpaqueMode::kOpaque,     // is_opaque
       false,                                  // is_wasm
       false,                                  // is_module
@@ -497,7 +697,7 @@ scoped_refptr<CachedMetadata> V8CodeCache::GenerateFullCodeCache(
       [&](perfetto::TracedValue context) {
         inspector_compile_script_event::Data(
             std::move(context), file_name, TextPosition::MinimumPosition(),
-            absl::nullopt, true, false,
+            std::nullopt, true, false,
             ScriptStreamer::NotStreamingReason::kStreamingDisabled);
       });
 
@@ -512,8 +712,8 @@ scoped_refptr<CachedMetadata> V8CodeCache::GenerateFullCodeCache(
         v8::ScriptCompiler::CreateCodeCache(unbound_script));
     if (cached_data && cached_data->length) {
       cached_metadata = CachedMetadata::Create(
-          CacheTag(kCacheTagCode, encoding.GetName()), cached_data->data,
-          cached_data->length, static_cast<uint64_t>(DetailFlags::kFull));
+          CacheTag(kCacheTagCode, encoding.GetName()), ToSpan(*cached_data),
+          static_cast<uint64_t>(DetailFlags::kFull));
     }
 
     TRACE_EVENT_END1(kTraceEventCategoryGroup, "v8.produceCache", "data",
@@ -526,6 +726,29 @@ scoped_refptr<CachedMetadata> V8CodeCache::GenerateFullCodeCache(
   }
 
   return cached_metadata;
+}
+
+void V8CodeCache::RecordCacheGetStatistics(
+    const CachedMetadataHandler* cache_handler) {
+  base::UmaHistogramEnumeration(kCacheGetHistogram,
+                                ReadGetMetadataType(cache_handler));
+}
+
+void V8CodeCache::RecordCacheGetStatistics(
+    const CachedMetadata* cached_metadata,
+    const String& encoding) {
+  base::UmaHistogramEnumeration(kCacheGetHistogram,
+                                ReadGetMetadataType(cached_metadata, encoding));
+}
+
+void V8CodeCache::RecordCacheGetStatistics(
+    V8CodeCache::GetMetadataType metadata_type) {
+  base::UmaHistogramEnumeration(kCacheGetHistogram, metadata_type);
+}
+
+void V8CodeCache::RecordCacheSetStatistics(
+    V8CodeCache::SetMetadataType metadata_type) {
+  base::UmaHistogramEnumeration(kCacheSetHistogram, metadata_type);
 }
 
 }  // namespace blink

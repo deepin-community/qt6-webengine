@@ -13,7 +13,7 @@ const BUTTONS = [
   Protocol.Input.MouseButton.Back,
   Protocol.Input.MouseButton.Forward,
 ];
-const MOUSE_EVENT_TYPES: {[key: string]: Protocol.Input.DispatchMouseEventRequestType} = {
+const MOUSE_EVENT_TYPES: Record<string, Protocol.Input.DispatchMouseEventRequestType> = {
   mousedown: Protocol.Input.DispatchMouseEventRequestType.MousePressed,
   mouseup: Protocol.Input.DispatchMouseEventRequestType.MouseReleased,
   mousemove: Protocol.Input.DispatchMouseEventRequestType.MouseMoved,
@@ -46,9 +46,9 @@ export class InputModel extends SDK.SDKModel.SDKModel<void> {
     }
     const text = event.type === 'keypress' ? String.fromCharCode(event.charCode) : undefined;
     void this.inputAgent.invoke_dispatchKeyEvent({
-      type: type,
+      type,
       modifiers: this.modifiersForEvent(event),
-      text: text,
+      text,
       unmodifiedText: text ? text.toLowerCase() : undefined,
       keyIdentifier: (event as {keyIdentifier?: string}).keyIdentifier,
       code: event.code,
@@ -105,6 +105,6 @@ export class InputModel extends SDK.SDKModel.SDKModel<void> {
 }
 
 SDK.SDKModel.SDKModel.register(InputModel, {
-  capabilities: SDK.Target.Capability.Input,
+  capabilities: SDK.Target.Capability.INPUT,
   autostart: false,
 });

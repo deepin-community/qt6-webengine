@@ -28,59 +28,59 @@
 #ifndef SRC_DAWN_WIRE_CLIENT_ADAPTER_H_
 #define SRC_DAWN_WIRE_CLIENT_ADAPTER_H_
 
+#include <string>
 #include <vector>
 
-#include "dawn/webgpu.h"
 #include "dawn/wire/WireClient.h"
 #include "dawn/wire/WireCmd_autogen.h"
 #include "dawn/wire/client/LimitsAndFeatures.h"
 #include "dawn/wire/client/ObjectBase.h"
-#include "dawn/wire/client/RequestTracker.h"
 #include "partition_alloc/pointers/raw_ptr.h"
 
 namespace dawn::wire::client {
 
+void APIFreeMembers(WGPUAdapterInfo info);
+void APIFreeMembers(WGPUAdapterPropertiesMemoryHeaps memoryHeapProperties);
+void APIFreeMembers(WGPUDawnDrmFormatCapabilities capabilities);
+void APIFreeMembers(WGPUSupportedFeatures supportedFeatures);
+void APIFreeMembers(WGPUAdapterPropertiesSubgroupMatrixConfigs subgroupMatrixConfigs);
+
 class Adapter final : public ObjectWithEventsBase {
   public:
     using ObjectWithEventsBase::ObjectWithEventsBase;
-    ~Adapter() override;
 
-    void CancelCallbacksForDisconnect() override;
+    ObjectType GetObjectType() const override;
 
-    bool GetLimits(WGPUSupportedLimits* limits) const;
-    bool HasFeature(WGPUFeatureName feature) const;
-    size_t EnumerateFeatures(WGPUFeatureName* features) const;
-    void SetLimits(const WGPUSupportedLimits* limits);
+    void SetLimits(const WGPULimits* limits);
     void SetFeatures(const WGPUFeatureName* features, uint32_t featuresCount);
-    void SetProperties(const WGPUAdapterProperties* properties);
-    void GetProperties(WGPUAdapterProperties* properties) const;
-    void RequestDevice(const WGPUDeviceDescriptor* descriptor,
-                       WGPURequestDeviceCallback callback,
-                       void* userdata);
-    WGPUFuture RequestDeviceF(const WGPUDeviceDescriptor* descriptor,
-                              const WGPURequestDeviceCallbackInfo& callbackInfo);
+    void SetInfo(const WGPUAdapterInfo* info);
+
+    WGPUStatus APIGetLimits(WGPULimits* limits) const;
+    bool APIHasFeature(WGPUFeatureName feature) const;
+    WGPUStatus APIGetInfo(WGPUAdapterInfo* info) const;
+    void APIGetFeatures(WGPUSupportedFeatures* features) const;
+    WGPUFuture APIRequestDevice(const WGPUDeviceDescriptor* descriptor,
+                                const WGPURequestDeviceCallbackInfo& callbackInfo);
 
     // Unimplementable. Only availale in dawn_native.
-    WGPUInstance GetInstance() const;
-    WGPUDevice CreateDevice(const WGPUDeviceDescriptor*);
+    WGPUInstance APIGetInstance() const;
+    WGPUDevice APICreateDevice(const WGPUDeviceDescriptor*);
+    WGPUStatus APIGetFormatCapabilities(WGPUTextureFormat format,
+                                        WGPUDawnFormatCapabilities* capabilities);
 
   private:
     LimitsAndFeatures mLimitsAndFeatures;
-    WGPUAdapterProperties mProperties;
+    WGPUAdapterInfo mInfo;
+    std::string mVendor;
+    std::string mArchitecture;
+    std::string mDeviceName;
+    std::string mDescription;
     std::vector<WGPUMemoryHeapInfo> mMemoryHeapInfo;
     WGPUAdapterPropertiesD3D mD3DProperties;
-
-    struct RequestDeviceData {
-        WGPURequestDeviceCallback callback = nullptr;
-        ObjectId deviceObjectId;
-        // TODO(https://crbug.com/dawn/2345): Investigate `DanglingUntriaged` in dawn/wire.
-        raw_ptr<void, DanglingUntriaged> userdata = nullptr;
-    };
-    RequestTracker<RequestDeviceData> mRequestDeviceRequests;
+    WGPUAdapterPropertiesVk mVkProperties;
+    std::vector<WGPUSubgroupMatrixConfig> mSubgroupMatrixConfigs;
+    WGPUDawnAdapterPropertiesPowerPreference mPowerProperties;
 };
-
-void ClientAdapterPropertiesFreeMembers(WGPUAdapterProperties);
-void ClientAdapterPropertiesMemoryHeapsFreeMembers(WGPUAdapterPropertiesMemoryHeaps);
 
 }  // namespace dawn::wire::client
 

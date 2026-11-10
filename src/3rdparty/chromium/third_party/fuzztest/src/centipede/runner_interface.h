@@ -21,10 +21,13 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
+#include <string_view>
 #include <vector>
 
-#include "./centipede/defs.h"
+#include "absl/base/nullability.h"
 #include "./centipede/mutation_input.h"
+#include "./common/defs.h"
 
 // Typedefs for the libFuzzer API, https://llvm.org/docs/LibFuzzer.html
 using FuzzerTestOneInputCallback = int (*)(const uint8_t *data, size_t size);
@@ -40,7 +43,8 @@ using FuzzerCustomCrossOverCallback = size_t (*)(
 // https://llvm.org/docs/LibFuzzer.html.
 extern "C" {
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
-__attribute__((weak)) int LLVMFuzzerInitialize(int *argc, char ***argv);
+__attribute__((weak)) int LLVMFuzzerInitialize(int *absl_nonnull argc,
+                                               char ***absl_nonnull argv);
 __attribute__((weak)) size_t LLVMFuzzerCustomMutator(uint8_t *data, size_t size,
                                                      size_t max_size,
                                                      unsigned int seed);
@@ -51,7 +55,8 @@ __attribute__((weak)) size_t LLVMFuzzerCustomCrossOver(
 
 // https://llvm.org/docs/LibFuzzer.html#using-libfuzzer-as-a-library
 extern "C" int LLVMFuzzerRunDriver(
-    int *argc, char ***argv, FuzzerTestOneInputCallback test_one_input_cb);
+    int *absl_nonnull argc, char ***absl_nonnull argv,
+    FuzzerTestOneInputCallback test_one_input_cb);
 
 // This interface can be used to detect presence of Centipede in the binary.
 // Also pretend we are LibFuzzer for compatibility.
@@ -76,7 +81,11 @@ extern "C" void CentipedeSetTimeoutPerInput(uint64_t timeout_per_input);
 //
 // It should return either a nullptr or a constant string that is valid
 // throughout the entire process life-time.
-extern "C" const char *CentipedeGetRunnerFlags();
+extern "C" const char *absl_nullable CentipedeGetRunnerFlags();
+
+// An overridable function to override `LLVMFuzzerMutate` behavior.
+extern "C" size_t CentipedeLLVMFuzzerMutateCallback(uint8_t *data, size_t size,
+                                                    size_t max_size);
 
 // Prepares to run a batch of test executions that ends with calling
 // `CentipedeEndExecutionBatch`.
@@ -94,6 +103,9 @@ extern "C" void CentipedeEndExecutionBatch();
 extern "C" void CentipedePrepareProcessing();
 
 // Finalizes the processing of an input and stores the state internally.
+//
+// For tool integration, it can be called inside `RunnerCallbacks::Execute()` to
+// finalize the execution early before extra cleanups.
 extern "C" void CentipedeFinalizeProcessing();
 
 // Retrieves the execution results (including coverage information) after
@@ -108,7 +120,17 @@ extern "C" size_t CentipedeGetExecutionResult(uint8_t *data, size_t capacity);
 // CentipedeFinalizeProcessing().
 extern "C" size_t CentipedeGetCoverageData(uint8_t *data, size_t capacity);
 
-namespace centipede {
+// Set the current execution result to the opaque memory `data` with `size`.
+// Such data is retrieved using `CentipedeGetExecutionResult`, possibly from
+// another process. When `data` is `nullptr`, will set the execution result to
+// "empty" with no features or metadata.
+extern "C" void CentipedeSetExecutionResult(const uint8_t *data, size_t size);
+
+// Set the failure description for the runner to propagate further. Only the
+// description from the first call will be used.
+extern "C" void CentipedeSetFailureDescription(const char *description);
+
+namespace fuzztest::internal {
 
 // Callbacks interface implemented by the fuzzer and called by the runner.
 //
@@ -122,6 +144,11 @@ class RunnerCallbacks {
   // Generates seed inputs by calling `seed_callback` for each input.
   // The default implementation generates a single-byte input {0}.
   virtual void GetSeeds(std::function<void(ByteSpan)> seed_callback);
+  // Returns the serialized configuration from the test target. The default
+  // implementation returns the empty string.
+  virtual std::string GetSerializedTargetConfig();
+  // Returns true if and only if the test target has a custom mutator.
+  virtual bool HasCustomMutator() const = 0;
   // Generates at most `num_mutants` mutants by calling `new_mutant_callback`
   // for each mutant. Returns true on success, false otherwise.
   //
@@ -129,7 +156,7 @@ class RunnerCallbacks {
   // input shrinking.
   virtual bool Mutate(const std::vector<MutationInputRef> &inputs,
                       size_t num_mutants,
-                      std::function<void(ByteSpan)> new_mutant_callback) = 0;
+                      std::function<void(ByteSpan)> new_mutant_callback);
   virtual ~RunnerCallbacks() = default;
 };
 
@@ -148,6 +175,6 @@ std::unique_ptr<RunnerCallbacks> CreateLegacyRunnerCallbacks(
 // This is not a guaranteed public interface (yet) and may disappear w/o notice.
 int RunnerMain(int argc, char **argv, RunnerCallbacks &callbacks);
 
-}  // namespace centipede
+}  // namespace fuzztest::internal
 
 #endif  // THIRD_PARTY_CENTIPEDE_RUNNER_INTERFACE_H_

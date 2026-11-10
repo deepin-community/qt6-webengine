@@ -19,6 +19,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "absl/log/check.h"
@@ -28,14 +29,15 @@
 #include "./centipede/command.h"
 #include "./centipede/control_flow.h"
 #include "./centipede/pc_info.h"
-#include "./centipede/remote_file.h"
 #include "./centipede/util.h"
+#include "./common/remote_file.h"
 
-namespace centipede {
+namespace fuzztest::internal {
 
 namespace {
 constexpr std::string_view kSymbolTableFileName = "symbol-table";
 constexpr std::string_view kPCTableFileName = "pc-table";
+constexpr std::string_view kCfTableFileName = "cf-table";
 }  // namespace
 
 void BinaryInfo::InitializeFromSanCovBinary(
@@ -56,12 +58,12 @@ void BinaryInfo::InitializeFromSanCovBinary(
   ScopedFile log_path(tmp_dir_path, "binary_info_log_tmp");
   LOG(INFO) << __func__ << ": tmp_dir: " << tmp_dir;
 
-  Command cmd(
-      binary_path_with_args, {},
-      {absl::StrCat("CENTIPEDE_RUNNER_FLAGS=:dump_binary_info:arg1=",
-                    pc_table_path.path(), ":arg2=", cf_table_path.path(),
-                    ":arg3=", dso_table_path.path(), ":")},
-      log_path.path());
+  Command::Options cmd_options;
+  cmd_options.env_add = {absl::StrCat(
+      "CENTIPEDE_RUNNER_FLAGS=:dump_binary_info:arg1=", pc_table_path.path(),
+      ":arg2=", cf_table_path.path(), ":arg3=", dso_table_path.path(), ":")};
+  cmd_options.stdout_file = std::string(log_path.path());
+  Command cmd{binary_path_with_args, std::move(cmd_options)};
   int exit_code = cmd.Execute();
   if (exit_code != EXIT_SUCCESS) {
     LOG(INFO) << __func__ << ": exit_code: " << exit_code;
@@ -72,7 +74,7 @@ void BinaryInfo::InitializeFromSanCovBinary(
 
   // Load CF Table.
   if (std::filesystem::exists(cf_table_path.path()))
-    cf_table = ReadCfTableFromFile(cf_table_path.path());
+    cf_table = ReadCfTable(cf_table_path.path());
 
   // Load the DSO Table.
   dso_table = ReadDsoTableFromFile(dso_table_path.path());
@@ -116,36 +118,49 @@ void BinaryInfo::InitializeFromSanCovBinary(
     ScopedFile sym_tmp1_path(tmp_dir_path, "symbols_tmp1");
     ScopedFile sym_tmp2_path(tmp_dir_path, "symbols_tmp2");
     symbols.GetSymbolsFromBinary(pc_table, dso_table, symbolizer_path,
-                                 sym_tmp1_path.path(), sym_tmp2_path.path());
+                                 tmp_dir_path);
   }
 }
 
 void BinaryInfo::Read(std::string_view dir) {
   std::string symbol_table_contents;
   // TODO(b/295978603): move calculation of paths into WorkDir class.
-  RemoteFileGetContents(std::filesystem::path(dir).append(kSymbolTableFileName),
-                        symbol_table_contents);
+  CHECK_OK(RemoteFileGetContents(
+      (std::filesystem::path(dir) / kSymbolTableFileName).c_str(),
+      symbol_table_contents));
   std::istringstream symbol_table_stream(symbol_table_contents);
   symbols.ReadFromLLVMSymbolizer(symbol_table_stream);
 
   std::string pc_table_contents;
-  RemoteFileGetContents(std::filesystem::path(dir).append(kPCTableFileName),
-                        pc_table_contents);
+  CHECK_OK(RemoteFileGetContents(
+      (std::filesystem::path(dir) / kPCTableFileName).c_str(),
+      pc_table_contents));
   std::istringstream pc_table_stream(pc_table_contents);
   pc_table = ReadPcTable(pc_table_stream);
+
+  cf_table =
+      ReadCfTable((std::filesystem::path(dir) / kCfTableFileName).c_str());
 }
 
 void BinaryInfo::Write(std::string_view dir) {
   std::ostringstream symbol_table_stream;
   symbols.WriteToLLVMSymbolizer(symbol_table_stream);
   // TODO(b/295978603): move calculation of paths into WorkDir class.
-  RemoteFileSetContents(std::filesystem::path(dir).append(kSymbolTableFileName),
-                        symbol_table_stream.str());
+  CHECK_OK(RemoteFileSetContents(
+      (std::filesystem::path(dir) / kSymbolTableFileName).c_str(),
+      symbol_table_stream.str()));
 
   std::ostringstream pc_table_stream;
   WritePcTable(pc_table, pc_table_stream);
-  RemoteFileSetContents(std::filesystem::path(dir).append(kPCTableFileName),
-                        pc_table_stream.str());
+  CHECK_OK(RemoteFileSetContents(
+      (std::filesystem::path(dir) / kPCTableFileName).c_str(),
+      pc_table_stream.str()));
+
+  std::ostringstream cf_table_stream;
+  WriteCfTable(cf_table, cf_table_stream);
+  CHECK_OK(RemoteFileSetContents(
+      (std::filesystem::path(dir) / kCfTableFileName).c_str(),
+      cf_table_stream.str()));
 }
 
-}  // namespace centipede
+}  // namespace fuzztest::internal

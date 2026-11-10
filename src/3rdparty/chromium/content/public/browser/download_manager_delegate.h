@@ -52,6 +52,11 @@ struct CONTENT_EXPORT SavePackagePathPickedParams {
 #if BUILDFLAG(IS_MAC)
   std::vector<std::string> file_tags;
 #endif
+
+#if BUILDFLAG(IS_ANDROID)
+  // Android file path may be content URI, thus we need display name here.
+  base::FilePath display_name;
+#endif
 };
 using SavePackagePathPickedCallback =
     base::OnceCallback<void(SavePackagePathPickedParams,
@@ -75,6 +80,13 @@ class CONTENT_EXPORT DownloadManagerDelegate {
  public:
   // Lets the delegate know that the download manager is shutting down.
   virtual void Shutdown() {}
+
+  // Lets the delegate know that the download is canceled at shutdown. This
+  // event is notified separately from normal download update events through
+  // the download item observer, because it is called too late (after
+  // ManagerGoingDown is called). Most observers have already unsubscribed
+  // download events at this point.
+  virtual void OnDownloadCanceledAtShutdown(download::DownloadItem* download) {}
 
   // Runs |callback| with a new download id when possible, perhaps
   // synchronously. If this call fails, |callback| will be called with
@@ -128,6 +140,10 @@ class CONTENT_EXPORT DownloadManagerDelegate {
   virtual bool ShouldOpenDownload(download::DownloadItem* item,
                                   DownloadOpenDelayedCallback callback);
 
+  // Returns whether the download contents should be temporarily obfuscated for
+  // access prevention.
+  virtual bool ShouldObfuscateDownload(download::DownloadItem* item);
+
   // Checks and hands off the downloading to be handled by another system based
   // on mime type. Returns true if the download was intercepted.
   virtual bool InterceptDownloadIfApplicable(
@@ -138,6 +154,7 @@ class CONTENT_EXPORT DownloadManagerDelegate {
       const std::string& request_origin,
       int64_t content_length,
       bool is_transient,
+      bool is_content_initiated,
       WebContents* web_contents);
 
   // Retrieve the directories to save html pages and downloads to.
@@ -192,7 +209,8 @@ class CONTENT_EXPORT DownloadManagerDelegate {
   virtual std::string ApplicationClientIdForFileScanning();
 
   // Checks whether download is allowed to continue. |check_download_allowed_cb|
-  // is called with the decision on completion.
+  // is called with the decision on completion. For download that is triggered
+  // without navigation, `mime_type` and `page_transition` will be empty.
   virtual void CheckDownloadAllowed(
       const WebContents::Getter& web_contents_getter,
       const GURL& url,
@@ -200,12 +218,19 @@ class CONTENT_EXPORT DownloadManagerDelegate {
       std::optional<url::Origin> request_initiator,
       bool from_download_cross_origin_redirect,
       bool content_initiated,
+      const std::string& mime_type,
+      std::optional<ui::PageTransition> page_transition,
       CheckDownloadAllowedCallback check_download_allowed_cb);
 
   // Gets a callback which can connect the download manager to a Quarantine
   // Service instance if available.
   virtual download::QuarantineConnectionCallback
   GetQuarantineConnectionCallback();
+
+  // Gets a handler to perform the rename for a download item. Returns nullptr
+  // if no special rename handling is required.
+  virtual std::unique_ptr<download::DownloadItemRenameHandler>
+  GetRenameHandlerForDownload(download::DownloadItem* download_item);
 
   // Gets a |DownloadItem| from the GUID, or null if no such GUID is available.
   virtual download::DownloadItem* GetDownloadByGuid(const std::string& guid);
@@ -223,6 +248,12 @@ class CONTENT_EXPORT DownloadManagerDelegate {
 #if BUILDFLAG(IS_ANDROID)
   // Returns whether download is triggered by an external app.
   virtual bool IsFromExternalApp(download::DownloadItem* item);
+
+  // Whether to open pdf inline.
+  virtual bool ShouldOpenPdfInline();
+
+  // Whether download is restricted by policy.
+  virtual bool IsDownloadRestrictedByPolicy();
 #endif  // BUILDFLAG(IS_ANDROID)
  protected:
   virtual ~DownloadManagerDelegate();

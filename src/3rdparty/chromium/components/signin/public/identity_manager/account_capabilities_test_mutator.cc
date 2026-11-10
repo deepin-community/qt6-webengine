@@ -4,6 +4,10 @@
 
 #include "components/signin/public/identity_manager/account_capabilities_test_mutator.h"
 
+#include <ostream>
+
+#include "base/check.h"
+#include "base/containers/contains.h"
 #include "components/signin/internal/identity_manager/account_capabilities_constants.h"
 
 AccountCapabilitiesTestMutator::AccountCapabilitiesTestMutator(
@@ -11,22 +15,24 @@ AccountCapabilitiesTestMutator::AccountCapabilitiesTestMutator(
     : capabilities_(capabilities) {}
 
 // static
-const std::vector<std::string>&
+base::span<const std::string_view>
 AccountCapabilitiesTestMutator::GetSupportedAccountCapabilityNames() {
   return AccountCapabilities::GetSupportedAccountCapabilityNames();
+}
+
+// clang-format off
+// keep-sorted start newline_separated=yes sticky_prefixes=#if group_prefixes=#endif block=yes
+// clang-format on
+void AccountCapabilitiesTestMutator::set_can_fetch_family_member_info(
+    bool value) {
+  capabilities_->capabilities_map_[kCanFetchFamilyMemberInfoCapabilityName] =
+      value;
 }
 
 void AccountCapabilitiesTestMutator::set_can_have_email_address_displayed(
     bool value) {
   capabilities_
       ->capabilities_map_[kCanHaveEmailAddressDisplayedCapabilityName] = value;
-}
-
-void AccountCapabilitiesTestMutator::set_can_offer_extended_chrome_sync_promos(
-    bool value) {
-  capabilities_
-      ->capabilities_map_[kCanOfferExtendedChromeSyncPromosCapabilityName] =
-      value;
 }
 
 void AccountCapabilitiesTestMutator::set_can_run_chrome_privacy_sandbox_trials(
@@ -36,10 +42,11 @@ void AccountCapabilitiesTestMutator::set_can_run_chrome_privacy_sandbox_trials(
       value;
 }
 
-void AccountCapabilitiesTestMutator::set_is_opted_in_to_parental_supervision(
-    bool value) {
-  capabilities_
-      ->capabilities_map_[kIsOptedInToParentalSupervisionCapabilityName] =
+void AccountCapabilitiesTestMutator::
+    set_can_show_history_sync_opt_ins_without_minor_mode_restrictions(
+        bool value) {
+  capabilities_->capabilities_map_
+      [kCanShowHistorySyncOptInsWithoutMinorModeRestrictionsCapabilityName] =
       value;
 }
 
@@ -52,15 +59,72 @@ void AccountCapabilitiesTestMutator::set_can_use_chrome_ip_protection(
   capabilities_->capabilities_map_[kCanUseChromeIpProtectionName] = value;
 }
 
+#if BUILDFLAG(IS_CHROMEOS)
+void AccountCapabilitiesTestMutator::set_can_use_chromeos_generative_ai(
+    bool value) {
+  capabilities_->capabilities_map_[kCanUseChromeOSGenerativeAi] = value;
+}
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
+void AccountCapabilitiesTestMutator::set_can_use_copyeditor_feature(
+    bool value) {
+  capabilities_->capabilities_map_[kCanUseCopyEditorFeatureName] = value;
+}
+
+void AccountCapabilitiesTestMutator::
+    set_can_use_devtools_generative_ai_features(bool value) {
+  capabilities_
+      ->capabilities_map_[kCanUseDevToolsGenerativeAiFeaturesCapabilityName] =
+      value;
+}
+
+void AccountCapabilitiesTestMutator::set_can_use_edu_features(bool value) {
+  capabilities_->capabilities_map_[kCanUseEduFeaturesCapabilityName] = value;
+}
+
+void AccountCapabilitiesTestMutator::set_can_use_generative_ai_in_recorder_app(
+    bool value) {
+  capabilities_->capabilities_map_[kCanUseGenerativeAiInRecorderApp] = value;
+}
+
+void AccountCapabilitiesTestMutator::set_can_use_generative_ai_photo_editing(
+    bool value) {
+  capabilities_->capabilities_map_[kCanUseGenerativeAiPhotoEditing] = value;
+}
+
+void AccountCapabilitiesTestMutator::set_can_use_manta_service(bool value) {
+  capabilities_->capabilities_map_[kCanUseMantaServiceName] = value;
+}
+
 void AccountCapabilitiesTestMutator::set_can_use_model_execution_features(
     bool value) {
   capabilities_->capabilities_map_[kCanUseModelExecutionFeaturesName] = value;
+}
+
+void AccountCapabilitiesTestMutator::set_can_use_speaker_label_in_recorder_app(
+    bool value) {
+  capabilities_->capabilities_map_[kCanUseSpeakerLabelInRecorderApp] = value;
 }
 
 void AccountCapabilitiesTestMutator::set_is_allowed_for_machine_learning(
     bool value) {
   capabilities_->capabilities_map_[kIsAllowedForMachineLearningCapabilityName] =
       value;
+}
+
+void AccountCapabilitiesTestMutator::set_is_opted_in_to_parental_supervision(
+    bool value) {
+  capabilities_
+      ->capabilities_map_[kIsOptedInToParentalSupervisionCapabilityName] =
+      value;
+}
+
+void AccountCapabilitiesTestMutator::
+    set_is_subject_to_account_level_enterprise_policies(bool value) {
+#if !BUILDFLAG(IS_IOS)
+  capabilities_->capabilities_map_
+      [kIsSubjectToAccountLevelEnterprisePoliciesCapabilityName] = value;
+#endif  // !BUILDFLAG(IS_IOS)
 }
 
 void AccountCapabilitiesTestMutator::
@@ -70,7 +134,7 @@ void AccountCapabilitiesTestMutator::
       [kIsSubjectToChromePrivacySandboxRestrictedMeasurementNotice] = value;
 }
 
-void AccountCapabilitiesTestMutator::set_is_subject_to_enterprise_policies(
+void AccountCapabilitiesTestMutator::set_is_subject_to_enterprise_features(
     bool value) {
   capabilities_
       ->capabilities_map_[kIsSubjectToEnterprisePoliciesCapabilityName] = value;
@@ -82,9 +146,20 @@ void AccountCapabilitiesTestMutator::set_is_subject_to_parental_controls(
       value;
 }
 
+// keep-sorted end
+
 void AccountCapabilitiesTestMutator::SetAllSupportedCapabilities(bool value) {
-  for (const std::string& name :
+  for (std::string_view name :
        AccountCapabilities::GetSupportedAccountCapabilityNames()) {
-    capabilities_->capabilities_map_[name] = value;
+    capabilities_->capabilities_map_[std::string(name)] = value;
   }
+}
+
+void AccountCapabilitiesTestMutator::SetCapability(const std::string& name,
+                                                   bool value) {
+  base::span<const std::string_view> capability_names =
+      AccountCapabilities::GetSupportedAccountCapabilityNames();
+  CHECK(base::Contains(capability_names, name))
+      << "Invalid capability name: " << name;
+  capabilities_->capabilities_map_[name] = value;
 }

@@ -47,7 +47,7 @@ namespace {
 // A.com -> B.com -> A.com (calls WebOTP API)
 // A.com -> B.com -> C.com (calls WebOTP API)
 bool ValidateAndCollectUniqueOrigins(RenderFrameHost& rfh,
-                                     OriginList& origin_list) {
+                                     WebOTPService::OriginList& origin_list) {
   url::Origin current_origin = rfh.GetLastCommittedOrigin();
   origin_list.push_back(current_origin);
 
@@ -89,7 +89,6 @@ Outcome FailureTypeToOutcome(SmsFetchFailureType failure_type) {
       return Outcome::kCrossDeviceFailure;
     default:
       NOTREACHED();
-      return Outcome::kTimeout;
   }
 }
 
@@ -181,7 +180,7 @@ void WebOTPService::WillBeDestroyed(DocumentServiceDestructionReason) {
   // Resolve any pending callback and invoke clean up to unsubscribe this
   // service from fetcher.
   //
-  // TODO(https://crbug.com/1317531): Previously, running the callbacks in the
+  // TODO(crbug.com/40222530): Previously, running the callbacks in the
   // destructor was required to avoid triggering CHECKs since the
   // mojo::Receiver was (incorrectly) not yet reset in the destructor.
   //

@@ -11,8 +11,9 @@
 
 #include "base/json/json_reader.h"
 #include "base/values.h"
-#include "chrome/browser/extensions/permissions_test_util.h"
+#include "chrome/browser/extensions/permissions/permissions_test_util.h"
 #include "chrome/common/extensions/api/permissions.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/permissions/permissions_info.h"
@@ -22,6 +23,8 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using extensions::api::permissions::Permissions;
 using extensions::mojom::APIPermissionID;
@@ -33,7 +36,7 @@ using extensions::permissions_test_util::GetPatternsAsStrings;
 namespace extensions {
 
 // Tests that we can convert PermissionSets to the generated types.
-TEST(ExtensionPermissionsAPIHelpers, Pack) {
+TEST(PermissionsApiHelpersTest, Pack) {
   APIPermissionSet apis;
   apis.insert(APIPermissionID::kTab);
 
@@ -60,7 +63,7 @@ TEST(ExtensionPermissionsAPIHelpers, Pack) {
 
 // Tests various error conditions and edge cases when unpacking Dicts
 // into PermissionSets.
-TEST(ExtensionPermissionsAPIHelpers, Unpack_Basic) {
+TEST(PermissionsApiHelpersTest, Unpack_Basic) {
   base::Value::List apis;
   apis.Append("tabs");
   base::Value::List origins;
@@ -182,7 +185,7 @@ TEST(ExtensionPermissionsAPIHelpers, Unpack_Basic) {
 
 // Tests that host permissions are properly partitioned according to the
 // required/optional permission sets.
-TEST(ExtensionPermissionsAPIHelpers, Unpack_HostSeparation) {
+TEST(PermissionsApiHelpersTest, Unpack_HostSeparation) {
   auto explicit_url_pattern = [](const char* pattern) {
     return URLPattern(Extension::kValidHostPermissionSchemes, pattern);
   };
@@ -263,7 +266,7 @@ TEST(ExtensionPermissionsAPIHelpers, Unpack_HostSeparation) {
 
 // Tests that host permissions are properly partitioned according to the
 // required/optional permission sets.
-TEST(ExtensionPermissionsAPIHelpers, Unpack_APISeparation) {
+TEST(PermissionsApiHelpersTest, Unpack_APISeparation) {
   constexpr APIPermissionID kRequired1 = APIPermissionID::kTab;
   constexpr APIPermissionID kRequired2 = APIPermissionID::kStorage;
   constexpr APIPermissionID kOptional1 = APIPermissionID::kCookie;
@@ -306,7 +309,7 @@ TEST(ExtensionPermissionsAPIHelpers, Unpack_APISeparation) {
 
 // Tests that unpacking works correctly with wildcard schemes (which are
 // interesting, because they only match http | https, and not all schemes).
-TEST(ExtensionPermissionsAPIHelpers, Unpack_WildcardSchemes) {
+TEST(PermissionsApiHelpersTest, Unpack_WildcardSchemes) {
   constexpr char kWildcardSchemePattern[] = "*://*/*";
 
   PermissionSet optional_permissions(
@@ -329,7 +332,7 @@ TEST(ExtensionPermissionsAPIHelpers, Unpack_WildcardSchemes) {
 }
 
 // Tests that unpacking <all_urls> correctly includes or omits the file:-scheme.
-TEST(ExtensionPermissionsAPIHelpers, Unpack_FileSchemes_AllUrls) {
+TEST(PermissionsApiHelpersTest, Unpack_FileSchemes_AllUrls) {
   // Without file access, <all_urls> should be parsed, but the resulting pattern
   // should not include file:-scheme access.
   {
@@ -394,7 +397,7 @@ TEST(ExtensionPermissionsAPIHelpers, Unpack_FileSchemes_AllUrls) {
 
 // Tests that unpacking a pattern that explicitly specifies the file:-scheme is
 // properly placed into the |restricted_file_scheme_patterns| set.
-TEST(ExtensionPermissionsAPIHelpers, Unpack_FileSchemes_Specific) {
+TEST(PermissionsApiHelpersTest, Unpack_FileSchemes_Specific) {
   constexpr char kFilePattern[] = "file:///*";
 
   // Without file access, the file:-scheme pattern should be populated into
@@ -458,7 +461,7 @@ TEST(ExtensionPermissionsAPIHelpers, Unpack_FileSchemes_Specific) {
 
 // Tests that unpacking a UsbDevicePermission with a list of USB device IDs
 // preserves the device list in the result object.
-TEST(ExtensionPermissionsAPIHelpers, Unpack_UsbDevicePermission) {
+TEST(PermissionsApiHelpersTest, Unpack_UsbDevicePermission) {
   constexpr char kDeviceListJson[] = R"([{"productId":2,"vendorId":1}])";
   constexpr char kUsbDevicesPermissionJson[] =
       R"(usbDevices|[{"productId":2,"vendorId":1}])";

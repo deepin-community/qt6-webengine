@@ -10,6 +10,8 @@
 
 #include "common/CompiledShaderState.h"
 
+#include <cstring>
+
 #include "common/BinaryStream.h"
 #include "common/utilities.h"
 
@@ -180,6 +182,56 @@ void LoadShInterfaceBlock(gl::BinaryInputStream *stream, sh::InterfaceBlock *blo
     }
 }
 
+std::string JoinShaderSources(GLsizei count, const char *const *string, const GLint *length)
+{
+    // Fast path for the most common case.
+    if (count == 1)
+    {
+        if (length == nullptr || length[0] < 0)
+        {
+            return std::string(string[0]);
+        }
+        else
+        {
+            return std::string(string[0], static_cast<size_t>(length[0]));
+        }
+    }
+
+    // Start with totalLength of 1 to reserve space for the null terminator
+    size_t totalLength = 1;
+
+    // First pass, calculate the total length of the joined string
+    for (GLsizei i = 0; i < count; ++i)
+    {
+        if (length == nullptr || length[i] < 0)
+        {
+            totalLength += std::strlen(string[i]);
+        }
+        else
+        {
+            totalLength += static_cast<size_t>(length[i]);
+        }
+    }
+
+    // Second pass, allocate the string and concatenate each shader source
+    // fragment
+    std::string joinedString;
+    joinedString.reserve(totalLength);
+    for (GLsizei i = 0; i < count; ++i)
+    {
+        if (length == nullptr || length[i] < 0)
+        {
+            joinedString.append(string[i]);
+        }
+        else
+        {
+            joinedString.append(string[i], static_cast<size_t>(length[i]));
+        }
+    }
+
+    return joinedString;
+}
+
 CompiledShaderState::CompiledShaderState(gl::ShaderType type)
     : shaderType(type),
       shaderVersion(100),
@@ -200,15 +252,20 @@ CompiledShaderState::CompiledShaderState(gl::ShaderType type)
 CompiledShaderState::~CompiledShaderState() {}
 
 void CompiledShaderState::buildCompiledShaderState(const ShHandle compilerHandle,
-                                                   const bool isBinaryOutput)
+                                                   const std::string &inputShaderSource,
+                                                   ShShaderOutput outputType)
 {
-    if (isBinaryOutput)
+    switch (outputType)
     {
-        compiledBinary = sh::GetObjectBinaryBlob(compilerHandle);
-    }
-    else
-    {
-        translatedSource = sh::GetObjectCode(compilerHandle);
+        case SH_SPIRV_VULKAN_OUTPUT:
+            compiledBinary = sh::GetObjectBinaryBlob(compilerHandle);
+            break;
+        case SH_NULL_OUTPUT:
+            translatedSource = inputShaderSource;
+            break;
+        default:
+            translatedSource = sh::GetObjectCode(compilerHandle);
+            break;
     }
 
     // Gather the shader information
@@ -248,6 +305,7 @@ void CompiledShaderState::buildCompiledShaderState(const ShHandle compilerHandle
                 GetActiveShaderVariables(sh::GetOutputVariables(compilerHandle));
             advancedBlendEquations =
                 gl::BlendEquationBitSet(sh::GetAdvancedBlendEquations(compilerHandle));
+            pixelLocalStorageFormats = *sh::GetPixelLocalStorageFormats(compilerHandle);
             break;
         }
         case gl::ShaderType::Geometry:
@@ -385,6 +443,9 @@ void CompiledShaderState::serialize(gl::BinaryOutputStream &stream) const
                 WriteShaderVar(&stream, shaderVariable);
             }
             stream.writeInt(advancedBlendEquations.bits());
+            stream.writeInt<size_t>(pixelLocalStorageFormats.size());
+            stream.writeBytes(reinterpret_cast<const uint8_t *>(pixelLocalStorageFormats.data()),
+                              pixelLocalStorageFormats.size());
             break;
         }
         case gl::ShaderType::Geometry:
@@ -463,6 +524,7 @@ void CompiledShaderState::serialize(gl::BinaryOutputStream &stream) const
             UNREACHABLE();
     }
 
+    stream.writeString(translatedSource);
     stream.writeVector(compiledBinary);
 }
 
@@ -556,6 +618,9 @@ void CompiledShaderState::deserialize(gl::BinaryInputStream &stream)
             int advancedBlendEquationBits;
             stream.readInt(&advancedBlendEquationBits);
             advancedBlendEquations = gl::BlendEquationBitSet(advancedBlendEquationBits);
+            pixelLocalStorageFormats.resize(stream.readInt<size_t>());
+            stream.readBytes(reinterpret_cast<uint8_t *>(pixelLocalStorageFormats.data()),
+                             pixelLocalStorageFormats.size());
             break;
         }
         case gl::ShaderType::Geometry:
@@ -645,6 +710,7 @@ void CompiledShaderState::deserialize(gl::BinaryInputStream &stream)
             UNREACHABLE();
     }
 
+    stream.readString(&translatedSource);
     stream.readVector(&compiledBinary);
 }
 }  // namespace gl

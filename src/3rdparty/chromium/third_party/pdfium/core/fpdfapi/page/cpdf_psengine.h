@@ -7,14 +7,14 @@
 #ifndef CORE_FPDFAPI_PAGE_CPDF_PSENGINE_H_
 #define CORE_FPDFAPI_PAGE_CPDF_PSENGINE_H_
 
-#include <stddef.h>
 #include <stdint.h>
 
+#include <array>
 #include <memory>
 #include <vector>
 
 #include "core/fxcrt/bytestring.h"
-#include "third_party/base/containers/span.h"
+#include "core/fxcrt/span.h"
 
 class CPDF_PSEngine;
 class CPDF_PSProc;
@@ -77,12 +77,12 @@ class CPDF_PSOP {
   bool Parse(CPDF_SimpleParser* parser, int depth);
   void Execute(CPDF_PSEngine* pEngine);
   float GetFloatValue() const;
-  PDF_PSOP GetOp() const { return m_op; }
+  PDF_PSOP GetOp() const { return op_; }
 
  private:
-  const PDF_PSOP m_op;
-  const float m_value;
-  std::unique_ptr<CPDF_PSProc> m_proc;
+  const PDF_PSOP op_;
+  const float value_;
+  std::unique_ptr<CPDF_PSProc> proc_;
 };
 
 class CPDF_PSProc {
@@ -95,9 +95,8 @@ class CPDF_PSProc {
 
   // These methods are exposed for testing.
   void AddOperatorForTesting(ByteStringView word);
-  size_t num_operators() const { return m_Operators.size(); }
   const std::unique_ptr<CPDF_PSOP>& last_operator() {
-    return m_Operators.back();
+    return operators_.back();
   }
 
  private:
@@ -105,7 +104,7 @@ class CPDF_PSProc {
 
   void AddOperator(ByteStringView word);
 
-  std::vector<std::unique_ptr<CPDF_PSOP>> m_Operators;
+  std::vector<std::unique_ptr<CPDF_PSOP>> operators_;
 };
 
 class CPDF_PSEngine {
@@ -116,18 +115,18 @@ class CPDF_PSEngine {
   bool Parse(pdfium::span<const uint8_t> input);
   bool Execute();
   bool DoOperator(PDF_PSOP op);
-  void Reset() { m_StackCount = 0; }
+  void Reset() { stack_count_ = 0; }
   void Push(float value);
   float Pop();
   int PopInt();
-  uint32_t GetStackSize() const { return m_StackCount; }
+  uint32_t GetStackSize() const { return stack_count_; }
 
  private:
   static constexpr uint32_t kPSEngineStackSize = 100;
 
-  uint32_t m_StackCount = 0;
-  CPDF_PSProc m_MainProc;
-  float m_Stack[kPSEngineStackSize] = {};
+  uint32_t stack_count_ = 0;
+  CPDF_PSProc main_proc_;
+  std::array<float, kPSEngineStackSize> stack_ = {};
 };
 
 #endif  // CORE_FPDFAPI_PAGE_CPDF_PSENGINE_H_

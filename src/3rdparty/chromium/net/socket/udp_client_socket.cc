@@ -8,6 +8,7 @@
 #include "build/build_config.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_change_notifier.h"
+#include "net/base/port_util.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace net {
@@ -65,6 +66,9 @@ UDPClientSocket::~UDPClientSocket() {
 
 int UDPClientSocket::Connect(const IPEndPoint& address) {
   CHECK(!connect_called_);
+  if (!IsPortAllowedForIpEndpoint(address)) {
+    return ERR_UNSAFE_PORT;
+  }
   if (connect_using_network_ != handles::kInvalidNetworkHandle)
     return ConnectUsingNetwork(connect_using_network_, address);
 
@@ -219,8 +223,12 @@ int UDPClientSocket::SetDoNotFragment() {
   return socket_.SetDoNotFragment();
 }
 
-int UDPClientSocket::SetRecvEcn() {
-  return socket_.SetRecvEcn();
+int UDPClientSocket::SetRecvTos() {
+  return socket_.SetRecvTos();
+}
+
+int UDPClientSocket::SetTos(DiffServCodePoint dscp, EcnCodePoint ecn) {
+  return socket_.SetTos(dscp, ecn);
 }
 
 void UDPClientSocket::SetMsgConfirm(bool confirm) {
@@ -253,6 +261,19 @@ void UDPClientSocket::SetIOSNetworkServiceType(int ios_network_service_type) {
 #endif
 }
 
+void UDPClientSocket::RegisterQuicConnectionClosePayload(
+    base::span<uint8_t> payload) {
+#if BUILDFLAG(IS_POSIX)
+  socket_.RegisterQuicConnectionClosePayload(payload);
+#endif
+}
+
+void UDPClientSocket::UnregisterQuicConnectionClosePayload() {
+#if BUILDFLAG(IS_POSIX)
+  socket_.UnregisterQuicConnectionClosePayload();
+#endif
+}
+
 int UDPClientSocket::AdoptOpenedSocket(AddressFamily address_family,
                                        SocketDescriptor socket) {
   int rv = socket_.AdoptOpenedSocket(address_family, socket);
@@ -260,6 +281,10 @@ int UDPClientSocket::AdoptOpenedSocket(AddressFamily address_family,
     adopted_opened_socket_ = true;
   }
   return rv;
+}
+
+DscpAndEcn UDPClientSocket::GetLastTos() const {
+  return socket_.GetLastTos();
 }
 
 }  // namespace net

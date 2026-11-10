@@ -15,25 +15,26 @@
 --
 
 -- Events when CPU entered hypervisor.
-CREATE PERFETTO VIEW pkvm_hypervisor_events(
+CREATE PERFETTO VIEW pkvm_hypervisor_events (
   -- Id of the corresponding slice in slices table.
-  slice_id INT,
+  slice_id JOINID(slice.id),
   -- CPU that entered hypervisor.
-  cpu INT,
-  -- Timestamp when CPU entered hypervisor (in nanoseconds).
-  ts INT,
-  -- How much time CPU spent in hypervisor (in nanoseconds).
-  dur INT,
+  cpu LONG,
+  -- Timestamp when CPU entered hypervisor.
+  ts TIMESTAMP,
+  -- How much time CPU spent in hypervisor.
+  dur DURATION,
   -- Reason for entering hypervisor (e.g. host_hcall, host_mem_abort), or NULL if unknown.
   reason STRING
 ) AS
 SELECT
-  slices.id as slice_id,
-  cpu_track.cpu as cpu,
-  slices.ts as ts,
-  slices.dur as dur,
-  EXTRACT_ARG(slices.arg_set_id, 'hyp_enter_reason') as reason
+  slices.id AS slice_id,
+  cpu_track.cpu AS cpu,
+  slices.ts AS ts,
+  slices.dur AS dur,
+  extract_arg(slices.arg_set_id, 'hyp_enter_reason') AS reason
 FROM slices
-JOIN cpu_track ON cpu_track.id = slices.track_id
+JOIN cpu_track
+  ON cpu_track.id = slices.track_id
 WHERE
-  slices.category = 'pkvm_hyp'
+  slices.category = 'pkvm_hyp';

@@ -5,6 +5,7 @@
 #include "components/optimization_guide/core/model_execution/model_execution_features.h"
 
 #include "base/test/scoped_feature_list.h"
+#include "components/optimization_guide/core/model_execution/feature_keys.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -12,11 +13,12 @@ namespace optimization_guide {
 namespace {
 
 using features::internal::GetAllowedFeaturesForUnsignedUser;
-using proto::ModelExecutionFeature;
 using testing::UnorderedElementsAre;
 
 TEST(ModelExecutionFeature, GetAllowedFeaturesForUnsignedUser) {
-  EXPECT_THAT(GetAllowedFeaturesForUnsignedUser(), UnorderedElementsAre());
+  // The kHistorySearch feature launched with `allow_unsigned_user` true.
+  EXPECT_THAT(GetAllowedFeaturesForUnsignedUser(),
+              UnorderedElementsAre(UserVisibleFeatureKey::kHistorySearch));
   {
     base::test::ScopedFeatureList scoped_feature_list;
     scoped_feature_list.InitWithFeaturesAndParameters(
@@ -25,24 +27,23 @@ TEST(ModelExecutionFeature, GetAllowedFeaturesForUnsignedUser) {
          {features::internal::kTabOrganizationSettingsVisibility,
           {{"allow_unsigned_user", "true"}}}},
         {});
-    EXPECT_THAT(
-        GetAllowedFeaturesForUnsignedUser(),
-        UnorderedElementsAre(
-            ModelExecutionFeature::MODEL_EXECUTION_FEATURE_COMPOSE,
-            ModelExecutionFeature::MODEL_EXECUTION_FEATURE_TAB_ORGANIZATION));
+    EXPECT_THAT(GetAllowedFeaturesForUnsignedUser(),
+                UnorderedElementsAre(UserVisibleFeatureKey::kHistorySearch,
+                                     UserVisibleFeatureKey::kCompose,
+                                     UserVisibleFeatureKey::kTabOrganization));
   }
   {
     base::test::ScopedFeatureList scoped_feature_list;
     scoped_feature_list.InitWithFeaturesAndParameters(
-        {{features::internal::kComposeSettingsVisibility,
+        {{features::internal::kHistorySearchSettingsVisibility,
+          {{"allow_unsigned_user", "false"}}},
+         {features::internal::kComposeSettingsVisibility,
           {{"allow_unsigned_user", "false"}}},
          {features::internal::kTabOrganizationSettingsVisibility,
           {{"allow_unsigned_user", "true"}}}},
         {});
-    EXPECT_THAT(
-        GetAllowedFeaturesForUnsignedUser(),
-        UnorderedElementsAre(
-            ModelExecutionFeature::MODEL_EXECUTION_FEATURE_TAB_ORGANIZATION));
+    EXPECT_THAT(GetAllowedFeaturesForUnsignedUser(),
+                UnorderedElementsAre(UserVisibleFeatureKey::kTabOrganization));
   }
 }
 

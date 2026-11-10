@@ -5,6 +5,8 @@
 #ifndef CONTENT_BROWSER_PRELOADING_PRELOADING_H_
 #define CONTENT_BROWSER_PRELOADING_PRELOADING_H_
 
+#include <string_view>
+
 #include "content/public/browser/preloading.h"
 #include "content/public/browser/preloading_trigger_type.h"
 
@@ -20,6 +22,8 @@ namespace content {
 // go/preloading-dashboard-updates to update the mapping reflected in
 // dashboard, or if you are not a Googler, please file an FYI bug on
 // https://crbug.new with component Internals>Preload.
+//
+// LINT.IfChange
 namespace content_preloading_predictor {
 // Advance numbering by +1 when adding a new element.
 //
@@ -32,31 +36,29 @@ namespace content_preloading_predictor {
 // might navigate to in order to perform preloading operations.
 // For more details please see:
 // https://wicg.github.io/nav-speculation/prerendering.html#speculation-rules
-static constexpr PreloadingPredictor kSpeculationRules(50, "SpeculationRules");
+inline constexpr PreloadingPredictor kSpeculationRules(50, "SpeculationRules");
 
 // When a mouse down of a mouse back button is seen.
-static constexpr PreloadingPredictor kMouseBackButton(51, "MouseBackButton");
+inline constexpr PreloadingPredictor kMouseBackButton(51, "MouseBackButton");
 
 // Same with the kSpeculationRules, but the rules are injected from an isolated
 // world, i.e. extensions or embedder's built-in features.
-static constexpr PreloadingPredictor kSpeculationRulesFromIsolatedWorld(
+inline constexpr PreloadingPredictor kSpeculationRulesFromIsolatedWorld(
     52,
     "SpeculationRulesFromIsolatedWorld");
 
 // Same with the kSpeculationRules, but the rules are injected by the browser
 // as part of the auto speculation rules feature.
-static constexpr PreloadingPredictor kSpeculationRulesFromAutoSpeculationRules(
+inline constexpr PreloadingPredictor kSpeculationRulesFromAutoSpeculationRules(
     53,
     "SpeculationRulesFromAutoSpeculationRules");
-
-// TODO(crbug.com/1309934): Add more predictors as we integrate Preloading
-// logging.
 }  // namespace content_preloading_predictor
+// LINT.ThenChange()
 
-CONTENT_EXPORT base::StringPiece PreloadingTypeToString(PreloadingType type);
+CONTENT_EXPORT std::string_view PreloadingTypeToString(PreloadingType type);
 
-PreloadingPredictor GetPredictorForPreloadingTriggerType(
-    PreloadingTriggerType trigger_type);
+CONTENT_EXPORT PreloadingPredictor
+GetPredictorForPreloadingTriggerType(PreloadingTriggerType trigger_type);
 
 }  // namespace content
 

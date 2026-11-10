@@ -19,6 +19,7 @@
 #include "extensions/browser/granted_file_entry.h"
 #include "extensions/common/api/app_runtime.h"
 #include "extensions/common/constants.h"
+#include "extensions/common/extension_id.h"
 #include "extensions/common/feature_switch.h"
 #include "url/gurl.h"
 
@@ -31,7 +32,7 @@ namespace app_runtime = api::app_runtime;
 namespace {
 
 void DispatchOnEmbedRequestedEventImpl(
-    const std::string& extension_id,
+    const ExtensionId& extension_id,
     base::Value::Dict app_embedding_request_data,
     content::BrowserContext* context) {
   base::Value::List args;
@@ -46,7 +47,7 @@ void DispatchOnEmbedRequestedEventImpl(
                                                   base::Time::Now());
 }
 
-void DispatchOnLaunchedEventImpl(const std::string& extension_id,
+void DispatchOnLaunchedEventImpl(const ExtensionId& extension_id,
                                  app_runtime::LaunchSource source,
                                  base::Value::Dict launch_data,
                                  BrowserContext* context) {
@@ -150,6 +151,8 @@ app_runtime::LaunchSource GetLaunchSourceEnum(AppLaunchSource source) {
     // AppLaunchSource are missing entries in LaunchSource, we need to subtract
     // three to remain in sync with LaunchSource.
     case AppLaunchSource::kSourceAppHomePage:
+    case AppLaunchSource::kSourceFocusMode:
+    case AppLaunchSource::kSourceSparky:
       return static_cast<app_runtime::LaunchSource>(
           base::to_underlying(source) - 3);
   }
@@ -202,8 +205,7 @@ void AppRuntimeEventRouter::DispatchOnLaunchedEventWithFileEntries(
     extensions::AppLaunchSource source,
     const std::string& handler_id,
     const std::vector<EntryInfo>& entries,
-    const std::vector<GrantedFileEntry>& file_entries,
-    std::optional<app_runtime::ActionData> action_data) {
+    const std::vector<GrantedFileEntry>& file_entries) {
   app_runtime::LaunchSource source_enum = GetLaunchSourceEnum(source);
 
   // TODO(sergeygs): Use the same way of creating an event (using the generated
@@ -213,10 +215,6 @@ void AppRuntimeEventRouter::DispatchOnLaunchedEventWithFileEntries(
 
   if (extensions::FeatureSwitch::trace_app_source()->IsEnabled()) {
     launch_data.Set("source", app_runtime::ToString(source_enum));
-  }
-
-  if (action_data) {
-    launch_data.Set("actionData", action_data->ToValue());
   }
 
   base::Value::List items;

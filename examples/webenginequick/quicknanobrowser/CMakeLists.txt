@@ -4,19 +4,16 @@
 cmake_minimum_required(VERSION 3.16)
 project(quicknanobrowser LANGUAGES CXX)
 
-set(CMAKE_AUTOMOC ON)
-
 if(NOT DEFINED INSTALL_EXAMPLESDIR)
     set(INSTALL_EXAMPLESDIR "examples")
 endif()
 
-set(INSTALL_EXAMPLEDIR "${INSTALL_EXAMPLESDIR}/webenginequick/quicknanobrowser")
-
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick WebEngineQuick)
+
+qt_standard_project_setup(REQUIRES 6.8)
 
 qt_add_executable(quicknanobrowser
     main.cpp
-    utils.h
 )
 
 if(WIN32)
@@ -40,44 +37,31 @@ target_link_libraries(quicknanobrowser PUBLIC
     Qt::WebEngineQuick
 )
 
+set_source_files_properties(BrowserManager.qml
+    PROPERTIES QT_QML_SINGLETON_TYPE TRUE
+)
+
 qt_add_qml_module(quicknanobrowser
     URI BrowserUtils
-    VERSION 1.0
-    RESOURCE_PREFIX /
-)
-
-# Resources:
-set(resources_resource_files
-    "ApplicationRoot.qml"
-    "BrowserDialog.qml"
-    "BrowserWindow.qml"
-    "DownloadView.qml"
-    "FindBar.qml"
-    "FullScreenNotification.qml"
-    "WebAuthDialog.qml"
-)
-
-qt_add_resources(quicknanobrowser "resources"
-    PREFIX
-        "/"
-    FILES
-        ${resources_resource_files}
-)
-
-set(resources1_resource_files
-    "icons/3rdparty/go-next.png"
-    "icons/3rdparty/go-previous.png"
-    "icons/3rdparty/process-stop.png"
-    "icons/3rdparty/view-refresh.png"
-)
-
-qt_add_resources(quicknanobrowser "resources1"
-    PREFIX
-        "/icons"
-    BASE
-        "icons/3rdparty"
-    FILES
-        ${resources1_resource_files}
+    QML_FILES
+        ApplicationRoot.qml
+        BrowserManager.qml
+        BrowserDialog.qml
+        BrowserWindow.qml
+        WebToolBar.qml
+        DownloadView.qml
+        FindBar.qml
+        FullScreenNotification.qml
+        PermissionDialog.qml
+        SslDialog.qml
+        WebAuthDialog.qml
+    SOURCES
+        utils.h
+    RESOURCES
+        icons/3rdparty/go-next.png
+        icons/3rdparty/go-previous.png
+        icons/3rdparty/process-stop.png
+        icons/3rdparty/view-refresh.png
 )
 
 if(TARGET Qt::Widgets)
@@ -105,7 +89,16 @@ if (APPLE)
 endif()
 
 install(TARGETS quicknanobrowser
-    RUNTIME DESTINATION "${INSTALL_EXAMPLEDIR}"
-    BUNDLE DESTINATION "${INSTALL_EXAMPLEDIR}"
-    LIBRARY DESTINATION "${INSTALL_EXAMPLEDIR}"
+    BUNDLE DESTINATION .
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
+
+qt_generate_deploy_qml_app_script(
+    TARGET quicknanobrowser
+    OUTPUT_SCRIPT deploy_script
+    MACOS_BUNDLE_POST_BUILD
+    NO_UNSUPPORTED_PLATFORM_ERROR
+    DEPLOY_USER_QML_MODULES_ON_UNSUPPORTED_PLATFORM
+)
+install(SCRIPT ${deploy_script})

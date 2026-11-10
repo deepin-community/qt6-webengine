@@ -135,6 +135,7 @@
   top: 0;
   width: 26px;
   height: 26px;
+  /* stylelint-disable-next-line custom-property-pattern */
   background-image: var(--image-file-cssoverview_icons_2x);
   background-size: 104px 26px;
 }
@@ -247,12 +248,12 @@
 
   &:hover .details,
   &:focus .details {
-    color: color-mix(in sRGB, var(--sys-color-primary), var(--sys-color-state-hover-on-prominent) 6%);
+    color: color-mix(in srgb, var(--sys-color-primary), var(--sys-color-state-hover-on-prominent) 6%);
   }
 
   &:hover .bar,
   &:focus .bar {
-    background-color: color-mix(in sRGB, var(--sys-color-primary-bright), var(--sys-color-state-hover-on-prominent) 6%);
+    background-color: color-mix(in srgb, var(--sys-color-primary-bright), var(--sys-color-state-hover-on-prominent) 6%);
     color: var(--sys-color-on-primary);
   }
 }
@@ -329,33 +330,22 @@
   min-width: initial;
 }
 
-.data .nodeId-column {
+::part(node-id-column) {
   align-items: center;
-  display: flex;
   height: 20px;
+
+  --show-element-display: none;
 }
 
-.nodeId-column .monospace {
-  overflow: hidden;
+::part(node-id-column):focus,
+::part(node-id-column):hover {
+  --show-element-display: inline-block;
 }
 
-.show-element {
-  margin: 0 0 0 8px;
-  display: none;
-  cursor: pointer;
-  flex: none;
-
-  --icon-show-element: var(--icon-default);
-}
-
-.show-element:focus,
-.show-element:hover {
-  --icon-show-element: var(--icon-default-hover);
-}
-
-.nodeId-column:focus-within .show-element,
-.nodeId-column:hover .show-element {
-  display: inline-block;
+::part(show-element) {
+  display: var(--show-element-display);
+  height: 16px;
+  width: 16px;
 }
 
 .results-section.colors {

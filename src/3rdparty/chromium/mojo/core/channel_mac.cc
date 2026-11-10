@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "mojo/core/channel.h"
 
 #include <mach/mach.h>
@@ -20,14 +25,17 @@
 #include "base/containers/buffer_iterator.h"
 #include "base/containers/circular_deque.h"
 #include "base/containers/span.h"
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/mac/scoped_mach_msg_destroy.h"
 #include "base/message_loop/message_pump_for_io.h"
+#include "base/numerics/byte_conversions.h"
 #include "base/task/current_thread.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/thread_annotations.h"
 #include "base/trace_event/typed_macros.h"
+#include "mojo/core/ipcz_driver/envelope.h"
 
 extern "C" {
 kern_return_t fileport_makeport(int fd, mach_port_t*);
@@ -38,6 +46,16 @@ namespace mojo {
 namespace core {
 
 namespace {
+
+// Kill switch.
+BASE_FEATURE(kUseMachVouchers,
+             "UseMachVouchers",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+bool ShouldUseVouchers() {
+  static bool enabled = base::FeatureList::IsEnabled(kUseMachVouchers);
+  return enabled;
+}
 
 constexpr mach_msg_id_t kChannelMacHandshakeMsgId = 'mjhs';
 constexpr mach_msg_id_t kChannelMacInlineMsgId = 'MOJO';
@@ -80,8 +98,9 @@ class ChannelMac : public Channel,
   }
 
   void Write(MessagePtr message) override {
-    base::AutoLock lock(write_lock_);
+    RecordSentMessageMetrics(message->data_num_bytes());
 
+    base::AutoLock lock(write_lock_);
     if (reject_writes_) {
       return;
     }
@@ -213,6 +232,13 @@ class ChannelMac : public Channel,
       // Wait for the received message via the MessageLoop.
     } else {
       NOTREACHED();
+    }
+
+    if (ShouldUseVouchers()) {
+      kr = mach_port_set_attributes(mach_task_self(), receive_port_.get(),
+                                    MACH_PORT_IMPORTANCE_RECEIVER, nullptr, 0);
+      MACH_LOG_IF(ERROR, kr != KERN_SUCCESS, kr)
+          << "mach_port_set_attributes MACH_PORT_IMPORTANCE_RECEIVER";
     }
 
     base::CurrentThread::Get()->AddDestructionObserver(this);
@@ -430,7 +456,6 @@ class ChannelMac : public Channel,
         default:
           NOTREACHED() << "Unsupported handle type "
                        << static_cast<int>(handle.type());
-          OnWriteErrorLocked(Error::kDisconnected);
       }
     }
 
@@ -444,8 +469,11 @@ class ChannelMac : public Channel,
       descriptor->type = MACH_MSG_OOL_DESCRIPTOR;
       ++body->msgh_descriptor_count;
     } else {
-      auto* data_size = buffer.MutableObject<uint64_t>();
-      *data_size = message->data_num_bytes();
+      // Mach message structs are all 4-byte aligned, but `uint64_t` is 8-byte
+      // aligned on 64-bit architectures. To avoid alignment issues, write the
+      // size as bytes.
+      buffer.MutableSpan<uint8_t, 8>()->copy_from(
+          base::U64ToNativeEndian(message->data_num_bytes()));
 
       auto data = buffer.MutableSpan<char>(message->data_num_bytes());
       memcpy(data.data(), message->data(), message->data_num_bytes());
@@ -528,7 +556,8 @@ class ChannelMac : public Channel,
     const mach_msg_option_t rcv_options =
         MACH_RCV_MSG | MACH_RCV_TIMEOUT |
         MACH_RCV_TRAILER_TYPE(MACH_MSG_TRAILER_FORMAT_0) |
-        MACH_RCV_TRAILER_ELEMENTS(MACH_RCV_TRAILER_AUDIT);
+        MACH_RCV_TRAILER_ELEMENTS(MACH_RCV_TRAILER_AUDIT) |
+        (ShouldUseVouchers() ? MACH_RCV_VOUCHER : 0);
     kern_return_t kr =
         mach_msg(header, rcv_options, 0, header->msgh_size, receive_port_.get(),
                  /*timeout=*/0, MACH_PORT_NULL);
@@ -538,6 +567,14 @@ class ChannelMac : public Channel,
       MACH_LOG(ERROR, kr) << "mach_msg receive";
       OnError(Error::kDisconnected);
       return;
+    }
+
+    scoped_refptr<ipcz_driver::Envelope> envelope;
+    if (ShouldUseVouchers()) {
+      envelope = base::MakeRefCounted<ipcz_driver::Envelope>(
+          base::apple::ScopedMachSendRight(header->msgh_voucher_port));
+      header->msgh_voucher_port = MACH_PORT_NULL;
+      header->msgh_bits &= ~MACH_MSGH_BITS_VOUCHER_MASK;
     }
 
     base::ScopedMachMsgDestroy scoped_message(header);
@@ -671,8 +708,12 @@ class ChannelMac : public Channel,
           reinterpret_cast<vm_address_t>(descriptor->address),
           descriptor->size);
     } else {
-      auto* data_size_ptr = buffer.Object<uint64_t>();
-      payload = buffer.Span<const char>(*data_size_ptr);
+      // Mach message structs are all 4-byte aligned, but `uint64_t` is 8-byte
+      // aligned on 64-bit architectures. To avoid alignment issues, write the
+      // size as bytes.
+      uint64_t data_size =
+          base::U64FromNativeEndian(*buffer.Span<uint8_t, 8>());
+      payload = buffer.Span<const char>(data_size);
     }
 
     if (payload.empty()) {
@@ -683,7 +724,9 @@ class ChannelMac : public Channel,
     scoped_message.Disarm();
 
     size_t ignored;
-    DispatchResult result = TryDispatchMessage(payload, &ignored);
+    // The envelope wrapping the voucher is attached to the message.
+    DispatchResult result = TryDispatchMessage(payload, std::nullopt,
+                                               std::move(envelope), &ignored);
     if (result != DispatchResult::kOK) {
       OnError(Error::kReceivedMalformedData);
       return;

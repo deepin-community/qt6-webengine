@@ -7,11 +7,12 @@
 #include "core/fxcrt/fx_codepage.h"
 
 #include <algorithm>
+#include <functional>
 #include <iterator>
 #include <utility>
 
 #include "build/build_config.h"
-#include "third_party/base/numerics/safe_math.h"
+#include "core/fxcrt/numerics/safe_math.h"
 
 #if BUILDFLAG(IS_WIN)
 #include <windows.h>
@@ -204,7 +205,7 @@ const FX_CHARSET_MAP kFXCharset2CodePageTable[] = {
 
 }  // namespace
 
-const FX_CharsetUnicodes kFX_CharsetUnicodes[8] = {
+const std::array<FX_CharsetUnicodes, 8> kFX_CharsetUnicodes = {{
     {FX_Charset::kThai, kFX_MSDOSThaiUnicodes},
     {FX_Charset::kMSWin_EasternEuropean, kFX_MSWinEasternEuropeanUnicodes},
     {FX_Charset::kMSWin_Cyrillic, kFX_MSWinCyrillicUnicodes},
@@ -213,7 +214,7 @@ const FX_CharsetUnicodes kFX_CharsetUnicodes[8] = {
     {FX_Charset::kMSWin_Hebrew, kFX_MSWinHebrewUnicodes},
     {FX_Charset::kMSWin_Arabic, kFX_MSWinArabicUnicodes},
     {FX_Charset::kMSWin_Baltic, kFX_MSWinBalticUnicodes},
-};
+}};
 
 FX_CodePage FX_GetACP() {
 #if BUILDFLAG(IS_WIN)
@@ -224,11 +225,9 @@ FX_CodePage FX_GetACP() {
 }
 
 FX_CodePage FX_GetCodePageFromCharset(FX_Charset charset) {
-  auto* result = std::lower_bound(
-      std::begin(kFXCharset2CodePageTable), std::end(kFXCharset2CodePageTable),
-      charset, [](const FX_CHARSET_MAP& iter, const FX_Charset& charset) {
-        return iter.charset < charset;
-      });
+  auto* result =
+      std::ranges::lower_bound(kFXCharset2CodePageTable, charset, std::less<>{},
+                               &FX_CHARSET_MAP::charset);
   if (result != std::end(kFXCharset2CodePageTable) &&
       result->charset == charset) {
     return result->codepage;
@@ -238,8 +237,9 @@ FX_CodePage FX_GetCodePageFromCharset(FX_Charset charset) {
 
 FX_Charset FX_GetCharsetFromCodePage(FX_CodePage codepage) {
   for (const auto& it : kFXCharset2CodePageTable) {
-    if (it.codepage == codepage)
+    if (it.codepage == codepage) {
       return it.charset;
+    }
   }
   return FX_Charset::kANSI;
 }
@@ -294,8 +294,8 @@ size_t FX_WideCharToMultiByte(FX_CodePage codepage,
                               WideStringView wstr,
                               pdfium::span<char> buf) {
 #if BUILDFLAG(IS_WIN)
-  int input_len = pdfium::base::checked_cast<int>(wstr.GetLength());
-  int output_len = pdfium::base::checked_cast<int>(buf.size());
+  int input_len = pdfium::checked_cast<int>(wstr.GetLength());
+  int output_len = pdfium::checked_cast<int>(buf.size());
   return WideCharToMultiByte(static_cast<UINT>(codepage), 0,
                              wstr.unterminated_c_str(), input_len, buf.data(),
                              output_len, nullptr, nullptr);
@@ -303,8 +303,9 @@ size_t FX_WideCharToMultiByte(FX_CodePage codepage,
   size_t len = 0;
   for (size_t i = 0; i < wstr.GetLength(); i++) {
     if (wstr[i] < 0x100) {
-      if (len < buf.size())
+      if (len < buf.size()) {
         buf[len] = static_cast<char>(wstr[i]);
+      }
       len++;
     }
   }
@@ -316,16 +317,17 @@ size_t FX_MultiByteToWideChar(FX_CodePage codepage,
                               ByteStringView bstr,
                               pdfium::span<wchar_t> buf) {
 #if BUILDFLAG(IS_WIN)
-  const int input_len = pdfium::base::checked_cast<int>(bstr.GetLength());
-  const int output_len = pdfium::base::checked_cast<int>(buf.size());
+  const int input_len = pdfium::checked_cast<int>(bstr.GetLength());
+  const int output_len = pdfium::checked_cast<int>(buf.size());
   return MultiByteToWideChar(static_cast<UINT>(codepage), 0,
                              bstr.unterminated_c_str(), input_len, buf.data(),
                              output_len);
 #else
   size_t wlen = 0;
   for (size_t i = 0; i < bstr.GetLength(); i++) {
-    if (wlen < buf.size())
+    if (wlen < buf.size()) {
       buf[wlen] = reinterpret_cast<uint8_t>(bstr[i]);
+    }
     wlen++;
   }
   return wlen;

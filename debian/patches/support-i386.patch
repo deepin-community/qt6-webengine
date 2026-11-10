@@ -10,16 +10,42 @@ still support i386] can patch the file."
 At this point, i386 on linux is completely unsupported upstream, so
 we're on our own with bugs.
 
+The second part is needed as _mm_cvtsi128_si64 is not available on i386,
+so let only amd64/x86_64 use it.
+
+Last-Update: 2025-07-29
+
 --- a/src/3rdparty/chromium/BUILD.gn
 +++ b/src/3rdparty/chromium/BUILD.gn
-@@ -1647,9 +1647,7 @@ if (!is_ios && !is_qtwebengine) {
+@@ -1733,8 +1733,9 @@ if (use_blink && !is_cronet_build) {
  }
-
+ 
  # TODO(cassew): Add more OS's that don't support x86.
 -is_valid_x86_target =
--    target_os != "ios" && target_os != "mac" &&
--    (target_os != "linux" || use_libfuzzer || !build_with_chromium)
+-    target_os != "ios" && target_os != "mac"
++#is_valid_x86_target =
++#    target_os != "ios" && target_os != "mac"
 +is_valid_x86_target = true
-
+ 
  # Note: v8_target_cpu == arm allows using the V8 arm simulator on x86 for fuzzing.
  assert(
+--- a/src/3rdparty/chromium/v8/src/strings/string-hasher.cc
++++ b/src/3rdparty/chromium/v8/src/strings/string-hasher.cc
+@@ -23,7 +23,7 @@ struct ConvertTo8BitHashReader {
+     DCHECK_LE(p[5], 0xff);
+     DCHECK_LE(p[6], 0xff);
+     DCHECK_LE(p[7], 0xff);
+-#ifdef __SSE2__
++#ifdef __x86_64__
+     __m128i x = _mm_loadu_si128(reinterpret_cast<const __m128i*>(p));
+     uint64_t out;
+     _mm_storel_epi64(reinterpret_cast<__m128i *>(&out), _mm_packus_epi16(x, x));
+@@ -46,7 +46,7 @@ struct ConvertTo8BitHashReader {
+     DCHECK_LE(p[1], 0xff);
+     DCHECK_LE(p[2], 0xff);
+     DCHECK_LE(p[3], 0xff);
+-#ifdef __SSE2__
++#ifdef __x86_64__
+     __m128i x = _mm_loadu_si64(reinterpret_cast<const __m128i*>(p));
+     uint64_t out;
+     _mm_storel_epi64(reinterpret_cast<__m128i *>(&out), _mm_packus_epi16(x, x));

@@ -12,6 +12,7 @@
 #include "base/threading/thread.h"
 #include "base/threading/thread_checker.h"
 #include "base/unguessable_token.h"
+#include "media/base/audio_glitch_info.h"
 #include "media/base/channel_layout.h"
 #include "media/base/fake_audio_renderer_sink.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -21,8 +22,12 @@
 #include "third_party/blink/renderer/platform/mediastream/media_stream_audio_track.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_component_impl.h"
 #include "third_party/blink/renderer/platform/mediastream/media_stream_source.h"
+#include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/testing/io_task_runner_testing_platform_support.h"
 #include "third_party/blink/renderer/platform/testing/task_environment.h"
+#include "third_party/blink/renderer/platform/wtf/cross_thread_copier_media.h"
+#include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
 namespace blink {
@@ -89,7 +94,7 @@ class FakeMediaStreamAudioSource final : public MediaStreamAudioSource {
       last_format_ = format;
     }
 
-    MediaStreamAudioSource::DeliverDataToTracks(data, reference_time);
+    MediaStreamAudioSource::DeliverDataToTracks(data, reference_time, {});
   }
 
  private:
@@ -184,11 +189,11 @@ class TrackAudioRendererTest : public testing::TestWithParam<bool> {
     total_frames_captured_ += frames;
     frames_captured_since_last_reconfig_ += frames;
 
-    IOTaskRunner()->PostTask(
-        FROM_HERE, base::BindOnce(&TrackAudioRendererTest::PushDataOnIO,
-                                  base::Unretained(this),
-                                  media::AudioBus::Create(channels, frames),
-                                  base::TimeTicks::Now()));
+    PostCrossThreadTask(
+        *IOTaskRunner(), FROM_HERE,
+        CrossThreadBindOnce(
+            &TrackAudioRendererTest::PushDataOnIO, CrossThreadUnretained(this),
+            media::AudioBus::Create(channels, frames), base::TimeTicks::Now()));
   }
 
   // Force sync the IO task runner, followed by the main task runner.
@@ -236,7 +241,7 @@ class TrackAudioRendererTest : public testing::TestWithParam<bool> {
   int total_frames_captured_ = 0;
   int frames_captured_since_last_reconfig_ = 0;
 
-  raw_ptr<FakeMediaStreamAudioSource, ExperimentalRenderer> fake_source_;
+  raw_ptr<FakeMediaStreamAudioSource> fake_source_;
 };
 
 TEST_P(TrackAudioRendererTest, SingleCapture) {

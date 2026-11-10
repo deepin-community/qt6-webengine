@@ -5,85 +5,35 @@
 """Siso configuration main entry."""
 
 load("@builtin//encoding.star", "json")
+load("@builtin//lib/gn.star", "gn")
 load("@builtin//runtime.star", "runtime")
 load("@builtin//struct.star", "module")
+load("./backend_config/backend.star", "backend")
 load("./blink_all.star", "blink_all")
+load("./config.star", "config")
+load("./gn_logs.star", "gn_logs")
 load("./linux.star", chromium_linux = "chromium")
 load("./mac.star", chromium_mac = "chromium")
 load("./mojo.star", "mojo")
 load("./platform.star", "platform")
 load("./reproxy.star", "reproxy")
+load("./rust.star", "rust")
 load("./simple.star", "simple")
 load("./windows.star", chromium_windows = "chromium")
 
-def __use_large_b289968566(ctx, step_config):
-    # TODO(b/289968566): they often faile with exit=137 (OOM?).
-    # They need to run on a machine has more memory than the default machine type n2-custom-2-3840
-    exit137_list = [
-        "./android_clang_arm/obj/third_party/distributed_point_functions/distributed_point_functions/evaluate_prg_hwy.o",
-        "./ash_clang_x64/obj/chrome/browser/ash/ash/autotest_private_api.o",
-        "./ash_clang_x64/obj/chrome/browser/ash/ash/chrome_browser_main_parts_ash.o",
-        "./ash_clang_x64/obj/chrome/browser/browser/browser_prefs.o",
-        "./ash_clang_x64/obj/chrome/browser/browser/chrome_browser_interface_binders.o",
-        "./obj/chrome/browser/ash/ash/autotest_private_api.o",
-        "./obj/chrome/browser/ash/ash/chrome_browser_main_parts_ash.o",
-        "./obj/chrome/browser/ash/system_web_apps/apps/browser_tests/personalization_app_time_of_day_browsertest.o",
-        "./obj/chrome/browser/ash/system_web_apps/apps/browser_tests/personalization_app_wallpaper_daily_refresh_browsertest.o",
-        "./obj/chrome/browser/ash/system_web_apps/browser_tests/system_web_app_manager_browsertest.o",
-        "./obj/chrome/browser/ash/unit_tests/wizard_controller_unittest.o",
-        "./obj/chrome/browser/autofill/interactive_ui_tests/autofill_interactive_uitest.o",
-        "./obj/chrome/browser/browser/browser_prefs.o",
-        "./obj/chrome/browser/browser/chrome_browser_interface_binders.o",
-        "./obj/chrome/browser/browser/chrome_content_browser_client.o",
-        "./obj/chrome/browser/ui/ash/holding_space/browser_tests/holding_space_ui_browsertest.o",
-        "./obj/chrome/test/browser_tests/app_list_client_impl_browsertest.o",
-        "./obj/chrome/test/browser_tests/browser_non_client_frame_view_browsertest.o",
-        "./obj/chrome/test/browser_tests/browser_non_client_frame_view_chromeos_browsertest.o",
-        "./obj/chrome/test/browser_tests/capture_mode_browsertest.o",
-        "./obj/chrome/test/browser_tests/chrome_shelf_controller_browsertest.o",
-        "./obj/chrome/test/browser_tests/device_local_account_browsertest.o",
-        "./obj/chrome/test/browser_tests/file_manager_browsertest_base.o",
-        "./obj/chrome/test/browser_tests/file_tasks_browsertest.o",
-        "./obj/chrome/test/browser_tests/full_restore_app_launch_handler_browsertest.o",
-        "./obj/chrome/test/browser_tests/login_browsertest.o",
-        "./obj/chrome/test/browser_tests/login_ui_browsertest.o",
-        "./obj/chrome/test/browser_tests/pwa_install_view_browsertest.o",
-        "./obj/chrome/test/browser_tests/remote_apps_manager_browsertest.o",
-        "./obj/chrome/test/browser_tests/safe_browsing_blocking_page_test.o",
-        "./obj/chrome/test/browser_tests/save_card_bubble_views_browsertest.o",
-        "./obj/chrome/test/browser_tests/scalable_iph_browsertest.o",
-        "./obj/chrome/test/browser_tests/spoken_feedback_browsertest.o",
-        "./obj/chrome/test/browser_tests/webview_login_browsertest.o",
-        "./obj/chrome/test/interactive_ui_tests/iban_bubble_view_uitest.o",
-        "./obj/chrome/test/interactive_ui_tests/local_card_migration_uitest.o",
-        "./obj/chrome/test/interactive_ui_tests/system_web_app_interactive_uitest.o",
-        "./obj/chrome/test/test_support_ui/offer_notification_bubble_views_test_base.o",
-        "./obj/chrome/test/unit_tests/chrome_browsing_data_remover_delegate_unittest.o",
-        "./obj/chrome/test/unit_tests/site_settings_handler_unittest.o",
-        "./obj/content/browser/browser/browser_interface_binders.o",
-        "./obj/fuchsia_web/runners/cast_runner_integration_tests__exec/cast_runner_integration_test.o",
-        "./obj/fuchsia_web/webengine/web_engine_core/frame_impl.o",
-    ]
-    if runtime.os == "windows":
-        exit137_list = [obj.removesuffix(".o") + ".obj" for obj in exit137_list if obj.startswith("./obj/")]
-
-    new_rules = []
+def __disable_remote(ctx, step_config):
+    gn_logs_data = gn_logs.read(ctx)
+    if gn_logs_data.get("use_remoteexec") == "true":
+        return step_config
     for rule in step_config["rules"]:
-        if not rule["name"].endswith("/cxx"):
-            new_rules.append(rule)
-            continue
-        if "action_outs" in rule:
-            fail("unexpeced \"action_outs\" in cxx rule %s" % rule["name"])
-        r = {}
-        r.update(rule)
-        r["name"] += "/b289968566/exit-137"
-        r["action_outs"] = exit137_list
-        r["platform_ref"] = "large"
-        if r.get("handler") == "rewrite_rewrapper":
-            r["handler"] = "rewrite_rewrapper_large"
-        new_rules.append(r)
-        new_rules.append(rule)
-    step_config["rules"] = new_rules
+        rule["remote"] = False
+    return step_config
+
+def __unset_timeout(ctx, step_config):
+    if not config.get(ctx, "no-remote-timeout"):
+        return step_config
+    for rule in step_config["rules"]:
+        rule.pop("timeout", None)
     return step_config
 
 def init(ctx):
@@ -97,31 +47,22 @@ def init(ctx):
         "darwin": chromium_mac,
         "windows": chromium_windows,
     }[runtime.os]
+    properties = {}
+    for k, v in gn.args(ctx).items():
+        properties["gn_args:" + k] = v
+    for k, v in gn_logs.read(ctx).items():
+        properties["gn_logs:" + k] = v
+
     step_config = {
-        "platforms": {
-            "default": {
-                "OSFamily": "Linux",
-                "container-image": "docker://gcr.io/chops-public-images-prod/rbe/siso-chromium/linux@sha256:912808c295e578ccde53b0685bcd0d56c15d7a03e819dcce70694bfe3fdab35e",
-                "label:action_default": "1",
-            },
-            # Large workers are usually used for Python actions like generate bindings, mojo generators etc
-            # They can run on Linux workers.
-            "large": {
-                "OSFamily": "Linux",
-                "container-image": "docker://gcr.io/chops-public-images-prod/rbe/siso-chromium/linux@sha256:912808c295e578ccde53b0685bcd0d56c15d7a03e819dcce70694bfe3fdab35e",
-                # As of Jul 2023, the action_large pool uses n2-highmem-8 with 200GB of pd-ssd.
-                # The pool is intended for the following actions.
-                #  - slow actions that can benefit from multi-cores and/or faster disk I/O. e.g. link, mojo, generate bindings etc.
-                #  - actions that fail for OOM.
-                "label:action_large": "1",
-            },
-        },
+        "properties": properties,
+        "platforms": backend.platform_properties(ctx),
         "input_deps": {},
         "rules": [],
     }
     step_config = blink_all.step_config(ctx, step_config)
     step_config = host.step_config(ctx, step_config)
     step_config = mojo.step_config(ctx, step_config)
+    step_config = rust.step_config(ctx, step_config)
     step_config = simple.step_config(ctx, step_config)
     if reproxy.enabled(ctx):
         step_config = reproxy.step_config(ctx, step_config)
@@ -146,16 +87,19 @@ def init(ctx):
             arg0 = arg0.removesuffix(".exe")
         rule["remote_command"] = arg0
 
-    step_config = __use_large_b289968566(ctx, step_config)
+    step_config = __disable_remote(ctx, step_config)
+    step_config = __unset_timeout(ctx, step_config)
 
     filegroups = {}
     filegroups.update(blink_all.filegroups(ctx))
     filegroups.update(host.filegroups(ctx))
+    filegroups.update(rust.filegroups(ctx))
     filegroups.update(simple.filegroups(ctx))
 
     handlers = {}
     handlers.update(blink_all.handlers)
     handlers.update(host.handlers)
+    handlers.update(rust.handlers)
     handlers.update(simple.handlers)
     handlers.update(reproxy.handlers)
 

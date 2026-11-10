@@ -6,6 +6,7 @@
 
 #include <string_view>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr_exclusion.h"
 #include "base/strings/pattern.h"
@@ -24,8 +25,7 @@ struct AllowlistEntry {
   // Pattern to match the interested trace event name.
   const char* event_name;
   // List of patterns that match the allowlisted arguments.
-  // This field is not a raw_ptr<> because it was filtered by the rewriter for:
-  // #global-scope
+  // RAW_PTR_EXCLUSION: constant data that is not freed.
   RAW_PTR_EXCLUSION const char* const* arg_name_filter;
 };
 
@@ -46,7 +46,7 @@ const char* const kTopLevelIpcRunTaskAllowedArgs[] = {"chrome_task_annotator",
 const char* const kMemoryPressureEventsAllowedArgs[] = {
     "chrome_memory_pressure_notification", nullptr};
 
-const AllowlistEntry kEventArgsAllowlist[] = {
+constexpr auto kEventArgsAllowlist = std::to_array<AllowlistEntry>({
     // Args recorded in perfetto protos and exported by trace processor JSON
     // exporter:
 
@@ -98,36 +98,40 @@ const AllowlistEntry kEventArgsAllowlist[] = {
     {TRACE_DISABLED_BY_DEFAULT("memory-infra"), "*", kMemoryDumpAllowedArgs},
     {TRACE_DISABLED_BY_DEFAULT("system_stats"), "*", nullptr},
     {TRACE_DISABLED_BY_DEFAULT("v8.gc"), "*", kV8GCAllowedArgs},
-    {nullptr, nullptr, nullptr}};
+    {nullptr, nullptr, nullptr},
+});
 
-const char* kMetadataAllowlist[] = {"chrome-bitness",
-                                    "chrome-dcheck-on",
-                                    "chrome-library-name",
-                                    "clock-domain",
-                                    "config",
-                                    "cpu-*",
-                                    "field-trials",
-                                    "gpu-*",
-                                    "highres-ticks",
-                                    "hardware-class",
-                                    "last_triggered_rule",
-                                    "network-type",
-                                    "num-cpus",
-                                    "os-*",
-                                    "physical-memory",
-                                    "product-version",
-                                    "scenario_name",
-                                    "trace-config",
-                                    "user-agent",
-                                    nullptr};
+const char* const kMetadataAllowlist[] = {
+    "chrome-bitness",
+    "chrome-dcheck-on",
+    "chrome-library-name",
+    "clock-domain",
+    "config",
+    "cpu-*",
+    "field-trials",
+    "gpu-*",
+    "highres-ticks",
+    "hardware-class",
+    "last_triggered_rule",
+    "network-type",
+    "num-cpus",
+    "os-*",
+    "physical-memory",
+    "product-version",
+    "scenario_name",
+    "trace-config",
+    "user-agent",
+    nullptr,
+};
 
 }  // namespace
 
 bool IsTraceArgumentNameAllowlisted(const char* const* granular_filter,
                                     const char* arg_name) {
-  for (int i = 0; granular_filter[i] != nullptr; ++i) {
-    if (base::MatchPattern(arg_name, granular_filter[i]))
+  for (int i = 0; UNSAFE_TODO(granular_filter[i]) != nullptr; ++i) {
+    if (base::MatchPattern(arg_name, UNSAFE_TODO(granular_filter[i]))) {
       return true;
+    }
   }
 
   return false;
@@ -139,8 +143,8 @@ bool IsTraceEventArgsAllowlisted(
     base::trace_event::ArgumentNameFilterPredicate* arg_name_filter) {
   DCHECK(arg_name_filter);
   base::CStringTokenizer category_group_tokens(
-      category_group_name, category_group_name + strlen(category_group_name),
-      ",");
+      category_group_name,
+      UNSAFE_TODO(category_group_name + strlen(category_group_name)), ",");
   while (category_group_tokens.GetNext()) {
     std::string_view category_group_token = category_group_tokens.token_piece();
     for (int i = 0; kEventArgsAllowlist[i].category_name != nullptr; ++i) {

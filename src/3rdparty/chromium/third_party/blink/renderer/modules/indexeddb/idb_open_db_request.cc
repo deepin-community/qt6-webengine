@@ -26,10 +26,10 @@
 #include "third_party/blink/renderer/modules/indexeddb/idb_open_db_request.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "base/metrics/histogram_macros.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
@@ -47,14 +47,12 @@ IDBOpenDBRequest::IDBOpenDBRequest(
     IDBTransaction::TransactionMojoRemote transaction_remote,
     int64_t transaction_id,
     int64_t version,
-    IDBRequest::AsyncTraceState metrics,
-    mojo::PendingRemote<mojom::blink::ObservedFeature> connection_lifetime)
+    IDBRequest::AsyncTraceState metrics)
     : IDBRequest(script_state, nullptr, nullptr, std::move(metrics)),
       callbacks_receiver_(std::move(callbacks_receiver)),
       transaction_remote_(std::move(transaction_remote)),
       transaction_id_(transaction_id),
       version_(version),
-      connection_lifetime_(std::move(connection_lifetime)),
       start_time_(base::Time::Now()) {
   DCHECK(!ResultAsAny());
 }
@@ -98,7 +96,7 @@ void IDBOpenDBRequest::OnBlocked(int64_t old_version) {
   if (!CanStillSendResult()) {
     return;
   }
-  absl::optional<uint64_t> new_version_nullable;
+  std::optional<uint64_t> new_version_nullable;
   if (version_ != IDBDatabaseMetadata::kDefaultVersion) {
     new_version_nullable = version_;
   }
@@ -125,16 +123,16 @@ void IDBOpenDBRequest::OnUpgradeNeeded(
 
   auto* idb_database = MakeGarbageCollected<IDBDatabase>(
       GetExecutionContext(), std::move(callbacks_receiver_),
-      std::move(connection_lifetime_), std::move(pending_database));
+      std::move(pending_database), connection_priority_);
   idb_database->SetMetadata(metadata);
 
   if (old_version == IDBDatabaseMetadata::kNoVersion) {
     // This database hasn't had a version before.
     old_version = IDBDatabaseMetadata::kDefaultVersion;
   }
-  IDBDatabaseMetadata old_database_metadata(
-      metadata.name, metadata.id, old_version, metadata.max_object_store_id,
-      metadata.was_cold_open);
+  IDBDatabaseMetadata old_database_metadata(metadata.name, old_version,
+                                            metadata.max_object_store_id,
+                                            metadata.was_cold_open);
 
   transaction_ = IDBTransaction::CreateVersionChange(
       GetExecutionContext(), std::move(transaction_remote_), transaction_id_,
@@ -173,7 +171,7 @@ void IDBOpenDBRequest::OnOpenDBSuccess(
 
     idb_database = MakeGarbageCollected<IDBDatabase>(
         GetExecutionContext(), std::move(callbacks_receiver_),
-        std::move(connection_lifetime_), std::move(pending_database));
+        std::move(pending_database), connection_priority_);
     SetResult(MakeGarbageCollected<IDBAny>(idb_database));
   }
   idb_database->SetMetadata(metadata);
@@ -194,7 +192,7 @@ void IDBOpenDBRequest::OnDeleteDBSuccess(int64_t old_version) {
   }
   SetResult(MakeGarbageCollected<IDBAny>(IDBAny::kUndefinedType));
   DispatchEvent(*MakeGarbageCollected<IDBVersionChangeEvent>(
-      event_type_names::kSuccess, old_version, absl::nullopt));
+      event_type_names::kSuccess, old_version, std::nullopt));
 }
 
 void IDBOpenDBRequest::OnDBFactoryError(DOMException* error) {
@@ -241,10 +239,13 @@ DispatchEventResult IDBOpenDBRequest::DispatchEventInternal(Event& event) {
     open_time_recorded_ = true;
     IDBDatabase* idb_database = ResultAsAny()->IdbDatabase();
     base::TimeDelta time_diff = base::Time::Now() - start_time_;
-    if (idb_database->Metadata().was_cold_open)
-      UMA_HISTOGRAM_MEDIUM_TIMES("WebCore.IndexedDB.OpenTime.Cold", time_diff);
-    else
-      UMA_HISTOGRAM_MEDIUM_TIMES("WebCore.IndexedDB.OpenTime.Warm", time_diff);
+    if (idb_database->Metadata().was_cold_open) {
+      DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES("WebCore.IndexedDB.OpenTime.Cold",
+                                            time_diff);
+    } else {
+      DEPRECATED_UMA_HISTOGRAM_MEDIUM_TIMES("WebCore.IndexedDB.OpenTime.Warm",
+                                            time_diff);
+    }
   }
 
   return IDBRequest::DispatchEventInternal(event);

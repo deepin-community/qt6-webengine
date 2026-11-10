@@ -8,12 +8,12 @@
 #include <string>
 
 #include "base/base64url.h"
+#include "base/containers/span.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
 #include "base/run_loop.h"
-#include "base/strings/string_util.h"
 #include "base/test/gtest_util.h"
 #include "base/test/task_environment.h"
 #include "components/gcm_driver/crypto/p256_key_util.h"
@@ -25,7 +25,6 @@ namespace gcm {
 
 namespace {
 
-using ECPrivateKeyUniquePtr = std::unique_ptr<crypto::ECPrivateKey>;
 using EncryptDataVectorUniquePtr = std::unique_ptr<std::vector<EncryptionData>>;
 using EntryVectorType =
     leveldb_proto::ProtoDatabase<EncryptionData>::KeyEntryVector;
@@ -80,10 +79,10 @@ class GCMKeyStoreTest : public ::testing::Test {
   }
 
   // Callback to use with GCMKeyStore::{GetKeys, CreateKeys} calls.
-  void GotKeys(ECPrivateKeyUniquePtr* key_out,
+  void GotKeys(std::optional<crypto::keypair::PrivateKey>* key_out,
                std::string* auth_secret_out,
                base::OnceClosure quit_closure,
-               ECPrivateKeyUniquePtr key,
+               std::optional<crypto::keypair::PrivateKey> key,
                const std::string& auth_secret) {
     *key_out = std::move(key);
     *auth_secret_out = auth_secret;
@@ -100,9 +99,8 @@ class GCMKeyStoreTest : public ::testing::Test {
 
     // Create the authentication secret, which has to be a cryptographically
     // secure random number of at least 128 bits (16 bytes).
-    std::string auth_secret;
-    crypto::RandBytes(base::WriteInto(&auth_secret, kAuthSecretBytes + 1),
-                      kAuthSecretBytes);
+    std::string auth_secret(kAuthSecretBytes, '\0');
+    crypto::RandBytes(base::as_writable_byte_span(auth_secret));
     encryption_data.set_auth_secret(auth_secret);
 
     // Add keys.
@@ -151,7 +149,7 @@ class GCMKeyStoreTest : public ::testing::Test {
 };
 
 TEST_F(GCMKeyStoreTest, EmptyByDefault) {
-  ECPrivateKeyUniquePtr key;
+  std::optional<crypto::keypair::PrivateKey> key;
   std::string auth_secret;
   base::RunLoop run_loop;
   gcm_key_store()->GetKeys(
@@ -167,7 +165,7 @@ TEST_F(GCMKeyStoreTest, EmptyByDefault) {
 }
 
 TEST_F(GCMKeyStoreTest, CreateAndGetKeys) {
-  ECPrivateKeyUniquePtr key;
+  std::optional<crypto::keypair::PrivateKey> key;
   std::string auth_secret;
   base::RunLoop run_loop;
   gcm_key_store()->CreateKeys(
@@ -176,18 +174,10 @@ TEST_F(GCMKeyStoreTest, CreateAndGetKeys) {
                      &auth_secret, run_loop.QuitClosure()));
 
   run_loop.Run();
-
   ASSERT_TRUE(key);
-  std::string public_key, private_key;
-  ASSERT_TRUE(GetRawPrivateKey(*key, &private_key));
-  ASSERT_TRUE(GetRawPublicKey(*key, &public_key));
-
-  EXPECT_GT(public_key.size(), 0u);
-  EXPECT_GT(private_key.size(), 0u);
-
   ASSERT_GT(auth_secret.size(), 0u);
 
-  ECPrivateKeyUniquePtr read_key;
+  std::optional<crypto::keypair::PrivateKey> read_key;
   std::string read_auth_secret;
   base::RunLoop first_get_run_loop;
   gcm_key_store()->GetKeys(
@@ -200,15 +190,12 @@ TEST_F(GCMKeyStoreTest, CreateAndGetKeys) {
   first_get_run_loop.Run();
 
   ASSERT_TRUE(read_key);
-  std::string read_public_key, read_private_key;
-  ASSERT_TRUE(GetRawPrivateKey(*read_key, &read_private_key));
-  ASSERT_TRUE(GetRawPublicKey(*read_key, &read_public_key));
-  ASSERT_EQ(read_private_key, private_key);
-  ASSERT_EQ(read_public_key, public_key);
+  EXPECT_EQ(key->ToPrivateKeyInfo(), read_key->ToPrivateKeyInfo());
   EXPECT_EQ(auth_secret, read_auth_secret);
 
   // GetKey should also succeed if fallback_to_empty_authorized_entity is true
   // (fallback should not occur, since an exact match is found).
+  read_key = std::nullopt;
   base::RunLoop second_get_run_loop;
   gcm_key_store()->GetKeys(
       kFakeAppId, kFakeAuthorizedEntity,
@@ -220,16 +207,12 @@ TEST_F(GCMKeyStoreTest, CreateAndGetKeys) {
   second_get_run_loop.Run();
 
   ASSERT_TRUE(read_key);
-
-  ASSERT_TRUE(GetRawPrivateKey(*read_key, &read_private_key));
-  ASSERT_TRUE(GetRawPublicKey(*read_key, &read_public_key));
-  ASSERT_EQ(read_private_key, private_key);
-  ASSERT_EQ(read_public_key, public_key);
+  EXPECT_EQ(key->ToPrivateKeyInfo(), read_key->ToPrivateKeyInfo());
   EXPECT_EQ(auth_secret, read_auth_secret);
 }
 
 TEST_F(GCMKeyStoreTest, GetKeysFallback) {
-  ECPrivateKeyUniquePtr key;
+  std::optional<crypto::keypair::PrivateKey> key;
   std::string auth_secret;
   {
     base::RunLoop run_loop;
@@ -242,18 +225,11 @@ TEST_F(GCMKeyStoreTest, GetKeysFallback) {
   }
 
   ASSERT_TRUE(key);
-
-  std::string public_key, private_key;
-  ASSERT_TRUE(GetRawPrivateKey(*key, &private_key));
-  ASSERT_TRUE(GetRawPublicKey(*key, &public_key));
-
-  EXPECT_GT(public_key.size(), 0u);
-  EXPECT_GT(private_key.size(), 0u);
   ASSERT_GT(auth_secret.size(), 0u);
 
   // GetKeys should fail when fallback_to_empty_authorized_entity is false, as
   // there is not an exact match for kFakeAuthorizedEntity.
-  ECPrivateKeyUniquePtr read_key;
+  std::optional<crypto::keypair::PrivateKey> read_key;
   std::string read_auth_secret;
   {
     base::RunLoop run_loop;
@@ -271,6 +247,7 @@ TEST_F(GCMKeyStoreTest, GetKeysFallback) {
 
   // GetKey should succeed when fallback_to_empty_authorized_entity is true, as
   // falling back to empty authorized entity will match the created key.
+  read_key = std::nullopt;
   {
     base::RunLoop run_loop;
     gcm_key_store()->GetKeys(
@@ -283,18 +260,12 @@ TEST_F(GCMKeyStoreTest, GetKeysFallback) {
   }
 
   ASSERT_TRUE(read_key);
-
-  std::string read_public_key, read_private_key;
-  ASSERT_TRUE(GetRawPrivateKey(*key, &read_private_key));
-  ASSERT_TRUE(GetRawPublicKey(*key, &read_public_key));
-  EXPECT_EQ(private_key, read_private_key);
-  EXPECT_EQ(public_key, read_public_key);
-
+  EXPECT_EQ(key->ToPrivateKeyInfo(), read_key->ToPrivateKeyInfo());
   EXPECT_EQ(auth_secret, read_auth_secret);
 }
 
 TEST_F(GCMKeyStoreTest, KeysPersistenceBetweenInstances) {
-  ECPrivateKeyUniquePtr key;
+  std::optional<crypto::keypair::PrivateKey> key;
   std::string auth_secret;
   {
     base::RunLoop run_loop;
@@ -311,7 +282,7 @@ TEST_F(GCMKeyStoreTest, KeysPersistenceBetweenInstances) {
   // Create a new GCM Key Store instance.
   CreateKeyStore();
 
-  ECPrivateKeyUniquePtr read_key;
+  std::optional<crypto::keypair::PrivateKey> read_key;
   std::string read_auth_secret;
   {
     base::RunLoop run_loop;
@@ -329,7 +300,7 @@ TEST_F(GCMKeyStoreTest, KeysPersistenceBetweenInstances) {
 }
 
 TEST_F(GCMKeyStoreTest, CreateAndRemoveKeys) {
-  ECPrivateKeyUniquePtr key;
+  std::optional<crypto::keypair::PrivateKey> key;
   std::string auth_secret;
   {
     base::RunLoop run_loop;
@@ -343,7 +314,7 @@ TEST_F(GCMKeyStoreTest, CreateAndRemoveKeys) {
 
   ASSERT_TRUE(key);
 
-  ECPrivateKeyUniquePtr read_key;
+  std::optional<crypto::keypair::PrivateKey> read_key;
   std::string read_auth_secret;
   {
     base::RunLoop run_loop;
@@ -378,7 +349,7 @@ TEST_F(GCMKeyStoreTest, CreateAndRemoveKeys) {
 }
 
 TEST_F(GCMKeyStoreTest, CreateGetAndRemoveKeysSynchronously) {
-  ECPrivateKeyUniquePtr key;
+  std::optional<crypto::keypair::PrivateKey> key;
   std::string auth_secret;
   gcm_key_store()->CreateKeys(
       kFakeAppId, kFakeAuthorizedEntity,
@@ -386,7 +357,7 @@ TEST_F(GCMKeyStoreTest, CreateGetAndRemoveKeysSynchronously) {
                      &auth_secret, base::OnceClosure()));
 
   // Continue synchronously, without running RunUntilIdle first.
-  ECPrivateKeyUniquePtr key_after_create;
+  std::optional<crypto::keypair::PrivateKey> key_after_create;
   std::string auth_secret_after_create;
   gcm_key_store()->GetKeys(
       kFakeAppId, kFakeAuthorizedEntity,
@@ -400,7 +371,7 @@ TEST_F(GCMKeyStoreTest, CreateGetAndRemoveKeysSynchronously) {
                               base::DoNothing());
 
   // Continue synchronously, without running RunUntilIdle first.
-  ECPrivateKeyUniquePtr key_after_remove;
+  std::optional<crypto::keypair::PrivateKey> key_after_remove;
   std::string auth_secret_after_remove;
   gcm_key_store()->GetKeys(
       kFakeAppId, kFakeAuthorizedEntity,
@@ -411,7 +382,7 @@ TEST_F(GCMKeyStoreTest, CreateGetAndRemoveKeysSynchronously) {
 
   base::RunLoop().RunUntilIdle();
 
-  ECPrivateKeyUniquePtr key_after_idle;
+  std::optional<crypto::keypair::PrivateKey> key_after_idle;
   std::string auth_secret_after_idle;
   gcm_key_store()->GetKeys(
       kFakeAppId, kFakeAuthorizedEntity,
@@ -427,10 +398,7 @@ TEST_F(GCMKeyStoreTest, CreateGetAndRemoveKeysSynchronously) {
   EXPECT_FALSE(key_after_remove);
   EXPECT_FALSE(key_after_idle);
 
-  std::string public_key, public_key_after_create;
-  ASSERT_TRUE(GetRawPublicKey(*key, &public_key));
-  ASSERT_TRUE(GetRawPublicKey(*key, &public_key_after_create));
-  EXPECT_EQ(public_key, public_key_after_create);
+  EXPECT_EQ(key->ToPrivateKeyInfo(), key_after_create->ToPrivateKeyInfo());
 
   EXPECT_GT(auth_secret.size(), 0u);
   EXPECT_EQ(auth_secret, auth_secret_after_create);
@@ -439,7 +407,7 @@ TEST_F(GCMKeyStoreTest, CreateGetAndRemoveKeysSynchronously) {
 }
 
 TEST_F(GCMKeyStoreTest, RemoveKeysWildcardAuthorizedEntity) {
-  ECPrivateKeyUniquePtr key1, key2, key3;
+  std::optional<crypto::keypair::PrivateKey> key1, key2, key3;
   std::string auth_secret1, auth_secret2, auth_secret3;
   gcm_key_store()->CreateKeys(
       kFakeAppId, kFakeAuthorizedEntity,
@@ -460,7 +428,7 @@ TEST_F(GCMKeyStoreTest, RemoveKeysWildcardAuthorizedEntity) {
   ASSERT_TRUE(key2);
   ASSERT_TRUE(key3);
 
-  ECPrivateKeyUniquePtr read_key1, read_key2, read_key3;
+  std::optional<crypto::keypair::PrivateKey> read_key1, read_key2, read_key3;
   std::string read_auth_secret1, read_auth_secret2, read_auth_secret3;
   gcm_key_store()->GetKeys(
       kFakeAppId, kFakeAuthorizedEntity,
@@ -513,7 +481,7 @@ TEST_F(GCMKeyStoreTest, RemoveKeysWildcardAuthorizedEntity) {
 }
 
 TEST_F(GCMKeyStoreTest, GetKeysMultipleAppIds) {
-  ECPrivateKeyUniquePtr key;
+  std::optional<crypto::keypair::PrivateKey> key;
   std::string auth_secret;
   {
     base::RunLoop run_loop;
@@ -539,7 +507,7 @@ TEST_F(GCMKeyStoreTest, GetKeysMultipleAppIds) {
 
   ASSERT_TRUE(key);
 
-  ECPrivateKeyUniquePtr read_key;
+  std::optional<crypto::keypair::PrivateKey> read_key;
   std::string read_auth_secret;
   {
     base::RunLoop run_loop;
@@ -556,7 +524,7 @@ TEST_F(GCMKeyStoreTest, GetKeysMultipleAppIds) {
 }
 
 TEST_F(GCMKeyStoreTest, SuccessiveCallsBeforeInitialization) {
-  ECPrivateKeyUniquePtr key;
+  std::optional<crypto::keypair::PrivateKey> key;
   std::string auth_secret;
   gcm_key_store()->CreateKeys(
       kFakeAppId, kFakeAuthorizedEntity,
@@ -567,7 +535,7 @@ TEST_F(GCMKeyStoreTest, SuccessiveCallsBeforeInitialization) {
   // been resolved yet. The following EXPECT() ensures this.
   EXPECT_FALSE(key);
 
-  ECPrivateKeyUniquePtr read_key;
+  std::optional<crypto::keypair::PrivateKey> read_key;
   std::string read_auth_secret;
   gcm_key_store()->GetKeys(
       kFakeAppId, kFakeAuthorizedEntity,
@@ -586,7 +554,7 @@ TEST_F(GCMKeyStoreTest, SuccessiveCallsBeforeInitialization) {
 }
 
 TEST_F(GCMKeyStoreTest, CannotShareAppIdFromGCMToInstanceID) {
-  ECPrivateKeyUniquePtr key_unused;
+  std::optional<crypto::keypair::PrivateKey> key_unused;
   std::string auth_secret_unused;
   {
     base::RunLoop run_loop;
@@ -612,7 +580,7 @@ TEST_F(GCMKeyStoreTest, CannotShareAppIdFromGCMToInstanceID) {
 }
 
 TEST_F(GCMKeyStoreTest, CannotShareAppIdFromInstanceIDToGCM) {
-  ECPrivateKeyUniquePtr key_unused;
+  std::optional<crypto::keypair::PrivateKey> key_unused;
   std::string auth_secret_unused;
   {
     base::RunLoop run_loop;
@@ -651,7 +619,7 @@ TEST_F(GCMKeyStoreTest, CannotShareAppIdFromInstanceIDToGCM) {
 TEST_F(GCMKeyStoreTest, TestUpgradePathForKeyStorageDeprecation) {
   // Initialize GCM store and the underlying levelDB database by trying
   // to fetch keys.
-  ECPrivateKeyUniquePtr key;
+  std::optional<crypto::keypair::PrivateKey> key;
   std::string auth_secret;
   {
     base::RunLoop run_loop;
@@ -688,13 +656,12 @@ TEST_F(GCMKeyStoreTest, TestUpgradePathForKeyStorageDeprecation) {
   ASSERT_GT(auth_secret.size(), 0u);
 
   // Verify also that the private key is decrypted.
-  std::string read_private_key;
-  ASSERT_TRUE(GetRawPrivateKey(*key, &read_private_key));
   std::string decrypted_private_key;
   ASSERT_TRUE(base::Base64UrlDecode(kPrivateDecrypted,
                                     base::Base64UrlDecodePolicy::IGNORE_PADDING,
                                     &decrypted_private_key));
-  ASSERT_EQ(decrypted_private_key, read_private_key);
+  ASSERT_EQ(base::as_byte_span(decrypted_private_key),
+            base::as_byte_span(key->ToPrivateKeyInfo()));
 
   // AddOldFormatEncryptionDataToKeyStoreDatabase() again, different keys
   ASSERT_NO_FATAL_FAILURE(AddOldFormatEncryptionDataToKeyStoreDatabase(

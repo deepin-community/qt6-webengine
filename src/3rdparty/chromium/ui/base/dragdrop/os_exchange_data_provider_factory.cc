@@ -18,7 +18,7 @@
 
 namespace ui {
 
-#if !defined(TOOLKIT_QT)
+#if !BUILDFLAG(IS_QTWEBENGINE)
 // static
 std::unique_ptr<OSExchangeDataProvider>
 OSExchangeDataProviderFactory::CreateProvider() {
@@ -37,12 +37,12 @@ OSExchangeDataProviderFactory::CreateProvider() {
 #elif BUILDFLAG(IS_WIN)
   return std::make_unique<OSExchangeDataProviderWin>();
 #elif BUILDFLAG(IS_FUCHSIA)
-  // TODO(crbug.com/980371): Implement OSExchangeDataProvider for Fuchsia.
+  // TODO(crbug.com/42050646): Implement OSExchangeDataProvider for Fuchsia.
   return std::make_unique<OSExchangeDataProviderNonBacked>();
 #else
 #error "Unknown operating system"
 #endif
 }
-#endif // !defined(TOOLKIT_QT)
+#endif // !BUILDFLAG(IS_QTWEBENGINE)
 
 }  // namespace ui

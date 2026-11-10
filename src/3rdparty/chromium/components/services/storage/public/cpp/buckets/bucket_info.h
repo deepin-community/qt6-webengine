@@ -11,7 +11,6 @@
 #include <string>
 
 #include "base/component_export.h"
-#include "base/feature_list.h"
 #include "base/time/time.h"
 #include "components/services/storage/public/cpp/buckets/bucket_id.h"
 #include "components/services/storage/public/cpp/buckets/bucket_locator.h"
@@ -21,11 +20,6 @@
 
 namespace storage {
 
-// Changes the hard-coded durability for default buckets to relaxed. This only
-// affects IndexedDB.
-COMPONENT_EXPORT(STORAGE_SERVICE_BUCKETS_SUPPORT)
-BASE_DECLARE_FEATURE(kDefaultBucketUsesRelaxedDurability);
-
 // Snapshot of a bucket's information in the quota database.
 //
 // Properties that can be updated by the Storage Buckets API, like
@@ -34,7 +28,6 @@ BASE_DECLARE_FEATURE(kDefaultBucketUsesRelaxedDurability);
 struct COMPONENT_EXPORT(STORAGE_SERVICE_BUCKETS_SUPPORT) BucketInfo {
   BucketInfo(BucketId bucket_id,
              blink::StorageKey storage_key,
-             blink::mojom::StorageType type,
              std::string name,
              base::Time expiration,
              int64_t quota,
@@ -53,13 +46,10 @@ struct COMPONENT_EXPORT(STORAGE_SERVICE_BUCKETS_SUPPORT) BucketInfo {
   friend bool operator==(const BucketInfo& lhs, const BucketInfo& rhs);
 
   COMPONENT_EXPORT(STORAGE_SERVICE_BUCKETS_SUPPORT)
-  friend bool operator!=(const BucketInfo& lhs, const BucketInfo& rhs);
-
-  COMPONENT_EXPORT(STORAGE_SERVICE_BUCKETS_SUPPORT)
   friend bool operator<(const BucketInfo& lhs, const BucketInfo& rhs);
 
   BucketLocator ToBucketLocator() const {
-    return BucketLocator(id, storage_key, type, name == kDefaultBucketName);
+    return BucketLocator(id, storage_key, name == kDefaultBucketName);
   }
 
   bool is_default() const { return name == kDefaultBucketName; }
@@ -67,7 +57,6 @@ struct COMPONENT_EXPORT(STORAGE_SERVICE_BUCKETS_SUPPORT) BucketInfo {
 
   BucketId id;
   blink::StorageKey storage_key;
-  blink::mojom::StorageType type = blink::mojom::StorageType::kTemporary;
   std::string name;
   base::Time expiration;
   int64_t quota = 0;

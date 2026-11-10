@@ -10,6 +10,62 @@
 namespace gpu {
 namespace gles2 {
 
+error::Error GLES2DecoderPassthroughImpl::ValidateAndGetTexImageData(
+    base::span<const uint8_t>* data_out,
+    uint32_t shm_id,
+    uint32_t shm_offset,
+    uint32_t image_size,
+    unsigned int* res_size
+    ) {
+  // When no unpack buffer is bound, only allow actual pointers to data, or
+  // nullptr (used to zero-initialize TexImage* and a GL error with non-empty
+  // uploads for TexSubImage).
+  if (bound_buffers_[GL_PIXEL_UNPACK_BUFFER] == 0) {
+    if (shm_id == 0) {
+      // data must be nullptr
+      if (image_size != 0) {
+        return error::kOutOfBounds;
+      }
+      if (shm_offset == 0) {
+        *data_out = {};
+        return error::kNoError;
+      }
+      return error::kInvalidArguments;
+    }
+
+    // Workaround for simplicity reason. size defaults to nullptr,
+    // but the methods that are called down the chain expect a valid
+    // pointer, so we give them one.
+    unsigned int size = 0;
+    // data comes from shmem
+    const uint8_t* data =
+        GetSharedMemoryAndSizeAs<const uint8_t*>(shm_id, shm_offset, 0, &size);
+
+    if (res_size) {
+      *res_size = size;
+    }
+
+    if (!data) {
+      return error::kOutOfBounds;
+    }
+    if (image_size > size) {
+      return error::kOutOfBounds;
+    }
+    *data_out = UNSAFE_TODO({data, size});
+    return error::kNoError;
+  }
+
+  // With an unpack buffer, no shmem can be used.
+  if (shm_id != 0) {
+    return error::kInvalidArguments;
+  }
+  // SAFETY: The span represents an offset in the unpack buffer, not actual
+  // memory. It's also of size 0.
+  *data_out = UNSAFE_BUFFERS(base::span<const uint8_t>(
+      reinterpret_cast<const uint8_t*>(static_cast<intptr_t>(shm_offset)), 0u));
+  return error::kNoError;
+}
+
 // Custom Handlers
 error::Error GLES2DecoderPassthroughImpl::HandleBindAttribLocationBucket(
     uint32_t immediate_data_size,
@@ -1229,22 +1285,15 @@ error::Error GLES2DecoderPassthroughImpl::HandleTexImage2D(
   uint32_t pixels_shm_id = c.pixels_shm_id;
   uint32_t pixels_shm_offset = c.pixels_shm_offset;
 
-  unsigned int buffer_size = 0;
-  const void* pixels = nullptr;
-
-  if (pixels_shm_id != 0) {
-    pixels = GetSharedMemoryAndSizeAs<uint8_t*>(
-        pixels_shm_id, pixels_shm_offset, 0, &buffer_size);
-    if (!pixels) {
-      return error::kOutOfBounds;
-    }
-  } else {
-    pixels =
-        reinterpret_cast<const void*>(static_cast<intptr_t>(pixels_shm_offset));
+  base::span<const uint8_t> pixels;
+  if (auto err =
+          ValidateAndGetTexImageData(&pixels, pixels_shm_id, pixels_shm_offset);
+      err != error::kNoError) {
+    return err;
   }
 
   return DoTexImage2D(target, level, internal_format, width, height, border,
-                      format, type, buffer_size, pixels);
+                      format, type, pixels.size(), pixels.data());
 }
 
 error::Error GLES2DecoderPassthroughImpl::HandleTexImage3D(
@@ -1267,22 +1316,15 @@ error::Error GLES2DecoderPassthroughImpl::HandleTexImage3D(
   uint32_t pixels_shm_id = c.pixels_shm_id;
   uint32_t pixels_shm_offset = c.pixels_shm_offset;
 
-  unsigned int buffer_size = 0;
-  const void* pixels = nullptr;
-
-  if (pixels_shm_id != 0) {
-    pixels = GetSharedMemoryAndSizeAs<uint8_t*>(
-        pixels_shm_id, pixels_shm_offset, 0, &buffer_size);
-    if (!pixels) {
-      return error::kOutOfBounds;
-    }
-  } else {
-    pixels =
-        reinterpret_cast<const void*>(static_cast<intptr_t>(pixels_shm_offset));
+  base::span<const uint8_t> pixels;
+  if (auto err =
+          ValidateAndGetTexImageData(&pixels, pixels_shm_id, pixels_shm_offset);
+      err != error::kNoError) {
+    return err;
   }
 
   return DoTexImage3D(target, level, internal_format, width, height, depth,
-                      border, format, type, buffer_size, pixels);
+                      border, format, type, pixels.size(), pixels.data());
 }
 
 error::Error GLES2DecoderPassthroughImpl::HandleTexSubImage2D(
@@ -1301,22 +1343,15 @@ error::Error GLES2DecoderPassthroughImpl::HandleTexSubImage2D(
   uint32_t pixels_shm_id = c.pixels_shm_id;
   uint32_t pixels_shm_offset = c.pixels_shm_offset;
 
-  unsigned int buffer_size = 0;
-  const void* pixels = nullptr;
-
-  if (pixels_shm_id != 0) {
-    pixels = GetSharedMemoryAndSizeAs<uint8_t*>(
-        pixels_shm_id, pixels_shm_offset, 0, &buffer_size);
-    if (!pixels) {
-      return error::kOutOfBounds;
-    }
-  } else {
-    pixels =
-        reinterpret_cast<const void*>(static_cast<intptr_t>(pixels_shm_offset));
+  base::span<const uint8_t> pixels;
+  if (auto err =
+          ValidateAndGetTexImageData(&pixels, pixels_shm_id, pixels_shm_offset);
+      err != error::kNoError) {
+    return err;
   }
 
   return DoTexSubImage2D(target, level, xoffset, yoffset, width, height, format,
-                         type, buffer_size, pixels);
+                         type, pixels.size(), pixels.data());
 }
 
 error::Error GLES2DecoderPassthroughImpl::HandleTexSubImage3D(
@@ -1340,22 +1375,16 @@ error::Error GLES2DecoderPassthroughImpl::HandleTexSubImage3D(
   uint32_t pixels_shm_id = c.pixels_shm_id;
   uint32_t pixels_shm_offset = c.pixels_shm_offset;
 
-  unsigned int buffer_size = 0;
-  const void* pixels = nullptr;
-
-  if (pixels_shm_id != 0) {
-    pixels = GetSharedMemoryAndSizeAs<uint8_t*>(
-        pixels_shm_id, pixels_shm_offset, 0, &buffer_size);
-    if (!pixels) {
-      return error::kOutOfBounds;
-    }
-  } else {
-    pixels =
-        reinterpret_cast<const void*>(static_cast<intptr_t>(pixels_shm_offset));
+  base::span<const uint8_t> pixels;
+  if (auto err =
+          ValidateAndGetTexImageData(&pixels, pixels_shm_id, pixels_shm_offset);
+      err != error::kNoError) {
+    return err;
   }
 
   return DoTexSubImage3D(target, level, xoffset, yoffset, zoffset, width,
-                         height, depth, format, type, buffer_size, pixels);
+                         height, depth, format, type, pixels.size(),
+                         pixels.data());
 }
 
 error::Error GLES2DecoderPassthroughImpl::HandleUniformBlockBinding(
@@ -1522,110 +1551,29 @@ error::Error GLES2DecoderPassthroughImpl::HandlePushGroupMarkerEXT(
   return DoPushGroupMarkerEXT(0, str.c_str());
 }
 
-error::Error GLES2DecoderPassthroughImpl::HandleEnableFeatureCHROMIUM(
-    uint32_t immediate_data_size,
-    const volatile void* cmd_data) {
-  const volatile gles2::cmds::EnableFeatureCHROMIUM& c =
-      *static_cast<const volatile gles2::cmds::EnableFeatureCHROMIUM*>(
-          cmd_data);
-  uint32_t bucket_id = c.bucket_id;
-  uint32_t result_shm_id = c.result_shm_id;
-  uint32_t result_shm_offset = c.result_shm_offset;
-
-  Bucket* bucket = GetBucket(bucket_id);
-  if (!bucket || bucket->size() == 0) {
-    return error::kInvalidArguments;
-  }
-  typedef cmds::EnableFeatureCHROMIUM::Result Result;
-  Result* result = GetSharedMemoryAs<Result*>(result_shm_id, result_shm_offset,
-                                              sizeof(*result));
-  if (!result) {
-    return error::kOutOfBounds;
-  }
-  // Check that the client initialized the result.
-  if (*result != 0) {
-    return error::kInvalidArguments;
-  }
-  std::string feature_str;
-  if (!bucket->GetAsString(&feature_str)) {
-    return error::kInvalidArguments;
-  }
-  error::Error error = DoEnableFeatureCHROMIUM(feature_str.c_str());
-  if (error != error::kNoError) {
-    return error;
-  }
-
-  *result = 1;  // true.
-  return error::kNoError;
-}
-
-error::Error GLES2DecoderPassthroughImpl::HandleMapBufferRange(
+error::Error GLES2DecoderPassthroughImpl::HandleGetBufferSubDataCHROMIUM(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
   if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
     return error::kUnknownCommand;
   }
-  const volatile gles2::cmds::MapBufferRange& c =
-      *static_cast<const volatile gles2::cmds::MapBufferRange*>(cmd_data);
-  GLenum target = static_cast<GLenum>(c.target);
-  GLbitfield access = static_cast<GLbitfield>(c.access);
+  const volatile gles2::cmds::GetBufferSubDataCHROMIUM& c =
+      *static_cast<const volatile gles2::cmds::GetBufferSubDataCHROMIUM*>(
+          cmd_data);
+
+  GLenum target = c.target;
   GLintptr offset = static_cast<GLintptr>(c.offset);
   GLsizeiptr size = static_cast<GLsizeiptr>(c.size);
-  uint32_t result_shm_id = c.result_shm_id;
-  uint32_t result_shm_offset = c.result_shm_offset;
   uint32_t data_shm_id = c.data_shm_id;
   uint32_t data_shm_offset = c.data_shm_offset;
 
-  typedef cmds::MapBufferRange::Result Result;
-  Result* result = GetSharedMemoryAs<Result*>(result_shm_id, result_shm_offset,
-                                              sizeof(*result));
-  if (!result) {
-    return error::kOutOfBounds;
-  }
-  if (*result != 0) {
-    *result = 0;
-    return error::kInvalidArguments;
-  }
-  uint8_t* mem =
+  uint8_t* data =
       GetSharedMemoryAs<uint8_t*>(data_shm_id, data_shm_offset, size);
-  if (!mem) {
+  if (!data) {
     return error::kOutOfBounds;
   }
 
-  error::Error error = DoMapBufferRange(target, offset, size, access, mem,
-                                        data_shm_id, data_shm_offset, result);
-  DCHECK(error == error::kNoError || *result == 0);
-  return error;
-}
-
-error::Error GLES2DecoderPassthroughImpl::HandleUnmapBuffer(
-    uint32_t immediate_data_size,
-    const volatile void* cmd_data) {
-  if (!feature_info_->IsWebGL2OrES3OrHigherContext()) {
-    return error::kUnknownCommand;
-  }
-  const volatile gles2::cmds::UnmapBuffer& c =
-      *static_cast<const volatile gles2::cmds::UnmapBuffer*>(cmd_data);
-  GLenum target = static_cast<GLenum>(c.target);
-
-  return DoUnmapBuffer(target);
-}
-
-error::Error GLES2DecoderPassthroughImpl::HandleResizeCHROMIUM(
-    uint32_t immediate_data_size,
-    const volatile void* cmd_data) {
-  const volatile gles2::cmds::ResizeCHROMIUM& c =
-      *static_cast<const volatile gles2::cmds::ResizeCHROMIUM*>(cmd_data);
-  GLuint width = static_cast<GLuint>(c.width);
-  GLuint height = static_cast<GLuint>(c.height);
-  GLfloat scale_factor = static_cast<GLfloat>(c.scale_factor);
-  GLboolean has_alpha = static_cast<GLboolean>(c.alpha);
-  gfx::ColorSpace color_space;
-  if (!ReadColorSpace(c.shm_id, c.shm_offset, c.color_space_size,
-                      &color_space)) {
-    return error::kOutOfBounds;
-  }
-  return DoResizeCHROMIUM(width, height, scale_factor, color_space, has_alpha);
+  return DoGetBufferSubDataCHROMIUM(target, offset, size, data);
 }
 
 error::Error
@@ -2255,12 +2203,6 @@ error::Error GLES2DecoderPassthroughImpl::HandleDescheduleUntilFinishedCHROMIUM(
   return DoDescheduleUntilFinishedCHROMIUM();
 }
 
-error::Error GLES2DecoderPassthroughImpl::HandleDiscardBackbufferCHROMIUM(
-    uint32_t immediate_data_size,
-    const volatile void* cmd_data) {
-  return DoDiscardBackbufferCHROMIUM();
-}
-
 error::Error
 GLES2DecoderPassthroughImpl::HandleBindFragDataLocationIndexedEXTBucket(
     uint32_t immediate_data_size,
@@ -2385,20 +2327,15 @@ error::Error GLES2DecoderPassthroughImpl::HandleCompressedTexImage2D(
   uint32_t data_shm_offset = c.data_shm_offset;
 
   unsigned int data_size = 0;
-  const void* data = nullptr;
-  if (data_shm_id != 0) {
-    data = GetSharedMemoryAndSizeAs<const void*>(data_shm_id, data_shm_offset,
-                                                 image_size, &data_size);
-    if (data == nullptr) {
-      return error::kOutOfBounds;
-    }
-  } else {
-    data =
-        reinterpret_cast<const void*>(static_cast<intptr_t>(data_shm_offset));
+  base::span<const uint8_t> data;
+  if (auto err = ValidateAndGetTexImageData(&data, data_shm_id, data_shm_offset,
+                                            image_size,&data_size);
+      err != error::kNoError) {
+    return err;
   }
 
   return DoCompressedTexImage2D(target, level, internal_format, width, height,
-                                border, image_size, data_size, data);
+                                border, image_size, data_size, data.data());
 }
 
 error::Error GLES2DecoderPassthroughImpl::HandleCompressedTexSubImage2DBucket(
@@ -2444,20 +2381,15 @@ error::Error GLES2DecoderPassthroughImpl::HandleCompressedTexSubImage2D(
   uint32_t data_shm_offset = c.data_shm_offset;
 
   unsigned int data_size = 0;
-  const void* data = nullptr;
-  if (data_shm_id != 0) {
-    data = GetSharedMemoryAndSizeAs<const void*>(data_shm_id, data_shm_offset,
-                                                 image_size, &data_size);
-    if (data == nullptr) {
-      return error::kOutOfBounds;
-    }
-  } else {
-    data =
-        reinterpret_cast<const void*>(static_cast<intptr_t>(data_shm_offset));
+  base::span<const uint8_t> data;
+  if (auto err = ValidateAndGetTexImageData(&data, data_shm_id, data_shm_offset,
+                                          image_size, &data_size);
+    err != error::kNoError) {
+    return err;
   }
 
   return DoCompressedTexSubImage2D(target, level, xoffset, yoffset, width,
-                                   height, format, image_size, data_size, data);
+                                   height, format, image_size, data_size, data.data());
 }
 
 error::Error GLES2DecoderPassthroughImpl::HandleCompressedTexImage3DBucket(
@@ -2507,20 +2439,15 @@ error::Error GLES2DecoderPassthroughImpl::HandleCompressedTexImage3D(
   uint32_t data_shm_offset = c.data_shm_offset;
 
   unsigned int data_size = 0;
-  const void* data = nullptr;
-  if (data_shm_id != 0) {
-    data = GetSharedMemoryAndSizeAs<const void*>(data_shm_id, data_shm_offset,
-                                                 image_size, &data_size);
-    if (data == nullptr) {
-      return error::kOutOfBounds;
-    }
-  } else {
-    data =
-        reinterpret_cast<const void*>(static_cast<intptr_t>(data_shm_offset));
+  base::span<const uint8_t> data;
+  if (auto err = ValidateAndGetTexImageData(&data, data_shm_id, data_shm_offset,
+                                            image_size, &data_size);
+      err != error::kNoError) {
+    return err;
   }
 
   return DoCompressedTexImage3D(target, level, internal_format, width, height,
-                                depth, border, image_size, data_size, data);
+                                depth, border, image_size, data_size, data.data());
 }
 
 error::Error GLES2DecoderPassthroughImpl::HandleCompressedTexSubImage3DBucket(
@@ -2576,21 +2503,16 @@ error::Error GLES2DecoderPassthroughImpl::HandleCompressedTexSubImage3D(
   uint32_t data_shm_offset = c.data_shm_offset;
 
   unsigned int data_size = 0;
-  const void* data = nullptr;
-  if (data_shm_id != 0) {
-    data = GetSharedMemoryAndSizeAs<const void*>(data_shm_id, data_shm_offset,
-                                                 image_size, &data_size);
-    if (data == nullptr) {
-      return error::kOutOfBounds;
-    }
-  } else {
-    data =
-        reinterpret_cast<const void*>(static_cast<intptr_t>(data_shm_offset));
+  base::span<const uint8_t> data;
+  if (auto err = ValidateAndGetTexImageData(&data, data_shm_id, data_shm_offset,
+                                            image_size, &data_size);
+      err != error::kNoError) {
+    return err;
   }
 
   return DoCompressedTexSubImage3D(target, level, xoffset, yoffset, zoffset,
                                    width, height, depth, format, image_size,
-                                   data_size, data);
+                                   data_size, data.data());
 }
 
 error::Error

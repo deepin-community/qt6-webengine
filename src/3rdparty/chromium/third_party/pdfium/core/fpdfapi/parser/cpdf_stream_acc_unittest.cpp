@@ -14,8 +14,7 @@
 #include "testing/invalid_seekable_read_stream.h"
 
 TEST(StreamAccTest, ReadRawDataFailed) {
-  auto stream = pdfium::MakeRetain<CPDF_Stream>();
-  stream->InitStreamFromFile(
+  auto stream = pdfium::MakeRetain<CPDF_Stream>(
       pdfium::MakeRetain<InvalidSeekableReadStream>(1024),
       pdfium::MakeRetain<CPDF_Dictionary>());
   auto stream_acc = pdfium::MakeRetain<CPDF_StreamAcc>(std::move(stream));
@@ -26,9 +25,8 @@ TEST(StreamAccTest, ReadRawDataFailed) {
 // Regression test for crbug.com/1361849. Should not trigger dangling pointer
 // failure with UnownedPtr.
 TEST(StreamAccTest, DataStreamLifeTime) {
-  constexpr uint8_t kData[] = {'a', 'b', 'c'};
-  auto stream = pdfium::MakeRetain<CPDF_Stream>();
-  stream->SetData(kData);
+  static constexpr uint8_t kData[] = {'a', 'b', 'c'};
+  auto stream = pdfium::MakeRetain<CPDF_Stream>(kData);
   auto stream_acc = pdfium::MakeRetain<CPDF_StreamAcc>(stream);
   stream_acc->LoadAllDataRaw();
   stream.Reset();

@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "base/task/sequenced_task_runner.h"
-#include "components/optimization_guide/core/model_executor.h"
+#include "components/optimization_guide/core/inference/model_executor.h"
 #include "components/optimization_guide/proto/common_types.pb.h"
 #include "components/optimization_guide/proto/models.pb.h"
 #include "components/segmentation_platform/internal/execution/optimization_guide/segmentation_model_executor.h"
@@ -24,13 +24,13 @@ OptimizationGuideSegmentationModelHandler::
         scoped_refptr<base::SequencedTaskRunner> background_task_runner,
         optimization_guide::proto::OptimizationTarget segment_id,
         const ModelUpdatedCallback& model_updated_callback,
-        absl::optional<optimization_guide::proto::Any>&& model_metadata)
+        std::optional<optimization_guide::proto::Any>&& model_metadata)
     : optimization_guide::ModelHandler<ModelProvider::Response,
                                        const ModelProvider::Request&>(
           model_provider,
           background_task_runner,
           std::make_unique<SegmentationModelExecutor>(),
-          /*model_inference_timeout=*/absl::nullopt,
+          /*model_inference_timeout=*/std::nullopt,
           segment_id,
           model_metadata),
       model_updated_callback_(model_updated_callback) {
@@ -63,7 +63,7 @@ void OptimizationGuideSegmentationModelHandler::OnModelUpdated(
     stats::RecordModelAvailability(
         segment_id, stats::SegmentationModelAvailability::kNoModelAvailable);
 
-    model_updated_callback_.Run(segment_id, absl::nullopt,
+    model_updated_callback_.Run(segment_id, std::nullopt,
                                 /*model_version = */ 0);
     return;
   }
@@ -73,7 +73,7 @@ void OptimizationGuideSegmentationModelHandler::OnModelUpdated(
 
   // Grab the segmentation specific metadata from the Any proto. If we are
   // unable to find it, there is no point in informing the rest of the platform.
-  absl::optional<proto::SegmentationModelMetadata> segmentation_model_metadata =
+  std::optional<proto::SegmentationModelMetadata> segmentation_model_metadata =
       ParsedSupportedFeaturesForLoadedModel<proto::SegmentationModelMetadata>();
   stats::RecordModelDeliveryHasMetadata(
       segment_id, segmentation_model_metadata.has_value());

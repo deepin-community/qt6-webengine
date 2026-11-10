@@ -28,8 +28,8 @@
  */
 
 :root {
-  --network-overview-total: var(--sys-color-surface-variant);
-  --network-overview-blocking: var(--sys-color-neutral-bright);
+  --network-overview-total: var(--sys-color-neutral-bright);
+  --network-overview-blocking: var(--ref-palette-neutral0);
   --network-overview-connecting: var(--ref-palette-yellow60);
   --network-overview-service-worker: var(--sys-color-orange-bright);
   --network-overview-service-worker-respond-with: var(--sys-color-cyan-bright);
@@ -44,13 +44,15 @@
   --network-grid-navigation-color: var(--ref-palette-blue90);
   --network-grid-initiator-path-color: var(--ref-palette-green90);
   --network-grid-initiated-path-color: var(--ref-palette-error80);
-  --network-grid-focus-selected-color-has-error: var(--sys-color-error-container);
+  --network-grid-focus-selected-color-has-error: var(--sys-color-surface-error);
+  --network-grid-focus-selected-color-has-warning: var(--sys-color-surface-yellow);
   --network-grid-from-frame-color: var(--ref-palette-cyan95);
   --network-grid-is-product-color: var(--ref-palette-yellow95);
   --network-frame-divider-color: var(--ref-palette-yellow60);
 }
 
-.-theme-with-dark-background {
+.theme-with-dark-background {
+  --network-overview-blocking: var(--ref-palette-neutral100);
   --network-grid-initiator-path-color: var(--ref-palette-green40);
   --network-grid-initiated-path-color: var(--ref-palette-error20);
   --network-grid-from-frame-color: var(--ref-palette-neutral50);
@@ -58,11 +60,11 @@
 }
 
 .network-details-view {
-  background: var(--sys-color-cdt-base);
+  background: var(--app-color-toolbar-background);
 }
 
 .network-details-view-tall-header {
-  border-top: 4px solid var(--sys-color-cdt-base);
+  border-top: 4px solid var(--app-color-toolbar-background);
 }
 
 .network-item-view {
@@ -146,30 +148,27 @@
 }
 
 .network-settings-pane {
+  display: grid;
+  grid-template-columns: 50% 50%;
   flex: none;
-  background-color: var(--sys-color-cdt-base-container);
-}
-
-.network-settings-pane .toolbar {
-  flex: 1 1;
-}
-
-.network-toolbar-container {
-  display: flex;
-  flex: none;
-}
-
-.network-toolbar-container > :first-child {
-  flex: 1 1 auto;
-}
-
-.panel.network .toolbar {
   background-color: var(--sys-color-cdt-base-container);
   border-bottom: 1px solid var(--sys-color-divider);
 }
 
+.network-toolbar-container {
+  display: flex;
+  align-items: flex-start;
+  flex: none;
+  background-color: var(--sys-color-cdt-base-container);
+  border-bottom: 1px solid var(--sys-color-divider);
+
+  & > :first-child {
+    flex: 1 1 auto;
+  }
+}
+
 @media (forced-colors: active) {
-  .panel.network .toolbar {
+  .panel.network devtools-toolbar {
     background-color: canvas;
   }
 }

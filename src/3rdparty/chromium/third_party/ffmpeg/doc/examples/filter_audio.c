@@ -41,15 +41,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "libavutil/channel_layout.h"
-#include "libavutil/md5.h"
-#include "libavutil/mem.h"
-#include "libavutil/opt.h"
-#include "libavutil/samplefmt.h"
+#include <libavutil/channel_layout.h>
+#include <libavutil/md5.h>
+#include <libavutil/mem.h>
+#include <libavutil/opt.h>
+#include <libavutil/samplefmt.h>
 
-#include "libavfilter/avfilter.h"
-#include "libavfilter/buffersink.h"
-#include "libavfilter/buffersrc.h"
+#include <libavfilter/avfilter.h>
+#include <libavfilter/buffersink.h>
+#include <libavfilter/buffersrc.h>
 
 #define INPUT_SAMPLERATE     48000
 #define INPUT_FORMAT         AV_SAMPLE_FMT_FLTP
@@ -270,7 +270,6 @@ int main(int argc, char *argv[])
     AVFilterGraph *graph;
     AVFilterContext *src, *sink;
     AVFrame *frame;
-    uint8_t errstr[1024];
     float duration;
     int err, nb_frames, i;
 
@@ -354,7 +353,6 @@ int main(int argc, char *argv[])
     return 0;
 
 fail:
-    av_strerror(err, errstr, sizeof(errstr));
-    fprintf(stderr, "%s\n", errstr);
+    fprintf(stderr, "%s\n", av_err2str(err));
     return 1;
 }

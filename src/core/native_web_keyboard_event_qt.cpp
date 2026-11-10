@@ -1,5 +1,6 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 // Copyright (c) 2011 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
@@ -9,6 +10,8 @@
 
 #if !defined(Q_OS_MACOS)
 #include "native_web_keyboard_event_qt.h"
+
+#include "components/input/native_web_keyboard_event.h"
 
 #include <QtGui/QKeyEvent>
 
@@ -45,7 +48,7 @@ void DestroyEvent(gfx::NativeEvent nativeEvent)
 } // namespace
 
 
-namespace content {
+namespace input {
 
 NativeWebKeyboardEvent::NativeWebKeyboardEvent(const blink::WebKeyboardEvent &web_event, gfx::NativeView)
     : blink::WebKeyboardEvent(web_event)
@@ -90,5 +93,5 @@ NativeWebKeyboardEvent::~NativeWebKeyboardEvent() {
     DestroyEvent(os_event);
 }
 
-}  // namespace content
+}  // namespace input
 #endif // !defined(Q_OS_MACOS)

@@ -9,12 +9,14 @@ $assert SIZE in [8, 16, 32, 64]
 $assert TYPE in ["int8_t", "int16_t", "int", "float", "int64_t", "double"]
 $assert (TILE_WIDTH * SIZE <= 128)
 $SUFFIX = "float" if TYPE in ["float", "double"] else "int"
-
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/math.h>
-#include <xnnpack/transpose.h>
+$if TILE_WIDTH > 1:
+  #include "src/xnnpack/common.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/transpose.h"
 
 void xnn_x${SIZE}_transposec_ukernel__${TILE_HEIGHT}x${TILE_WIDTH}_scalar_${SUFFIX}(
     const uint${SIZE}_t *input,
@@ -22,11 +24,10 @@ void xnn_x${SIZE}_transposec_ukernel__${TILE_HEIGHT}x${TILE_WIDTH}_scalar_${SUFF
     size_t input_stride,
     size_t output_stride,
     size_t block_width,
-    size_t block_height,
-    const union xnn_x${SIZE}_transpose_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    size_t block_height)
 {
-  assert(output_stride >= block_height * sizeof(${TYPE}));
-  assert(input_stride >= block_width * sizeof(${TYPE}));
+  assert(block_width == 1 || output_stride >= block_height * sizeof(${TYPE}));
+  assert(block_height == 1 || input_stride >= block_width * sizeof(${TYPE}));
 
   const size_t tile_height = ${TILE_HEIGHT};
   const size_t tile_width = ${TILE_WIDTH};

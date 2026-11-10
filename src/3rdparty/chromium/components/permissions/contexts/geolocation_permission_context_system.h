@@ -18,7 +18,7 @@
 // have changed when the system permission is updated.
 
 #include "components/permissions/contexts//geolocation_permission_context.h"
-#include "services/device/public/cpp/geolocation/geolocation_manager.h"
+#include "services/device/public/cpp/geolocation/geolocation_system_permission_manager.h"
 
 namespace permissions {
 
@@ -26,7 +26,7 @@ using device::LocationSystemPermissionStatus;
 
 class GeolocationPermissionContextSystem
     : public GeolocationPermissionContext,
-      public device::GeolocationManager::PermissionObserver {
+      public device::GeolocationSystemPermissionManager::PermissionObserver {
  public:
   GeolocationPermissionContextSystem(content::BrowserContext* browser_context,
                                      std::unique_ptr<Delegate> delegate);
@@ -39,12 +39,12 @@ class GeolocationPermissionContextSystem
 
  private:
   // GeolocationPermissionContext:
-  ContentSetting GetPermissionStatusInternal(
+  PermissionSetting GetPermissionStatusInternal(
       content::RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
       const GURL& embedding_origin) const override;
 
-  // device::GeolocationManager::PermissionObserver:
+  // device::GeolocationSystemPermissionManager::PermissionObserver:
   void OnSystemPermissionUpdated(
       LocationSystemPermissionStatus new_status) override;
 

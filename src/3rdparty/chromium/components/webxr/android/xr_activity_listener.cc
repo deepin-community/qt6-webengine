@@ -9,8 +9,10 @@
 #include "base/android/jni_string.h"
 #include "base/logging.h"
 #include "components/webxr/android/webxr_utils.h"
-#include "components/webxr/android/xr_jni_headers/XrActivityListener_jni.h"
 #include "device/vr/android/xr_activity_state_handler.h"
+
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/webxr/android/xr_jni_headers/XrActivityListener_jni.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ScopedJavaLocalRef;
@@ -54,9 +56,7 @@ void XrActivityListener::SetResumedHandler(
   on_activity_resumed_handler_ = std::move(resumed_handler);
 }
 
-void XrActivityListener::OnActivityResumed(
-    JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& obj) {
+void XrActivityListener::OnActivityResumed(JNIEnv* env) {
   DVLOG(1) << __func__ << ": has handler?=" << !!on_activity_resumed_handler_;
   if (on_activity_resumed_handler_) {
     on_activity_resumed_handler_.Run();

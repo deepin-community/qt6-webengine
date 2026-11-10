@@ -28,8 +28,10 @@ jumbo_component("media_foundation_util") {
   configs += [ "//media:subcomponent_config" ]
   deps = [
     "//base",
-    "//media:shared_memory_support",
+    "//gpu/ipc/common",
     "//media/base",
+    "//media/gpu:command_buffer_helper",
+    "//third_party/libyuv",
   ]
   libs = [
     "d3d11.lib",
@@ -52,7 +54,6 @@ component("color_space_util_win") {
   ]
   configs += [ "//media:media_config" ]
   deps = [
-    "//media:shared_memory_support",
     "//media/base",
     "//ui/gfx:color_space",
   ]
@@ -89,6 +90,10 @@ source_set("test_support") {
   sources = [
     "d3d11_mocks.cc",
     "d3d11_mocks.h",
+    "d3d12_mocks.cc",
+    "d3d12_mocks.h",
+    "d3d12_video_mocks.cc",
+    "d3d12_video_mocks.h",
     "mf_mocks.cc",
     "mf_mocks.h",
     "test_utils.h",

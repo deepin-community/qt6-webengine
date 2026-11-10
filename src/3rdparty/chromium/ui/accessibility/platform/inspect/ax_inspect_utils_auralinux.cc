@@ -2,12 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/accessibility/platform/inspect/ax_inspect_utils_auralinux.h"
 
+#include <array>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "base/containers/span.h"
 #include "base/logging.h"
 #include "base/strings/pattern.h"
 #include "ui/accessibility/platform/inspect/ax_inspect.h"
@@ -25,10 +32,14 @@ struct PlatformConstantToNameEntry {
 };
 
 const char* GetNameForPlatformConstant(
-    const PlatformConstantToNameEntry table[],
-    size_t table_size,
+    base::span<const PlatformConstantToNameEntry> table,
+    size_t spanification_suspected_redundant_table_size,
     int32_t value) {
-  for (size_t i = 0; i < table_size; ++i) {
+  // TODO(crbug.com/431824301): Remove unneeded parameter once validated to be
+  // redundant in M143.
+  CHECK(spanification_suspected_redundant_table_size == table.size(),
+        base::NotFatalUntil::M143);
+  for (size_t i = 0; i < spanification_suspected_redundant_table_size; ++i) {
     auto& entry = table[i];
     if (entry.value == value)
       return entry.name;
@@ -288,7 +299,7 @@ const char* ATSPIRoleToString(AtspiRole role) {
 // a new role and newer versions may have changed the name returned by
 // atk_role_get_name. This table should be kept up to date with newer ATK
 // releases.
-const char* const kRoleNames[] = {
+constexpr auto kRoleNames = std::to_array<const char*>({
     "invalid",  // ATK_ROLE_INVALID.
     "accelerator label",
     "alert",
@@ -414,7 +425,7 @@ const char* const kRoleNames[] = {
     "footnote",           // ATK_ROLE_FOOTNOTE = 122.
     "content deletion",   // ATK_ROLE_CONTENT_DELETION = 123.
     "content insertion",  // ATK_ROLE_CONTENT_DELETION = 124.
-};
+});
 
 const char* AtkRoleToString(AtkRole role) {
   if (role < G_N_ELEMENTS(kRoleNames))

@@ -7,11 +7,10 @@
 #ifndef FXJS_CJS_OBJECT_H_
 #define FXJS_CJS_OBJECT_H_
 
+#include "core/fxcrt/span.h"
 #include "core/fxcrt/unowned_ptr.h"
+#include "fxjs/cfxjs_engine.h"
 #include "fxjs/cjs_runtime.h"
-#include "third_party/base/containers/span.h"
-
-class CFXJS_Engine;
 
 struct JSConstSpec {
   enum Type { Number = 0, String = 1 };
@@ -24,8 +23,8 @@ struct JSConstSpec {
 
 struct JSPropertySpec {
   const char* pName;
-  v8::AccessorGetterCallback pPropGet;
-  v8::AccessorSetterCallback pPropPut;
+  v8::AccessorNameGetterCallback pPropGet;
+  v8::AccessorNameSetterCallback pPropPut;
 };
 
 struct JSMethodSpec {
@@ -33,7 +32,7 @@ struct JSMethodSpec {
   v8::FunctionCallback pMethodCall;
 };
 
-class CJS_Object {
+class CJS_Object : public CFXJS_PerObjectData::Binding {
  public:
   static void DefineConsts(CFXJS_Engine* pEngine,
                            uint32_t nObjDefnID,
@@ -46,16 +45,21 @@ class CJS_Object {
                             pdfium::span<const JSMethodSpec> consts);
 
   CJS_Object(v8::Local<v8::Object> pObject, CJS_Runtime* pRuntime);
-  virtual ~CJS_Object();
+
+  // For simple testing only, where we need not support methods that call back
+  // through an actual CJS_Runtime.
+  CJS_Object(v8::Local<v8::Object> object, v8::Isolate* isolate);
+
+  ~CJS_Object() override;
 
   v8::Local<v8::Object> ToV8Object() {
-    return m_pV8Object.Get(GetRuntime()->GetIsolate());
+    return v8_object_.Get(GetRuntime()->GetIsolate());
   }
-  CJS_Runtime* GetRuntime() const { return m_pRuntime.Get(); }
+  CJS_Runtime* GetRuntime() const { return runtime_.Get(); }
 
  private:
-  v8::Global<v8::Object> m_pV8Object;
-  ObservedPtr<CJS_Runtime> m_pRuntime;
+  v8::Global<v8::Object> v8_object_;
+  ObservedPtr<CJS_Runtime> runtime_;
 };
 
 #endif  // FXJS_CJS_OBJECT_H_

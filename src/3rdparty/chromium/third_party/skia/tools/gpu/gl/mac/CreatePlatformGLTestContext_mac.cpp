@@ -7,11 +7,15 @@
  */
 #include "include/core/SkTypes.h"
 
+#include "include/gpu/ganesh/gl/mac/GrGLMakeMacInterface.h"
 #include "tools/gpu/gl/GLTestContext.h"
 
-#include <AvailabilityMacros.h>
 #include <OpenGL/OpenGL.h>
 #include <dlfcn.h>
+
+// All of NSOpenGL is deprecated.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 namespace {
 
@@ -45,36 +49,28 @@ MacGLTestContext::MacGLTestContext(MacGLTestContext* shareContext)
     // If that fails, we try again with only the base parameters.
     CGLPixelFormatAttribute attributes[] = {
         // base parameters
-#if MAC_OS_X_VERSION_10_7
         kCGLPFAOpenGLProfile,
         (CGLPixelFormatAttribute) kCGLOGLPVersion_3_2_Core,
-#endif
         kCGLPFADoubleBuffer,
 
-#if MAC_OS_X_VERSION_10_8
         // eGPU parameters
         kCGLPFAAllowOfflineRenderers,  // Enables e-GPU.
         kCGLPFANoRecovery,  // Disallows software rendering.
         kCGLPFARendererID, (CGLPixelFormatAttribute)kCGLRendererATIRadeonX4000ID, // Select Radeon
-#endif
         (CGLPixelFormatAttribute)NULL
     };
-#if MAC_OS_X_VERSION_10_8
     static const int kFirstEGPUParameter = 3;
     SkASSERT(kCGLPFAAllowOfflineRenderers == attributes[kFirstEGPUParameter]);
-#endif
 
     CGLPixelFormatObj pixFormat;
     GLint npix;
     CGLChoosePixelFormat(attributes, &pixFormat, &npix);
 
-#if MAC_OS_X_VERSION_10_8
     if (nullptr == pixFormat) {
         // Move the NULL-termination up to remove the eGPU parameters and try again
         attributes[kFirstEGPUParameter] = (CGLPixelFormatAttribute)NULL;
         CGLChoosePixelFormat(attributes, &pixFormat, &npix);
     }
-#endif
     if (nullptr == pixFormat) {
         SkDebugf("CGLChoosePixelFormat failed.");
         return;
@@ -91,7 +87,7 @@ MacGLTestContext::MacGLTestContext(MacGLTestContext* shareContext)
     SkScopeExit restorer(context_restorer());
     CGLSetCurrentContext(fContext);
 
-    auto gl = GrGLMakeNativeInterface();
+    auto gl = GrGLInterfaces::MakeMac();
     if (!gl) {
         SkDebugf("Context could not create GL interface.\n");
         this->destroyGLContext();
@@ -150,6 +146,8 @@ GrGLFuncPtr MacGLTestContext::onPlatformGetProcAddress(const char* procName) con
 }
 
 }  // anonymous namespace
+
+#pragma clang diagnostic pop
 
 namespace sk_gpu_test {
 GLTestContext* CreatePlatformGLTestContext(GrGLStandard forcedGpuAPI,

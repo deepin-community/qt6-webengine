@@ -4,6 +4,7 @@
 
 #include "base/command_line.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/values.h"
 #include "content/browser/renderer_host/frame_tree_node.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/content_navigation_policy.h"
@@ -32,9 +33,8 @@ class RenderDocumentHostBrowserTest : public ContentBrowserTest {
         GetRenderDocumentLevelName(RenderDocumentLevel::kAllFrames));
     // Disable BackForwardCache so that the RenderFrameHost changes aren't
     // caused by proactive BrowsingInstance swap.
-    feature_list_for_back_forward_cache_.InitWithFeatures(
-        {}, {features::kBackForwardCache,
-             features::kProactivelySwapBrowsingInstance});
+    feature_list_for_back_forward_cache_.InitAndDisableFeature(
+        features::kBackForwardCache);
   }
 
   void SetUpOnMainThread() override {
@@ -143,10 +143,12 @@ IN_PROC_BROWSER_TEST_F(RenderDocumentHostBrowserTest, PopupScriptableNavigate) {
   EXPECT_EQ(url_1, EvalJs(new_contents, "window.location.href;"));
 
   // 3) Navigate the new window same-process.
-  int process_id = new_contents->GetPrimaryMainFrame()->GetProcess()->GetID();
+  int process_id =
+      new_contents->GetPrimaryMainFrame()->GetProcess()->GetDeprecatedID();
   EXPECT_TRUE(NavigateToURL(new_contents, url_2));
-  EXPECT_EQ(process_id,
-            new_contents->GetPrimaryMainFrame()->GetProcess()->GetID());
+  EXPECT_EQ(
+      process_id,
+      new_contents->GetPrimaryMainFrame()->GetProcess()->GetDeprecatedID());
 
   // The URL is accessible from each side and correctly reflects the current
   // value.
@@ -154,8 +156,8 @@ IN_PROC_BROWSER_TEST_F(RenderDocumentHostBrowserTest, PopupScriptableNavigate) {
   EXPECT_EQ(url_2, EvalJs(new_contents, "window.location.href;"));
 
   // The object is no longer accessible from each side.
-  EXPECT_EQ(nullptr, EvalJs(web_contents(), "other_window.foo;"));
-  EXPECT_EQ(nullptr, EvalJs(new_contents, "window.foo"));
+  EXPECT_EQ(base::Value(), EvalJs(web_contents(), "other_window.foo;"));
+  EXPECT_EQ(base::Value(), EvalJs(new_contents, "window.foo"));
 
   // Define the variable again.
   EXPECT_TRUE(ExecJs(web_contents(), "other_window.foo = 'bar_2';"));
@@ -199,8 +201,8 @@ IN_PROC_BROWSER_TEST_F(RenderDocumentHostBrowserTest,
       main_rfh->child_at(0)->current_frame_host();
 
   // The object is no longer accessible from each side.
-  EXPECT_EQ(nullptr, EvalJs(main_rfh, "other_window.foo;"));
-  EXPECT_EQ(nullptr, EvalJs(subframe_rfh_2, "window.foo"));
+  EXPECT_EQ(base::Value(), EvalJs(main_rfh, "other_window.foo;"));
+  EXPECT_EQ(base::Value(), EvalJs(subframe_rfh_2, "window.foo"));
 
   // Define the variable again.
   EXPECT_TRUE(ExecJs(main_rfh, "other_window.foo = 'bar_2';"));

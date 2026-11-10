@@ -5,6 +5,7 @@
 #ifndef NET_HTTP_HTTP_RESPONSE_INFO_H_
 #define NET_HTTP_HTTP_RESPONSE_INFO_H_
 
+#include <optional>
 #include <set>
 #include <string>
 
@@ -18,7 +19,6 @@
 #include "net/http/http_connection_info.h"
 #include "net/http/http_vary_data.h"
 #include "net/ssl/ssl_info.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 class Pickle;
@@ -69,10 +69,10 @@ class NET_EXPORT HttpResponseInfo {
   // Initializes from the representation stored in the given pickle.
   bool InitFromPickle(const base::Pickle& pickle, bool* response_truncated);
 
-  // Call this method to persist the response info.
-  void Persist(base::Pickle* pickle,
-               bool skip_transient_headers,
-               bool response_truncated) const;
+  // Call this method to persist the response info. Can't fail. Returns a
+  // unique_ptr because base::Pickle doesn't support std::move().
+  std::unique_ptr<base::Pickle> MakePickle(bool skip_transient_headers,
+                                           bool response_truncated) const;
 
   // Whether QUIC is used or not.
   bool DidUseQuic() const;
@@ -104,27 +104,10 @@ class NET_EXPORT HttpResponseInfo {
   // True if the response was fetched via explicit proxying. Any type of
   // proxying may have taken place, HTTP or SOCKS. Note, we do not know if a
   // transparent proxy may have been involved.
-  //
-  // If true and this struct was not restored from pickled data, `proxy_chain`
-  // contains the proxy chain that was used.
-  //
-  // TODO(https://crbug.com/653354): Remove this in favor of `proxy_chain`.
-  bool was_fetched_via_proxy = false;
+  bool WasFetchedViaProxy() const;
 
   // Information about the proxy chain used to fetch this response, if any.
-  //
-  // This field is not persisted by `Persist()` and not restored by
-  // `InitFromPickle()`.
-  //
-  // TODO(https://crbug.com/653354): Support this field in `Persist()` and
-  // `InitFromPickle()` then use it to replace `was_fetched_via_proxy`.
   ProxyChain proxy_chain;
-
-  // Whether this request was covered by IP protection. This may be true even if
-  // the IP Protection proxy chain is `direct://`. It is false if `was_cached`.
-  // This field is not persisted by `Persist()` and not restored by
-  // `InitFromPickle()`.
-  bool was_ip_protected = false;
 
   // Whether this request was eligible for IP Protection based on the request
   // being a match to the masked domain list, if available.
@@ -168,8 +151,8 @@ class NET_EXPORT HttpResponseInfo {
 
   // The reason why Chrome uses a specific transport protocol for HTTP
   // semantics.
-  net::AlternateProtocolUsage alternate_protocol_usage =
-      net::AlternateProtocolUsage::ALTERNATE_PROTOCOL_USAGE_UNSPECIFIED_REASON;
+  AlternateProtocolUsage alternate_protocol_usage =
+      AlternateProtocolUsage::ALTERNATE_PROTOCOL_USAGE_UNSPECIFIED_REASON;
 
   // The type of connection used for this response.
   HttpConnectionInfo connection_info = HttpConnectionInfo::kUNKNOWN;
@@ -182,12 +165,15 @@ class NET_EXPORT HttpResponseInfo {
   // this is the last time the cache entry was validated.
   base::Time response_time;
 
+  // Like response_time, but ignoring revalidations.
+  base::Time original_response_time;
+
   // Host resolution error info.
   ResolveErrorInfo resolve_error_info;
 
   // If the response headers indicate a 401 or 407 failure, then this structure
   // will contain additional information about the authentication challenge.
-  absl::optional<AuthChallengeInfo> auth_challenge;
+  std::optional<AuthChallengeInfo> auth_challenge;
 
   // The SSL client certificate request info.
   // TODO(wtc): does this really belong in HttpResponseInfo?  I put it here
@@ -215,7 +201,7 @@ class NET_EXPORT HttpResponseInfo {
 
   // If not null, this indicates the response is stored during a certain browser
   // session. Used for filtering cache access.
-  absl::optional<int64_t> browser_run_id;
+  std::optional<int64_t> browser_run_id;
 
   // True if the response used a shared dictionary for decoding its body.
   bool did_use_shared_dictionary = false;

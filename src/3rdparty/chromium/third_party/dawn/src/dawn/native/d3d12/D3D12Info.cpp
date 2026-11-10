@@ -86,23 +86,19 @@ ResultOrError<D3D12DeviceInfo> GatherDeviceInfo(const PhysicalDevice& physicalDe
         // featureOptions4.MSAA64KBAlignedTextureSupported indicates whether 64KB-aligned MSAA
         // textures are supported.
         info.use64KBAlignedMSAATexture = featureOptions4.MSAA64KBAlignedTextureSupported;
+
+        // To support shader f16 feature, both featureOptions4.Native16BitShaderOpsSupported and
+        // using shader model version >= 6.2 are required.
+        info.supportsNative16BitShaderOps = featureOptions4.Native16BitShaderOpsSupported;
     }
 
-    // Windows builds 1809 and above can use the D3D12 render pass API. If we query
-    // CheckFeatureSupport for D3D12_FEATURE_D3D12_OPTIONS5 successfully, then we can use
-    // the render pass API.
-    info.supportsRenderPass = false;
-    D3D12_FEATURE_DATA_D3D12_OPTIONS5 featureOptions5 = {};
+#if D3D12_SDK_VERSION >= 612
+    D3D12_FEATURE_DATA_D3D12_OPTIONS18 featureOptions18 = {};
     if (SUCCEEDED(physicalDevice.GetDevice()->CheckFeatureSupport(
-            D3D12_FEATURE_D3D12_OPTIONS5, &featureOptions5, sizeof(featureOptions5)))) {
-        // Performance regressions been observed when using a render pass on Intel graphics
-        // with RENDER_PASS_TIER_1 available, so fall back to a software emulated render
-        // pass on these platforms.
-        if (featureOptions5.RenderPassesTier < D3D12_RENDER_PASS_TIER_1 ||
-            !gpu_info::IsIntel(physicalDevice.GetVendorId())) {
-            info.supportsRenderPass = true;
-        }
+            D3D12_FEATURE_D3D12_OPTIONS18, &featureOptions18, sizeof(featureOptions18)))) {
+        info.supportsRenderPass = featureOptions18.RenderPassesValid;
     }
+#endif
 
     // D3D12_HEAP_FLAG_CREATE_NOT_ZEROED is available anytime that ID3D12Device8 is exposed, or a
     // check for D3D12_FEATURE_D3D12_OPTIONS7 succeeds.
@@ -112,14 +108,14 @@ ResultOrError<D3D12DeviceInfo> GatherDeviceInfo(const PhysicalDevice& physicalDe
         info.supportsHeapFlagCreateNotZeroed = true;
     }
 
-#if D3D12_SDK_VERSION >= 602
     D3D12_FEATURE_DATA_D3D12_OPTIONS13 featureOptions13 = {};
     if (SUCCEEDED(physicalDevice.GetDevice()->CheckFeatureSupport(
             D3D12_FEATURE_D3D12_OPTIONS13, &featureOptions13, sizeof(featureOptions13)))) {
         info.supportsTextureCopyBetweenDimensions =
             featureOptions13.TextureCopyBetweenDimensionsSupported;
+        info.supportsUnrestrictedBufferTextureCopyPitch =
+            featureOptions13.UnrestrictedBufferTextureCopyPitchSupported;
     }
-#endif
 
     info.supportsRootSignatureVersion1_1 = false;
     D3D12_FEATURE_DATA_ROOT_SIGNATURE featureDataRootSignature = {};
@@ -129,6 +125,12 @@ ResultOrError<D3D12DeviceInfo> GatherDeviceInfo(const PhysicalDevice& physicalDe
             sizeof(featureDataRootSignature)))) {
         info.supportsRootSignatureVersion1_1 =
             featureDataRootSignature.HighestVersion >= D3D_ROOT_SIGNATURE_VERSION_1_1;
+    }
+
+    D3D12_FEATURE_DATA_EXISTING_HEAPS existingHeapInfo = {};
+    if (SUCCEEDED(physicalDevice.GetDevice()->CheckFeatureSupport(
+            D3D12_FEATURE_EXISTING_HEAPS, &existingHeapInfo, sizeof(existingHeapInfo)))) {
+        info.supportsExistingHeap = existingHeapInfo.Supported;
     }
 
     D3D12_FEATURE_DATA_SHADER_MODEL knownShaderModels[] = {
@@ -155,23 +157,7 @@ ResultOrError<D3D12DeviceInfo> GatherDeviceInfo(const PhysicalDevice& physicalDe
 
     DAWN_ASSERT(shaderModelMajor < 10);
     DAWN_ASSERT(shaderModelMinor < 10);
-    info.shaderModel = 10 * shaderModelMajor + shaderModelMinor;
-
-    // Profiles are always <stage>s_<minor>_<major> so we build the s_<minor>_major and add
-    // it to each of the stage's suffix.
-    std::wstring profileSuffix = L"s_M_n";
-    profileSuffix[2] = wchar_t('0' + shaderModelMajor);
-    profileSuffix[4] = wchar_t('0' + shaderModelMinor);
-
-    info.shaderProfiles[SingleShaderStage::Vertex] = L"v" + profileSuffix;
-    info.shaderProfiles[SingleShaderStage::Fragment] = L"p" + profileSuffix;
-    info.shaderProfiles[SingleShaderStage::Compute] = L"c" + profileSuffix;
-
-    info.supportsShaderF16 =
-        driverShaderModel >= D3D_SHADER_MODEL_6_2 && featureOptions4.Native16BitShaderOpsSupported;
-
-    info.supportsPacked4x8IntegerDotProduct = driverShaderModel >= D3D_SHADER_MODEL_6_4;
-    info.supportsPackUnpack4x8Intrinsics = driverShaderModel >= D3D_SHADER_MODEL_6_6;
+    info.highestSupportedShaderModel = 10 * shaderModelMajor + shaderModelMinor;
 
     // Device support wave intrinsics if shader model >= SM6.0 and capabilities flag WaveOps is set.
     // https://github.com/Microsoft/DirectXShaderCompiler/wiki/Wave-Intrinsics

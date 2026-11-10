@@ -20,13 +20,14 @@ package perfetto.protos;
 
 import "protos/perfetto/common/builtin_clock.proto";
 import "protos/perfetto/config/data_source_config.proto";
+import "protos/perfetto/config/priority_boost/priority_boost_config.proto";
 
 // The overall config that is used when starting a new tracing session through
 // ProducerPort::StartTracing().
 // It contains the general config for the logging buffer(s) and the configs for
 // all the data source being enabled.
 //
-// Next id: 38.
+// Next id: 41.
 message TraceConfig {
   message BufferConfig {
     optional uint32 size_kb = 1;
@@ -61,7 +62,7 @@ message TraceConfig {
     // that case we don't want to retain another in-memory copy of the buffer.
     optional bool transfer_on_clone = 5;
 
-    // Used in conjuction with transfer_on_clone. When true the buffer is
+    // Used in conjunction with transfer_on_clone. When true the buffer is
     // cleared before issuing the Flush(reason=kTraceClone). This is to ensure
     // that if the data source took too long to write the data in a previous
     // clone-related flush, we don't end up with a mixture of leftovers from
@@ -87,6 +88,16 @@ message TraceConfig {
     // "bar"] will enable data sources on both "foo" and "bar" (if they exist).
     repeated string producer_name_filter = 2;
     repeated string producer_name_regex_filter = 3;
+
+    // Filter by machine names. The name of a machine is determined by the
+    // PERFETTO_MACHINE_NAME env variable. In Android systems, if the env
+    // variable is not set then the
+    // persist.traced_relay.machine_name system property is used. If the
+    // sysprop isn't set or not in an Android system, then the machine name by
+    // default is set to the utsname sysname (e.g. Linux), which can be obtained
+    // via the 'uname -s' command. As a convenience, one can use "host" to refer
+    // to the host machine, which is the machine running traced.
+    repeated string machine_name_filter = 4;
   }
   repeated DataSource data_sources = 2;
 
@@ -234,7 +245,9 @@ message TraceConfig {
     // a 24 hour period.
     // On R-, this override only affected userdebug builds. Since S, it also
     // affects user builds.
-    optional uint64 max_upload_per_day_bytes = 1;
+    // In 24Q3+ (V+), this override is a noop because upload guardrail logic
+    // was removed from Perfetto.
+    optional uint64 max_upload_per_day_bytes = 1 [deprecated = true];
 
     // Overrides the guardrail for maximum trace buffer size.
     // Available on U+
@@ -284,6 +297,13 @@ message TraceConfig {
   // When this field is set the tracing session becomes eligible to be cloned
   // by other UIDs.
   optional int32 bugreport_score = 30;
+
+  // When set, defines name of the file that will be saved under
+  // /data/misc/perfetto-traces/bugreport/ when using --save-all-for-bugreport.
+  // If omitted, traces will be named systrace.pftrace, systrace_1.pftrace, etc,
+  // starting from the highest `bugreport_score`.
+  // Introduced in v42 / Android V.
+  optional string bugreport_filename = 38;
 
   // Triggers allow producers to start or stop the tracing session when an event
   // occurs.
@@ -429,11 +449,8 @@ message TraceConfig {
   }
   optional IncrementalStateConfig incremental_state_config = 21;
 
-  // Additional guardrail used by the Perfetto command line client.
-  // On user builds when --dropbox is set perfetto will refuse to trace unless
-  // this is also set.
-  // Added in Q.
-  optional bool allow_user_build_tracing = 19;
+  // No longer needed as we unconditionally allow tracing on user builds.
+  optional bool allow_user_build_tracing = 19 [deprecated = true];
 
   // If set the tracing service will ensure there is at most one tracing session
   // with this key.
@@ -683,4 +700,53 @@ message TraceConfig {
     optional uint32 max_delay_ms = 2;
   }
   optional CmdTraceStartDelay cmd_trace_start_delay = 35;
+
+  // When non-empty, ensures that for a each semaphore named `name at most
+  // `max_other_session_count`` *other* sessions (whose value is taken of the
+  // minimum of all values specified by this config or any already-running
+  // session) can be be running.
+  //
+  // If a semaphore "acquisition" fails, EnableTracing will return an error
+  // and the tracing session will not be started (or elgible to start in
+  // the case of deferred sessions).
+  //
+  // This is easiest to explain with an example. Suppose the tracing service has
+  // the following active tracing sessions:
+  //   S1 = [{name=foo, max_other_session_count=2},
+  //         {name=bar, max_other_session_count=0}]
+  //   S2 = [{name=foo, max_other_session_count=1},
+  //         {name=baz, max_other_session_count=1}]
+  //
+  // Then, for a new session, the following would be the expected behaviour of
+  // EnableSession given the state of `session_semaphores`.
+  //   Q: session_semaphores = []
+  //   A: Allowed because it does not specify any semaphores. Will be allowed
+  //      no matter the state of any other tracing session.
+  //   Q: session_semaphores = [{name=baz, max_other_session_count=1}]
+  //   A: Allowed because both S2 and this config specify
+  //      max_other_session_count=1 for baz.
+  //   Q: session_semaphores = [{name=foo, max_other_session_count=3}]
+  //   A: Denied because S2 specified max_other_session_count=1 for foo and S1
+  //      takes that slot.
+  //   Q: session_semaphores = [{name=bar, max_other_session_count=0}]
+  //   A: Denied because S1 takes the the slot specified by both S1 and
+  //      this config.
+  //
+  // Introduced in 24Q3 (Android V).
+  message SessionSemaphore {
+    // The name of the semaphore. Acts as a unique identifier across all
+    // tracing sessions (including the one being started).
+    optional string name = 1;
+
+    // The maximum number of *other* sesssions which specify the same semaphore
+    // which can be active. The minimum of this value across all tracing
+    // sessions and the value specified by the config is used when deciding
+    // whether the tracing session can be started.
+    optional uint64 max_other_session_count = 2;
+  }
+  repeated SessionSemaphore session_semaphores = 39;
+
+  // Priority boost to be applied to the traced process, when the session is
+  // running.
+  optional PriorityBoostConfig priority_boost = 40;
 }

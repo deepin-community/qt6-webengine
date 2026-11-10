@@ -23,6 +23,7 @@ void WebTestRuntimeFlags::Reset() {
   set_printing_width(0);
   set_printing_height(0);
   set_printing_margin(0);
+  set_safe_printable_inset(0);
 
   set_policy_delegate_enabled(false);
   set_policy_delegate_is_permissive(false);
@@ -34,7 +35,6 @@ void WebTestRuntimeFlags::Reset() {
   set_dump_drag_image(false);
 
   set_dump_web_content_settings_client_callbacks(false);
-  set_images_allowed(true);
   set_storage_allowed(true);
   set_running_insecure_content_allowed(false);
 

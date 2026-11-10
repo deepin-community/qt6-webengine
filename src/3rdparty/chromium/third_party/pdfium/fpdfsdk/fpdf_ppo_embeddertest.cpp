@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <array>
 #include <iterator>
 #include <memory>
 #include <string>
@@ -43,26 +44,29 @@ constexpr int kRectanglesMultiPagesPageCount = 2;
 
 const char* RectanglesMultiPagesExpectedChecksum(int page_index) {
   if (CFX_DefaultRenderDevice::UseSkiaRenderer()) {
-    static constexpr const char* kChecksums[kRectanglesMultiPagesPageCount] = {
-        "07606a12487bd0c28a88f23fa00fc313", "94ea6e1eef220833a3ec14d6a1c612b0"};
+    static constexpr std::array<const char*, kRectanglesMultiPagesPageCount>
+        kChecksums = {{"07606a12487bd0c28a88f23fa00fc313",
+                       "94ea6e1eef220833a3ec14d6a1c612b0"}};
     return kChecksums[page_index];
   }
-  static constexpr const char* kChecksums[kRectanglesMultiPagesPageCount] = {
-      "72d0d7a19a2f40e010ca6a1133b33e1e", "fb18142190d770cfbc329d2b071aee4d"};
+  static constexpr std::array<const char*, kRectanglesMultiPagesPageCount>
+      kChecksums = {{"72d0d7a19a2f40e010ca6a1133b33e1e",
+                     "fb18142190d770cfbc329d2b071aee4d"}};
   return kChecksums[page_index];
 }
 
 const char* Bug750568PageHash(int page_index) {
-  constexpr int kBug750568PageCount = 4;
+  static constexpr int kBug750568PageCount = 4;
   if (CFX_DefaultRenderDevice::UseSkiaRenderer()) {
-    static constexpr const char* kChecksums[kBug750568PageCount] = {
-        "eaa139e944eafb43d31e8742a0e158de", "226485e9d4fa6a67dfe0a88723f12060",
-        "c5601a3492ae5dcc5dd25140fc463bfe", "1f60055b54de4fac8a59c65e90da156e"};
+    static constexpr std::array<const char*, kBug750568PageCount> kChecksums = {
+        {"eaa139e944eafb43d31e8742a0e158de", "226485e9d4fa6a67dfe0a88723f12060",
+         "c5601a3492ae5dcc5dd25140fc463bfe",
+         "1f60055b54de4fac8a59c65e90da156e"}};
     return kChecksums[page_index];
   }
-  static constexpr const char* kChecksums[kBug750568PageCount] = {
-      "64ad08132a1c5a166768298c8a578f57", "83b83e2f6bc80707d0a917c7634140b9",
-      "913cd3723a451e4e46fbc2c05702d1ee", "81fb7cfd4860f855eb468f73dfeb6d60"};
+  static constexpr std::array<const char*, kBug750568PageCount> kChecksums = {
+      {"64ad08132a1c5a166768298c8a578f57", "83b83e2f6bc80707d0a917c7634140b9",
+       "913cd3723a451e4e46fbc2c05702d1ee", "81fb7cfd4860f855eb468f73dfeb6d60"}};
   return kChecksums[page_index];
 }
 
@@ -87,7 +91,7 @@ TEST_F(FPDFPPOEmbedderTest, ViewerPreferences) {
 TEST_F(FPDFPPOEmbedderTest, ImportPagesByIndex) {
   ASSERT_TRUE(OpenDocument("viewer_ref.pdf"));
 
-  FPDF_PAGE page = LoadPage(0);
+  ScopedPage page = LoadScopedPage(0);
   EXPECT_TRUE(page);
 
   ScopedFPDFDocument output_doc(FPDF_CreateNewDocument());
@@ -98,14 +102,12 @@ TEST_F(FPDFPPOEmbedderTest, ImportPagesByIndex) {
   EXPECT_TRUE(FPDF_ImportPagesByIndex(
       output_doc.get(), document(), kPageIndices, std::size(kPageIndices), 0));
   EXPECT_EQ(1, FPDF_GetPageCount(output_doc.get()));
-
-  UnloadPage(page);
 }
 
 TEST_F(FPDFPPOEmbedderTest, ImportPages) {
   ASSERT_TRUE(OpenDocument("viewer_ref.pdf"));
 
-  FPDF_PAGE page = LoadPage(0);
+  ScopedPage page = LoadScopedPage(0);
   EXPECT_TRUE(page);
 
   ScopedFPDFDocument output_doc(FPDF_CreateNewDocument());
@@ -113,8 +115,6 @@ TEST_F(FPDFPPOEmbedderTest, ImportPages) {
   EXPECT_TRUE(FPDF_CopyViewerPreferences(output_doc.get(), document()));
   EXPECT_TRUE(FPDF_ImportPages(output_doc.get(), document(), "1", 0));
   EXPECT_EQ(1, FPDF_GetPageCount(output_doc.get()));
-
-  UnloadPage(page);
 }
 
 TEST_F(FPDFPPOEmbedderTest, ImportNPages) {
@@ -223,11 +223,11 @@ TEST_F(FPDFPPOEmbedderTest, ImportPageToXObject) {
     FPDF_CloseXObject(xobject);
   }
 
-  constexpr int kExpectedPageCount = 2;
+  static constexpr int kExpectedPageCount = 2;
   ASSERT_TRUE(OpenSavedDocument());
 
-  FPDF_PAGE saved_pages[kExpectedPageCount];
-  FPDF_PAGEOBJECT xobjects[kExpectedPageCount];
+  std::array<FPDF_PAGE, kExpectedPageCount> saved_pages;
+  std::array<FPDF_PAGEOBJECT, kExpectedPageCount> xobjects;
   for (int i = 0; i < kExpectedPageCount; ++i) {
     saved_pages[i] = LoadSavedPage(i);
     ASSERT_TRUE(saved_pages[i]);
@@ -257,7 +257,8 @@ TEST_F(FPDFPPOEmbedderTest, ImportPageToXObject) {
     EXPECT_FLOAT_EQ(301.0f, top);
   }
 
-  // Peek at object internals to make sure the two XObjects use the same stream.
+  // Peek at object internals to make sure the two XObjects use the same
+  // stream.
   EXPECT_NE(xobjects[0], xobjects[1]);
   CPDF_PageObject* obj1 = CPDFPageObjectFromFPDFPageObject(xobjects[0]);
   ASSERT_TRUE(obj1->AsForm());
@@ -270,8 +271,9 @@ TEST_F(FPDFPPOEmbedderTest, ImportPageToXObject) {
   EXPECT_EQ(obj1->AsForm()->form()->GetStream(),
             obj2->AsForm()->form()->GetStream());
 
-  for (FPDF_PAGE saved_page : saved_pages)
+  for (FPDF_PAGE saved_page : saved_pages) {
     CloseSavedPage(saved_page);
+  }
 
   CloseSavedDocument();
 }
@@ -289,11 +291,11 @@ TEST_F(FPDFPPOEmbedderTest, ImportPageToXObjectWithSameDoc) {
   FPDF_XOBJECT xobject = FPDF_NewXObjectFromPage(document(), document(), 0);
   ASSERT_TRUE(xobject);
 
-  FPDF_PAGE page = LoadPage(0);
+  ScopedPage page = LoadScopedPage(0);
   ASSERT_TRUE(page);
 
   {
-    ScopedFPDFBitmap bitmap = RenderLoadedPage(page);
+    ScopedFPDFBitmap bitmap = RenderLoadedPage(page.get());
     CompareBitmap(bitmap.get(), 200, 300, pdfium::RectanglesChecksum());
   }
 
@@ -304,11 +306,11 @@ TEST_F(FPDFPPOEmbedderTest, ImportPageToXObjectWithSameDoc) {
   static constexpr FS_MATRIX kMatrix = {0.5f, 0.0f, 0.0f, 0.5f, 0.0f, 0.0f};
   EXPECT_TRUE(FPDFPageObj_SetMatrix(page_object, &kMatrix));
 
-  FPDFPage_InsertObject(page, page_object);
-  EXPECT_TRUE(FPDFPage_GenerateContent(page));
+  FPDFPage_InsertObject(page.get(), page_object);
+  EXPECT_TRUE(FPDFPage_GenerateContent(page.get()));
 
   {
-    ScopedFPDFBitmap bitmap = RenderLoadedPage(page);
+    ScopedFPDFBitmap bitmap = RenderLoadedPage(page.get());
     CompareBitmap(bitmap.get(), 200, 300, checksum);
   }
 
@@ -316,8 +318,6 @@ TEST_F(FPDFPPOEmbedderTest, ImportPageToXObjectWithSameDoc) {
 
   EXPECT_TRUE(FPDF_SaveAsCopy(document(), this, 0));
   VerifySavedDocument(200, 300, checksum);
-
-  UnloadPage(page);
 }
 
 TEST_F(FPDFPPOEmbedderTest, XObjectNullParams) {
@@ -347,14 +347,14 @@ TEST_F(FPDFPPOEmbedderTest, XObjectNullParams) {
   EXPECT_FALSE(FPDF_NewFormObjectFromXObject(nullptr));
 }
 
-TEST_F(FPDFPPOEmbedderTest, BUG_925981) {
+TEST_F(FPDFPPOEmbedderTest, Bug925981) {
   ASSERT_TRUE(OpenDocument("bug_925981.pdf"));
   ScopedFPDFDocument output_doc_2up(
       FPDF_ImportNPagesToOne(document(), 612, 792, 2, 1));
   EXPECT_EQ(1, FPDF_GetPageCount(output_doc_2up.get()));
 }
 
-TEST_F(FPDFPPOEmbedderTest, BUG_1229106) {
+TEST_F(FPDFPPOEmbedderTest, Bug1229106) {
   static constexpr int kPageCount = 4;
   static constexpr int kTwoUpPageCount = 2;
   static const char kRectsChecksum[] = "140d629b3c96a07ced2e3e408ea85a1d";
@@ -365,10 +365,9 @@ TEST_F(FPDFPPOEmbedderTest, BUG_1229106) {
   // Show all pages render the same.
   ASSERT_EQ(kPageCount, FPDF_GetPageCount(document()));
   for (int i = 0; i < kPageCount; ++i) {
-    FPDF_PAGE page = LoadPage(0);
-    ScopedFPDFBitmap bitmap = RenderLoadedPage(page);
+    ScopedPage page = LoadScopedPage(0);
+    ScopedFPDFBitmap bitmap = RenderLoadedPage(page.get());
     CompareBitmap(bitmap.get(), 792, 612, kRectsChecksum);
-    UnloadPage(page);
   }
 
   // Create a 2-up PDF.
@@ -453,7 +452,7 @@ TEST_F(FPDFPPOEmbedderTest, CopyViewerPrefTypes) {
 TEST_F(FPDFPPOEmbedderTest, BadIndices) {
   ASSERT_TRUE(OpenDocument("hello_world.pdf"));
 
-  FPDF_PAGE page = LoadPage(0);
+  ScopedPage page = LoadScopedPage(0);
   EXPECT_TRUE(page);
 
   ScopedFPDFDocument output_doc(FPDF_CreateNewDocument());
@@ -474,14 +473,12 @@ TEST_F(FPDFPPOEmbedderTest, BadIndices) {
   static constexpr int kBadIndices4[] = {42};
   EXPECT_FALSE(FPDF_ImportPagesByIndex(
       output_doc.get(), document(), kBadIndices4, std::size(kBadIndices4), 0));
-
-  UnloadPage(page);
 }
 
 TEST_F(FPDFPPOEmbedderTest, GoodIndices) {
   ASSERT_TRUE(OpenDocument("viewer_ref.pdf"));
 
-  FPDF_PAGE page = LoadPage(0);
+  ScopedPage page = LoadScopedPage(0);
   EXPECT_TRUE(page);
 
   ScopedFPDFDocument output_doc(FPDF_CreateNewDocument());
@@ -515,14 +512,12 @@ TEST_F(FPDFPPOEmbedderTest, GoodIndices) {
   EXPECT_TRUE(
       FPDF_ImportPagesByIndex(output_doc.get(), document(), nullptr, 0, 0));
   EXPECT_EQ(14, FPDF_GetPageCount(output_doc.get()));
-
-  UnloadPage(page);
 }
 
 TEST_F(FPDFPPOEmbedderTest, BadRanges) {
   ASSERT_TRUE(OpenDocument("hello_world.pdf"));
 
-  FPDF_PAGE page = LoadPage(0);
+  ScopedPage page = LoadScopedPage(0);
   EXPECT_TRUE(page);
 
   ScopedFPDFDocument output_doc(FPDF_CreateNewDocument());
@@ -537,14 +532,12 @@ TEST_F(FPDFPPOEmbedderTest, BadRanges) {
   EXPECT_FALSE(FPDF_ImportPages(output_doc.get(), document(), "1-", 0));
   EXPECT_FALSE(FPDF_ImportPages(output_doc.get(), document(), "-1", 0));
   EXPECT_FALSE(FPDF_ImportPages(output_doc.get(), document(), "-,0,,,1-", 0));
-
-  UnloadPage(page);
 }
 
 TEST_F(FPDFPPOEmbedderTest, GoodRanges) {
   ASSERT_TRUE(OpenDocument("viewer_ref.pdf"));
 
-  FPDF_PAGE page = LoadPage(0);
+  ScopedPage page = LoadScopedPage(0);
   EXPECT_TRUE(page);
 
   ScopedFPDFDocument output_doc(FPDF_CreateNewDocument());
@@ -558,15 +551,13 @@ TEST_F(FPDFPPOEmbedderTest, GoodRanges) {
   EXPECT_EQ(6, FPDF_GetPageCount(output_doc.get()));
   EXPECT_TRUE(FPDF_ImportPages(output_doc.get(), document(), "2-4", 0));
   EXPECT_EQ(9, FPDF_GetPageCount(output_doc.get()));
-
-  UnloadPage(page);
 }
 
-TEST_F(FPDFPPOEmbedderTest, BUG_664284) {
+TEST_F(FPDFPPOEmbedderTest, Bug664284) {
   ASSERT_TRUE(OpenDocument("bug_664284.pdf"));
 
-  FPDF_PAGE page = LoadPage(0);
-  ASSERT_NE(nullptr, page);
+  ScopedPage page = LoadScopedPage(0);
+  ASSERT_NE(nullptr, page.get());
 
   ScopedFPDFDocument output_doc(FPDF_CreateNewDocument());
   EXPECT_TRUE(output_doc);
@@ -574,21 +565,18 @@ TEST_F(FPDFPPOEmbedderTest, BUG_664284) {
   static constexpr int kIndices[] = {0};
   EXPECT_TRUE(FPDF_ImportPagesByIndex(output_doc.get(), document(), kIndices,
                                       std::size(kIndices), 0));
-
-  UnloadPage(page);
 }
 
-TEST_F(FPDFPPOEmbedderTest, BUG_750568) {
+TEST_F(FPDFPPOEmbedderTest, Bug750568) {
   ASSERT_TRUE(OpenDocument("bug_750568.pdf"));
   ASSERT_EQ(4, FPDF_GetPageCount(document()));
 
   for (size_t i = 0; i < 4; ++i) {
-    FPDF_PAGE page = LoadPage(i);
+    ScopedPage page = LoadScopedPage(i);
     ASSERT_TRUE(page);
 
-    ScopedFPDFBitmap bitmap = RenderLoadedPage(page);
+    ScopedFPDFBitmap bitmap = RenderLoadedPage(page.get());
     CompareBitmap(bitmap.get(), 200, 200, Bug750568PageHash(i));
-    UnloadPage(page);
   }
 
   ScopedFPDFDocument output_doc(FPDF_CreateNewDocument());
@@ -609,12 +597,11 @@ TEST_F(FPDFPPOEmbedderTest, BUG_750568) {
 
 TEST_F(FPDFPPOEmbedderTest, ImportWithZeroLengthStream) {
   ASSERT_TRUE(OpenDocument("zero_length_stream.pdf"));
-  FPDF_PAGE page = LoadPage(0);
+  ScopedPage page = LoadScopedPage(0);
   ASSERT_TRUE(page);
 
-  ScopedFPDFBitmap bitmap = RenderLoadedPage(page);
+  ScopedFPDFBitmap bitmap = RenderLoadedPage(page.get());
   CompareBitmap(bitmap.get(), 200, 200, pdfium::HelloWorldChecksum());
-  UnloadPage(page);
 
   ScopedFPDFDocument new_doc(FPDF_CreateNewDocument());
   ASSERT_TRUE(new_doc);
@@ -681,18 +668,16 @@ TEST_F(FPDFPPOEmbedderTest, ImportIntoDocWithWrongPageType) {
   }();
   const char new_page_2_checksum[] = "39336760026e7f3d26135e3b765125c3";
   {
-    FPDF_PAGE page = LoadPage(0);
+    ScopedPage page = LoadScopedPage(0);
     ASSERT_TRUE(page);
-    ScopedFPDFBitmap bitmap = RenderPage(page);
+    ScopedFPDFBitmap bitmap = RenderPage(page.get());
     CompareBitmap(bitmap.get(), 200, 300, new_page_1_checksum);
-    UnloadPage(page);
   }
   {
-    FPDF_PAGE page = LoadPage(1);
+    ScopedPage page = LoadScopedPage(1);
     ASSERT_TRUE(page);
-    ScopedFPDFBitmap bitmap = RenderPage(page);
+    ScopedFPDFBitmap bitmap = RenderPage(page.get());
     CompareBitmap(bitmap.get(), 200, 100, new_page_2_checksum);
-    UnloadPage(page);
   }
 
   EXPECT_TRUE(FPDF_SaveAsCopy(document(), this, 0));

@@ -15,11 +15,11 @@
 #include <string>
 #include <utility>
 
+#include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "api/array_view.h"
-#include "rtc_base/string_encode.h"
 
-namespace rtc {
+namespace webrtc {
 
 // This is a minimalistic string builder class meant to cover the most cases of
 // when you might otherwise be tempted to use a stringstream (discouraged for
@@ -28,7 +28,7 @@ namespace rtc {
 // read via `str()`.
 class SimpleStringBuilder {
  public:
-  explicit SimpleStringBuilder(rtc::ArrayView<char> buffer);
+  explicit SimpleStringBuilder(ArrayView<char> buffer);
   SimpleStringBuilder(const SimpleStringBuilder&) = delete;
   SimpleStringBuilder& operator=(const SimpleStringBuilder&) = delete;
 
@@ -69,7 +69,7 @@ class SimpleStringBuilder {
   // size allows the buffer to be stack allocated, which helps performance.
   // Having a fixed size is furthermore useful to avoid unnecessary resizing
   // while building it.
-  const rtc::ArrayView<char> buffer_;
+  const ArrayView<char> buffer_;
 
   // Represents the number of characters written to the buffer.
   // This does not include the terminating '\0'.
@@ -98,47 +98,42 @@ class StringBuilder {
   StringBuilder& operator<<(char c) = delete;
 
   StringBuilder& operator<<(int i) {
-    str_ += rtc::ToString(i);
+    str_ += absl::StrCat(i);
     return *this;
   }
 
   StringBuilder& operator<<(unsigned i) {
-    str_ += rtc::ToString(i);
+    str_ += absl::StrCat(i);
     return *this;
   }
 
   StringBuilder& operator<<(long i) {  // NOLINT
-    str_ += rtc::ToString(i);
+    str_ += absl::StrCat(i);
     return *this;
   }
 
   StringBuilder& operator<<(long long i) {  // NOLINT
-    str_ += rtc::ToString(i);
+    str_ += absl::StrCat(i);
     return *this;
   }
 
   StringBuilder& operator<<(unsigned long i) {  // NOLINT
-    str_ += rtc::ToString(i);
+    str_ += absl::StrCat(i);
     return *this;
   }
 
   StringBuilder& operator<<(unsigned long long i) {  // NOLINT
-    str_ += rtc::ToString(i);
+    str_ += absl::StrCat(i);
     return *this;
   }
 
   StringBuilder& operator<<(float f) {
-    str_ += rtc::ToString(f);
+    str_ += absl::StrCat(f);
     return *this;
   }
 
   StringBuilder& operator<<(double f) {
-    str_ += rtc::ToString(f);
-    return *this;
-  }
-
-  StringBuilder& operator<<(long double f) {
-    str_ += rtc::ToString(f);
+    str_ += absl::StrCat(f);
     return *this;
   }
 
@@ -148,11 +143,8 @@ class StringBuilder {
 
   size_t size() const { return str_.size(); }
 
-  std::string Release() {
-    std::string ret = std::move(str_);
-    str_.clear();
-    return ret;
-  }
+  // Moves out the internal std::string.
+  std::string Release() { return std::move(str_); }
 
   // Allows appending a printf style formatted string.
   StringBuilder& AppendFormat(const char* fmt, ...)
@@ -165,6 +157,7 @@ class StringBuilder {
   std::string str_;
 };
 
-}  // namespace rtc
+}  //  namespace webrtc
+
 
 #endif  // RTC_BASE_STRINGS_STRING_BUILDER_H_

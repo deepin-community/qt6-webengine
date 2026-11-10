@@ -5,24 +5,24 @@
 #include "third_party/blink/renderer/core/css/selector_checker.h"
 
 #include <bitset>
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include <optional>
+
 #include "third_party/blink/renderer/core/css/css_test_helpers.h"
 #include "third_party/blink/renderer/core/css/selector_checker-inl.h"
 #include "third_party/blink/renderer/core/css/style_rule.h"
 #include "third_party/blink/renderer/core/dom/document.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
+#include "third_party/blink/renderer/core/style/computed_style_constants.h"
 #include "third_party/blink/renderer/core/testing/page_test_base.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 
 namespace blink {
 
 struct ScopeProximityTestData {
   const char* html;
   const char* rule;
-  absl::optional<unsigned> proximity;
+  std::optional<unsigned> proximity;
 };
 
 ScopeProximityTestData scope_proximity_test_data[] = {
@@ -100,6 +100,50 @@ ScopeProximityTestData scope_proximity_test_data[] = {
     },
 
     // The proximity is determined according to the nearest scoping root.
+    // (#target is the scope itself, selected with :scope).
+    {
+      R"HTML(
+        <div class=a>
+          <div>
+            <div>
+              <div>
+                <div id=target class=a></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )HTML",
+      R"CSS(
+        @scope (.a) {
+          :scope { z-index: 1; }
+        }
+      )CSS",
+      0
+    },
+
+    // The proximity is determined according to the nearest scoping root.
+    // (#target is the scope itself, selected with &).
+    {
+      R"HTML(
+        <div class=a>
+          <div>
+            <div>
+              <div>
+                <div id=target class=a></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )HTML",
+      R"CSS(
+        @scope (.a) {
+          & { z-index: 1; }
+        }
+      )CSS",
+      0
+    },
+
+    // The proximity is determined according to the nearest scoping root.
     // (Nested scopes from different @scope rules).
     {
       R"HTML(
@@ -147,11 +191,7 @@ ScopeProximityTestData scope_proximity_test_data[] = {
 
 class ScopeProximityTest
     : public PageTestBase,
-      public testing::WithParamInterface<ScopeProximityTestData>,
-      private ScopedCSSScopeForTest {
- public:
-  ScopeProximityTest() : ScopedCSSScopeForTest(true) {}
-};
+      public testing::WithParamInterface<ScopeProximityTestData> {};
 
 INSTANTIATE_TEST_SUITE_P(SelectorChecker,
                          ScopeProximityTest,
@@ -188,7 +228,8 @@ TEST_P(ScopeProximityTest, All) {
 
   SelectorChecker checker(SelectorChecker::kResolvingStyle);
   StyleScopeFrame style_scope_frame(*target, /* parent */ nullptr);
-  SelectorChecker::SelectorCheckingContext context(target);
+  SelectorChecker::SelectorCheckingContext context{
+      ElementResolveContext(*target)};
   context.selector = style_rule->FirstSelector();
   context.style_scope = scope;
   context.style_scope_frame = &style_scope_frame;
@@ -197,7 +238,7 @@ TEST_P(ScopeProximityTest, All) {
   bool match = checker.Match(context, result);
 
   EXPECT_EQ(param.proximity,
-            match ? absl::optional<unsigned>(result.proximity) : absl::nullopt);
+            match ? std::optional<unsigned>(result.proximity) : std::nullopt);
 }
 
 struct MatchFlagsTestData {
@@ -264,7 +305,7 @@ INSTANTIATE_TEST_SUITE_P(SelectorChecker,
 TEST_P(MatchFlagsTest, All) {
   MatchFlagsTestData param = GetParam();
 
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id=target>
       <div></div>
     </div>
@@ -277,10 +318,11 @@ TEST_P(MatchFlagsTest, All) {
   CSSSelectorList* selector_list =
       css_test_helpers::ParseSelectorList(param.selector);
   ASSERT_TRUE(selector_list);
-  ASSERT_TRUE(selector_list->HasOneSelector());
+  ASSERT_TRUE(selector_list->IsSingleComplexSelector());
 
   SelectorChecker checker(SelectorChecker::kResolvingStyle);
-  SelectorChecker::SelectorCheckingContext context(element);
+  SelectorChecker::SelectorCheckingContext context{
+      ElementResolveContext(*element)};
   context.selector = selector_list->First();
 
   SelectorChecker::MatchResult result;
@@ -299,7 +341,7 @@ class ImpactTest : public PageTestBase {
   void SetUp() override {
     PageTestBase::SetUp();
 
-    GetDocument().body()->setInnerHTML(R"HTML(
+    GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
       <div id=outer>
         <div id=middle>
           <div id=inner>
@@ -327,10 +369,11 @@ class ImpactTest : public PageTestBase {
     CSSSelectorList* selector_list =
         css_test_helpers::ParseSelectorList(selector);
     DCHECK(selector_list);
-    DCHECK(selector_list->HasOneSelector());
+    DCHECK(selector_list->IsSingleComplexSelector());
 
     SelectorChecker checker(SelectorChecker::kResolvingStyle);
-    SelectorChecker::SelectorCheckingContext context(&element);
+    SelectorChecker::SelectorCheckingContext context{
+        ElementResolveContext(element)};
     context.selector = selector_list->First();
     context.impact = impact;
 
@@ -628,7 +671,7 @@ INSTANTIATE_TEST_SUITE_P(SelectorChecker,
 TEST_P(MatchFlagsShadowTest, Host) {
   MatchFlagsTestData param = GetParam();
 
-  GetDocument().body()->setInnerHTMLWithDeclarativeShadowDOMForTesting(R"HTML(
+  GetDocument().body()->SetHTMLUnsafeWithoutTrustedTypes(R"HTML(
     <div id=host>
       <template shadowrootmode="open">
         <div></div>
@@ -644,12 +687,14 @@ TEST_P(MatchFlagsShadowTest, Host) {
   CSSSelectorList* selector_list =
       css_test_helpers::ParseSelectorList(param.selector);
   ASSERT_TRUE(selector_list);
-  ASSERT_TRUE(selector_list->HasOneSelector());
+  ASSERT_TRUE(selector_list->IsSingleComplexSelector());
 
   SelectorChecker checker(SelectorChecker::kResolvingStyle);
-  SelectorChecker::SelectorCheckingContext context(host);
+  SelectorChecker::SelectorCheckingContext context{
+      ElementResolveContext(*host)};
   context.selector = selector_list->First();
   context.scope = host->GetShadowRoot();
+  context.tree_scope = host->GetShadowRoot();
 
   SelectorChecker::MatchResult result;
   checker.Match(context, result);
@@ -666,7 +711,7 @@ class MatchFlagsScopeTest : public PageTestBase {
  public:
   void SetUp() override {
     PageTestBase::SetUp();
-    GetDocument().body()->setInnerHTML(R"HTML(
+    GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
       <style id=style>
       </style>
       <div id=outer>
@@ -817,16 +862,19 @@ TEST_F(EasySelectorCheckerTest, IsEasy) {
   EXPECT_FALSE(IsEasy("a:link"));
   EXPECT_FALSE(IsEasy("::before"));
   EXPECT_FALSE(IsEasy("div::before"));
-  EXPECT_FALSE(IsEasy("* .a"));  // Due to the universal selector.
+  EXPECT_TRUE(IsEasy("* .a"));
+  EXPECT_TRUE(IsEasy(".a *"));
   EXPECT_TRUE(IsEasy("[attr]"));
   EXPECT_TRUE(IsEasy("[attr=\"foo\"]"));
-  EXPECT_FALSE(IsEasy("[attr=\"foo\" i]"));
+  EXPECT_TRUE(IsEasy("[attr=\"foo\" i]"));
   EXPECT_TRUE(IsEasy(":root"));       // Due to bucketing.
   EXPECT_TRUE(IsEasy(":any-link"));   // Due to bucketing.
   EXPECT_TRUE(IsEasy("a:any-link"));  // Due to bucketing.
   EXPECT_TRUE(IsEasy(".a .b"));
   EXPECT_TRUE(IsEasy(".a .b.c.d"));
-  EXPECT_FALSE(IsEasy(".a > .b"));
+  EXPECT_TRUE(IsEasy(".a > .b"));
+  EXPECT_TRUE(IsEasy(".a .b > .c"));
+  EXPECT_FALSE(IsEasy(".a > .b .c"));
   EXPECT_FALSE(IsEasy(".a ~ .b"));
   EXPECT_FALSE(IsEasy("&"));
   EXPECT_FALSE(IsEasy(":not(.a)"));
@@ -862,7 +910,7 @@ TEST_F(EasySelectorCheckerTest, SmokeTest) {
 class SelectorCheckerTest : public PageTestBase {};
 
 TEST_F(SelectorCheckerTest, PseudoScopeWithoutScope) {
-  GetDocument().body()->setInnerHTML("<div id=foo></div>");
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes("<div id=foo></div>");
   UpdateAllLifecyclePhasesForTest();
 
   CSSSelectorList* selector_list =
@@ -874,7 +922,7 @@ TEST_F(SelectorCheckerTest, PseudoScopeWithoutScope) {
   ASSERT_TRUE(foo);
 
   SelectorChecker checker(SelectorChecker::kResolvingStyle);
-  SelectorChecker::SelectorCheckingContext context(foo);
+  SelectorChecker::SelectorCheckingContext context{ElementResolveContext(*foo)};
   context.selector = selector_list->First();
   // We have a selector with :scope, but no context.scope:
   context.scope = nullptr;
@@ -883,52 +931,6 @@ TEST_F(SelectorCheckerTest, PseudoScopeWithoutScope) {
 
   // Don't crash.
   EXPECT_FALSE(checker.Match(context, result));
-}
-
-TEST_F(SelectorCheckerTest, PseudoTrue) {
-  GetDocument().body()->setInnerHTML("<div id=foo></div>");
-  UpdateAllLifecyclePhasesForTest();
-
-  CSSSelector selector;
-  selector.SetTrue();
-  selector.SetLastInComplexSelector(true);
-
-  Element* foo = GetDocument().getElementById(AtomicString("foo"));
-  ASSERT_TRUE(foo);
-
-  SelectorChecker checker(SelectorChecker::kResolvingStyle);
-  SelectorChecker::SelectorCheckingContext context(foo);
-  context.selector = &selector;
-
-  SelectorChecker::MatchResult result;
-  EXPECT_TRUE(checker.Match(context, result));
-}
-
-TEST_F(SelectorCheckerTest, PseudoTrueMatchesHost) {
-  GetDocument().body()->setInnerHTMLWithDeclarativeShadowDOMForTesting(R"HTML(
-    <div id=host>
-      <template shadowrootmode=open>
-      </template>
-    </div>
-  )HTML");
-  UpdateAllLifecyclePhasesForTest();
-
-  CSSSelector selector;
-  selector.SetTrue();
-  selector.SetLastInComplexSelector(true);
-
-  Element* host = GetElementById("host");
-  ASSERT_TRUE(host);
-  ShadowRoot* shadow = host->GetShadowRoot();
-  ASSERT_TRUE(shadow);
-
-  SelectorChecker checker(SelectorChecker::kResolvingStyle);
-  SelectorChecker::SelectorCheckingContext context(host);
-  context.selector = &selector;
-  context.scope = shadow;
-
-  SelectorChecker::MatchResult result;
-  EXPECT_TRUE(checker.Match(context, result));
 }
 
 }  // namespace blink

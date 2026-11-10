@@ -34,7 +34,6 @@
 #include "dawn/dawn_proc.h"
 #include "src/dawn/node/binding/Flags.h"
 #include "src/dawn/node/binding/GPU.h"
-#include "tint/tint.h"
 
 #ifdef DAWN_EMIT_COVERAGE
 extern "C" {
@@ -50,8 +49,7 @@ Napi::Value CreateGPU(const Napi::CallbackInfo& info) {
     const auto& env = info.Env();
 
     std::tuple<std::vector<std::string>> args;
-    auto res = wgpu::interop::FromJS(info, args);
-    if (res != wgpu::interop::Success) {
+    if (auto res = wgpu::interop::FromJS(info, args); !res) {
         Napi::Error::New(env, res.error).ThrowAsJavaScriptException();
         return env.Undefined();
     }

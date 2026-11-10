@@ -86,6 +86,14 @@ void BindFramebufferAttachment(const FunctionsGL *functions,
             const Texture *texture     = attachment->getTexture();
             const TextureGL *textureGL = GetImplAs<TextureGL>(texture);
 
+            if (features.reattachFboDepthStencilOnReallocation.enabled &&
+                (attachmentPoint == GL_DEPTH_ATTACHMENT ||
+                 attachmentPoint == GL_STENCIL_ATTACHMENT))
+            {
+                functions->framebufferTexture2D(GL_FRAMEBUFFER, attachmentPoint, GL_TEXTURE_2D, 0,
+                                                0);
+            }
+
             if (texture->getType() == TextureType::_2D ||
                 texture->getType() == TextureType::_2DMultisample ||
                 texture->getType() == TextureType::Rectangle ||
@@ -160,6 +168,14 @@ void BindFramebufferAttachment(const FunctionsGL *functions,
         {
             const Renderbuffer *renderbuffer     = attachment->getRenderbuffer();
             const RenderbufferGL *renderbufferGL = GetImplAs<RenderbufferGL>(renderbuffer);
+
+            if (features.reattachFboDepthStencilOnReallocation.enabled &&
+                (attachmentPoint == GL_DEPTH_ATTACHMENT ||
+                 attachmentPoint == GL_STENCIL_ATTACHMENT))
+            {
+                functions->framebufferRenderbuffer(GL_FRAMEBUFFER, attachmentPoint, GL_RENDERBUFFER,
+                                                   0);
+            }
 
             if (features.alwaysUnbindFramebufferTexture2D.enabled)
             {
@@ -250,18 +266,6 @@ bool RequiresMultiviewClear(const FramebufferState &state, bool scissorTestEnabl
     return false;
 }
 
-bool IsEmulatedAlphaChannelTextureAttachment(const FramebufferAttachment *attachment)
-{
-    if (!attachment || attachment->type() != GL_TEXTURE)
-    {
-        return false;
-    }
-
-    const Texture *texture     = attachment->getTexture();
-    const TextureGL *textureGL = GetImplAs<TextureGL>(texture);
-    return textureGL->hasEmulatedAlphaChannel(attachment->getTextureImageIndex());
-}
-
 class [[nodiscard]] ScopedEXTTextureNorm16ReadbackWorkaround
 {
   public:
@@ -295,9 +299,11 @@ class [[nodiscard]] ScopedEXTTextureNorm16ReadbackWorkaround
         ContextGL *contextGL              = GetImplAs<ContextGL>(context);
         const angle::FeaturesGL &features = GetFeaturesGL(context);
 
+        // This workaround does not work if the destination is a Pixel Buffer Object.
         enabled = features.readPixelsUsingImplementationColorReadFormatForNorm16.enabled &&
                   type == GL_UNSIGNED_SHORT && originalReadFormat == GL_RGBA &&
-                  (format == GL_RED || format == GL_RG);
+                  (format == GL_RED || format == GL_RG) &&
+                  context->getState().getTargetBuffer(gl::BufferBinding::PixelPack) == nullptr;
 
         clientPixels = pixels;
 
@@ -413,7 +419,39 @@ bool IsValidUnsignedShortReadPixelsFormat(GLenum readFormat, const gl::Context *
            ((readFormat == GL_DEPTH_COMPONENT) && (context->getExtensions().readDepthNV));
 }
 
+// Returns true for all colors except
+// - transparent/opaque black
+// - transparent/opaque white
+bool IsNonTrivialClearColor(const GLfloat *color)
+{
+    return !(((color[0] == 0.0f && color[1] == 0.0f && color[2] == 0.0f) ||
+              (color[0] == 1.0f && color[1] == 1.0f && color[2] == 1.0f)) &&
+             (color[3] == 0.0f || color[3] == 1.0f));
+}
+
+// Returns true for all colors except
+// - (0, 0, 0, 0 or 1)
+// - (1, 1, 1, 0 or 1)
+bool IsNonTrivialClearColor(const GLuint *color)
+{
+    return !(((color[0] == 0 && color[1] == 0 && color[2] == 0) ||
+              (color[0] == 1 && color[1] == 1 && color[2] == 1)) &&
+             (color[3] == 0 || color[3] == 1));
+}
+
 }  // namespace
+
+bool IsEmulatedAlphaChannelTextureAttachment(const gl::FramebufferAttachment *attachment)
+{
+    if (!attachment || attachment->type() != GL_TEXTURE)
+    {
+        return false;
+    }
+
+    const Texture *texture     = attachment->getTexture();
+    const TextureGL *textureGL = GetImplAs<TextureGL>(texture);
+    return textureGL->hasEmulatedAlphaChannel(attachment->getTextureImageIndex());
+}
 
 FramebufferGL::FramebufferGL(const gl::FramebufferState &data, GLuint id, bool emulatedAlpha)
     : FramebufferImpl(data),
@@ -532,6 +570,15 @@ angle::Result FramebufferGL::clear(const gl::Context *context, GLbitfield mask)
     }
 
     contextGL->markWorkSubmitted();
+
+    // Perform cheaper checks first, relying on short-circuiting
+    if ((mask & GL_COLOR_BUFFER_BIT) != 0 && mState.getEnabledDrawBuffers().hasGaps() &&
+        GetFeaturesGL(context).clearsWithGapsNeedFlush.enabled &&
+        IsNonTrivialClearColor(context->getState().getColorClearValue().data()))
+    {
+        return contextGL->flush(context);
+    }
+
     return angle::Result::Continue;
 }
 
@@ -561,6 +608,14 @@ angle::Result FramebufferGL::clearBufferfv(const gl::Context *context,
     }
 
     contextGL->markWorkSubmitted();
+
+    // Perform cheaper checks first, relying on short-circuiting
+    if (buffer == GL_COLOR && mState.getEnabledDrawBuffers().hasGaps() &&
+        GetFeaturesGL(context).clearsWithGapsNeedFlush.enabled && IsNonTrivialClearColor(values))
+    {
+        return contextGL->flush(context);
+    }
+
     return angle::Result::Continue;
 }
 
@@ -590,6 +645,14 @@ angle::Result FramebufferGL::clearBufferuiv(const gl::Context *context,
     }
 
     contextGL->markWorkSubmitted();
+
+    // Perform cheaper checks first, relying on short-circuiting
+    if (mState.getEnabledDrawBuffers().hasGaps() &&
+        GetFeaturesGL(context).clearsWithGapsNeedFlush.enabled && IsNonTrivialClearColor(values))
+    {
+        return contextGL->flush(context);
+    }
+
     return angle::Result::Continue;
 }
 
@@ -619,6 +682,15 @@ angle::Result FramebufferGL::clearBufferiv(const gl::Context *context,
     }
 
     contextGL->markWorkSubmitted();
+
+    // Perform cheaper checks first, relying on short-circuiting
+    if (buffer == GL_COLOR && mState.getEnabledDrawBuffers().hasGaps() &&
+        GetFeaturesGL(context).clearsWithGapsNeedFlush.enabled &&
+        IsNonTrivialClearColor(reinterpret_cast<const GLuint *>(values)))
+    {
+        return contextGL->flush(context);
+    }
+
     return angle::Result::Continue;
 }
 
@@ -1247,6 +1319,107 @@ gl::FramebufferStatus FramebufferGL::checkStatus(const gl::Context *context) con
     }
 
     return gl::FramebufferStatus::Complete();
+}
+
+angle::Result FramebufferGL::ensureAttachmentsInitialized(
+    const gl::Context *context,
+    const gl::DrawBufferMask &colorAttachments,
+    bool depth,
+    bool stencil)
+{
+    const gl::FramebufferState &state                  = getState();
+    const gl::FramebufferAttachment *depthAttachment   = state.getDepthAttachment();
+    const gl::FramebufferAttachment *stencilAttachment = state.getStencilAttachment();
+
+    const bool isPartialDepthStencilInit =
+        depthAttachment && stencilAttachment &&
+        depthAttachment->getResource() == stencilAttachment->getResource() && depth != stencil;
+
+    if (colorAttachments != state.getEnabledDrawBuffers() || isPartialDepthStencilInit)
+    {
+        // Fall back to the default implementation when there are gaps in the enabled draw buffers
+        // to avoid modifying the draw buffer state, or when we are performing a partial clear of a
+        // packed depth-stencil attachment.
+        return FramebufferImpl::ensureAttachmentsInitialized(context, colorAttachments, depth,
+                                                             stencil);
+    }
+
+    BlitGL *blitter = GetBlitGL(context);
+    return blitter->clearFramebuffer(context, colorAttachments, depth, stencil, this);
+}
+
+angle::Result FramebufferGL::recreateFbo(const gl::Context *context)
+{
+    const FunctionsGL *functions = GetFunctionsGL(context);
+    StateManagerGL *stateManager = GetStateManagerGL(context);
+
+    stateManager->deleteFramebuffer(mFramebufferID);
+    mFramebufferID = 0;
+    functions->genFramebuffers(1, &mFramebufferID);
+    stateManager->bindFramebuffer(GL_FRAMEBUFFER, mFramebufferID);
+
+    const gl::FramebufferState &state = getState();
+    size_t numColorAttachments        = state.getColorAttachments().size();
+    gl::Framebuffer::DirtyBits dirtyBits;
+
+    // Setting dirty bits that require entry points from later context
+    // versions will crash, as syncState dereferences null function
+    // pointers.
+    for (size_t i = 0; i < numColorAttachments; ++i)
+    {
+        dirtyBits.set(Framebuffer::DIRTY_BIT_COLOR_ATTACHMENT_0 + i);
+    }
+    if (state.getDepthAttachment())
+    {
+        dirtyBits.set(Framebuffer::DIRTY_BIT_DEPTH_ATTACHMENT);
+    }
+    if (state.getStencilAttachment())
+    {
+        dirtyBits.set(Framebuffer::DIRTY_BIT_STENCIL_ATTACHMENT);
+    }
+    const DrawBuffersVector<GLenum> &drawBufferStates = state.getDrawBufferStates();
+    if (drawBufferStates[0] != GL_COLOR_ATTACHMENT0 ||
+        std::find_if_not(drawBufferStates.begin() + 1, drawBufferStates.end(),
+                         [](const GLenum &current) { return current == GL_NONE; }) !=
+            drawBufferStates.end())
+    {
+        dirtyBits.set(Framebuffer::DIRTY_BIT_DRAW_BUFFERS);
+    }
+    if (state.getReadBufferState() != GL_COLOR_ATTACHMENT0)
+    {
+        dirtyBits.set(Framebuffer::DIRTY_BIT_READ_BUFFER);
+    }
+    if (state.getDefaultWidth() != 0)
+    {
+        dirtyBits.set(Framebuffer::DIRTY_BIT_DEFAULT_WIDTH);
+    }
+    if (state.getDefaultHeight() != 0)
+    {
+        dirtyBits.set(Framebuffer::DIRTY_BIT_DEFAULT_HEIGHT);
+    }
+    if (state.getDefaultSamples() != 0)
+    {
+        dirtyBits.set(Framebuffer::DIRTY_BIT_DEFAULT_SAMPLES);
+    }
+    if (state.getDefaultFixedSampleLocations() != 0)
+    {
+        dirtyBits.set(Framebuffer::DIRTY_BIT_DEFAULT_FIXED_SAMPLE_LOCATIONS);
+    }
+    if (state.getDefaultLayers() != 0)
+    {
+        dirtyBits.set(Framebuffer::DIRTY_BIT_DEFAULT_LAYERS);
+    }
+    if (state.getWriteControlMode() != SrgbWriteControlMode::Default)
+    {
+        dirtyBits.set(Framebuffer::DIRTY_BIT_FRAMEBUFFER_SRGB_WRITE_CONTROL_MODE);
+    }
+    if (state.getFlipY() != GL_FALSE)
+    {
+        dirtyBits.set(Framebuffer::DIRTY_BIT_FLIP_Y);
+    }
+
+    // Leave other bits like DIRTY_BIT_FOVEATION alone.
+    return syncState(context, GL_FRAMEBUFFER, dirtyBits, gl::Command::Other);
 }
 
 angle::Result FramebufferGL::syncState(const gl::Context *context,

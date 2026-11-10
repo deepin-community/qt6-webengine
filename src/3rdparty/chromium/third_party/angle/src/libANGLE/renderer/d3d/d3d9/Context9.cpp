@@ -37,14 +37,17 @@ Context9::Context9(const gl::State &state, gl::ErrorSet *errorSet, Renderer9 *re
 
 Context9::~Context9() {}
 
-angle::Result Context9::initialize()
+angle::Result Context9::initialize(const angle::ImageLoadContext &imageLoadContext)
 {
+    mImageLoadContext = imageLoadContext;
     return angle::Result::Continue;
 }
 
 void Context9::onDestroy(const gl::Context *context)
 {
     mIncompleteTextures.onDestroy(context);
+
+    mImageLoadContext = {};
 }
 
 CompilerImpl *Context9::createCompiler()
@@ -100,9 +103,10 @@ BufferImpl *Context9::createBuffer(const gl::BufferState &state)
     return new Buffer9(state, mRenderer);
 }
 
-VertexArrayImpl *Context9::createVertexArray(const gl::VertexArrayState &data)
+VertexArrayImpl *Context9::createVertexArray(const gl::VertexArrayState &data,
+                                             const gl::VertexArrayBuffers &vertexArrayBuffers)
 {
-    return new VertexArray9(data);
+    return new VertexArray9(data, vertexArrayBuffers);
 }
 
 QueryImpl *Context9::createQuery(gl::QueryType type)
@@ -115,7 +119,7 @@ FenceNVImpl *Context9::createFenceNV()
     return new FenceNV9(mRenderer);
 }
 
-SyncImpl *Context9::createSync()
+SyncImpl *Context9::createSync(const gl::Context *)
 {
     // D3D9 doesn't support ES 3.0 and its sync objects.
     UNREACHABLE();
@@ -535,10 +539,5 @@ void Context9::handleResult(HRESULT hr,
     errorStream << "Internal D3D9 error: " << gl::FmtHR(hr) << ": " << message;
 
     mErrors->handleError(glErrorCode, errorStream.str().c_str(), file, function, line);
-}
-
-angle::ImageLoadContext Context9::getImageLoadContext() const
-{
-    return getRenderer()->getDisplay()->getImageLoadContext();
 }
 }  // namespace rx

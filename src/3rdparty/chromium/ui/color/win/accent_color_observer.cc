@@ -37,7 +37,7 @@ base::CallbackListSubscription AccentColorObserver::Subscribe(
 }
 
 void AccentColorObserver::SetAccentColorForTesting(
-    absl::optional<SkColor> accent_color) {
+    std::optional<SkColor> accent_color) {
   accent_color_ = accent_color;
   callbacks_.Notify();
 }
@@ -49,7 +49,7 @@ void AccentColorObserver::SetUseDwmFrameColorForTesting(
 }
 
 void AccentColorObserver::OnDwmKeyUpdated() {
-  accent_border_color_ = absl::nullopt;
+  accent_border_color_ = std::nullopt;
   DWORD colorization_color, colorization_color_balance;
   if ((dwm_key_->ReadValueDW(L"ColorizationColor", &colorization_color) ==
        ERROR_SUCCESS) &&
@@ -64,8 +64,9 @@ void AccentColorObserver::OnDwmKeyUpdated() {
     // is a solid color or was just changed to a slideshow. It's unclear what
     // that value's supposed to mean, so change it to 80 to match Edge's
     // behavior.
-    if (colorization_color_balance > 100)
+    if (colorization_color_balance > 100) {
       colorization_color_balance = 80;
+    }
 
     // colorization_color's high byte is not an alpha value, so replace it
     // with 0xff to make an opaque ARGB color.
@@ -76,8 +77,8 @@ void AccentColorObserver::OnDwmKeyUpdated() {
                                 colorization_color_balance / 100.0f);
   }
 
-  accent_color_ = absl::nullopt;
-  accent_color_inactive_ = absl::nullopt;
+  accent_color_ = std::nullopt;
+  accent_color_inactive_ = std::nullopt;
   DWORD accent_color = 0;
   if (dwm_key_->ReadValueDW(L"AccentColor", &accent_color) == ERROR_SUCCESS) {
     accent_color_ = skia::COLORREFToSkColor(accent_color);

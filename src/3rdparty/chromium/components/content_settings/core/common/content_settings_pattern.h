@@ -9,9 +9,9 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "base/gtest_prod_util.h"
-#include "base/strings/string_piece.h"
 #include "mojo/public/cpp/bindings/struct_traits.h"
 
 class GURL;
@@ -52,6 +52,10 @@ class ContentSettingsPattern {
   // - PREDECESSOR:
   //   Pattern A and B have an intersection. But pattern A has a higher
   //   precedence than pattern B for URLs that are matched by both pattern.
+  //
+  //  See the url below for more details about pattern precedence.
+  //  https://developer.chrome.com/docs/extensions/reference/api/contentSettings#content_setting_patterns
+  //
   enum Relation {
     DISJOINT_ORDER_POST = -2,
     SUCCESSOR = -1,
@@ -76,8 +80,30 @@ class ContentSettingsPattern {
     SCHEME_CHROME,
     SCHEME_CHROMEUNTRUSTED,
     SCHEME_DEVTOOLS,
+    SCHEME_ISOLATEDAPP,
     SCHEME_MAX,
   };
+
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  //
+  // LINT.IfChange(Scope)
+  enum class Scope {
+    kOriginScoped = 0,                        // https://example.com:443
+    kWithDomainWildcard = 1,                  // https://[*.]example.com:443
+    kWithPortWildcard = 2,                    // https://example.com
+    kWithSchemeWildcard = 3,                  // example.com:443
+    kWithSchemeAndPortWildcard = 4,           // example.com
+    kWithDomainAndPortWildcard = 5,           // https://[*.]example.com
+    kWithDomainAndSchemeWildcard = 6,         // [*.]example.com:443
+    kWithDomainAndSchemeAndPortWildcard = 7,  // [*.]example.com
+    kFullWildcard = 8,                        // * (default values)
+    kFilePath = 9,                            // file:///tmp/index.html
+    kCustomScope = 10,                        // everything else: https://*,
+                                              // *:443 etc.
+    kMaxValue = kCustomScope
+  };
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/privacy/enums.xml:ContentSettingPatternScope)
 
   struct PatternParts {
     PatternParts();
@@ -163,7 +189,8 @@ class ContentSettingsPattern {
   // all subdomains and ports.
   static ContentSettingsPattern FromURL(const GURL& url);
 
-  // Returns a pattern that matches exactly this URL.
+  // Returns a pattern that matches exactly this URL. (Paths are ignored for
+  // non-"file://" URLs.)
   static ContentSettingsPattern FromURLNoWildcard(const GURL& url);
 
   // Converts a given url to a ContentSettingsPattern that represents a site,
@@ -179,7 +206,7 @@ class ContentSettingsPattern {
   //   - file://path (The path has to be an absolute path and start with a '/')
   //   - a.b.c.d (matches an exact IPv4 ip)
   //   - [a:b:c:d:e:f:g:h] (matches an exact IPv6 ip)
-  static ContentSettingsPattern FromString(base::StringPiece pattern_spec);
+  static ContentSettingsPattern FromString(std::string_view pattern_spec);
 
   // Sets schemes that do not support domain wildcards and ports.
   // Needs to be called by the embedder before using ContentSettingsPattern.
@@ -193,7 +220,7 @@ class ContentSettingsPattern {
                                                  size_t count);
 
   // Compares |scheme| against the schemes set by the embedder.
-  static bool IsNonWildcardDomainNonPortScheme(base::StringPiece scheme);
+  static bool IsNonWildcardDomainNonPortScheme(std::string_view scheme);
 
   // Convert pattern to domain wildcard pattern. If fail to extract domain from
   // the pattern, return an invalid pattern.
@@ -204,11 +231,13 @@ class ContentSettingsPattern {
   static ContentSettingsPattern ToHostOnlyPattern(
       const ContentSettingsPattern& pattern);
 
-  // Expose an comparator to sort domains by precedence. Highest precedence
-  // first.
+  // Expose a comparator to sort domains by precedence. Highest precedence
+  // first. Returns true if |domain_a| has a higher precedence than |domain_b|.
+  // If there is no difference in precedence, then the domains are compared
+  // alphabetically.
   struct CompareDomains {
-    bool operator()(const std::string_view& domain_a,
-                    const std::string_view& domain_b) const;
+    using is_transparent = void;
+    bool operator()(std::string_view domain_a, std::string_view domain_b) const;
   };
 
   // Constructs an empty pattern. Empty patterns are invalid patterns. Invalid
@@ -245,21 +274,22 @@ class ContentSettingsPattern {
   // Returns the host of a pattern.
   const std::string& GetHost() const;
 
+  // Returns the scope of the pattern (based on the wildcards in the pattern).
+  Scope GetScope() const;
+
   // Compares the pattern with a given |other| pattern and returns the
   // |Relation| of the two patterns.
   Relation Compare(const ContentSettingsPattern& other) const;
 
-  // Returns true if the pattern and the |other| pattern are identical.
-  bool operator==(const ContentSettingsPattern& other) const;
+  friend bool operator==(const ContentSettingsPattern& a,
+                         const ContentSettingsPattern& b) {
+    return a.Compare(b) == IDENTITY;
+  }
 
-  // Returns true if the pattern and the |other| pattern are not identical.
-  bool operator!=(const ContentSettingsPattern& other) const;
-
-  // Returns true if the pattern has a lower priority than the |other| pattern.
-  bool operator<(const ContentSettingsPattern& other) const;
-
-  // Returns true if the pattern has a higher priority than the |other| pattern.
-  bool operator>(const ContentSettingsPattern& other) const;
+  friend auto operator<=>(const ContentSettingsPattern& a,
+                          const ContentSettingsPattern& b) {
+    return a.Compare(b) <=> IDENTITY;
+  }
 
   // Formatter method for Google Test
   friend void PrintTo(const ContentSettingsPattern& pattern, std::ostream* os) {

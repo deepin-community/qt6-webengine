@@ -88,6 +88,7 @@ TOutputGLSLBase::TOutputGLSLBase(TCompiler *compiler,
       mObjSink(objSink),
       mDeclaringVariable(false),
       mHashFunction(compiler->getHashFunction()),
+      mUserVariablePrefix(compiler->getUserVariableNamePrefix()),
       mNameMap(compiler->getNameMap()),
       mShaderType(compiler->getShaderType()),
       mShaderVersion(compiler->getShaderVersion()),
@@ -1151,17 +1152,17 @@ ImmutableString TOutputGLSLBase::getTypeName(const TType &type)
 {
     if (type.getBasicType() == EbtSamplerVideoWEBGL)
     {
-        // TODO(http://anglebug.com/3889): translate SamplerVideoWEBGL into different token
+        // TODO(http://anglebug.com/42262534): translate SamplerVideoWEBGL into different token
         // when necessary (e.g. on Android devices)
         return ImmutableString("sampler2D");
     }
 
-    return GetTypeName(type, mHashFunction, &mNameMap);
+    return GetTypeName(type, mUserVariablePrefix, mHashFunction, &mNameMap);
 }
 
 ImmutableString TOutputGLSLBase::hashName(const TSymbol *symbol)
 {
-    return HashName(symbol, mHashFunction, &mNameMap);
+    return HashName(symbol, mUserVariablePrefix, mHashFunction, &mNameMap);
 }
 
 ImmutableString TOutputGLSLBase::hashFieldName(const TField *field)
@@ -1169,7 +1170,7 @@ ImmutableString TOutputGLSLBase::hashFieldName(const TField *field)
     ASSERT(field->symbolType() != SymbolType::Empty);
     if (field->symbolType() == SymbolType::UserDefined)
     {
-        return HashName(field->name(), mHashFunction, &mNameMap);
+        return HashName(field->name(), mUserVariablePrefix, mHashFunction, &mNameMap);
     }
 
     return field->name();
@@ -1440,6 +1441,37 @@ void WriteTessEvaluationShaderLayoutQualifiers(TInfoSinkBase &out,
             out << ", " << getTessEvaluationShaderTypeString(inputPoint);
         }
         out << ") in;\n";
+    }
+}
+
+void WriteFragmentShaderLayoutQualifiers(TInfoSinkBase &out,
+                                         const AdvancedBlendEquations &advancedBlendEquations)
+{
+    if (advancedBlendEquations.any())
+    {
+        out << "layout (";
+
+        const char *delimiter = "";
+        auto emitQualifer     = [&](const char *qualifier) {
+            out << delimiter << qualifier;
+            delimiter = ", ";
+        };
+
+        if (advancedBlendEquations.all())
+        {
+            emitQualifer(AdvancedBlendEquations::GetAllEquationsLayoutString());
+        }
+        else
+        {
+            for (gl::BlendEquationType blendEquation :
+                 gl::BlendEquationBitSet(advancedBlendEquations.bits()))
+            {
+                emitQualifer(
+                    AdvancedBlendEquations::GetLayoutString(static_cast<uint32_t>(blendEquation)));
+            }
+        }
+
+        out << ") out;\n";
     }
 }
 

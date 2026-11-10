@@ -20,7 +20,6 @@ class ScopedOleInitializer;
 namespace content {
 
 class BrowserMainLoop;
-class NotificationServiceImpl;
 
 class BrowserMainRunnerImpl : public BrowserMainRunner {
  public:
@@ -54,9 +53,8 @@ class BrowserMainRunnerImpl : public BrowserMainRunner {
   std::unique_ptr<base::ThreadPoolInstance::ScopedExecutionFence>
       scoped_execution_fence_;
 
-  std::unique_ptr<NotificationServiceImpl> notification_service_;
   std::unique_ptr<BrowserMainLoop> main_loop_;
-#if BUILDFLAG(IS_WIN) && !defined(TOOLKIT_QT)
+#if BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_QTWEBENGINE)
   std::unique_ptr<ui::ScopedOleInitializer> ole_initializer_;
 #endif
 };

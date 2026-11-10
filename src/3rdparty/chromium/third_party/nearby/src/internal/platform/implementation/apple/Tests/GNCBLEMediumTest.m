@@ -18,11 +18,14 @@
 #import <Foundation/Foundation.h>
 #import <XCTest/XCTest.h>
 
+#import "internal/platform/implementation/apple/Mediums/BLEv2/GNCBLEGATTClient.h"
 #import "internal/platform/implementation/apple/Mediums/BLEv2/GNCBLEGATTServer.h"
 #import "internal/platform/implementation/apple/Mediums/BLEv2/GNCPeripheral.h"
+#import "internal/platform/implementation/apple/Tests/GNCBLEL2CAPClient+Testing.h"
 #import "internal/platform/implementation/apple/Tests/GNCBLEMedium+Testing.h"
 #import "internal/platform/implementation/apple/Tests/GNCFakeCentralManager.h"
 #import "internal/platform/implementation/apple/Tests/GNCFakePeripheral.h"
+#import "internal/platform/implementation/apple/Tests/GNCFakePeripheralManager.h"
 
 static NSString *const kServiceUUID = @"0000FEF3-0000-1000-8000-00805F9B34FB";
 
@@ -272,6 +275,57 @@ static NSString *const kServiceUUID = @"0000FEF3-0000-1000-8000-00805F9B34FB";
   [self waitForExpectations:@[ expectation ] timeout:3];
 }
 
+#pragma mark - Open L2CAP Channel
+
+- (void)testOpenL2CAPServerSocket {
+  GNCFakeCentralManager *fakeCentralManager = [[GNCFakeCentralManager alloc] init];
+  GNCFakePeripheralManager *fakePeripheralManager = [[GNCFakePeripheralManager alloc] init];
+  GNCBLEMedium *medium = [[GNCBLEMedium alloc] initWithCentralManager:fakeCentralManager queue:nil];
+  XCTestExpectation *psmPublishedexpectation =
+      [[XCTestExpectation alloc] initWithDescription:@"PSM published."];
+  XCTestExpectation *channelOpenedexpectation =
+      [[XCTestExpectation alloc] initWithDescription:@"Channel opened."];
+
+  [fakePeripheralManager simulatePeripheralManagerDidUpdateState:CBManagerStatePoweredOn];
+
+  // Open L2CAP server is fully covered with @c GNCBLEL2CAPServer tests.
+  [medium
+      openL2CAPServerWithPSMPublishedCompletionHandler:^(uint16_t PSM, NSError *error) {
+        XCTAssertEqual(PSM, fakePeripheralManager.PSM);
+        XCTAssertNil(error);
+        [psmPublishedexpectation fulfill];
+      }
+      channelOpenedCompletionHandler:^(GNCBLEL2CAPStream *stream, NSError *error) {
+        XCTAssertNil(error);
+        [channelOpenedexpectation fulfill];
+      }
+      peripheralManager:fakePeripheralManager];
+
+  [self waitForExpectations:@[ psmPublishedexpectation ] timeout:0.1];
+  [self waitForExpectations:@[ channelOpenedexpectation ] timeout:0.5];
+}
+
+- (void)testSuccessfulOpenL2CAPChannel {
+  GNCFakeCentralManager *fakeCentralManager = [[GNCFakeCentralManager alloc] init];
+  GNCBLEMedium *medium = [[GNCBLEMedium alloc] initWithCentralManager:fakeCentralManager queue:nil];
+  XCTestExpectation *expectation =
+      [[XCTestExpectation alloc] initWithDescription:@"Open L2CAP channel."];
+
+  GNCFakePeripheral *fakePeripheral = [[GNCFakePeripheral alloc] init];
+  GNCBLEL2CAPClient *l2capClient =
+      [[GNCBLEL2CAPClient alloc] initWithQueue:nil
+                   requestDisconnectionHandler:^(id<GNCPeripheral> _Nonnull peripheral){
+                   }];
+  [medium setL2CAPClient:l2capClient];
+  [medium openL2CAPChannelWithPSM:123
+                       peripheral:fakePeripheral
+                completionHandler:^(GNCBLEL2CAPStream *_Nullable stream, NSError *_Nullable error) {
+                  [expectation fulfill];
+                }];
+
+  [self waitForExpectations:@[ expectation ] timeout:3];
+}
+
 #pragma mark - Connect
 
 - (void)testSuccessfulConnect {
@@ -313,8 +367,6 @@ static NSString *const kServiceUUID = @"0000FEF3-0000-1000-8000-00805F9B34FB";
 - (void)testDisconnect {
   GNCFakeCentralManager *fakeCentralManager = [[GNCFakeCentralManager alloc] init];
   GNCBLEMedium *medium = [[GNCBLEMedium alloc] initWithCentralManager:fakeCentralManager queue:nil];
-  XCTestExpectation *connectExpectation =
-      [[XCTestExpectation alloc] initWithDescription:@"Connect."];
   XCTestExpectation *disconnectExpectation =
       [[XCTestExpectation alloc] initWithDescription:@"Disconnect."];
 
@@ -327,12 +379,8 @@ static NSString *const kServiceUUID = @"0000FEF3-0000-1000-8000-00805F9B34FB";
       completionHandler:^(GNCBLEGATTClient *client, NSError *error) {
         XCTAssertNotNil(client);
         XCTAssertNil(error);
-        [connectExpectation fulfill];
+        [client disconnect];
       }];
-
-  [self waitForExpectations:@[ connectExpectation ] timeout:3];
-
-  [fakeCentralManager simulateCentralManagerDidDisconnectPeripheral:peripheral];
 
   [self waitForExpectations:@[ disconnectExpectation ] timeout:3];
 }

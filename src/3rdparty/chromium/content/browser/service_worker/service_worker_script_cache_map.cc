@@ -53,7 +53,7 @@ void ServiceWorkerScriptCacheMap::NotifyStartedCaching(const GURL& url,
   }
   resource_map_[url] = storage::mojom::ServiceWorkerResourceRecord::New(
       resource_id, url, -1, /*sha256_checksum=*/"");
-  context_->registry()->StoreUncommittedResourceId(resource_id, owner_->key());
+  context_->registry().StoreUncommittedResourceId(resource_id, owner_->key());
 }
 
 void ServiceWorkerScriptCacheMap::NotifyFinishedCaching(
@@ -72,7 +72,7 @@ void ServiceWorkerScriptCacheMap::NotifyFinishedCaching(
     return;  // Our storage has been wiped via DeleteAndStartOver.
 
   if (net_error != net::OK) {
-    context_->registry()->DoomUncommittedResource(LookupResourceId(url));
+    context_->registry().DoomUncommittedResource(LookupResourceId(url));
     resource_map_.erase(url);
     if (owner_->script_url() == url) {
       main_script_net_error_ = net_error;
@@ -171,7 +171,7 @@ void ServiceWorkerScriptCacheMap::OnMetadataWritten(
 void ServiceWorkerScriptCacheMap::RunCallback(uint64_t callback_id,
                                               int result) {
   auto it = callbacks_.find(callback_id);
-  DCHECK(it != callbacks_.end());
+  CHECK(it != callbacks_.end());
   std::move(it->second).Run(result);
   callbacks_.erase(it);
 }

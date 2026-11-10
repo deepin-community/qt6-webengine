@@ -19,12 +19,16 @@
 #include "include/core/SkString.h"
 #include "include/core/SkTypes.h"
 #include "include/effects/SkDashPathEffect.h"
-#include "include/private/base/SkFloatBits.h"
 #include "include/utils/SkParsePath.h"
+#include "src/base/SkFloatBits.h"
 #include "src/base/SkRandom.h"
 #include "tools/ToolUtils.h"
 
 #include <string.h>
+
+#if defined(SK_GRAPHITE)
+#include "include/gpu/graphite/ContextOptions.h"
+#endif
 
 #define W   400
 #define H   400
@@ -57,6 +61,13 @@ protected:
     SkString getName() const override { return SkString("strokes_round"); }
 
     SkISize getISize() override { return SkISize::Make(W, H * 2); }
+
+#if defined(SK_GRAPHITE)
+    void modifyGraphiteContextOptions(skgpu::graphite::ContextOptions* options) const override {
+        options->fMaxPathAtlasTextureSize = 0;
+        options->fAllowMultipleAtlasTextures = false;
+    }
+#endif
 
     void onDraw(SkCanvas* canvas) override {
         SkPaint paint;
@@ -134,9 +145,8 @@ protected:
             canvas->drawPath(fMoveZfPath, strokePaint);
             dashPaint = strokePaint;
             const SkScalar intervals[] = { 0, 10 };
-            dashPaint.setPathEffect(SkDashPathEffect::Make(intervals, 2, 0));
-            SkPath fillPath;
-            skpathutils::FillPathWithPaint(fDashedfPath, dashPaint, &fillPath);
+            dashPaint.setPathEffect(SkDashPathEffect::Make(intervals, 0));
+            (void)skpathutils::FillPathWithPaint(fDashedfPath, dashPaint);
             canvas->translate(0, 20);
             canvas->drawPath(fDashedfPath, dashPaint);
             canvas->translate(0, 20);
@@ -402,8 +412,7 @@ protected:
                 strokePaint.setStrokeWidth(SK_Scalar1 * j * j);
                 canvas->drawPath(orig, strokePaint);
                 canvas->drawPath(orig, origPaint);
-                SkPath fill;
-                skpathutils::FillPathWithPaint(orig, strokePaint, &fill);
+                SkPath fill = skpathutils::FillPathWithPaint(orig, strokePaint);
                 canvas->drawPath(fill, fillPaint);
                 canvas->translate(dx + strokePaint.getStrokeWidth(), 0);
             }
@@ -438,7 +447,7 @@ private:
     using INHERITED = skiagm::GM;
 };
 
-// Test stroking for curves that produce degenerate tangents when t is 0 or 1 (see bug 4191)
+// Test stroking for curves that produce degenerate tangents when t is 0 or 1 (skbug.com/40035337)
 class Strokes5GM : public skiagm::GM {
 public:
     Strokes5GM() {}
@@ -509,7 +518,7 @@ DEF_SIMPLE_GM(zerolinedash, canvas, 256, 256) {
     paint.setStrokeJoin(SkPaint::kBevel_Join);
 
     SkScalar dash_pattern[] = {1, 5};
-    paint.setPathEffect(SkDashPathEffect::Make(dash_pattern, 2, 0));
+    paint.setPathEffect(SkDashPathEffect::Make(dash_pattern, 0));
 
     canvas->drawLine(100, 100, 100, 100, paint);
 }
@@ -546,7 +555,7 @@ DEF_SIMPLE_GM(longrect_dash, canvas, 250, 250) {
 
 DEF_SIMPLE_GM(inner_join_geometry, canvas, 1000, 700) {
     // These paths trigger cases where we must add inner join geometry.
-    // skbug.com/11964
+    // skbug.com/40043052
     const SkPoint pathPoints[] = {
         /*moveTo*/  /*lineTo*/  /*lineTo*/
         {119,  71}, {129, 151}, {230,  24},
@@ -572,11 +581,10 @@ DEF_SIMPLE_GM(inner_join_geometry, canvas, 1000, 700) {
 
     canvas->translate(0, 50);
     for (size_t i = 0; i < std::size(pathPoints) / 3; i++) {
-        auto path = SkPath::Polygon(pathPoints + i * 3, 3, false);
+        auto path = SkPath::Polygon({pathPoints + i * 3, 3}, false);
         canvas->drawPath(path, pathPaint);
 
-        SkPath fillPath;
-        skpathutils::FillPathWithPaint(path, pathPaint, &fillPath);
+        SkPath fillPath = skpathutils::FillPathWithPaint(path, pathPaint);
         canvas->drawPath(fillPath, skeletonPaint);
 
         canvas->translate(200, 0);
@@ -610,4 +618,33 @@ DEF_SIMPLE_GM(skbug12244, canvas, 150, 150) {
 
     canvas->translate(20.f, 20.f);
     canvas->drawPath(path, p);
+}
+
+DEF_SIMPLE_GM(b_340982297, canvas, 80, 50) {
+    SkPaint paint;
+    paint.setAntiAlias(true);
+
+    SkPath path;
+    path.moveTo(30.23983f, 48.5674667f);
+    path.lineTo(1.30884242f, 45.5222702f);
+    path.lineTo(2.97688866f, 29.6749554f);
+    path.lineTo(17.4423828f, 31.1975555f);
+    path.lineTo(2.94269657f, 30.0452003f);
+    path.lineTo(4.38597536f, 11.8849154f);
+    path.lineTo(33.3853493f, 14.1896257f);
+    path.close();
+
+    canvas->drawPath(path, paint);
+
+    path.reset();
+    path.moveTo(73.3853455f, 4.18963623f);
+    path.lineTo(69.995636f, 39.1360626f);
+    path.lineTo(42.83145142f, 21.056778f);
+    path.lineTo(42.97689819f, 19.6749573f);
+    path.lineTo(57.4423828f, 21.1975555f);
+    path.lineTo(42.94268799f, 20.0451965f);
+    path.lineTo(44.38595581f, 1.88491821f);
+    path.close();
+
+    canvas->drawPath(path, paint);
 }

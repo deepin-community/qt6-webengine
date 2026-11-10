@@ -4,7 +4,10 @@
 
 #include "content/browser/devtools/protocol/target_handler.h"
 
+#include <algorithm>
 #include <memory>
+#include <optional>
+#include <string_view>
 
 #include "base/base64.h"
 #include "base/containers/contains.h"
@@ -14,15 +17,15 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/memory/ptr_util.h"
-#include "base/ranges/algorithm.h"
+#include "base/memory/raw_ptr.h"
 #include "base/strings/stringprintf.h"
 #include "base/unguessable_token.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "content/browser/devtools/browser_devtools_agent_host.h"
 #include "content/browser/devtools/devtools_agent_host_impl.h"
 #include "content/browser/devtools/devtools_manager.h"
+#include "content/browser/devtools/protocol/browser_handler.h"
 #include "content/browser/devtools/protocol/target_auto_attacher.h"
 #include "content/browser/devtools/render_frame_devtools_agent_host.h"
 #include "content/browser/devtools/web_contents_devtools_agent_host.h"
@@ -33,6 +36,7 @@
 #include "content/public/browser/cors_origin_pattern_setter.h"
 #include "content/public/browser/devtools_agent_host_client.h"
 #include "content/public/browser/navigation_throttle.h"
+#include "content/public/common/url_constants.h"
 #include "url/url_constants.h"
 
 namespace content::protocol {
@@ -100,15 +104,19 @@ std::unique_ptr<Target::TargetInfo> BuildTargetInfo(
           .SetAttached(host->IsAttached())
           .SetCanAccessOpener(host->CanAccessOpener())
           .Build();
-  if (!host->GetOpenerId().empty())
+  if (!host->GetOpenerId().empty()) {
     target_info->SetOpenerId(host->GetOpenerId());
-  if (!host->GetOpenerFrameId().empty())
+  }
+  if (!host->GetOpenerFrameId().empty()) {
     target_info->SetOpenerFrameId(host->GetOpenerFrameId());
-  if (host->GetBrowserContext())
+  }
+  if (host->GetBrowserContext()) {
     target_info->SetBrowserContextId(host->GetBrowserContext()->UniqueId());
+  }
   std::string subtype = host->GetSubtype();
-  if (!subtype.empty())
+  if (!subtype.empty()) {
     target_info->SetSubtype(subtype);
+  }
   return target_info;
 }
 
@@ -149,18 +157,29 @@ static std::string TerminationStatusToString(base::TerminationStatus status) {
       break;
   }
   NOTREACHED() << "Unknown Termination Status.";
-  return "unknown";
 }
 
 class BrowserToPageConnector;
+
+// Contains permissions for the instances of BrowserConnectorHostClient.
+// Currently, only permissions for
+// DevToolsAgentHostClient::AllowUnsafeOperations are implemented.
+struct BrowserConnectorHostClientPermissions {
+  // Defines what DevToolsAgentHostClient::AllowUnsafeOperations
+  // returns for BrowserConnectorHostClient instances. See
+  // DevToolsAgentHostClient::AllowUnsafeOperations for more details.
+  bool allow_unsafe_operations = false;
+};
 
 class BrowserToPageConnector {
  public:
   class BrowserConnectorHostClient : public DevToolsAgentHostClient {
    public:
-    BrowserConnectorHostClient(BrowserToPageConnector* connector,
-                               DevToolsAgentHost* host)
-        : connector_(connector) {
+    BrowserConnectorHostClient(
+        BrowserToPageConnector* connector,
+        DevToolsAgentHost* host,
+        const BrowserConnectorHostClientPermissions& permissions)
+        : connector_(connector), permissions_(permissions) {
       // TODO(dgozman): handle return value of AttachClient.
       host->AttachClient(this);
     }
@@ -177,18 +196,28 @@ class BrowserToPageConnector {
       connector_->AgentHostClosed(agent_host);
     }
 
+    bool AllowUnsafeOperations() override {
+      return permissions_.allow_unsafe_operations;
+    }
+
    private:
-    BrowserToPageConnector* connector_;
+    raw_ptr<BrowserToPageConnector> connector_;
+    BrowserConnectorHostClientPermissions permissions_;
   };
 
-  BrowserToPageConnector(const std::string& binding_name,
-                         DevToolsAgentHost* page_host)
-      : binding_name_(binding_name), page_host_(page_host) {
+  BrowserToPageConnector(
+      const std::string& binding_name,
+      DevToolsAgentHost* page_host,
+      BrowserConnectorHostClientPermissions permissions,
+      std::unique_ptr<Target::Backend::ExposeDevToolsProtocolCallback> callback)
+      : binding_name_(binding_name),
+        page_host_(page_host),
+        pending_callback_(std::move(callback)) {
     browser_host_ = BrowserDevToolsAgentHost::CreateForDiscovery();
-    browser_host_client_ =
-        std::make_unique<BrowserConnectorHostClient>(this, browser_host_.get());
-    page_host_client_ =
-        std::make_unique<BrowserConnectorHostClient>(this, page_host_.get());
+    browser_host_client_ = std::make_unique<BrowserConnectorHostClient>(
+        this, browser_host_.get(), permissions);
+    page_host_client_ = std::make_unique<BrowserConnectorHostClient>(
+        this, page_host_.get(), BrowserConnectorHostClientPermissions());
 
     SendProtocolMessageToPage("Page.enable", base::Value());
     SendProtocolMessageToPage("Runtime.enable", base::Value());
@@ -208,8 +237,8 @@ class BrowserToPageConnector {
 
     base::Value::Dict evaluate_params;
     evaluate_params.Set("expression", initializer_script);
-    SendProtocolMessageToPage("Runtime.evaluate",
-                              base::Value(std::move(evaluate_params)));
+    pending_request_id_ = SendProtocolMessageToPage(
+        "Runtime.evaluate", base::Value(std::move(evaluate_params)));
     GetInstanceMap()[page_host_.get()].reset(this);
   }
 
@@ -225,36 +254,46 @@ class BrowserToPageConnector {
   }
 
  private:
-  void SendProtocolMessageToPage(const char* method, base::Value params) {
+  int SendProtocolMessageToPage(const char* method, base::Value params) {
     base::Value::Dict message_dict;
-    message_dict.Set("id", page_message_id_++);
+    int id = page_message_id_++;
+    message_dict.Set("id", id);
     message_dict.Set("method", method);
     message_dict.Set("params", std::move(params));
     base::Value message(std::move(message_dict));
     std::string json_message;
     base::JSONWriter::Write(message, &json_message);
-    page_host_->DispatchProtocolMessage(
-        page_host_client_.get(), base::as_bytes(base::make_span(json_message)));
+    page_host_->DispatchProtocolMessage(page_host_client_.get(),
+                                        base::as_byte_span(json_message));
+    return id;
   }
 
   void DispatchProtocolMessage(DevToolsAgentHost* agent_host,
                                base::span<const uint8_t> message) {
-    base::StringPiece message_sp(reinterpret_cast<const char*>(message.data()),
-                                 message.size());
+    std::string_view message_sp(reinterpret_cast<const char*>(message.data()),
+                                message.size());
     if (agent_host == page_host_.get()) {
-      std::optional<base::Value> value = base::JSONReader::Read(message_sp);
-      if (!value || !value->is_dict()) {
+      std::optional<base::Value::Dict> value =
+          base::JSONReader::ReadDict(message_sp);
+      if (!value) {
         return;
       }
 
-      const base::Value::Dict& dict = value->GetDict();
+      std::optional<int> id = value->FindInt("id");
+      if (id && *id == pending_request_id_ && pending_callback_) {
+        pending_callback_->sendSuccess();
+        pending_callback_.reset();
+        pending_request_id_ = -1;
+        return;
+      }
+
       // Make sure this is a binding call.
-      const std::string* method = dict.FindString("method");
+      const std::string* method = value->FindString("method");
       if (!method || *method != "Runtime.bindingCalled") {
         return;
       }
 
-      const base::Value::Dict* params = dict.FindDict("params");
+      const base::Value::Dict* params = value->FindDict("params");
       if (!params) {
         return;
       }
@@ -268,15 +307,13 @@ class BrowserToPageConnector {
       if (!payload) {
         return;
       }
-      browser_host_->DispatchProtocolMessage(
-          browser_host_client_.get(),
-          base::as_bytes(base::make_span(*payload)));
+      browser_host_->DispatchProtocolMessage(browser_host_client_.get(),
+                                             base::as_byte_span(*payload));
       return;
     }
     DCHECK(agent_host == browser_host_.get());
 
-    std::string encoded;
-    base::Base64Encode(message_sp, &encoded);
+    std::string encoded = base::Base64Encode(message_sp);
     std::string eval_code =
         "try { window." + binding_name_ + ".onmessage(atob(\"";
     std::string eval_suffix = "\")); } catch(e) { console.error(e); }";
@@ -306,12 +343,15 @@ class BrowserToPageConnector {
   std::unique_ptr<BrowserConnectorHostClient> browser_host_client_;
   std::unique_ptr<BrowserConnectorHostClient> page_host_client_;
   int page_message_id_ = 0;
+  std::unique_ptr<Target::Backend::ExposeDevToolsProtocolCallback>
+      pending_callback_;
+  int pending_request_id_ = -1;
 };
 
 }  // namespace
 
 // Throttle is owned externally by the navigation subsystem.
-class TargetHandler::Throttle : public content::NavigationThrottle {
+class TargetHandler::Throttle : public NavigationThrottle {
  public:
   Throttle(const Throttle&) = delete;
   Throttle& operator=(const Throttle&) = delete;
@@ -319,14 +359,14 @@ class TargetHandler::Throttle : public content::NavigationThrottle {
   ~Throttle() override { CleanupPointers(); }
   TargetAutoAttacher* auto_attacher() const { return auto_attacher_; }
   void Clear();
-  // content::NavigationThrottle implementation:
+  // NavigationThrottle implementation:
   const char* GetNameForLogging() override;
 
  protected:
   Throttle(base::WeakPtr<protocol::TargetHandler> target_handler,
            TargetAutoAttacher* auto_attacher,
-           content::NavigationHandle* navigation_handle)
-      : content::NavigationThrottle(navigation_handle),
+           NavigationThrottleRegistry& registry)
+      : NavigationThrottle(registry),
         target_handler_(target_handler),
         auto_attacher_(auto_attacher) {
     target_handler->throttles_.insert(this);
@@ -339,19 +379,19 @@ class TargetHandler::Throttle : public content::NavigationThrottle {
 
  private:
   void CleanupPointers();
-  TargetAutoAttacher* auto_attacher_;
+  raw_ptr<TargetAutoAttacher> auto_attacher_;
 };
 
 class TargetHandler::ResponseThrottle : public TargetHandler::Throttle {
  public:
   ResponseThrottle(base::WeakPtr<protocol::TargetHandler> target_handler,
                    TargetAutoAttacher* auto_attacher,
-                   content::NavigationHandle* navigation_handle)
-      : Throttle(target_handler, auto_attacher, navigation_handle) {}
+                   NavigationThrottleRegistry& registry)
+      : Throttle(target_handler, auto_attacher, registry) {}
   ~ResponseThrottle() override = default;
 
  private:
-  // content::NavigationThrottle implementation:
+  // NavigationThrottle implementation:
   ThrottleCheckResult WillProcessResponse() override { return MaybeThrottle(); }
 
   ThrottleCheckResult WillFailRequest() override { return MaybeThrottle(); }
@@ -381,17 +421,15 @@ class TargetHandler::ResponseThrottle : public TargetHandler::Throttle {
 class TargetHandler::RequestThrottle : public TargetHandler::Throttle {
  public:
   RequestThrottle(base::WeakPtr<protocol::TargetHandler> target_handler,
-                  content::NavigationHandle* navigation_handle,
+                  NavigationThrottleRegistry& registry,
                   DevToolsAgentHost* throttled_agent_host)
-      : Throttle(target_handler,
-                 target_handler->auto_attacher_,
-                 navigation_handle) {
+      : Throttle(target_handler, target_handler->auto_attacher_, registry) {
     SetThrottledAgentHost(throttled_agent_host);
   }
   ~RequestThrottle() override = default;
 
  private:
-  // content::NavigationThrottle implementation:
+  // NavigationThrottle implementation:
   ThrottleCheckResult WillStartRequest() override {
     is_deferring_ = !!agent_host_;
     return is_deferring_ ? DEFER : PROCEED;
@@ -400,20 +438,22 @@ class TargetHandler::RequestThrottle : public TargetHandler::Throttle {
 
 class TargetHandler::Session : public DevToolsAgentHostClient {
  public:
-  static std::string Attach(TargetHandler* handler,
-                            DevToolsAgentHost* agent_host,
-                            bool waiting_for_debugger,
-                            bool flatten_protocol) {
+  static std::optional<std::string> Attach(
+      TargetHandler* handler,
+      scoped_refptr<DevToolsAgentHost> agent_host,
+      bool waiting_for_debugger,
+      bool flatten_protocol) {
     std::string id = base::UnguessableToken::Create().ToString();
     // We don't support or allow the non-flattened protocol when in binary mode.
     // So, we coerce the setting to true, as the non-flattened mode is
     // deprecated anyway.
-    if (handler->root_session_->GetClient()->UsesBinaryProtocol())
+    if (handler->root_session_->GetClient()->UsesBinaryProtocol()) {
       flatten_protocol = true;
-    Session* session = new Session(handler, agent_host, id, flatten_protocol);
-    handler->attached_sessions_[id].reset(session);
+    }
+    auto session = base::WrapUnique(
+        new Session(handler, agent_host, id, flatten_protocol));
     DevToolsAgentHostImpl* agent_host_impl =
-        static_cast<DevToolsAgentHostImpl*>(agent_host);
+        static_cast<DevToolsAgentHostImpl*>(agent_host.get());
     if (flatten_protocol) {
       using Mode = DevToolsSession::Mode;
       const Mode mode =
@@ -424,16 +464,25 @@ class TargetHandler::Session : public DevToolsAgentHostClient {
       base::OnceClosure resume_callback;
       if (waiting_for_debugger) {
         resume_callback = base::BindOnce(&Session::ResumeIfThrottled,
-                                         base::Unretained(session));
+                                         base::Unretained(session.get()));
       }
       DevToolsSession* devtools_session =
           handler->root_session_->AttachChildSession(
-              id, agent_host_impl, session, mode, std::move(resume_callback));
+              id, agent_host_impl, session.get(), mode,
+              std::move(resume_callback));
+      if (!devtools_session) {
+        session->agent_host_ = nullptr;
+        return std::nullopt;
+      }
       session->devtools_session_ = devtools_session;
     } else {
-      agent_host_impl->AttachClient(session);
+      if (!agent_host_impl->AttachClient(session.get())) {
+        session->agent_host_ = nullptr;
+        return std::nullopt;
+      }
     }
-    handler->frontend_->AttachedToTarget(id, BuildTargetInfo(agent_host),
+    handler->attached_sessions_[id] = std::move(session);
+    handler->frontend_->AttachedToTarget(id, BuildTargetInfo(agent_host.get()),
                                          waiting_for_debugger);
     return id;
   }
@@ -442,10 +491,12 @@ class TargetHandler::Session : public DevToolsAgentHostClient {
   Session& operator=(const Session&) = delete;
 
   ~Session() override {
-    if (!agent_host_)
+    if (!agent_host_) {
       return;
-    if (flatten_protocol_)
+    }
+    if (flatten_protocol_) {
       handler_->root_session_->DetachChildSession(id_);
+    }
     agent_host_->DetachClient(this);
   }
 
@@ -453,10 +504,12 @@ class TargetHandler::Session : public DevToolsAgentHostClient {
 
   void Detach(bool host_closed) {
     handler_->frontend_->DetachedFromTarget(id_, agent_host_->GetId());
-    if (flatten_protocol_)
+    if (flatten_protocol_) {
       handler_->root_session_->DetachChildSession(id_);
-    if (!host_closed)
+    }
+    if (!host_closed) {
       agent_host_->DetachClient(this);
+    }
     handler_->auto_attached_sessions_.erase(agent_host_.get());
     devtools_session_ = nullptr;
     agent_host_ = nullptr;
@@ -469,8 +522,9 @@ class TargetHandler::Session : public DevToolsAgentHostClient {
   }
 
   void ResumeSendingMessagesToAgent() const {
-    if (devtools_session_)
+    if (devtools_session_) {
       devtools_session_->ResumeSendingMessagesToAgent();
+    }
   }
 
   void SetThrottle(Throttle* throttle) { throttle_ = throttle; }
@@ -480,8 +534,9 @@ class TargetHandler::Session : public DevToolsAgentHostClient {
   }
 
   void ResumeIfThrottled() {
-    if (throttle_)
+    if (throttle_) {
       throttle_->Clear();
+    }
     worker_throttle_.reset();
   }
 
@@ -493,12 +548,11 @@ class TargetHandler::Session : public DevToolsAgentHostClient {
     DCHECK(!flatten_protocol_);
 
     if (throttle_ || worker_throttle_) {
-      std::optional<base::Value> value =
-          base::JSONReader::Read(base::StringPiece(
+      std::optional<base::Value::Dict> value =
+          base::JSONReader::ReadDict(std::string_view(
               reinterpret_cast<const char*>(message.data()), message.size()));
       const std::string* method;
-      if (value.has_value() && value->is_dict() &&
-          (method = value->GetDict().FindString(kMethod)) &&
+      if (value && (method = value->FindString(kMethod)) &&
           *method == kResumeMethod) {
         ResumeIfThrottled();
       }
@@ -519,11 +573,11 @@ class TargetHandler::Session : public DevToolsAgentHostClient {
   friend class TargetHandler;
 
   Session(TargetHandler* handler,
-          DevToolsAgentHost* agent_host,
+          scoped_refptr<DevToolsAgentHost> agent_host,
           const std::string& id,
           bool flatten_protocol)
       : handler_(handler),
-        agent_host_(agent_host),
+        agent_host_(std::move(agent_host)),
         id_(id),
         flatten_protocol_(flatten_protocol) {}
 
@@ -535,8 +589,9 @@ class TargetHandler::Session : public DevToolsAgentHostClient {
       // TODO(johannes): It's not clear that this check is useful, but
       // a similar check has been in the code ever since the flattened protocol
       // was introduced. Try a DCHECK instead and possibly remove the check.
-      if (!handler_->root_session_->HasChildSession(id_))
+      if (!handler_->root_session_->HasChildSession(id_)) {
         return;
+      }
       GetRootClient()->DispatchProtocolMessage(
           handler_->root_session_->GetAgentHost(), message);
       return;
@@ -544,7 +599,7 @@ class TargetHandler::Session : public DevToolsAgentHostClient {
     // TODO(johannes): For now, We need to copy here because
     // ReceivedMessageFromTarget is generated code and we're using const
     // std::string& for such parameters. Perhaps we should switch this to
-    // base::StringPiece?
+    // std::string_view?
     std::string message_copy(message.begin(), message.end());
     handler_->frontend_->ReceivedMessageFromTarget(id_, message_copy,
                                                    agent_host_->GetId());
@@ -553,6 +608,10 @@ class TargetHandler::Session : public DevToolsAgentHostClient {
   void AgentHostClosed(DevToolsAgentHost* agent_host) override {
     DCHECK(agent_host == agent_host_.get());
     Detach(true);
+  }
+
+  bool MayAttachToRenderFrameHost(RenderFrameHost* rfh) override {
+    return GetRootClient()->MayAttachToRenderFrameHost(rfh);
   }
 
   bool MayAttachToURL(const GURL& url, bool is_webui) override {
@@ -573,16 +632,16 @@ class TargetHandler::Session : public DevToolsAgentHostClient {
     return GetRootClient()->AllowUnsafeOperations();
   }
 
-  content::DevToolsAgentHostClient* GetRootClient() {
+  DevToolsAgentHostClient* GetRootClient() {
     return handler_->root_session_->GetClient();
   }
 
-  TargetHandler* handler_;
+  raw_ptr<TargetHandler> handler_;
   scoped_refptr<DevToolsAgentHost> agent_host_;
   std::string id_;
   bool flatten_protocol_;
-  DevToolsSession* devtools_session_ = nullptr;
-  Throttle* throttle_ = nullptr;
+  raw_ptr<DevToolsSession, DanglingUntriaged> devtools_session_ = nullptr;
+  raw_ptr<Throttle> throttle_ = nullptr;
   scoped_refptr<DevToolsThrottleHandle> worker_throttle_;
   // This is needed to identify sessions associated with given
   // AutoAttacher to properly support SetAttachedTargetsOfType()
@@ -595,8 +654,9 @@ class TargetHandler::Session : public DevToolsAgentHostClient {
 void TargetHandler::Throttle::CleanupPointers() {
   if (target_handler_ && agent_host_) {
     auto it = target_handler_->auto_attached_sessions_.find(agent_host_.get());
-    if (it != target_handler_->auto_attached_sessions_.end())
+    if (it != target_handler_->auto_attached_sessions_.end()) {
       it->second->SetThrottle(nullptr);
+    }
   }
   if (target_handler_) {
     target_handler_->throttles_.erase(this);
@@ -649,16 +709,16 @@ class TargetHandler::TargetFilter {
     default_filter.push_back(protocol::Target::FilterEntry::Create().Build());
     return base::WrapUnique(new TargetFilter(std::move(default_filter)));
   }
-  static std::unique_ptr<TargetFilter> Create(Maybe<Filter> filter) {
-    if (!filter.has_value()) {
+  static std::unique_ptr<TargetFilter> Create(std::unique_ptr<Filter> filter) {
+    if (!filter) {
       return CreateDefault();
     }
-    return base::WrapUnique(new TargetFilter(std::move(filter.value())));
+    return base::WrapUnique(new TargetFilter(std::move(*filter)));
   }
 
   bool Match(DevToolsAgentHost& host) const { return Match(host.GetType()); }
 
-  bool Match(base::StringPiece type) const {
+  bool Match(std::string_view type) const {
     for (const auto& entry : entries_) {
       if (!entry->HasType() || entry->GetType("") == type) {
         return !entry->GetExclude(false);
@@ -700,18 +760,21 @@ void TargetHandler::Wire(UberDispatcher* dispatcher) {
 Response TargetHandler::Disable() {
   SetAutoAttachInternal(false, false, false, base::DoNothing());
   SetDiscoverTargets(false, {});
+  hidden_target_manager_.Clear();
   auto_attached_sessions_.clear();
   attached_sessions_.clear();
 
   DevToolsManagerDelegate* delegate =
       DevToolsManager::GetInstance()->delegate();
-  if (!delegate)
+  if (!delegate) {
     return Response::Success();
+  }
 
   if (dispose_on_detach_context_ids_.size()) {
     for (auto* context : delegate->GetBrowserContexts()) {
-      if (!dispose_on_detach_context_ids_.contains(context->UniqueId()))
+      if (!dispose_on_detach_context_ids_.contains(context->UniqueId())) {
         continue;
+      }
       delegate->DisposeBrowserContext(context, base::DoNothing());
     }
     dispose_on_detach_context_ids_.clear();
@@ -720,10 +783,11 @@ Response TargetHandler::Disable() {
   return Response::Success();
 }
 
-std::unique_ptr<NavigationThrottle> TargetHandler::CreateThrottleForNavigation(
+void TargetHandler::MaybeCreateAndAddNavigationThrottle(
     TargetAutoAttacher* auto_attacher,
-    NavigationHandle* navigation_handle) {
+    NavigationThrottleRegistry& registry) {
   DCHECK(auto_attach_ || !auto_attach_related_targets_.empty());
+  auto* navigation_handle = &registry.GetNavigationHandle();
   FrameTreeNode* frame_tree_node =
       NavigationRequest::From(navigation_handle)->frame_tree_node();
   DCHECK(access_mode_ != AccessMode::kBrowser ||
@@ -733,8 +797,9 @@ std::unique_ptr<NavigationThrottle> TargetHandler::CreateThrottleForNavigation(
   // Note that fenced frames start as remote frames right away and get a RFDTAH
   // of their own, so they require a RequestThrottle rather than a Response one.
   if (!frame_tree_node->IsMainFrame()) {
-    return std::make_unique<ResponseThrottle>(weak_factory_.GetWeakPtr(),
-                                              auto_attacher, navigation_handle);
+    registry.AddThrottle(std::make_unique<ResponseThrottle>(
+        weak_factory_.GetWeakPtr(), auto_attacher, registry));
+    return;
   }
   // If we got here for main frame, it must be either browser or tab target.
   DCHECK(auto_attacher == auto_attacher_);
@@ -758,7 +823,7 @@ std::unique_ptr<NavigationThrottle> TargetHandler::CreateThrottleForNavigation(
         WebContentsImpl::FromFrameTreeNode(frame_tree_node));
     waiting_session = FindWaitingSession(host);
     if (!waiting_session) {
-      return nullptr;
+      return;
     }
   }
   // window.open() navigations are throttled on the renderer side and the main
@@ -769,10 +834,10 @@ std::unique_ptr<NavigationThrottle> TargetHandler::CreateThrottleForNavigation(
   // New window navigations (such as ctrl+click) should be throttled before
   // the main request is sent to apply user agent and other overrides.
   if (frame_tree_node->opener()) {
-    return nullptr;
+    return;
   }
-  return std::make_unique<RequestThrottle>(weak_factory_.GetWeakPtr(),
-                                           navigation_handle, host);
+  registry.AddThrottle(std::make_unique<RequestThrottle>(
+      weak_factory_.GetWeakPtr(), registry, host));
 }
 
 TargetHandler::Session* TargetHandler::FindWaitingSession(
@@ -791,9 +856,10 @@ TargetHandler::Session* TargetHandler::FindWaitingSession(
 }
 
 void TargetHandler::ClearThrottles() {
-  base::flat_set<Throttle*> copy(throttles_);
-  for (Throttle* throttle : copy)
+  base::flat_set<raw_ptr<Throttle, CtnExperimental>> copy(throttles_);
+  for (Throttle* throttle : copy) {
     throttle->Clear();
+  }
   throttles_.clear();
 }
 
@@ -801,20 +867,23 @@ void TargetHandler::SetAutoAttachInternal(bool auto_attach,
                                           bool wait_for_debugger_on_start,
                                           bool flatten,
                                           base::OnceClosure callback) {
-  for (auto& entry : auto_attach_related_targets_)
+  for (auto& entry : auto_attach_related_targets_) {
     entry.first->RemoveClient(this);
+  }
   auto_attach_related_targets_.clear();
   flatten_auto_attach_ = flatten;
-  if (auto_attach_)
+  if (auto_attach_) {
     auto_attacher_->RemoveClient(this);
+  }
   auto_attach_ = auto_attach;
   wait_for_debugger_on_start_ = wait_for_debugger_on_start;
   if (auto_attach_) {
     auto_attacher_->AddClient(this, wait_for_debugger_on_start,
                               std::move(callback));
   } else {
-    while (!auto_attached_sessions_.empty())
+    while (!auto_attached_sessions_.empty()) {
       auto_attached_sessions_.begin()->second->Detach(false);
+    }
     ClearThrottles();
     auto_attach_target_filter_.reset();
     std::move(callback).Run();
@@ -822,13 +891,15 @@ void TargetHandler::SetAutoAttachInternal(bool auto_attach,
 }
 
 void TargetHandler::UpdateAgentHostObserver() {
-  if (discover() == observing_agent_hosts_)
+  if (discover() == observing_agent_hosts_) {
     return;
+  }
   observing_agent_hosts_ = discover();
-  if (observing_agent_hosts_)
+  if (observing_agent_hosts_) {
     DevToolsAgentHost::AddObserver(this);
-  else
+  } else {
     DevToolsAgentHost::RemoveObserver(this);
+  }
 }
 
 bool TargetHandler::AutoAttach(TargetAutoAttacher* source,
@@ -836,8 +907,9 @@ bool TargetHandler::AutoAttach(TargetAutoAttacher* source,
                                bool waiting_for_debugger) {
   DCHECK(host);
   DCHECK(auto_attach_target_filter_);
-  if (!auto_attach_target_filter_->Match(*host))
+  if (!auto_attach_target_filter_->Match(*host)) {
     return false;
+  }
   if (base::Contains(auto_attached_sessions_, host)) {
     return false;
   }
@@ -845,9 +917,12 @@ bool TargetHandler::AutoAttach(TargetAutoAttacher* source,
       host->GetType() == DevToolsAgentHost::kTypeServiceWorker) {
     return false;
   }
-  std::string session_id =
+  std::optional<std::string> session_id =
       Session::Attach(this, host, waiting_for_debugger, flatten_auto_attach_);
-  Session* session = attached_sessions_[session_id].get();
+  if (!session_id) {
+    return false;
+  }
+  Session* session = attached_sessions_[*session_id].get();
   session->auto_attacher_id_ = reinterpret_cast<uintptr_t>(source);
   auto_attached_sessions_[host] = session;
   return true;
@@ -856,8 +931,9 @@ bool TargetHandler::AutoAttach(TargetAutoAttacher* source,
 void TargetHandler::AutoDetach(TargetAutoAttacher* source,
                                DevToolsAgentHost* host) {
   auto it = auto_attached_sessions_.find(host);
-  if (it == auto_attached_sessions_.end())
+  if (it == auto_attached_sessions_.end()) {
     return;
+  }
   it->second->Detach(false);
 }
 
@@ -866,25 +942,30 @@ void TargetHandler::SetAttachedTargetsOfType(
     const base::flat_set<scoped_refptr<DevToolsAgentHost>>& new_hosts,
     const std::string& type) {
   DCHECK(!type.empty());
-  // Ignore page targets coming from frame auto-attachers when client has
-  // opted into supporting the tab targets. These are portals and are now
-  // reported via the tab target.
-  if (!auto_attach_portals_ && type == DevToolsAgentHost::kTypePage) {
-    DCHECK(source == auto_attacher_);
-    return;
-  }
-  auto old_sessions = auto_attached_sessions_;
-  for (auto& entry : old_sessions) {
+  // Detaching a target (e.g. a subframe) can synchronously dispose child
+  // sessions and tear down owned resources (e.g. hidden targets), which may
+  // destroy sibling DevToolsAgentHost instances and mutate
+  // `auto_attached_sessions_`.
+  // To avoid use-after-free on bare pointer keys or session objects, first
+  // collect strong references to the hosts that need to be detached while all
+  // entries are still alive and valid.
+  std::vector<scoped_refptr<DevToolsAgentHost>> hosts_to_detach;
+  for (const auto& entry : auto_attached_sessions_) {
     scoped_refptr<DevToolsAgentHost> host(entry.first);
     if (host->GetType() == type &&
         entry.second->auto_attacher_id_ ==
             reinterpret_cast<uintptr_t>(source) &&
         !base::Contains(new_hosts, host)) {
-      AutoDetach(source, host.get());
+      hosts_to_detach.push_back(std::move(host));
     }
   }
-  for (auto& host : new_hosts) {
-    if (!base::Contains(old_sessions, host.get())) {
+  // AutoDetach re-validates each host against the live `auto_attached_sessions_`
+  // map, safely skipping any targets already detached by earlier cascades.
+  for (const auto& host : hosts_to_detach) {
+    AutoDetach(source, host.get());
+  }
+  for (const auto& host : new_hosts) {
+    if (!auto_attached_sessions_.contains(host.get())) {
       AutoAttach(source, host.get(), false);
     }
   }
@@ -901,9 +982,10 @@ void TargetHandler::TargetInfoChanged(DevToolsAgentHost* host) {
 
 void TargetHandler::AutoAttacherDestroyed(TargetAutoAttacher* auto_attacher) {
   auto throttles = throttles_;
-  for (auto* throttle : throttles_) {
-    if (throttle->auto_attacher() == auto_attacher)
+  for (Throttle* throttle : throttles) {
+    if (throttle->auto_attacher() == auto_attacher) {
       throttle->Clear();
+    }
   }
   for (auto& entry : auto_attached_sessions_) {
     if (entry.second->auto_attacher_id_ ==
@@ -916,13 +998,15 @@ void TargetHandler::AutoAttacherDestroyed(TargetAutoAttacher* auto_attacher) {
 
 bool TargetHandler::ShouldWaitForDebuggerOnStart(
     NavigationRequest* navigation_request) const {
-  if (auto_attach_)
+  if (auto_attach_) {
     return wait_for_debugger_on_start_;
+  }
   DCHECK(!auto_attach_related_targets_.empty());
   auto* host = RenderFrameDevToolsAgentHost::GetFor(
       navigation_request->frame_tree_node());
-  if (!host)
+  if (!host) {
     return false;
+  }
   auto it = auto_attach_related_targets_.find(host->auto_attacher());
   return it != auto_attach_related_targets_.end() && it->second;
 }
@@ -935,33 +1019,31 @@ void TargetHandler::DisableAutoAttachOfServiceWorkers() {
   auto_attach_service_workers_ = false;
 }
 
-void TargetHandler::DisableAutoAttachOfPortals() {
-  DCHECK(access_mode_ != AccessMode::kBrowser);
-  auto_attach_portals_ = false;
-}
-
-Response TargetHandler::FindSession(Maybe<std::string> session_id,
-                                    Maybe<std::string> target_id,
+Response TargetHandler::FindSession(std::optional<std::string> session_id,
+                                    std::optional<std::string> target_id,
                                     Session** session) {
   *session = nullptr;
   if (session_id.has_value()) {
     auto it = attached_sessions_.find(session_id.value());
-    if (it == attached_sessions_.end())
+    if (it == attached_sessions_.end()) {
       return Response::InvalidParams("No session with given id");
+    }
     *session = it->second.get();
     return Response::Success();
   }
   if (target_id.has_value()) {
     for (auto& it : attached_sessions_) {
       if (it.second->IsAttachedTo(target_id.value())) {
-        if (*session)
+        if (*session) {
           return Response::ServerError(
               "Multiple sessions attached, specify id.");
+        }
         *session = it.second.get();
       }
     }
-    if (!*session)
+    if (!*session) {
       return Response::InvalidParams("No session for given target id");
+    }
     return Response::Success();
   }
   return Response::InvalidParams("Session id must be specified");
@@ -971,9 +1053,10 @@ Response TargetHandler::FindSession(Maybe<std::string> session_id,
 
 Response TargetHandler::SetDiscoverTargets(
     bool discover,
-    Maybe<protocol::Array<protocol::Target::FilterEntry>> filter) {
-  if (access_mode_ == AccessMode::kAutoAttachOnly)
+    std::unique_ptr<protocol::Array<protocol::Target::FilterEntry>> filter) {
+  if (access_mode_ == AccessMode::kAutoAttachOnly) {
     return Response::ServerError(kNotAllowedErrorTH);
+  }
   if (!discover && filter && !filter->empty()) {
     return Response::InvalidParams(
         "Filter should not be present with `discover` is off");
@@ -984,22 +1067,24 @@ Response TargetHandler::SetDiscoverTargets(
   if (old_discover == discover) {
     // Report the newly matching targets that were not yet reported.
     if (discover) {
-      for (const auto& target : DevToolsAgentHost::GetOrCreateAll())
+      for (const auto& target : DevToolsAgentHost::GetOrCreateAll()) {
         DevToolsAgentHostCreated(target.get());
+      }
     }
     return Response::Success();
   }
   UpdateAgentHostObserver();
-  if (!TargetHandler::discover())
+  if (!TargetHandler::discover()) {
     reported_hosts_.clear();
+  }
   return Response::Success();
 }
 
 void TargetHandler::SetAutoAttach(
     bool auto_attach,
     bool wait_for_debugger_on_start,
-    Maybe<bool> flatten,
-    Maybe<protocol::Array<protocol::Target::FilterEntry>> filter,
+    std::optional<bool> flatten,
+    std::unique_ptr<protocol::Array<protocol::Target::FilterEntry>> filter,
     std::unique_ptr<SetAutoAttachCallback> callback) {
   if (access_mode_ == AccessMode::kBrowser && !flatten.value_or(false)) {
     callback->sendFailure(Response::InvalidParams(
@@ -1008,7 +1093,7 @@ void TargetHandler::SetAutoAttach(
   }
   if (!auto_attach && filter && !filter->empty()) {
     callback->sendFailure(Response::InvalidParams(
-        "Target filter should be empty whien disabling auto-attach"));
+        "Target filter should be empty when disabling auto-attach"));
     return;
   }
   auto_attach_target_filter_ =
@@ -1029,7 +1114,7 @@ void TargetHandler::SetAutoAttach(
 void TargetHandler::AutoAttachRelated(
     const std::string& targetId,
     bool wait_for_debugger_on_start,
-    Maybe<protocol::Array<protocol::Target::FilterEntry>> filter,
+    std::unique_ptr<protocol::Array<protocol::Target::FilterEntry>> filter,
     std::unique_ptr<AutoAttachRelatedCallback> callback) {
   if (access_mode_ != AccessMode::kBrowser) {
     callback->sendFailure(Response::ServerError(
@@ -1077,62 +1162,78 @@ Response TargetHandler::SetRemoteLocations(
 }
 
 Response TargetHandler::AttachToTarget(const std::string& target_id,
-                                       Maybe<bool> flatten,
+                                       std::optional<bool> flatten,
                                        std::string* out_session_id) {
-  if (access_mode_ == AccessMode::kAutoAttachOnly)
+  if (access_mode_ == AccessMode::kAutoAttachOnly) {
     return Response::ServerError(kNotAllowedErrorTH);
+  }
   // TODO(dgozman): only allow reported hosts.
   scoped_refptr<DevToolsAgentHost> agent_host =
       DevToolsAgentHost::GetForId(target_id);
-  if (!agent_host)
+  if (!agent_host) {
     return Response::InvalidParams(kTargetNotFound);
-  *out_session_id =
+  }
+  std::optional<std::string> session_id =
       Session::Attach(this, agent_host.get(), false, flatten.value_or(false));
+  if (!session_id) {
+    return Response::ServerError(kNotAllowedErrorTH);
+  }
+  *out_session_id = *session_id;
   return Response::Success();
 }
 
 Response TargetHandler::AttachToBrowserTarget(std::string* out_session_id) {
-  if (access_mode_ != AccessMode::kBrowser)
+  if (access_mode_ != AccessMode::kBrowser) {
     return Response::ServerError(kNotAllowedErrorTH);
+  }
   scoped_refptr<DevToolsAgentHost> agent_host =
       DevToolsAgentHost::CreateForBrowser(
           nullptr, DevToolsAgentHost::CreateServerSocketCallback());
-  *out_session_id = Session::Attach(this, agent_host.get(), false, true);
+  std::optional<std::string> session_id =
+      Session::Attach(this, agent_host.get(), false, true);
+  if (!session_id) {
+    return Response::ServerError(kNotAllowedErrorTH);
+  }
+  *out_session_id = *session_id;
   return Response::Success();
 }
 
-Response TargetHandler::DetachFromTarget(Maybe<std::string> session_id,
-                                         Maybe<std::string> target_id) {
-  if (access_mode_ == AccessMode::kAutoAttachOnly)
+Response TargetHandler::DetachFromTarget(std::optional<std::string> session_id,
+                                         std::optional<std::string> target_id) {
+  if (access_mode_ == AccessMode::kAutoAttachOnly) {
     return Response::ServerError(kNotAllowedErrorTH);
+  }
   Session* session = nullptr;
   Response response =
       FindSession(std::move(session_id), std::move(target_id), &session);
-  if (!response.IsSuccess())
+  if (!response.IsSuccess()) {
     return response;
+  }
   session->Detach(false);
   return Response::Success();
 }
 
-Response TargetHandler::SendMessageToTarget(const std::string& message,
-                                            Maybe<std::string> session_id,
-                                            Maybe<std::string> target_id) {
+Response TargetHandler::SendMessageToTarget(
+    const std::string& message,
+    std::optional<std::string> session_id,
+    std::optional<std::string> target_id) {
   Session* session = nullptr;
   Response response =
       FindSession(std::move(session_id), std::move(target_id), &session);
-  if (!response.IsSuccess())
+  if (!response.IsSuccess()) {
     return response;
+  }
   if (session->flatten_protocol_) {
     return Response::ServerError(
         "When using flat protocol, messages are routed to the target "
         "via the sessionId attribute.");
   }
-  session->SendMessageToAgentHost(base::as_bytes(base::make_span(message)));
+  session->SendMessageToAgentHost(base::as_byte_span(message));
   return Response::Success();
 }
 
 Response TargetHandler::GetTargetInfo(
-    Maybe<std::string> maybe_target_id,
+    std::optional<std::string> maybe_target_id,
     std::unique_ptr<Target::TargetInfo>* target_info) {
   const std::string& target_id = maybe_target_id.value_or(owner_target_id_);
   if (access_mode_ == AccessMode::kAutoAttachOnly &&
@@ -1142,101 +1243,182 @@ Response TargetHandler::GetTargetInfo(
   // TODO(dgozman): only allow reported hosts.
   scoped_refptr<DevToolsAgentHost> agent_host(
       DevToolsAgentHost::GetForId(target_id));
-  if (!agent_host)
+  if (!agent_host) {
     return Response::InvalidParams(kTargetNotFound);
+  }
   *target_info = BuildTargetInfo(agent_host.get());
   return Response::Success();
 }
 
 Response TargetHandler::ActivateTarget(const std::string& target_id) {
-  if (access_mode_ == AccessMode::kAutoAttachOnly)
+  if (access_mode_ == AccessMode::kAutoAttachOnly) {
     return Response::ServerError(kNotAllowedErrorTH);
+  }
   // TODO(dgozman): only allow reported hosts.
   scoped_refptr<DevToolsAgentHost> agent_host(
       DevToolsAgentHost::GetForId(target_id));
-  if (!agent_host)
+  if (!agent_host) {
     return Response::InvalidParams(kTargetNotFound);
+  }
   agent_host->Activate();
   return Response::Success();
 }
 
 Response TargetHandler::CloseTarget(const std::string& target_id,
                                     bool* out_success) {
-  if (access_mode_ == AccessMode::kAutoAttachOnly)
+  if (access_mode_ == AccessMode::kAutoAttachOnly) {
     return Response::ServerError(kNotAllowedErrorTH);
+  }
   scoped_refptr<DevToolsAgentHost> agent_host =
       DevToolsAgentHost::GetForId(target_id);
-  if (!agent_host)
+  if (!agent_host) {
     return Response::InvalidParams(kTargetNotFound);
-  if (!agent_host->Close())
+  }
+  if (!agent_host->Close()) {
     return Response::InvalidParams("Specified target doesn't support closing");
+  }
   *out_success = true;
   return Response::Success();
 }
 
-Response TargetHandler::ExposeDevToolsProtocol(
+void TargetHandler::ExposeDevToolsProtocol(
     const std::string& target_id,
-    Maybe<std::string> binding_name) {
-  if (access_mode_ != AccessMode::kBrowser)
-    return Response::InvalidParams(kNotAllowedErrorTH);
+    std::optional<std::string> binding_name,
+    std::optional<bool> inherit_permissions,
+    std::unique_ptr<ExposeDevToolsProtocolCallback> callback) {
+  if (access_mode_ != AccessMode::kBrowser) {
+    callback->sendFailure(Response::InvalidParams(kNotAllowedErrorTH));
+    return;
+  }
   scoped_refptr<DevToolsAgentHost> agent_host =
       DevToolsAgentHost::GetForId(target_id);
-  if (!agent_host)
-    return Response::InvalidParams(kTargetNotFound);
+  if (!agent_host) {
+    callback->sendFailure(Response::InvalidParams(kTargetNotFound));
+    return;
+  }
 
   if (BrowserToPageConnector::GetInstanceMap()[agent_host.get()]) {
-    return Response::ServerError(base::StringPrintf(
+    callback->sendFailure(Response::ServerError(base::StringPrintf(
         "Target with id %s is already granted remote debugging bindings.",
-        target_id.c_str()));
+        target_id.c_str())));
+    return;
   }
   if (!agent_host->GetWebContents()) {
-    return Response::ServerError(
-        "RemoteDebuggingBinding can be granted only to page targets");
+    callback->sendFailure(Response::ServerError(
+        "RemoteDebuggingBinding can be granted only to page targets"));
+    return;
   }
 
-  new BrowserToPageConnector(binding_name.value_or("cdp"), agent_host.get());
-  return Response::Success();
+  BrowserConnectorHostClientPermissions permissions;
+  if (inherit_permissions.value_or(false)) {
+    permissions.allow_unsafe_operations =
+        root_session_->GetClient()->AllowUnsafeOperations();
+  }
+
+  new BrowserToPageConnector(binding_name.value_or("cdp"), agent_host.get(),
+                             permissions, std::move(callback));
 }
 
-Response TargetHandler::CreateTarget(const std::string& url,
-                                     Maybe<int> width,
-                                     Maybe<int> height,
-                                     Maybe<std::string> context_id,
-                                     Maybe<bool> enable_begin_frame_control,
-                                     Maybe<bool> new_window,
-                                     Maybe<bool> background,
-                                     Maybe<bool> for_tab,
-                                     std::string* out_target_id) {
-  if (access_mode_ == AccessMode::kAutoAttachOnly)
+Response TargetHandler::CreateTarget(
+    const std::string& url,
+    std::optional<int> left,
+    std::optional<int> top,
+    std::optional<int> width,
+    std::optional<int> height,
+    std::optional<std::string> window_state,
+    std::optional<std::string> browser_context_id,
+    std::optional<bool> enable_begin_frame_control,
+    std::optional<bool> new_window,
+    std::optional<bool> background,
+    std::optional<bool> for_tab,
+    std::optional<bool> hidden,
+    std::string* out_target_id) {
+  if (access_mode_ == AccessMode::kAutoAttachOnly) {
     return Response::ServerError(kNotAllowedErrorTH);
-  DevToolsManagerDelegate* delegate =
-      DevToolsManager::GetInstance()->delegate();
-  if (!delegate)
-    return Response::ServerError("Not supported");
+  }
+
   GURL gurl(url);
   if (gurl.is_empty()) {
     gurl = GURL(url::kAboutBlankURL);
   }
-  content::DevToolsManagerDelegate::TargetType target_type =
+
+  GURL inner_url = gurl;
+  if (gurl.SchemeIs(content::kViewSourceScheme)) {
+    inner_url = GURL(gurl.GetContent());
+  }
+
+  // chrome-untrusted:// WebUIs might perform high-privileged actions on
+  // navigation, disallow navigation to them unless the client is trusted.
+  if ((inner_url.SchemeIs(content::kChromeUIUntrustedScheme) ||
+       inner_url.SchemeIs(content::kChromeDevToolsScheme)) &&
+      !root_session_->GetClient()->IsTrusted()) {
+    return Response::ServerError(
+        "Navigating to a URL with a privileged scheme is not allowed");
+  }
+
+  if (hidden.value_or(false)) {
+    // Hidden target can be created only when remote debugging is enabled.
+    DevToolsManagerDelegate* delegate =
+        DevToolsManager::GetInstance()->delegate();
+    if (!delegate || delegate
+                         ->RemoteDebuggingTargets(
+                             DevToolsManagerDelegate::TargetType::kFrame)
+                         .empty()) {
+      return protocol::Response::ServerError(
+          "Hidden target can be created only when remote debugging is enabled");
+    }
+    if (for_tab.value_or(false)) {
+      return protocol::Response::InvalidParams(
+          "Hidden target cannot be created for tab");
+    }
+    if (new_window) {
+      return protocol::Response::InvalidParams(
+          "Hidden target cannot be created in a new window");
+    }
+    if (!background.value_or(true)) {
+      return protocol::Response::InvalidParams(
+          "Hidden target can be created only in background");
+    }
+
+    BrowserContext* browser_context = nullptr;
+    Response response = BrowserHandler::FindBrowserContext(browser_context_id,
+                                                           &browser_context);
+    if (!response.IsSuccess()) {
+      return response;
+    }
+
+    *out_target_id =
+        hidden_target_manager_.CreateHiddenTarget(gurl, browser_context);
+    return Response::Success();
+  }
+
+  DevToolsManagerDelegate* delegate =
+      DevToolsManager::GetInstance()->delegate();
+  if (!delegate) {
+    return Response::ServerError("Not supported");
+  }
+  DevToolsManagerDelegate::TargetType target_type =
       for_tab.value_or(session_mode_ ==
                        DevToolsSession::Mode::kSupportsTabTarget)
-          ? content::DevToolsManagerDelegate::kTab
-          : content::DevToolsManagerDelegate::kFrame;
-  scoped_refptr<content::DevToolsAgentHost> agent_host =
-      delegate->CreateNewTarget(gurl, target_type);
-  if (!agent_host)
+          ? DevToolsManagerDelegate::kTab
+          : DevToolsManagerDelegate::kFrame;
+  scoped_refptr<DevToolsAgentHost> agent_host =
+      delegate->CreateNewTarget(gurl, target_type, new_window.value_or(false));
+  if (!agent_host) {
     return Response::ServerError("Not supported");
+  }
   *out_target_id = agent_host->GetId();
   return Response::Success();
 }
 
 Response TargetHandler::GetTargets(
-    Maybe<protocol::Array<protocol::Target::FilterEntry>> filter,
+    std::unique_ptr<protocol::Array<protocol::Target::FilterEntry>> filter,
     std::unique_ptr<protocol::Array<Target::TargetInfo>>* target_infos) {
-  if (access_mode_ == AccessMode::kAutoAttachOnly)
+  if (access_mode_ == AccessMode::kAutoAttachOnly) {
     return Response::ServerError(kNotAllowedErrorTH);
+  }
   std::unique_ptr<TargetFilter> passed_filter =
-      filter.has_value() || !discover_target_filter_
+      filter || !discover_target_filter_
           ? TargetFilter::Create(std::move(filter))
           : nullptr;
   const TargetFilter* effective_filter =
@@ -1244,8 +1426,9 @@ Response TargetHandler::GetTargets(
   DCHECK(effective_filter);
   *target_infos = std::make_unique<protocol::Array<Target::TargetInfo>>();
   for (const auto& host : DevToolsAgentHost::GetOrCreateAll()) {
-    if (effective_filter->Match(*host))
+    if (effective_filter->Match(*host)) {
       (*target_infos)->emplace_back(BuildTargetInfo(host.get()));
+    }
   }
   return Response::Success();
 }
@@ -1259,8 +1442,9 @@ bool TargetHandler::ShouldForceDevToolsAgentHostCreation() {
 void TargetHandler::DevToolsAgentHostCreated(DevToolsAgentHost* host) {
   DCHECK(discover());
   DCHECK(host);
-  if (!discover_target_filter_->Match(*host))
+  if (!discover_target_filter_->Match(*host)) {
     return;
+  }
   // If we start discovering late, all existing agent hosts will be reported,
   // but we could have already attached to some.
   if (!base::Contains(reported_hosts_, host)) {
@@ -1303,10 +1487,11 @@ void TargetHandler::DevToolsAgentHostCrashed(DevToolsAgentHost* host,
 // ----------------- More protocol methods -------------------
 
 void TargetHandler::CreateBrowserContext(
-    Maybe<bool> in_disposeOnDetach,
-    Maybe<String> in_proxyServer,
-    Maybe<String> in_proxyBypassList,
-    Maybe<protocol::Array<String>> in_originsToGrantUniversalNetworkAccess,
+    std::optional<bool> in_disposeOnDetach,
+    std::optional<String> in_proxyServer,
+    std::optional<String> in_proxyBypassList,
+    std::unique_ptr<protocol::Array<String>>
+        in_originsToGrantUniversalNetworkAccess,
     std::unique_ptr<CreateBrowserContextCallback> callback) {
   if (access_mode_ != AccessMode::kBrowser) {
     callback->sendFailure(Response::ServerError(kNotAllowedErrorTH));
@@ -1333,9 +1518,8 @@ void TargetHandler::CreateBrowserContext(
   // Pre-process universal network access origins before actual context creation
   // in case we need to bail out with error.
   std::vector<url::Origin> originsToGrantUniversalNetworkAccess;
-  if (in_originsToGrantUniversalNetworkAccess.has_value()) {
-    for (const auto& origin_str :
-         in_originsToGrantUniversalNetworkAccess.value()) {
+  if (in_originsToGrantUniversalNetworkAccess) {
+    for (const auto& origin_str : *in_originsToGrantUniversalNetworkAccess) {
       GURL url(origin_str);
       url::Origin origin = url::Origin::Create(url);
       if (!url.is_valid() || origin.opaque()) {
@@ -1368,7 +1552,7 @@ void TargetHandler::CreateBrowserContext(
 
     // It's fine to not await the completion here -- this is implicitly
     // serialized with the actual URLLoaderFactory / URLLoader creation.
-    content::CorsOriginPatternSetter::Set(
+    CorsOriginPatternSetter::Set(
         context, origin, std::move(allow_patterns), {}, base::DoNothing());
   }
 
@@ -1386,18 +1570,21 @@ void TargetHandler::CreateBrowserContext(
 
 protocol::Response TargetHandler::GetBrowserContexts(
     std::unique_ptr<protocol::Array<protocol::String>>* browser_context_ids) {
-  if (access_mode_ != AccessMode::kBrowser)
+  if (access_mode_ != AccessMode::kBrowser) {
     return Response::ServerError(kNotAllowedErrorTH);
+  }
   DevToolsManagerDelegate* delegate =
       DevToolsManager::GetInstance()->delegate();
-  if (!delegate)
+  if (!delegate) {
     return Response::ServerError(
         "Browser context management is not supported.");
-  std::vector<content::BrowserContext*> contexts =
+  }
+  std::vector<BrowserContext*> contexts =
       delegate->GetBrowserContexts();
   *browser_context_ids = std::make_unique<protocol::Array<protocol::String>>();
-  for (auto* context : contexts)
+  for (auto* context : contexts) {
     (*browser_context_ids)->emplace_back(context->UniqueId());
+  }
   return Response::Success();
 }
 
@@ -1415,10 +1602,10 @@ void TargetHandler::DisposeBrowserContext(
         Response::ServerError("Browser context management is not supported."));
     return;
   }
-  std::vector<content::BrowserContext*> contexts =
+  std::vector<BrowserContext*> contexts =
       delegate->GetBrowserContexts();
-  auto context_it = base::ranges::find(contexts, context_id,
-                                       &content::BrowserContext::UniqueId);
+  auto context_it = std::ranges::find(contexts, context_id,
+                                      &BrowserContext::UniqueId);
   if (context_it == contexts.end()) {
     callback->sendFailure(
         Response::ServerError("Failed to find context with id " + context_id));
@@ -1430,10 +1617,11 @@ void TargetHandler::DisposeBrowserContext(
       base::BindOnce(
           [](std::unique_ptr<DisposeBrowserContextCallback> callback,
              bool success, const std::string& error) {
-            if (success)
+            if (success) {
               callback->sendSuccess();
-            else
+            } else {
               callback->sendFailure(Response::ServerError(error));
+            }
           },
           std::move(callback)));
 }
@@ -1441,12 +1629,21 @@ void TargetHandler::DisposeBrowserContext(
 void TargetHandler::ApplyNetworkContextParamsOverrides(
     BrowserContext* browser_context,
     network::mojom::NetworkContextParams* context_params) {
-  // Under certain conditions, storage partition is created synchronously for
+  //   Note #1: below we clear the proxy config client receiver,
+  // and effectively disable proxy updates based on the OS settings.
+  // This way our "initial proxy config" is not overridden by any
+  // OS settings and stays the same.
+  //   This relies on ApplyNetworkContextParamsOverrides() being called
+  // after the client receiver was setup for the network context.
+  //
+  //   Note #2: Under certain conditions, storage partition is created
+  // synchronously for
   // the browser context. Account for this use case.
   if (pending_proxy_config_) {
     context_params->initial_proxy_config =
         net::ProxyConfigWithAnnotation(std::move(*pending_proxy_config_),
                                        kSettingsProxyConfigTrafficAnnotation);
+    context_params->proxy_config_client_receiver = mojo::NullReceiver();
     pending_proxy_config_.reset();
     return;
   }
@@ -1454,6 +1651,7 @@ void TargetHandler::ApplyNetworkContextParamsOverrides(
   if (it != contexts_with_overridden_proxy_.end()) {
     context_params->initial_proxy_config = net::ProxyConfigWithAnnotation(
         std::move(it->second), kSettingsProxyConfigTrafficAnnotation);
+    context_params->proxy_config_client_receiver = mojo::NullReceiver();
     contexts_with_overridden_proxy_.erase(browser_context->UniqueId());
   }
 }
@@ -1461,8 +1659,9 @@ void TargetHandler::ApplyNetworkContextParamsOverrides(
 void TargetHandler::AddWorkerThrottle(
     DevToolsAgentHost* agent_host,
     scoped_refptr<DevToolsThrottleHandle> throttle_handle) {
-  if (!agent_host)
+  if (!agent_host) {
     return;
+  }
 
   if (auto_attached_sessions_.count(agent_host)) {
     if (auto_attached_sessions_[agent_host]->IsWaitingForDebuggerOnStart()) {
@@ -1470,6 +1669,29 @@ void TargetHandler::AddWorkerThrottle(
           std::move(throttle_handle));
     }
   }
+}
+
+Response TargetHandler::OpenDevTools(const std::string& target_id,
+                                     std::string* out_target_id) {
+  if (access_mode_ != AccessMode::kBrowser) {
+    return protocol::Response::ServerError(kNotAllowedErrorTH);
+  }
+  scoped_refptr<DevToolsAgentHostImpl> agent_host =
+      DevToolsAgentHostImpl::GetForId(target_id);
+
+  if (!agent_host) {
+    return protocol::Response::InvalidParams(kTargetNotFound);
+  }
+
+  scoped_refptr<DevToolsAgentHost> devtools_agent_host =
+      agent_host->OpenDevTools();
+  if (!devtools_agent_host) {
+    return protocol::Response::ServerError("Failed to create DevTools window");
+  }
+
+  *out_target_id = devtools_agent_host->GetId();
+
+  return protocol::Response::Success();
 }
 
 }  // namespace content::protocol

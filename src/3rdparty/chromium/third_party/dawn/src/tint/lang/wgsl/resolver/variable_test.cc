@@ -1050,9 +1050,12 @@ TEST_F(ResolverVariableTest, LocalConst_ConstEval) {
 TEST_F(ResolverVariableTest, GlobalVar_AddressSpace) {
     // https://gpuweb.github.io/gpuweb/wgsl/#storage-class
 
+    Enable(wgsl::Extension::kChromiumExperimentalImmediate);
+
     auto* buf = Structure("S", Vector{Member("m", ty.i32())});
     auto* private_ = GlobalVar("p", ty.i32(), core::AddressSpace::kPrivate);
     auto* workgroup = GlobalVar("w", ty.i32(), core::AddressSpace::kWorkgroup);
+    auto* immediate = GlobalVar("pc", ty.i32(), core::AddressSpace::kImmediate);
     auto* uniform =
         GlobalVar("ub", ty.Of(buf), core::AddressSpace::kUniform, Binding(0_a), Group(0_a));
     auto* storage =
@@ -1064,12 +1067,14 @@ TEST_F(ResolverVariableTest, GlobalVar_AddressSpace) {
 
     ASSERT_TRUE(TypeOf(private_)->Is<core::type::Reference>());
     ASSERT_TRUE(TypeOf(workgroup)->Is<core::type::Reference>());
+    ASSERT_TRUE(TypeOf(immediate)->Is<core::type::Reference>());
     ASSERT_TRUE(TypeOf(uniform)->Is<core::type::Reference>());
     ASSERT_TRUE(TypeOf(storage)->Is<core::type::Reference>());
     ASSERT_TRUE(TypeOf(handle)->Is<core::type::Reference>());
 
     EXPECT_EQ(TypeOf(private_)->As<core::type::Reference>()->Access(), core::Access::kReadWrite);
     EXPECT_EQ(TypeOf(workgroup)->As<core::type::Reference>()->Access(), core::Access::kReadWrite);
+    EXPECT_EQ(TypeOf(immediate)->As<core::type::Reference>()->Access(), core::Access::kRead);
     EXPECT_EQ(TypeOf(uniform)->As<core::type::Reference>()->Access(), core::Access::kRead);
     EXPECT_EQ(TypeOf(storage)->As<core::type::Reference>()->Access(), core::Access::kRead);
     EXPECT_EQ(TypeOf(handle)->As<core::type::Reference>()->Access(), core::Access::kRead);
@@ -1312,7 +1317,7 @@ TEST_F(ResolverVariableTest, GlobalVar_UseTemplatedIdent) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(), R"(12:34 error: variable 'a' does not take template arguments
-56:78 note: var 'a' declared here)");
+56:78 note: 'var a' declared here)");
 }
 
 TEST_F(ResolverVariableTest, GlobalConst_UseTemplatedIdent) {
@@ -1330,7 +1335,7 @@ TEST_F(ResolverVariableTest, GlobalConst_UseTemplatedIdent) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(), R"(12:34 error: variable 'a' does not take template arguments
-56:78 note: const 'a' declared here)");
+56:78 note: 'const a' declared here)");
 }
 
 TEST_F(ResolverVariableTest, GlobalOverride_UseTemplatedIdent) {
@@ -1348,7 +1353,7 @@ TEST_F(ResolverVariableTest, GlobalOverride_UseTemplatedIdent) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(), R"(12:34 error: variable 'a' does not take template arguments
-56:78 note: override 'a' declared here)");
+56:78 note: 'override a' declared here)");
 }
 
 TEST_F(ResolverVariableTest, Param_UseTemplatedIdent) {
@@ -1380,7 +1385,7 @@ TEST_F(ResolverVariableTest, LocalVar_UseTemplatedIdent) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(), R"(12:34 error: variable 'a' does not take template arguments
-56:78 note: var 'a' declared here)");
+56:78 note: 'var a' declared here)");
 }
 
 TEST_F(ResolverVariableTest, Let_UseTemplatedIdent) {
@@ -1397,7 +1402,121 @@ TEST_F(ResolverVariableTest, Let_UseTemplatedIdent) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(), R"(12:34 error: variable 'a' does not take template arguments
-56:78 note: let 'a' declared here)");
+56:78 note: 'let a' declared here)");
+}
+
+TEST_F(ResolverVariableTest, ScalarI8) {
+    Enable(wgsl::Extension::kChromiumExperimentalSubgroupMatrix);
+
+    GlobalVar("v", ty.i8(), core::AddressSpace::kPrivate);
+
+    EXPECT_FALSE(r()->Resolve()) << r()->error();
+    EXPECT_EQ(r()->error(), R"(error: i8 cannot be used as the type of a var)");
+}
+
+TEST_F(ResolverVariableTest, ScalarU8) {
+    Enable(wgsl::Extension::kChromiumExperimentalSubgroupMatrix);
+
+    GlobalVar("v", ty.u8(), core::AddressSpace::kPrivate);
+
+    EXPECT_FALSE(r()->Resolve()) << r()->error();
+    EXPECT_EQ(r()->error(), R"(error: u8 cannot be used as the type of a var)");
+}
+
+TEST_F(ResolverVariableTest, Vec2I8) {
+    Enable(wgsl::Extension::kChromiumExperimentalSubgroupMatrix);
+
+    GlobalVar("v", ty.vec2<i8>(), core::AddressSpace::kPrivate);
+
+    EXPECT_FALSE(r()->Resolve()) << r()->error();
+    EXPECT_EQ(r()->error(),
+              R"(error: vector element type must be 'bool', 'f32', 'f16', 'i32' or 'u32')");
+}
+
+TEST_F(ResolverVariableTest, Vec2U8) {
+    Enable(wgsl::Extension::kChromiumExperimentalSubgroupMatrix);
+
+    GlobalVar("v", ty.vec2<u8>(), core::AddressSpace::kPrivate);
+
+    EXPECT_FALSE(r()->Resolve()) << r()->error();
+    EXPECT_EQ(r()->error(),
+              R"(error: vector element type must be 'bool', 'f32', 'f16', 'i32' or 'u32')");
+}
+
+TEST_F(ResolverVariableTest, Vec3I8) {
+    Enable(wgsl::Extension::kChromiumExperimentalSubgroupMatrix);
+
+    GlobalVar("v", ty.vec2<i8>(), core::AddressSpace::kPrivate);
+
+    EXPECT_FALSE(r()->Resolve()) << r()->error();
+    EXPECT_EQ(r()->error(),
+              R"(error: vector element type must be 'bool', 'f32', 'f16', 'i32' or 'u32')");
+}
+
+TEST_F(ResolverVariableTest, Vec3U8) {
+    Enable(wgsl::Extension::kChromiumExperimentalSubgroupMatrix);
+
+    GlobalVar("v", ty.vec2<u8>(), core::AddressSpace::kPrivate);
+
+    EXPECT_FALSE(r()->Resolve()) << r()->error();
+    EXPECT_EQ(r()->error(),
+              R"(error: vector element type must be 'bool', 'f32', 'f16', 'i32' or 'u32')");
+}
+
+TEST_F(ResolverVariableTest, Vec4I8) {
+    Enable(wgsl::Extension::kChromiumExperimentalSubgroupMatrix);
+
+    GlobalVar("v", ty.vec2<i8>(), core::AddressSpace::kPrivate);
+
+    EXPECT_FALSE(r()->Resolve()) << r()->error();
+    EXPECT_EQ(r()->error(),
+              R"(error: vector element type must be 'bool', 'f32', 'f16', 'i32' or 'u32')");
+}
+
+TEST_F(ResolverVariableTest, Vec4U8) {
+    Enable(wgsl::Extension::kChromiumExperimentalSubgroupMatrix);
+
+    GlobalVar("v", ty.vec2<u8>(), core::AddressSpace::kPrivate);
+
+    EXPECT_FALSE(r()->Resolve()) << r()->error();
+    EXPECT_EQ(r()->error(),
+              R"(error: vector element type must be 'bool', 'f32', 'f16', 'i32' or 'u32')");
+}
+
+TEST_F(ResolverVariableTest, ArrayI8) {
+    Enable(wgsl::Extension::kChromiumExperimentalSubgroupMatrix);
+
+    GlobalVar("v", ty.array<i8, 4>(), core::AddressSpace::kPrivate);
+
+    EXPECT_FALSE(r()->Resolve()) << r()->error();
+    EXPECT_EQ(r()->error(), R"(error: i8 cannot be used as an element type of an array)");
+}
+
+TEST_F(ResolverVariableTest, ArrayU8) {
+    Enable(wgsl::Extension::kChromiumExperimentalSubgroupMatrix);
+
+    GlobalVar("v", ty.array<u8, 4>(), core::AddressSpace::kPrivate);
+
+    EXPECT_FALSE(r()->Resolve()) << r()->error();
+    EXPECT_EQ(r()->error(), R"(error: u8 cannot be used as an element type of an array)");
+}
+
+TEST_F(ResolverVariableTest, MatrixI8) {
+    Enable(wgsl::Extension::kChromiumExperimentalSubgroupMatrix);
+
+    GlobalVar("v", ty.mat4x4<i8>(), core::AddressSpace::kPrivate);
+
+    EXPECT_FALSE(r()->Resolve()) << r()->error();
+    EXPECT_EQ(r()->error(), R"(error: matrix element type must be 'f32' or 'f16')");
+}
+
+TEST_F(ResolverVariableTest, MatrixU8) {
+    Enable(wgsl::Extension::kChromiumExperimentalSubgroupMatrix);
+
+    GlobalVar("v", ty.mat2x2<u8>(), core::AddressSpace::kPrivate);
+
+    EXPECT_FALSE(r()->Resolve()) << r()->error();
+    EXPECT_EQ(r()->error(), R"(error: matrix element type must be 'f32' or 'f16')");
 }
 
 }  // namespace

@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/os_crypt/sync/key_storage_libsecret.h"
+
 #include <string>
 #include <unordered_map>
 
-#include "base/lazy_instance.h"
-#include "components/os_crypt/sync/key_storage_libsecret.h"
+#include "base/compiler_specific.h"
+#include "base/no_destructor.h"
 #include "components/os_crypt/sync/libsecret_util_linux.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/glib/scoped_gobject.h"
@@ -77,8 +79,11 @@ class MockPasswordStore {
   std::vector<ScopedGObject<GObject>> objects_returned_to_caller_;
   ScopedGObject<GObject> password_;
 };
-base::LazyInstance<MockPasswordStore>::Leaky g_password_store =
-    LAZY_INSTANCE_INITIALIZER;
+
+MockPasswordStore& GetPasswordStore() {
+  static base::NoDestructor<MockPasswordStore> password_store;
+  return *password_store;
+}
 
 // Replaces some of LibsecretLoader's methods with mocked ones.
 class MockLibsecretLoader : public LibsecretLoader {
@@ -123,7 +128,7 @@ class MockLibsecretLoader : public LibsecretLoader {
 
 const gchar* MockLibsecretLoader::mock_secret_value_get_text(
     SecretValue* value) {
-  return g_password_store.Pointer()->GetString(value);
+  return GetPasswordStore().GetString(value);
 }
 
 // static
@@ -135,13 +140,15 @@ gboolean MockLibsecretLoader::mock_secret_password_store_sync(
     GCancellable* cancellable,
     GError** error,
     ...) {
-  // TODO(crbug.com/660005) We don't read the dummy we store to unlock keyring.
-  if (strcmp("_chrome_dummy_schema_for_unlocking", schema->name) == 0) {
+  // TODO(crbug.com/40490926) We don't read the dummy we store to unlock
+  // keyring.
+  if (UNSAFE_TODO(strcmp("_chrome_dummy_schema_for_unlocking", schema->name)) ==
+      0) {
     return true;
   }
 
   EXPECT_STREQ(kKeystoreSchemaV2.name, schema->name);
-  g_password_store.Pointer()->SetPassword(password);
+  GetPasswordStore().SetPassword(password);
   return true;
 }
 
@@ -164,10 +171,10 @@ GList* MockLibsecretLoader::mock_secret_service_search_sync(
   EXPECT_TRUE(flags & SECRET_SEARCH_LOAD_SECRETS);
 
   GObject* item = nullptr;
-  MockPasswordStore* store = g_password_store.Pointer();
-  GObject* password = store->password();
+  MockPasswordStore& store = GetPasswordStore();
+  GObject* password = store.password();
   if (password) {
-    item = store->MakeTempObject(store->GetString(password));
+    item = store.MakeTempObject(store.GetString(password));
   }
 
   if (!item) {
@@ -212,7 +219,7 @@ bool MockLibsecretLoader::ResetForOSCrypt() {
   secret_item_get_modified =
       &MockLibsecretLoader::mock_secret_item_get_modified;
 
-  g_password_store.Pointer()->Reset();
+  GetPasswordStore().Reset();
   libsecret_loaded_ = true;
 
   return true;
@@ -220,7 +227,7 @@ bool MockLibsecretLoader::ResetForOSCrypt() {
 
 // static
 void MockLibsecretLoader::TearDown() {
-  g_password_store.Pointer()->Reset();
+  GetPasswordStore().Reset();
   libsecret_loaded_ =
       false;  // Function pointers will be restored when loading.
 }
@@ -242,11 +249,11 @@ class LibsecretTest : public testing::Test {
 TEST_F(LibsecretTest, LibsecretRepeats) {
   KeyStorageLibsecret libsecret("chromium");
   MockLibsecretLoader::ResetForOSCrypt();
-  g_password_store.Pointer()->SetPassword("initial password");
-  absl::optional<std::string> password = libsecret.GetKey();
+  GetPasswordStore().SetPassword("initial password");
+  std::optional<std::string> password = libsecret.GetKey();
   EXPECT_TRUE(password.has_value());
   EXPECT_FALSE(password.value().empty());
-  absl::optional<std::string> password_repeat = libsecret.GetKey();
+  std::optional<std::string> password_repeat = libsecret.GetKey();
   EXPECT_TRUE(password_repeat.has_value());
   EXPECT_EQ(password.value(), password_repeat.value());
 }
@@ -254,9 +261,9 @@ TEST_F(LibsecretTest, LibsecretRepeats) {
 TEST_F(LibsecretTest, LibsecretCreatesRandomised) {
   KeyStorageLibsecret libsecret("chromium");
   MockLibsecretLoader::ResetForOSCrypt();
-  absl::optional<std::string> password = libsecret.GetKey();
+  std::optional<std::string> password = libsecret.GetKey();
   MockLibsecretLoader::ResetForOSCrypt();
-  absl::optional<std::string> password_new = libsecret.GetKey();
+  std::optional<std::string> password_new = libsecret.GetKey();
   EXPECT_TRUE(password.has_value());
   EXPECT_TRUE(password_new.has_value());
   EXPECT_NE(password.value(), password_new.value());

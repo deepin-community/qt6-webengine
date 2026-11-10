@@ -14,12 +14,11 @@ enum ContextType {
   kPrivilegedWebPage,
   kWebUi,
   kUntrustedWebUi,
-  kLockscreenExtension,
   kOffscreenExtension,
   kUserScript,
 
   // An unspecified context type. Note that this should never be used in real-
   // world scenarios.
-  // TODO(https://crbug.com/1506353): Remove this.
+  // TODO(crbug.com/40947006): Remove this.
   kUnspecified,
 };

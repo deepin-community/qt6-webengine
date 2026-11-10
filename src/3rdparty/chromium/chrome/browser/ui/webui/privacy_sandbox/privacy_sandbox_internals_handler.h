@@ -4,6 +4,7 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_PRIVACY_SANDBOX_PRIVACY_SANDBOX_INTERNALS_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_PRIVACY_SANDBOX_PRIVACY_SANDBOX_INTERNALS_HANDLER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/privacy_sandbox/privacy_sandbox_internals.mojom.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
@@ -29,8 +30,11 @@ class PrivacySandboxInternalsHandler
   PrivacySandboxInternalsHandler& operator=(
       const PrivacySandboxInternalsHandler&) = delete;
 
-  void ReadPref(const std::string& pref_name,
-                ReadPrefCallback callback) override;
+  void ReadPrefsWithPrefixes(const std::vector<std::string>& pref_prefixes,
+                             ReadPrefsWithPrefixesCallback callback) override;
+  void ReadContentSettings(const ContentSettingsType type,
+                           ReadContentSettingsCallback callback) override;
+
   void ContentSettingsPatternToString(
       const ContentSettingsPattern& pattern,
       ContentSettingsPatternToStringCallback callback) override;
@@ -39,14 +43,10 @@ class PrivacySandboxInternalsHandler
       const std::string& s,
       StringToContentSettingsPatternCallback callback) override;
 
-  void GetCookieSettings(GetCookieSettingsCallback callback) override;
   void GetTpcdMetadataGrants(GetTpcdMetadataGrantsCallback callback) override;
-  void GetTpcdHeuristicsGrants(GetTpcdMetadataGrantsCallback callback) override;
-  void GetTpcdTrial(GetTpcdMetadataGrantsCallback callback) override;
-  void GetTopLevelTpcdTrial(GetTpcdMetadataGrantsCallback callback) override;
 
  private:
-  raw_ptr<Profile> profile_;
+  raw_ptr<Profile, DanglingUntriaged> profile_;
   // It seems like the handler is supposed to retain ownership even though we
   // don't need to reference the mojo::Receiver.
   mojo::Receiver<privacy_sandbox_internals::mojom::PageHandler> receiver_{this};

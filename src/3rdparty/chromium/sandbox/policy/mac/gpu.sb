@@ -25,7 +25,6 @@
   (global-name "com.apple.cvmsServ")
   (global-name "com.apple.gpumemd.source")
   (global-name "com.apple.lsd.mapdb")
-  (global-name "com.apple.lsd.modifydb")
   (global-name "com.apple.powerlog.plxpclogger.xpc")
   (global-name "com.apple.PowerManagement.control")
   (global-name "com.apple.SecurityServer")
@@ -40,9 +39,7 @@
 )
 
 ; Needed for metal decoding - https://crbug.com/957217
-(if (>= os-version 1014)
-  (allow mach-lookup (xpc-service-name "com.apple.MTLCompilerService"))
-)
+(allow mach-lookup (xpc-service-name "com.apple.MTLCompilerService"))
 
 ; Allow access to the Apple Neural Engine for the Shape Detection API.
 ; https://crbug.com/1382442
@@ -121,24 +118,30 @@
 )
 
 ; crbug.com/980134
-(allow file-read* file-write*
+; Restrict file-write to data/create/unlink only — the GPU process does not need
+; file-write-xattr or file-write-mode.
+; TODO(crbug.com/491422244): Remove file-write-owner needed by WebNN.
+(allow file-read* file-write-data file-write-create file-write-owner file-write-unlink
   (subpath (param darwin-user-cache-dir))
   (subpath (param darwin-user-dir))
   (subpath (param darwin-user-temp-dir))
 )
 
-(if (param-true? filter-syscalls-debug)
-  (when (defined? 'syscall-unix)
-    (deny syscall-unix (with send-signal SIGSYS))
-    (allow syscall-unix
-      (syscall-number SYS_csrctl)
-      (syscall-number SYS_getentropy)
-      (syscall-number SYS_getxattr)
-      (syscall-number SYS_kdebug_typefilter)
-      (syscall-number SYS_sigaltstack)
-      (syscall-number SYS_write)
-      (syscall-number SYS_write_nocancel)
-)))
+; Metal issues a sandbox extension to permit MTLCompilerService to read source
+; files from disk. It's much broader than we'd like (https://crbug.com/41485470).
+(allow file-issue-extension
+  (require-all
+    (extension-class "com.apple.app-sandbox.read")
+    (subpath "/")))
 
 (if (not (maybe-disable-metal-shader-cache))
   (maybe-allow-metal-shader-cache-access))
+
+; Needed for WebNN Core ML backend - https://crbug.com/344935458
+(if (and (>= os-version 1400) (param-defined? helper-bundle-id))
+    (let ((helper-bundle-cache-dir
+          (user-homedir-path (string-append "/Library/Caches/"
+                          (param helper-bundle-id) "/com.apple.e5rt.e5bundlecache"))))
+      (allow file-read* file-write*
+        (subpath helper-bundle-cache-dir)
+)))

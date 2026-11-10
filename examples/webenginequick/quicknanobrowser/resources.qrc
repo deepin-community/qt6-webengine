@@ -1,17 +1,20 @@
 <RCC>
-    <qresource prefix="/">
+    <qresource prefix="/qt/qml/BrowserUtils">
         <file>ApplicationRoot.qml</file>
+        <file>BrowserManager.qml</file>
         <file>BrowserDialog.qml</file>
         <file>BrowserWindow.qml</file>
+        <file>WebToolBar.qml</file>
         <file>DownloadView.qml</file>
         <file>FindBar.qml</file>
         <file>FullScreenNotification.qml</file>
+        <file>PermissionDialog.qml</file>
+        <file>SslDialog.qml</file>
         <file>WebAuthDialog.qml</file>
-    </qresource>
-    <qresource prefix="/icons">
-        <file alias="go-next.png">icons/3rdparty/go-next.png</file>
-        <file alias="go-previous.png">icons/3rdparty/go-previous.png</file>
-        <file alias="process-stop.png">icons/3rdparty/process-stop.png</file>
-        <file alias="view-refresh.png">icons/3rdparty/view-refresh.png</file>
+        <file>qmldir</file>
+        <file>icons/3rdparty/go-next.png</file>
+        <file>icons/3rdparty/go-previous.png</file>
+        <file>icons/3rdparty/process-stop.png</file>
+        <file>icons/3rdparty/view-refresh.png</file>
     </qresource>
 </RCC>

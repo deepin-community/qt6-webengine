@@ -10,9 +10,11 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <optional>
 #include <set>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/logging.h"
@@ -24,7 +26,6 @@
 #include "components/zucchini/buffer_view.h"
 #include "components/zucchini/io_utils.h"
 #include "third_party/abseil-cpp/absl/strings/ascii.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace zucchini {
 
@@ -261,11 +262,12 @@ class InstructionParser {
       std::fill(std::begin(instruction_table), std::end(instruction_table),
                 nullptr);
       for (const dex::Instruction& instr : dex::kByteCode) {
-        std::fill(instruction_table + instr.opcode,
-                  instruction_table + instr.opcode + instr.variant, &instr);
+        std::fill(UNSAFE_TODO(instruction_table + instr.opcode),
+                  UNSAFE_TODO(instruction_table + instr.opcode + instr.variant),
+                  &instr);
       }
     }
-    return instruction_table[opcode];
+    return UNSAFE_TODO(instruction_table[opcode]);
   }
 
   InstructionParser() = default;
@@ -312,8 +314,8 @@ class InstructionParser {
         return false;
       }
       // Update boundary between instructions and payload.
-      const ConstBufferView::const_iterator payload_it =
-          insns_.begin() + unsafe_payload_rel_units * kInstrUnitSize;
+      const ConstBufferView::const_iterator payload_it = UNSAFE_TODO(
+          insns_.begin() + unsafe_payload_rel_units * kInstrUnitSize);
       payload_boundary_ = std::min(payload_boundary_, payload_it);
     }
 
@@ -372,13 +374,13 @@ class InstructionReferenceReader : public ReferenceReader {
   }
 
   // ReferenceReader:
-  absl::optional<Reference> GetNext() override {
+  std::optional<Reference> GetNext() override {
     while (true) {
       while (parser_.ReadNext()) {
         const auto& v = parser_.value();
         DCHECK_NE(v.instr, nullptr);
         if (v.instr_offset >= hi_)
-          return absl::nullopt;
+          return std::nullopt;
         const offset_t location = filter_.Run(v);
         if (location == kInvalidOffset || location < lo_)
           continue;
@@ -386,7 +388,7 @@ class InstructionReferenceReader : public ReferenceReader {
         // assumption |hi_| and |lo_| do not straddle the body of a Reference.
         // So |reference_width| is unneeded.
         if (location >= hi_)
-          return absl::nullopt;
+          return std::nullopt;
         offset_t target = mapper_.Run(location);
         if (target != kInvalidOffset)
           return Reference{location, target};
@@ -395,7 +397,7 @@ class InstructionReferenceReader : public ReferenceReader {
       }
       ++cur_it_;
       if (cur_it_ == end_it_)
-        return absl::nullopt;
+        return std::nullopt;
       parser_ = InstructionParser(image_, *cur_it_);
     }
   }
@@ -462,7 +464,7 @@ class ItemReferenceReader : public ReferenceReader {
   }
 
   // ReferenceReader:
-  absl::optional<Reference> GetNext() override {
+  std::optional<Reference> GetNext() override {
     while (cur_idx_ < num_items_) {
       const offset_t item_offset = OffsetOfIndex(cur_idx_);
       const offset_t location = item_offset + rel_location_;
@@ -500,7 +502,7 @@ class ItemReferenceReader : public ReferenceReader {
       ++cur_idx_;
       return Reference{location, target};
     }
-    return absl::nullopt;
+    return std::nullopt;
   }
 
  private:
@@ -660,7 +662,7 @@ class CachedItemListReferenceReader : public ReferenceReader {
       const CachedItemListReferenceReader&) = delete;
 
   // ReferenceReader:
-  absl::optional<Reference> GetNext() override {
+  std::optional<Reference> GetNext() override {
     while (cur_it_ < end_it_) {
       const offset_t location = *cur_it_ + rel_location_;
       if (location >= hi_)  // Check is simplified by atomicity assumption.
@@ -678,7 +680,7 @@ class CachedItemListReferenceReader : public ReferenceReader {
         continue;
       return Reference{location, target};
     }
-    return absl::nullopt;
+    return std::nullopt;
   }
 
  private:
@@ -1808,7 +1810,7 @@ bool DisassemblerDex::ParseHeader() {
   // Read and validate map list, ensuring that required item types are present.
   // GetItemBaseSize() should have an entry for each item.
   for (offset_t i = 0; i < list_size; ++i) {
-    const dex::MapItem* item = &item_list[i];
+    const dex::MapItem* item = &UNSAFE_TODO(item_list[i]);
     // Reject unreasonably large |item->size|.
     size_t item_size = GetItemBaseSize(item->type);
     // Confusing name: |item->size| is actually the number of items.

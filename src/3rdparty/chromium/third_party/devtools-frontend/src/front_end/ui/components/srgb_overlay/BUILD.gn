@@ -18,7 +18,7 @@ devtools_module("srgb_overlay") {
     "../../../core/common:bundle",
     "../../../ui/components/helpers:bundle",
     "../../../ui/components/render_coordinator:bundle",
-    "../../../ui/lit-html:bundle",
+    "../../../ui/lit:bundle",
   ]
 }
 
@@ -30,8 +30,5 @@ devtools_entrypoint("bundle") {
     ":srgb_overlay",
   ]
 
-  visibility = [
-    "../../../../test/unittests/front_end/ui/components/*",
-    "../../legacy/components/color_picker/*",
-  ]
+  visibility = [ "../../legacy/components/color_picker/*" ]
 }

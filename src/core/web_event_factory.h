@@ -1,12 +1,13 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef WEB_EVENT_FACTORY_H
 #define WEB_EVENT_FACTORY_H
 
 #include "QtGui/qtguiglobal.h"
 
-#include "content/public/common/input/native_web_keyboard_event.h"
+#include "components/input/native_web_keyboard_event.h"
 #if QT_CONFIG(gestures)
 #include "third_party/blink/public/common/input/web_gesture_event.h"
 #endif
@@ -46,7 +47,7 @@ public:
     static blink::WebMouseWheelEvent toWebWheelEvent(QWheelEvent *);
     static bool coalesceWebWheelEvent(blink::WebMouseWheelEvent &, QWheelEvent *);
     static void sendUnhandledWheelEvent(const blink::WebGestureEvent &, RenderWidgetHostViewQtDelegate *);
-    static content::NativeWebKeyboardEvent toWebKeyboardEvent(QKeyEvent*);
+    static input::NativeWebKeyboardEvent toWebKeyboardEvent(QKeyEvent*);
     static bool getEditCommand(QKeyEvent *event, std::string *editCommand);
 };
 

@@ -53,9 +53,6 @@ TEST_F(IR_CombineAccessInstructionsTest, NoModify_NoChaining) {
 
     auto* func = b.Function("foo", ty.void_());
     b.Append(func->Block(), [&] {
-        auto* access_root = b.Access(ty.ptr(uniform, structure), buffer);
-        b.Load(access_root);
-
         auto* access_arr = b.Access(ty.ptr(uniform, arr), buffer, 0_u);
         b.Load(access_arr);
 
@@ -73,20 +70,18 @@ MyStruct = struct @align(16) {
   a:array<mat3x3<f32>, 4> @offset(0)
 }
 
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
+$B1: {  # root
+  %buffer:ptr<uniform, MyStruct, read> = var undef @binding_point(0, 0)
 }
 
-%foo = func():void -> %b2 {
-  %b2 = block {
-    %3:ptr<uniform, MyStruct, read> = access %buffer
-    %4:MyStruct = load %3
-    %5:ptr<uniform, array<mat3x3<f32>, 4>, read> = access %buffer, 0u
-    %6:array<mat3x3<f32>, 4> = load %5
-    %7:ptr<uniform, mat3x3<f32>, read> = access %buffer, 0u, 1u
-    %8:mat3x3<f32> = load %7
-    %9:ptr<uniform, vec3<f32>, read> = access %buffer, 0u, 1u, 2u
-    %10:vec3<f32> = load %9
+%foo = func():void {
+  $B2: {
+    %3:ptr<uniform, array<mat3x3<f32>, 4>, read> = access %buffer, 0u
+    %4:array<mat3x3<f32>, 4> = load %3
+    %5:ptr<uniform, mat3x3<f32>, read> = access %buffer, 0u, 1u
+    %6:mat3x3<f32> = load %5
+    %7:ptr<uniform, vec3<f32>, read> = access %buffer, 0u, 1u, 2u
+    %8:vec3<f32> = load %7
     ret
   }
 }
@@ -127,12 +122,12 @@ MyStruct = struct @align(16) {
   a:array<mat3x3<f32>, 4> @offset(0)
 }
 
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
+$B1: {  # root
+  %buffer:ptr<uniform, MyStruct, read> = var undef @binding_point(0, 0)
 }
 
-%foo = func():void -> %b2 {
-  %b2 = block {
+%foo = func():void {
+  $B2: {
     %3:ptr<uniform, array<mat3x3<f32>, 4>, read> = access %buffer, 0u
     %4:ptr<uniform, mat3x3<f32>, read> = access %3, 1u
     %5:ptr<uniform, vec3<f32>, read> = access %4, 2u
@@ -148,207 +143,14 @@ MyStruct = struct @align(16) {
   a:array<mat3x3<f32>, 4> @offset(0)
 }
 
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
+$B1: {  # root
+  %buffer:ptr<uniform, MyStruct, read> = var undef @binding_point(0, 0)
 }
 
-%foo = func():void -> %b2 {
-  %b2 = block {
+%foo = func():void {
+  $B2: {
     %3:ptr<uniform, vec3<f32>, read> = access %buffer, 0u, 1u, 2u
     %4:vec3<f32> = load %3
-    ret
-  }
-}
-)";
-
-    Run(CombineAccessInstructions);
-
-    EXPECT_EQ(expect, str());
-}
-
-TEST_F(IR_CombineAccessInstructionsTest, NoIndices_Root) {
-    auto* mat = ty.mat3x3<f32>();
-    auto* arr = ty.array(mat, 4);
-    auto* structure = ty.Struct(mod.symbols.New("MyStruct"), {
-                                                                 {mod.symbols.New("a"), arr},
-                                                             });
-
-    auto* buffer = b.Var("buffer", ty.ptr(uniform, structure));
-    buffer->SetBindingPoint(0, 0);
-    mod.root_block->Append(buffer);
-
-    auto* func = b.Function("foo", ty.void_());
-    b.Append(func->Block(), [&] {
-        auto* access_root = b.Access(ty.ptr(uniform, structure), buffer);
-        auto* access_arr = b.Access(ty.ptr(uniform, arr), access_root, 0_u);
-        b.Load(access_arr);
-
-        b.Return(func);
-    });
-
-    auto* src = R"(
-MyStruct = struct @align(16) {
-  a:array<mat3x3<f32>, 4> @offset(0)
-}
-
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
-}
-
-%foo = func():void -> %b2 {
-  %b2 = block {
-    %3:ptr<uniform, MyStruct, read> = access %buffer
-    %4:ptr<uniform, array<mat3x3<f32>, 4>, read> = access %3, 0u
-    %5:array<mat3x3<f32>, 4> = load %4
-    ret
-  }
-}
-)";
-    EXPECT_EQ(src, str());
-
-    auto* expect = R"(
-MyStruct = struct @align(16) {
-  a:array<mat3x3<f32>, 4> @offset(0)
-}
-
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
-}
-
-%foo = func():void -> %b2 {
-  %b2 = block {
-    %3:ptr<uniform, array<mat3x3<f32>, 4>, read> = access %buffer, 0u
-    %4:array<mat3x3<f32>, 4> = load %3
-    ret
-  }
-}
-)";
-
-    Run(CombineAccessInstructions);
-
-    EXPECT_EQ(expect, str());
-}
-
-TEST_F(IR_CombineAccessInstructionsTest, NoIndices_Middle) {
-    auto* mat = ty.mat3x3<f32>();
-    auto* arr = ty.array(mat, 4);
-    auto* structure = ty.Struct(mod.symbols.New("MyStruct"), {
-                                                                 {mod.symbols.New("a"), arr},
-                                                             });
-
-    auto* buffer = b.Var("buffer", ty.ptr(uniform, structure));
-    buffer->SetBindingPoint(0, 0);
-    mod.root_block->Append(buffer);
-
-    auto* func = b.Function("foo", ty.void_());
-    b.Append(func->Block(), [&] {
-        auto* access_arr = b.Access(ty.ptr(uniform, arr), buffer, 0_u);
-        auto* access_copy = b.Access(ty.ptr(uniform, arr), access_arr);
-        auto* access_mat = b.Access(ty.ptr(uniform, mat), access_copy, 1_u);
-        b.Load(access_mat);
-
-        b.Return(func);
-    });
-
-    auto* src = R"(
-MyStruct = struct @align(16) {
-  a:array<mat3x3<f32>, 4> @offset(0)
-}
-
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
-}
-
-%foo = func():void -> %b2 {
-  %b2 = block {
-    %3:ptr<uniform, array<mat3x3<f32>, 4>, read> = access %buffer, 0u
-    %4:ptr<uniform, array<mat3x3<f32>, 4>, read> = access %3
-    %5:ptr<uniform, mat3x3<f32>, read> = access %4, 1u
-    %6:mat3x3<f32> = load %5
-    ret
-  }
-}
-)";
-    EXPECT_EQ(src, str());
-
-    auto* expect = R"(
-MyStruct = struct @align(16) {
-  a:array<mat3x3<f32>, 4> @offset(0)
-}
-
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
-}
-
-%foo = func():void -> %b2 {
-  %b2 = block {
-    %3:ptr<uniform, mat3x3<f32>, read> = access %buffer, 0u, 1u
-    %4:mat3x3<f32> = load %3
-    ret
-  }
-}
-)";
-
-    Run(CombineAccessInstructions);
-
-    EXPECT_EQ(expect, str());
-}
-
-TEST_F(IR_CombineAccessInstructionsTest, NoIndices_End) {
-    auto* mat = ty.mat3x3<f32>();
-    auto* arr = ty.array(mat, 4);
-    auto* structure = ty.Struct(mod.symbols.New("MyStruct"), {
-                                                                 {mod.symbols.New("a"), arr},
-                                                             });
-
-    auto* buffer = b.Var("buffer", ty.ptr(uniform, structure));
-    buffer->SetBindingPoint(0, 0);
-    mod.root_block->Append(buffer);
-
-    auto* func = b.Function("foo", ty.void_());
-    b.Append(func->Block(), [&] {
-        auto* access_arr = b.Access(ty.ptr(uniform, arr), buffer, 0_u);
-        auto* access_mat = b.Access(ty.ptr(uniform, mat), access_arr, 1_u);
-        auto* access_copy = b.Access(ty.ptr(uniform, mat), access_mat);
-        b.Load(access_copy);
-
-        b.Return(func);
-    });
-
-    auto* src = R"(
-MyStruct = struct @align(16) {
-  a:array<mat3x3<f32>, 4> @offset(0)
-}
-
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
-}
-
-%foo = func():void -> %b2 {
-  %b2 = block {
-    %3:ptr<uniform, array<mat3x3<f32>, 4>, read> = access %buffer, 0u
-    %4:ptr<uniform, mat3x3<f32>, read> = access %3, 1u
-    %5:ptr<uniform, mat3x3<f32>, read> = access %4
-    %6:mat3x3<f32> = load %5
-    ret
-  }
-}
-)";
-    EXPECT_EQ(src, str());
-
-    auto* expect = R"(
-MyStruct = struct @align(16) {
-  a:array<mat3x3<f32>, 4> @offset(0)
-}
-
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
-}
-
-%foo = func():void -> %b2 {
-  %b2 = block {
-    %3:ptr<uniform, mat3x3<f32>, read> = access %buffer, 0u, 1u
-    %4:mat3x3<f32> = load %3
     ret
   }
 }
@@ -399,12 +201,12 @@ MyStruct = struct @align(16) {
   a:array<mat3x3<f32>, 4> @offset(0)
 }
 
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
+$B1: {  # root
+  %buffer:ptr<uniform, MyStruct, read> = var undef @binding_point(0, 0)
 }
 
-%foo = func():void -> %b2 {
-  %b2 = block {
+%foo = func():void {
+  $B2: {
     %3:ptr<uniform, array<mat3x3<f32>, 4>, read> = access %buffer, 0u
     %4:ptr<uniform, mat3x3<f32>, read> = access %3, 1u
     %5:ptr<uniform, vec3<f32>, read> = access %4, 2u
@@ -426,12 +228,12 @@ MyStruct = struct @align(16) {
   a:array<mat3x3<f32>, 4> @offset(0)
 }
 
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
+$B1: {  # root
+  %buffer:ptr<uniform, MyStruct, read> = var undef @binding_point(0, 0)
 }
 
-%foo = func():void -> %b2 {
-  %b2 = block {
+%foo = func():void {
+  $B2: {
     %3:ptr<uniform, vec3<f32>, read> = access %buffer, 0u, 1u, 2u
     %4:vec3<f32> = load %3
     %5:ptr<uniform, vec3<f32>, read> = access %buffer, 0u, 2u, 0u
@@ -486,12 +288,12 @@ MyStruct = struct @align(16) {
   a:array<mat3x3<f32>, 4> @offset(0)
 }
 
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
+$B1: {  # root
+  %buffer:ptr<uniform, MyStruct, read> = var undef @binding_point(0, 0)
 }
 
-%foo = func():void -> %b2 {
-  %b2 = block {
+%foo = func():void {
+  $B2: {
     %3:ptr<uniform, array<mat3x3<f32>, 4>, read> = access %buffer, 0u
     %4:ptr<uniform, mat3x3<f32>, read> = access %3, 1u
     %5:ptr<uniform, vec3<f32>, read> = access %4, 2u
@@ -511,12 +313,12 @@ MyStruct = struct @align(16) {
   a:array<mat3x3<f32>, 4> @offset(0)
 }
 
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
+$B1: {  # root
+  %buffer:ptr<uniform, MyStruct, read> = var undef @binding_point(0, 0)
 }
 
-%foo = func():void -> %b2 {
-  %b2 = block {
+%foo = func():void {
+  $B2: {
     %3:ptr<uniform, vec3<f32>, read> = access %buffer, 0u, 1u, 2u
     %4:vec3<f32> = load %3
     %5:ptr<uniform, vec3<f32>, read> = access %buffer, 0u, 1u, 0u
@@ -561,12 +363,12 @@ MyStruct = struct @align(16) {
   a:array<mat3x3<f32>, 4> @offset(0)
 }
 
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
+$B1: {  # root
+  %buffer:ptr<uniform, MyStruct, read> = var undef @binding_point(0, 0)
 }
 
-%foo = func():void -> %b2 {
-  %b2 = block {
+%foo = func():void {
+  $B2: {
     %3:ptr<uniform, array<mat3x3<f32>, 4>, read> = access %buffer, 0u
     %4:array<mat3x3<f32>, 4> = load %3
     %5:ptr<uniform, mat3x3<f32>, read> = access %3, 1u
@@ -583,12 +385,12 @@ MyStruct = struct @align(16) {
   a:array<mat3x3<f32>, 4> @offset(0)
 }
 
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
+$B1: {  # root
+  %buffer:ptr<uniform, MyStruct, read> = var undef @binding_point(0, 0)
 }
 
-%foo = func():void -> %b2 {
-  %b2 = block {
+%foo = func():void {
+  $B2: {
     %3:ptr<uniform, array<mat3x3<f32>, 4>, read> = access %buffer, 0u
     %4:array<mat3x3<f32>, 4> = load %3
     %5:ptr<uniform, vec3<f32>, read> = access %buffer, 0u, 1u, 2u
@@ -631,12 +433,12 @@ MyStruct = struct @align(16) {
   a:array<mat3x3<f32>, 4> @offset(0)
 }
 
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
+$B1: {  # root
+  %buffer:ptr<uniform, MyStruct, read> = var undef @binding_point(0, 0)
 }
 
-%foo = func():void -> %b2 {
-  %b2 = block {
+%foo = func():void {
+  $B2: {
     %3:ptr<uniform, array<mat3x3<f32>, 4>, read> = access %buffer, 0u
     %4:ptr<uniform, mat3x3<f32>, read> = access %3, 1u
     %5:mat3x3<f32> = load %4
@@ -653,12 +455,12 @@ MyStruct = struct @align(16) {
   a:array<mat3x3<f32>, 4> @offset(0)
 }
 
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
+$B1: {  # root
+  %buffer:ptr<uniform, MyStruct, read> = var undef @binding_point(0, 0)
 }
 
-%foo = func():void -> %b2 {
-  %b2 = block {
+%foo = func():void {
+  $B2: {
     %3:ptr<uniform, mat3x3<f32>, read> = access %buffer, 0u, 1u
     %4:mat3x3<f32> = load %3
     %5:ptr<uniform, vec3<f32>, read> = access %buffer, 0u, 1u, 2u
@@ -677,6 +479,7 @@ TEST_F(IR_CombineAccessInstructionsTest, AccessResultUsesAsAccessIndex) {
     auto* func = b.Function("foo", ty.f32());
     auto* indices = b.FunctionParam("indices", ty.array<u32, 4>());
     auto* values = b.FunctionParam("values", ty.array<f32, 4>());
+    func->SetParams({indices, values});
     b.Append(func->Block(), [&] {
         auto* access_index = b.Access(ty.u32(), indices, 1_u);
         auto* access_value = b.Access(ty.f32(), values, access_index);
@@ -684,11 +487,11 @@ TEST_F(IR_CombineAccessInstructionsTest, AccessResultUsesAsAccessIndex) {
     });
 
     auto* src = R"(
-%foo = func():f32 -> %b1 {
-  %b1 = block {
-    %2:u32 = access %indices, 1u
-    %4:f32 = access %values, %2
-    ret %4
+%foo = func(%indices:array<u32, 4>, %values:array<f32, 4>):f32 {
+  $B1: {
+    %4:u32 = access %indices, 1u
+    %5:f32 = access %values, %4
+    ret %5
   }
 }
 )";
@@ -734,20 +537,20 @@ MyStruct = struct @align(16) {
   a:array<mat3x3<f32>, 4> @offset(0)
 }
 
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
+$B1: {  # root
+  %buffer:ptr<uniform, MyStruct, read> = var undef @binding_point(0, 0)
 }
 
-%foo = func():void -> %b2 {
-  %b2 = block {
+%foo = func():void {
+  $B2: {
     %3:ptr<uniform, array<mat3x3<f32>, 4>, read> = access %buffer, 0u
-    if true [t: %b3, f: %b4] {  # if_1
-      %b3 = block {  # true
+    if true [t: $B3, f: $B4] {  # if_1
+      $B3: {  # true
         %4:ptr<uniform, mat3x3<f32>, read> = access %3, 1u
         %5:mat3x3<f32> = load %4
         exit_if  # if_1
       }
-      %b4 = block {  # false
+      $B4: {  # false
         %6:ptr<uniform, mat3x3<f32>, read> = access %3, 2u
         %7:mat3x3<f32> = load %6
         exit_if  # if_1
@@ -764,19 +567,19 @@ MyStruct = struct @align(16) {
   a:array<mat3x3<f32>, 4> @offset(0)
 }
 
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
+$B1: {  # root
+  %buffer:ptr<uniform, MyStruct, read> = var undef @binding_point(0, 0)
 }
 
-%foo = func():void -> %b2 {
-  %b2 = block {
-    if true [t: %b3, f: %b4] {  # if_1
-      %b3 = block {  # true
+%foo = func():void {
+  $B2: {
+    if true [t: $B3, f: $B4] {  # if_1
+      $B3: {  # true
         %3:ptr<uniform, mat3x3<f32>, read> = access %buffer, 0u, 1u
         %4:mat3x3<f32> = load %3
         exit_if  # if_1
       }
-      %b4 = block {  # false
+      $B4: {  # false
         %5:ptr<uniform, mat3x3<f32>, read> = access %buffer, 0u, 2u
         %6:mat3x3<f32> = load %5
         exit_if  # if_1
@@ -825,23 +628,23 @@ MyStruct = struct @align(16) {
   a:array<mat3x3<f32>, 4> @offset(0)
 }
 
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
+$B1: {  # root
+  %buffer:ptr<uniform, MyStruct, read> = var undef @binding_point(0, 0)
 }
 
-%foo = func():void -> %b2 {
-  %b2 = block {
+%foo = func():void {
+  $B2: {
     %3:ptr<uniform, array<mat3x3<f32>, 4>, read> = access %buffer, 0u
-    loop [b: %b3, c: %b4] {  # loop_1
-      %b3 = block {  # body
+    loop [b: $B3, c: $B4] {  # loop_1
+      $B3: {  # body
         %4:ptr<uniform, mat3x3<f32>, read> = access %3, 2u
         %5:mat3x3<f32> = load %4
-        continue %b4
+        continue  # -> $B4
       }
-      %b4 = block {  # continuing
+      $B4: {  # continuing
         %6:ptr<uniform, mat3x3<f32>, read> = access %3, 3u
         %7:mat3x3<f32> = load %6
-        break_if true %b3
+        break_if true  # -> [t: exit_loop loop_1, f: $B3]
       }
     }
     ret
@@ -855,22 +658,22 @@ MyStruct = struct @align(16) {
   a:array<mat3x3<f32>, 4> @offset(0)
 }
 
-%b1 = block {  # root
-  %buffer:ptr<uniform, MyStruct, read> = var @binding_point(0, 0)
+$B1: {  # root
+  %buffer:ptr<uniform, MyStruct, read> = var undef @binding_point(0, 0)
 }
 
-%foo = func():void -> %b2 {
-  %b2 = block {
-    loop [b: %b3, c: %b4] {  # loop_1
-      %b3 = block {  # body
+%foo = func():void {
+  $B2: {
+    loop [b: $B3, c: $B4] {  # loop_1
+      $B3: {  # body
         %3:ptr<uniform, mat3x3<f32>, read> = access %buffer, 0u, 2u
         %4:mat3x3<f32> = load %3
-        continue %b4
+        continue  # -> $B4
       }
-      %b4 = block {  # continuing
+      $B4: {  # continuing
         %5:ptr<uniform, mat3x3<f32>, read> = access %buffer, 0u, 3u
         %6:mat3x3<f32> = load %5
-        break_if true %b3
+        break_if true  # -> [t: exit_loop loop_1, f: $B3]
       }
     }
     ret

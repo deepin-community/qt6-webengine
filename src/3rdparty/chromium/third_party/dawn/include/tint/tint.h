@@ -34,24 +34,15 @@
 // TODO(tint:88): When implementing support for an install target, all of these
 //                headers will need to be moved to include/tint/.
 
-#include "src/tint/api/common/binding_point.h"
-#include "src/tint/api/options/array_length_from_uniform.h"
-#include "src/tint/api/options/binding_remapper.h"
-#include "src/tint/api/options/external_texture.h"
-#include "src/tint/api/options/pixel_local.h"
-#include "src/tint/api/options/texture_builtins_from_uniform.h"
+#include "src/tint/api/common/vertex_pulling_config.h"
 #include "src/tint/api/tint.h"
+#include "src/tint/lang/core/ir/reflection.h"
+#include "src/tint/lang/core/ir/transform/single_entry_point.h"
+#include "src/tint/lang/core/ir/transform/substitute_overrides.h"
 #include "src/tint/lang/core/type/manager.h"
-#include "src/tint/lang/wgsl/ast/transform/first_index_offset.h"
-#include "src/tint/lang/wgsl/ast/transform/manager.h"
-#include "src/tint/lang/wgsl/ast/transform/renamer.h"
-#include "src/tint/lang/wgsl/ast/transform/single_entry_point.h"
-#include "src/tint/lang/wgsl/ast/transform/substitute_override.h"
-#include "src/tint/lang/wgsl/ast/transform/vertex_pulling.h"
-#include "src/tint/lang/wgsl/helpers/flatten_bindings.h"
 #include "src/tint/lang/wgsl/inspector/inspector.h"
 #include "src/tint/utils/diagnostic/formatter.h"
-#include "src/tint/utils/diagnostic/printer.h"
+#include "src/tint/utils/text/styled_text.h"
 
 #if TINT_BUILD_SPV_READER
 #include "src/tint/lang/spirv/reader/reader.h"

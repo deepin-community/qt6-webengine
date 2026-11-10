@@ -5,6 +5,8 @@
 #ifndef V8_BASE_NUMBERS_DOUBLE_H_
 #define V8_BASE_NUMBERS_DOUBLE_H_
 
+#include <bit>
+
 #include "src/base/macros.h"
 #include "src/base/numbers/diy-fp.h"
 
@@ -13,10 +15,14 @@ namespace base {
 
 // We assume that doubles and uint64_t have the same endianness.
 inline uint64_t double_to_uint64(double d) {
-  return base::bit_cast<uint64_t>(d);
+  uint64_t result;
+  std::memcpy(&result, &d, sizeof(double));
+  return result;
 }
 inline double uint64_to_double(uint64_t d64) {
-  return base::bit_cast<double>(d64);
+  double result;
+  std::memcpy(&result, &d64, sizeof(uint64_t));
+  return result;
 }
 
 // Helper functions for doubles.
@@ -30,10 +36,10 @@ class Double {
       52;  // Excludes the hidden bit.
   static constexpr int kSignificandSize = 53;
 
-  Double() : d64_(0) {}
+  constexpr Double() : d64_(0) {}
   explicit Double(double d) : d64_(double_to_uint64(d)) {}
-  explicit Double(uint64_t d64) : d64_(d64) {}
-  explicit Double(DiyFp diy_fp) : d64_(DiyFpToUint64(diy_fp)) {}
+  constexpr explicit Double(uint64_t d64) : d64_(d64) {}
+  constexpr explicit Double(DiyFp diy_fp) : d64_(DiyFpToUint64(diy_fp)) {}
 
   // The value encoded by this Double must be greater or equal to +0.0.
   // It must not be special (infinity, or NaN).
@@ -61,10 +67,10 @@ class Double {
   }
 
   // Returns the double's bit as uint64.
-  uint64_t AsUint64() const { return d64_; }
+  constexpr uint64_t AsUint64() const { return d64_; }
 
   // Returns the next greater double. Returns +infinity on input +infinity.
-  double NextDouble() const {
+  constexpr double NextDouble() const {
     if (d64_ == kInfinity) return Double(kInfinity).value();
     if (Sign() < 0 && Significand() == 0) {
       // -0.0
@@ -77,7 +83,7 @@ class Double {
     }
   }
 
-  int Exponent() const {
+  constexpr int Exponent() const {
     if (IsDenormal()) return kDenormalExponent;
 
     uint64_t d64 = AsUint64();
@@ -86,7 +92,7 @@ class Double {
     return biased_e - kExponentBias;
   }
 
-  uint64_t Significand() const {
+  constexpr uint64_t Significand() const {
     uint64_t d64 = AsUint64();
     uint64_t significand = d64 & kSignificandMask;
     if (!IsDenormal()) {
@@ -97,25 +103,25 @@ class Double {
   }
 
   // Returns true if the double is a denormal.
-  bool IsDenormal() const {
+  constexpr bool IsDenormal() const {
     uint64_t d64 = AsUint64();
     return (d64 & kExponentMask) == 0;
   }
 
   // We consider denormals not to be special.
   // Hence only Infinity and NaN are special.
-  bool IsSpecial() const {
+  constexpr bool IsSpecial() const {
     uint64_t d64 = AsUint64();
     return (d64 & kExponentMask) == kExponentMask;
   }
 
-  bool IsInfinite() const {
+  constexpr bool IsInfinite() const {
     uint64_t d64 = AsUint64();
     return ((d64 & kExponentMask) == kExponentMask) &&
            ((d64 & kSignificandMask) == 0);
   }
 
-  int Sign() const {
+  constexpr int Sign() const {
     uint64_t d64 = AsUint64();
     return (d64 & kSignMask) == 0 ? 1 : -1;
   }
@@ -179,7 +185,7 @@ class Double {
   // constructor.
   uint64_t d64_;
 
-  static uint64_t DiyFpToUint64(DiyFp diy_fp) {
+  static constexpr uint64_t DiyFpToUint64(DiyFp diy_fp) {
     uint64_t significand = diy_fp.f();
     int exponent = diy_fp.e();
     while (significand > kHiddenBit + kSignificandMask) {

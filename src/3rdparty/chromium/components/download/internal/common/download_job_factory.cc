@@ -38,12 +38,16 @@ ConnectionType GetConnectionType(net::HttpConnectionInfo connection_info) {
       return ConnectionType::kUnknown;
   }
   NOTREACHED();
-  return ConnectionType::kUnknown;
 }
 
 // Returns if the download can be parallelized.
 bool IsParallelizableDownload(const DownloadCreateInfo& create_info,
                               DownloadItem* download_item) {
+  if (download_item->GetDownloadFile() &&
+      download_item->GetDownloadFile()->IsMemoryFile()) {
+    return false;
+  }
+
   // To enable parallel download, following conditions need to be satisfied.
   // 1. Feature |kParallelDownloading| enabled.
   // 2. Strong validators response headers. i.e. ETag and Last-Modified.

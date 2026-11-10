@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-dwconv/unipass-sse.c.in
 //   Generator: tools/xngen
@@ -8,10 +9,14 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <xmmintrin.h>
 
-#include <xnnpack/dwconv.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/dwconv.h"
 
 
 void xnn_f32_dwconv_minmax_ukernel_3p8c__sse(
@@ -23,14 +28,17 @@ void xnn_f32_dwconv_minmax_ukernel_3p8c__sse(
     intptr_t input_stride,
     size_t output_increment,
     size_t input_offset,
+    size_t input_pixel_stride,
     const float* zero,
-    const union xnn_f32_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f32_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(channels != 0);
   assert(output_width != 0);
 
-  const __m128 vmax = _mm_load_ps(params->sse.max);
-  const __m128 vmin = _mm_load_ps(params->sse.min);
+  const __m128 vmin = _mm_set1_ps(params->scalar.min);
+  const __m128 vmax = _mm_set1_ps(params->scalar.max);
+  XNN_FORCE_REALIZATION(vmin);
+  XNN_FORCE_REALIZATION(vmax);
   do {
     const float* i0 = input[0];
     assert(i0 != NULL);
@@ -155,6 +163,7 @@ void xnn_f32_dwconv_minmax_ukernel_3p8c__sse(
       }
     }
 
+    input_offset += input_pixel_stride;
     output = (float*) ((uintptr_t) output + output_increment);
   } while (--output_width != 0);
 }

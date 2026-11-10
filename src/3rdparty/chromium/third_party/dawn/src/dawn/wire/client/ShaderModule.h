@@ -28,34 +28,31 @@
 #ifndef SRC_DAWN_WIRE_CLIENT_SHADERMODULE_H_
 #define SRC_DAWN_WIRE_CLIENT_SHADERMODULE_H_
 
-#include "dawn/webgpu.h"
-#include "partition_alloc/pointers/raw_ptr.h"
+#include <webgpu/webgpu.h>
+
+#include <optional>
+#include <string>
+#include <vector>
 
 #include "dawn/wire/client/ObjectBase.h"
-#include "dawn/wire/client/RequestTracker.h"
 
 namespace dawn::wire::client {
 
-class ShaderModule final : public ObjectBase {
+class ShaderModule final : public ObjectWithEventsBase {
   public:
-    using ObjectBase::ObjectBase;
-    ~ShaderModule() override;
+    using ObjectWithEventsBase::ObjectWithEventsBase;
 
-    void GetCompilationInfo(WGPUCompilationInfoCallback callback, void* userdata);
-    bool GetCompilationInfoCallback(uint64_t requestSerial,
-                                    WGPUCompilationInfoRequestStatus status,
-                                    const WGPUCompilationInfo* info);
+    ObjectType GetObjectType() const override;
+
+    WGPUFuture APIGetCompilationInfo(const WGPUCompilationInfoCallbackInfo& callbackInfo);
 
   private:
-    void CancelCallbacksForDisconnect() override;
-    void ClearAllCallbacks(WGPUCompilationInfoRequestStatus status);
+    friend class Client;
+    class CompilationInfoEvent;
 
-    struct CompilationInfoRequest {
-        WGPUCompilationInfoCallback callback = nullptr;
-        // TODO(https://crbug.com/dawn/2345): Investigate `DanglingUntriaged` in dawn/wire.
-        raw_ptr<void, DanglingUntriaged> userdata = nullptr;
-    };
-    RequestTracker<CompilationInfoRequest> mCompilationInfoRequests;
+    std::optional<WGPUCompilationInfo> mCompilationInfo;
+    std::vector<std::string> mMessageStrings;
+    std::vector<WGPUCompilationMessage> mMessages;
 };
 
 }  // namespace dawn::wire::client

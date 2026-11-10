@@ -1,11 +1,13 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef AUTHENTICATOR_REQUEST_CLIENT_DELEGATE_QT_H
 #define AUTHENTICATOR_REQUEST_CLIENT_DELEGATE_QT_H
 
 #include "qtwebenginecoreglobal_p.h"
 #include "content/public/browser/authenticator_request_client_delegate.h"
+#include "content/public/browser/web_authentication_delegate.h"
 #include <unordered_map>
 #include <QSharedPointer>
 
@@ -31,24 +33,25 @@ public:
     operator=(const AuthenticatorRequestClientDelegateQt &) = delete;
     ~AuthenticatorRequestClientDelegateQt();
 
-    // content::AuthenticatorRequestClientDelegate ovverrides
+    // content::AuthenticatorRequestClientDelegate overrides
     void SetRelyingPartyId(const std::string &rp_id) override;
     bool DoesBlockRequestOnFailure(InterestingFailureReason reason) override;
-    void RegisterActionCallbacks(base::OnceClosure cancel_callback,
-                            base::RepeatingClosure start_over_callback,
-                            AccountPreselectedCallback account_preselected_callback,
-                            device::FidoRequestHandlerBase::RequestCallback request_callback,
-                            base::RepeatingClosure bluetooth_adapter_power_on_callback) override;
-    void ShouldReturnAttestation(const std::string &relying_party_id,
-                                 const device::FidoAuthenticator *authenticator,
-                                 bool is_enterprise_attestation,
-                                 base::OnceCallback<void(bool)> callback) override;
+    void RegisterActionCallbacks(
+            base::OnceClosure cancel_callback,
+            base::OnceClosure immediate_not_found_callback,
+            base::RepeatingClosure start_over_callback,
+            AccountPreselectedCallback account_preselected_callback,
+            PasswordSelectedCallback password_selected_callback,
+            device::FidoRequestHandlerBase::RequestCallback request_callback,
+            base::OnceClosure cancel_ui_timeout_callback,
+            base::RepeatingClosure bluetooth_adapter_power_on_callback,
+            base::RepeatingCallback<
+                    void(device::FidoRequestHandlerBase::BlePermissionCallback)>
+                    request_ble_permission_callback) override;
     void SelectAccount(
             std::vector<device::AuthenticatorGetAssertionResponse> responses,
             base::OnceCallback<void(device::AuthenticatorGetAssertionResponse)> callback) override;
-    void DisableUI() override;
-    bool IsWebAuthnUIEnabled() override;
-    void SetConditionalRequest(bool is_conditional) override;
+    void SetUIPresentation(UIPresentation ui_presentation) override;
 
     // device::FidoRequestHandlerBase::Observer overrides:
     // This method will not be invoked until the observer is set.
@@ -69,7 +72,6 @@ public:
 private:
     content::RenderFrameHost *m_renderFrameHost;
     bool m_isUiDisabled = false;
-    bool m_isConditionalRequest = false;
 
     base::OnceClosure m_cancelCallback;
     base::RepeatingClosure m_startOverCallback;

@@ -32,7 +32,7 @@ class StreamContainer {
   StreamContainer(int tab_id,
                   bool embedded,
                   const GURL& handler_url,
-                  const std::string& extension_id,
+                  const ExtensionId& extension_id,
                   blink::mojom::TransferrableURLLoaderPtr transferrable_loader,
                   const GURL& original_url);
 
@@ -92,9 +92,12 @@ class MimeHandlerViewGuest
       content::RenderFrameHost* owner_rfh);
 
   static const char Type[];
+  static const guest_view::GuestViewHistogramValue HistogramValue;
 
   // GuestViewBase overrides.
   bool CanBeEmbeddedInsideCrossProcessFrames() const override;
+  void GuestOverrideRendererPreferences(
+      blink::RendererPreferences& preferences) final;
 
   content::RenderFrameHost* GetEmbedderFrame();
 
@@ -134,23 +137,32 @@ class MimeHandlerViewGuest
   // GuestViewBase implementation.
   const char* GetAPINamespace() const final;
   int GetTaskPrefix() const final;
-  void CreateWebContents(std::unique_ptr<GuestViewBase> owned_this,
-                         const base::Value::Dict& create_params,
-                         WebContentsCreatedCallback callback) override;
+  void CreateInnerPage(std::unique_ptr<GuestViewBase> owned_this,
+                       scoped_refptr<content::SiteInstance> site_instance,
+                       const base::Value::Dict& create_params,
+                       GuestPageCreatedCallback callback) override;
   void DidAttachToEmbedder() override;
   void DidInitialize(const base::Value::Dict& create_params) final;
   void MaybeRecreateGuestContents(
       content::RenderFrameHost* outer_contents_frame) final;
   void EmbedderFullscreenToggled(bool entered_fullscreen) final;
   bool ZoomPropagatesFromEmbedderToGuest() const final;
+  void GuestViewDocumentOnLoadCompleted() final;
 
   // BrowserPluginGuestDelegate implementation.
   content::RenderFrameHost* GetProspectiveOuterDocument() final;
 
+  // GuestpageHolder::Delegate implementation.
+  bool GuestHandleContextMenu(content::RenderFrameHost& render_frame_host,
+                              const content::ContextMenuParams& params) final;
+  content::JavaScriptDialogManager* GuestGetJavascriptDialogManager() final;
+
   // WebContentsDelegate implementation.
   content::WebContents* OpenURLFromTab(
       content::WebContents* source,
-      const content::OpenURLParams& params) final;
+      const content::OpenURLParams& params,
+      base::OnceCallback<void(content::NavigationHandle&)>
+          navigation_handle_callback) final;
   void NavigationStateChanged(content::WebContents* source,
                               content::InvalidateTypes changed_flags) final;
   bool HandleContextMenu(content::RenderFrameHost& render_frame_host,
@@ -171,6 +183,7 @@ class MimeHandlerViewGuest
       const content::WebContents* web_contents) override;
   bool ShouldResumeRequestsForCreatedWindow() override;
   bool IsWebContentsCreationOverridden(
+      content::RenderFrameHost* opener,
       content::SiteInstance* source_site_instance,
       content::mojom::WindowContainerType window_container_type,
       const GURL& opener_url,
@@ -191,7 +204,6 @@ class MimeHandlerViewGuest
   bool SetFullscreenState(bool is_fullscreen);
 
   // content::WebContentsObserver implementation.
-  void DocumentOnLoadCompletedInPrimaryMainFrame() final;
   void ReadyToCommitNavigation(
       content::NavigationHandle* navigation_handle) final;
   void DidFinishNavigation(content::NavigationHandle* navigation_handle) final;

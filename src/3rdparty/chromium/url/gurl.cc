@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/350788890): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "url/gurl.h"
 
 #include <stddef.h>
@@ -16,14 +21,13 @@
 #include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/strings/string_util.h"
-#include "base/trace_event/base_tracing.h"
 #include "base/trace_event/memory_usage_estimator.h"
+#include "base/trace_event/trace_event.h"
 #include "url/url_canon_stdstring.h"
 #include "url/url_util.h"
 #include "url/url_util_qt.h"
 
-GURL::GURL() : is_valid_(false) {
-}
+GURL::GURL() : is_valid_(false) {}
 
 GURL::GURL(const GURL& other)
     : spec_(other.spec_),
@@ -160,18 +164,10 @@ const std::string& GURL::spec() const {
   if (is_valid_ || spec_.empty())
     return spec_;
 
-  // TODO(crbug.com/851128): Make sure this no longer hits before making
-  // NOTREACHED_NORETURN();
-  NOTREACHED() << "Trying to get the spec of an invalid URL!";
+  // TODO(crbug.com/40580068): Make sure this no longer hits before making
+  // NOTREACHED();
+  DUMP_WILL_BE_NOTREACHED() << "Trying to get the spec of an invalid URL!";
   return base::EmptyString();
-}
-
-bool GURL::operator<(const GURL& other) const {
-  return spec_ < other.spec_;
-}
-
-bool GURL::operator>(const GURL& other) const {
-  return spec_ > other.spec_;
 }
 
 // Note: code duplicated below (it's inconvenient to use a template here).
@@ -277,8 +273,9 @@ void GURL::ProcessFileSystemURLAfterReplaceComponents() {
 GURL GURL::DeprecatedGetOriginAsURL() const {
   // This doesn't make sense for invalid or nonstandard URLs, so return
   // the empty URL.
-  if (!is_valid_ || (!IsStandard() && !IsCustom()))
+  if (!is_valid_ || (!IsStandard() && !IsCustom())) {
     return GURL();
+  }
 
   if (SchemeIsFileSystem())
     return inner_url_->DeprecatedGetOriginAsURL();
@@ -294,8 +291,11 @@ GURL GURL::DeprecatedGetOriginAsURL() const {
 }
 
 GURL GURL::GetAsReferrer() const {
-  if (!is_valid() || !IsReferrerScheme(spec_.data(), parsed_.scheme))
+  if (!is_valid() ||
+      !url::IsReferrerScheme(
+          parsed_.scheme.maybe_as_string_view_on(spec_.data()))) {
     return GURL();
+  }
 
   if (!has_ref() && !has_username() && !has_password())
     return GURL(*this);
@@ -310,8 +310,9 @@ GURL GURL::GetAsReferrer() const {
 GURL GURL::GetWithEmptyPath() const {
   // This doesn't make sense for invalid or nonstandard URLs, so return
   // the empty URL.
-  if (!is_valid_ || (!IsStandard() && !IsCustom()))
+  if (!is_valid_ || (!IsStandard() && !IsCustom())) {
     return GURL();
+  }
 
   // We could optimize this since we know that the URL is canonical, and we are
   // appending a canonical path, so avoiding re-parsing.
@@ -345,7 +346,7 @@ GURL GURL::GetWithoutRef() const {
 }
 
 bool GURL::IsStandard() const {
-  return url::IsStandard(spec_.data(), parsed_.scheme);
+  return url::IsStandard(parsed_.scheme.maybe_as_string_view_on(spec_.data()));
 }
 
 bool GURL::IsCustom() const {
@@ -407,8 +408,8 @@ int GURL::IntPort() const {
 int GURL::EffectiveIntPort() const {
   int int_port = IntPort();
   if (int_port == url::PORT_UNSPECIFIED && IsStandard())
-    return url::DefaultPortForScheme(spec_.data() + parsed_.scheme.begin,
-                                     parsed_.scheme.len);
+    return url::DefaultPortForScheme(std::string_view(
+        spec_.data() + parsed_.scheme.begin, parsed_.scheme.len));
   return int_port;
 }
 
@@ -550,37 +551,9 @@ bool operator==(const GURL& x, const GURL& y) {
   return x.possibly_invalid_spec() == y.possibly_invalid_spec();
 }
 
-bool operator!=(const GURL& x, const GURL& y) {
-  return !(x == y);
-}
-
 bool operator==(const GURL& x, std::string_view spec) {
   DCHECK_EQ(GURL(spec).possibly_invalid_spec(), spec)
       << "Comparisons of GURLs and strings must ensure as a precondition that "
          "the string is fully canonicalized.";
   return x.possibly_invalid_spec() == spec;
 }
-
-bool operator==(std::string_view spec, const GURL& x) {
-  return x == spec;
-}
-
-bool operator!=(const GURL& x, std::string_view spec) {
-  return !(x == spec);
-}
-
-bool operator!=(std::string_view spec, const GURL& x) {
-  return !(x == spec);
-}
-
-namespace url::debug {
-
-ScopedUrlCrashKey::ScopedUrlCrashKey(base::debug::CrashKeyString* crash_key,
-                                     const GURL& url)
-    : scoped_string_value_(
-          crash_key,
-          url.is_empty() ? "<empty url>" : url.possibly_invalid_spec()) {}
-
-ScopedUrlCrashKey::~ScopedUrlCrashKey() = default;
-
-}  // namespace url::debug

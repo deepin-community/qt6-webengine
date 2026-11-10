@@ -1,10 +1,10 @@
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/pdf/multipage/multipage
-usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/pdf/singlepage/pdfviewerquick
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/pdf/singlepage/singlepage
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/pdfwidgets/pdfviewer/pdfviewerwidgets
-usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/webenginequick/lifecycle/lifecycle
-usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/webenginequick/quicknanobrowser/quicknanobrowser
-usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/webenginewidgets/clientcertificate/client
-usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/webenginewidgets/clientcertificate/server
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/webenginequick/lifecycle/lib/${DEB_HOST_MULTIARCH}/qt6/examples/webenginequick/lifecycle/lifecycle
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/webenginequick/quicknanobrowser/bin/quicknanobrowser
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/webenginewidgets/clientcertificate/example_cert_client
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/webenginewidgets/clientcertificate/example_cert_server
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/webenginewidgets/contentmanipulation/contentmanipulation
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/webenginewidgets/cookiebrowser/cookiebrowser
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/webenginewidgets/html2pdf/html2pdf
@@ -14,6 +14,6 @@ usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/webenginewidgets/permissionbrowser/pe
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/webenginewidgets/printme/printme
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/webenginewidgets/push-notifications/push-notifications
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/webenginewidgets/recipebrowser/recipebrowser
-usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/webenginewidgets/simplebrowser/simplebrowser
+usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/webenginewidgets/simplebrowser/bin/simplebrowser
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/webenginewidgets/spellchecker/spellchecker
 usr/lib/${DEB_HOST_MULTIARCH}/qt6/examples/webenginewidgets/videoplayer/videoplayer

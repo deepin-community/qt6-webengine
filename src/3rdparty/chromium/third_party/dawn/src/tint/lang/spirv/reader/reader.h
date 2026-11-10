@@ -41,15 +41,16 @@ class Module;
 namespace tint::spirv::reader {
 
 /// Reads the SPIR-V source data, returning a core IR module.
-/// If the SPIR-V binary fails to parse then the result will contain diagnostic error messages.
+/// If the SPIR-V binary fails to parse then the result will contain error messages.
 /// TODO(crbug.com/tint/1907): Rename when we remove the AST path.
 /// @param input the SPIR-V binary data
+/// @param options the parser options
 /// @returns the Tint IR module
-Result<core::ir::Module> ReadIR(const std::vector<uint32_t>& input);
+Result<core::ir::Module> ReadIR(const std::vector<uint32_t>& input, const Options& options = {});
 
 /// Reads the SPIR-V source data, returning the parsed program.
 /// If the source data fails to parse then the returned
-/// `program.Diagnostics.contains_errors()` will be true, and the
+/// `program.Diagnostics.ContainsErrors()` will be true, and the
 /// `program.Diagnostics()` will describe the error.
 /// @param input the source data
 /// @param options the parser options

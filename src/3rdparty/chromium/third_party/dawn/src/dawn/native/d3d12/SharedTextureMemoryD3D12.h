@@ -32,24 +32,31 @@
 #include "dawn/native/d3d/SharedTextureMemoryD3D.h"
 #include "dawn/native/d3d12/d3d12_platform.h"
 
-namespace dawn::native::d3d12 {
+namespace dawn::native {
+namespace d3d {
+class KeyedMutex;
+}  // namespace d3d
 
+namespace d3d12 {
 class Device;
 
 class SharedTextureMemory final : public d3d::SharedTextureMemory {
   public:
     static ResultOrError<Ref<SharedTextureMemory>> Create(
         Device* device,
-        const char* label,
+        StringView label,
         const SharedTextureMemoryDXGISharedHandleDescriptor* descriptor);
 
     ID3D12Resource* GetD3DResource() const;
 
+    d3d::KeyedMutex* GetKeyedMutex() const;
+
   private:
     SharedTextureMemory(Device* device,
-                        const char* label,
+                        StringView label,
                         SharedTextureMemoryProperties properties,
-                        ComPtr<ID3D12Resource> resource);
+                        ComPtr<ID3D12Resource> resource,
+                        Ref<d3d::KeyedMutex> keyedMutex);
 
     void DestroyImpl() override;
 
@@ -59,9 +66,14 @@ class SharedTextureMemory final : public d3d::SharedTextureMemory {
     MaybeError BeginAccessImpl(TextureBase* texture,
                                const UnpackedPtr<BeginAccessDescriptor>& descriptor) override;
 
-    ComPtr<ID3D12Resource> mResource;
-};
+    ResultOrError<FenceAndSignalValue> EndAccessImpl(TextureBase* texture,
+                                                     ExecutionSerial lastUsageSerial,
+                                                     UnpackedPtr<EndAccessState>& state) override;
 
-}  // namespace dawn::native::d3d12
+    ComPtr<ID3D12Resource> mResource;
+    Ref<d3d::KeyedMutex> mKeyedMutex;
+};
+}  // namespace d3d12
+}  // namespace dawn::native
 
 #endif  // SRC_DAWN_NATIVE_D3D12_SHARED_TEXTURE_MEMORY_D3D12_H_

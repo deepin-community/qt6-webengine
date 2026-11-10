@@ -30,7 +30,7 @@ Vector<String> HeaderSetToVector(const HTTPHeaderSet& headers) {
   result.ReserveInitialCapacity(base::checked_cast<wtf_size_t>(headers.size()));
   // HTTPHeaderSet stores headers using Latin1 encoding.
   for (const auto& header : headers)
-    result.push_back(String(header.data(), header.size()));
+    result.push_back(String(header));
   return result;
 }
 
@@ -402,7 +402,7 @@ FetchResponseData::FetchResponseData(Type type,
       request_include_credentials_(true) {}
 
 void FetchResponseData::SetAuthChallengeInfo(
-    const absl::optional<net::AuthChallengeInfo>& auth_challenge_info) {
+    const std::optional<net::AuthChallengeInfo>& auth_challenge_info) {
   if (auth_challenge_info) {
     auth_challenge_info_ =
         std::make_unique<net::AuthChallengeInfo>(*auth_challenge_info);

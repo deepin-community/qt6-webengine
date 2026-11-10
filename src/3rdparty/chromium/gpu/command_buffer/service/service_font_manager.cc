@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "gpu/command_buffer/service/service_font_manager.h"
 
 #include <inttypes.h>
@@ -10,8 +15,10 @@
 #include <type_traits>
 
 #include "base/bits.h"
+#include "base/compiler_specific.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/logging.h"
+#include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/checked_math.h"
 #include "base/rand_util.h"
@@ -25,7 +32,7 @@ namespace gpu {
 namespace {
 class Deserializer {
  public:
-  Deserializer(const volatile char* memory, uint32_t memory_size)
+  Deserializer(const volatile uint8_t* memory, uint32_t memory_size)
       : memory_(memory), memory_size_(memory_size) {}
   ~Deserializer() = default;
 
@@ -35,9 +42,9 @@ class Deserializer {
     if (!AlignMemory(sizeof(T), alignof(T)))
       return false;
 
-    *val = *reinterpret_cast<const T*>(const_cast<const char*>(memory_));
+    memcpy(val, const_cast<const uint8_t*>(memory_.get()), sizeof(T));
 
-    memory_ += sizeof(T);
+    UNSAFE_TODO(memory_ += sizeof(T));
     bytes_read_ += sizeof(T);
     return true;
   }
@@ -56,7 +63,7 @@ class Deserializer {
       return false;
 
     bytes_read_ += size;
-    memory_ += size;
+    UNSAFE_TODO(memory_ += size);
     return true;
   }
 
@@ -65,8 +72,7 @@ class Deserializer {
     // Due to the math below, alignment must be a power of two.
     DCHECK(std::has_single_bit(alignment));
 
-    size_t memory = reinterpret_cast<size_t>(memory_);
-    size_t padding = base::bits::AlignUp(memory, alignment) - memory;
+    size_t padding = base::bits::AlignUp(memory_.get(), alignment) - memory_;
 
     base::CheckedNumeric<uint32_t> checked_padded_size = bytes_read_;
     checked_padded_size += padding;
@@ -77,12 +83,12 @@ class Deserializer {
       return false;
     }
 
-    memory_ += padding;
+    UNSAFE_TODO(memory_ += padding);
     bytes_read_ += padding;
     return true;
   }
 
-  const volatile char* memory_;
+  raw_ptr<const volatile uint8_t, AllowPtrArithmetic> memory_;
   uint32_t memory_size_;
   uint32_t bytes_read_ = 0u;
 };
@@ -106,8 +112,6 @@ class ServiceFontManager::SkiaDiscardableManager
 
   void notifyCacheMiss(SkStrikeClient::CacheMissType type,
                        int fontSize) override {
-    UMA_HISTOGRAM_ENUMERATION("GPU.OopRaster.GlyphCacheMiss", type,
-                              SkStrikeClient::CacheMissType::kLast + 1);
     // In general, Skia analysis of glyphs should find all cases.
     // If this is not happening, please file a bug with a repro so
     // it can be fixed.
@@ -173,7 +177,7 @@ void ServiceFontManager::Destroy() {
 }
 
 bool ServiceFontManager::Deserialize(
-    const volatile char* memory,
+    const volatile uint8_t* memory,
     uint32_t memory_size,
     std::vector<SkDiscardableHandleId>* locked_handles) {
   base::ReleasableAutoLock hold(&lock_);

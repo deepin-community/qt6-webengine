@@ -7,6 +7,7 @@
 
 #include "base/functional/callback.h"
 #include "components/enterprise/client_certificates/core/certificate_store.h"
+#include "components/enterprise/client_certificates/core/client_identity.h"
 #include "components/enterprise/client_certificates/core/private_key.h"
 #include "components/enterprise/client_certificates/core/private_key_factory.h"
 #include "components/leveldb_proto/public/proto_database_provider.h"
@@ -20,22 +21,32 @@ class MockCertificateStore : public CertificateStore {
   MockCertificateStore();
   ~MockCertificateStore() override;
 
-  MOCK_METHOD(void,
-              CreatePrivateKey,
-              (const std::string&,
-               base::OnceCallback<void(scoped_refptr<PrivateKey>)>),
-              (override));
+  // CertificateStore:
+  MOCK_METHOD(
+      void,
+      CreatePrivateKey,
+      (const std::string&,
+       base::OnceCallback<void(StoreErrorOr<scoped_refptr<PrivateKey>>)>),
+      (override));
   MOCK_METHOD(void,
               CommitCertificate,
               (const std::string&,
                scoped_refptr<net::X509Certificate>,
-               base::OnceClosure),
+               base::OnceCallback<void(std::optional<StoreError>)>),
               (override));
   MOCK_METHOD(void,
-              GetIdentity,
+              CommitIdentity,
               (const std::string&,
-               base::OnceCallback<void(std::optional<ClientIdentity>)>),
+               const std::string&,
+               scoped_refptr<net::X509Certificate>,
+               base::OnceCallback<void(std::optional<StoreError>)>),
               (override));
+  MOCK_METHOD(
+      void,
+      GetIdentity,
+      (const std::string&,
+       base::OnceCallback<void(StoreErrorOr<std::optional<ClientIdentity>>)>),
+      (override));
 };
 
 }  // namespace client_certificates

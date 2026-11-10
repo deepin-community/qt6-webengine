@@ -5,6 +5,7 @@
 #include "quiche/quic/core/http/quic_headers_stream.h"
 
 #include <cstdint>
+#include <memory>
 #include <ostream>
 #include <string>
 #include <tuple>
@@ -13,6 +14,11 @@
 
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "quiche/http2/core/http2_frame_decoder_adapter.h"
+#include "quiche/http2/core/recording_headers_handler.h"
+#include "quiche/http2/core/spdy_alt_svc_wire_format.h"
+#include "quiche/http2/core/spdy_protocol.h"
+#include "quiche/http2/test_tools/spdy_test_utils.h"
 #include "quiche/quic/core/crypto/null_encrypter.h"
 #include "quiche/quic/core/http/spdy_utils.h"
 #include "quiche/quic/core/quic_data_writer.h"
@@ -26,16 +32,11 @@
 #include "quiche/quic/test_tools/quic_spdy_session_peer.h"
 #include "quiche/quic/test_tools/quic_stream_peer.h"
 #include "quiche/quic/test_tools/quic_test_utils.h"
+#include "quiche/common/http/http_header_block.h"
 #include "quiche/common/quiche_endian.h"
-#include "quiche/spdy/core/http2_frame_decoder_adapter.h"
-#include "quiche/spdy/core/http2_header_block.h"
-#include "quiche/spdy/core/recording_headers_handler.h"
-#include "quiche/spdy/core/spdy_alt_svc_wire_format.h"
-#include "quiche/spdy/core/spdy_protocol.h"
-#include "quiche/spdy/test_tools/spdy_test_utils.h"
 
+using quiche::HttpHeaderBlock;
 using spdy::ERROR_CODE_PROTOCOL_ERROR;
-using spdy::Http2HeaderBlock;
 using spdy::RecordingHeadersHandler;
 using spdy::SETTINGS_ENABLE_PUSH;
 using spdy::SETTINGS_HEADER_TABLE_SIZE;
@@ -64,7 +65,6 @@ using spdy::SpdyStreamId;
 using spdy::SpdyWindowUpdateIR;
 using testing::_;
 using testing::AnyNumber;
-using testing::AtLeast;
 using testing::InSequence;
 using testing::Invoke;
 using testing::Return;
@@ -354,7 +354,7 @@ class QuicHeadersStreamTest : public QuicTestWithParam<TestParams> {
   StrictMock<MockQuicConnection>* connection_;
   StrictMock<MockQuicSpdySession> session_;
   QuicHeadersStream* headers_stream_;
-  Http2HeaderBlock headers_;
+  HttpHeaderBlock headers_;
   std::unique_ptr<RecordingHeadersHandler> headers_handler_;
   std::string body_;
   std::string saved_data_;
@@ -725,34 +725,34 @@ TEST_P(QuicHeadersStreamTest, AckSentData) {
   EXPECT_CALL(*ack_listener2, OnPacketAcked(7, _));
   EXPECT_TRUE(headers_stream_->OnStreamFrameAcked(
       21, 7, false, QuicTime::Delta::Zero(), QuicTime::Zero(),
-      &newly_acked_length));
+      &newly_acked_length, /*is_retransmission=*/false));
   EXPECT_EQ(7u, newly_acked_length);
   EXPECT_TRUE(headers_stream_->OnStreamFrameAcked(
       28, 7, false, QuicTime::Delta::Zero(), QuicTime::Zero(),
-      &newly_acked_length));
+      &newly_acked_length, /*is_retransmission=*/false));
   EXPECT_EQ(7u, newly_acked_length);
 
   EXPECT_CALL(*ack_listener3, OnPacketAcked(7, _));
   EXPECT_TRUE(headers_stream_->OnStreamFrameAcked(
       35, 7, false, QuicTime::Delta::Zero(), QuicTime::Zero(),
-      &newly_acked_length));
+      &newly_acked_length, /*is_retransmission=*/false));
   EXPECT_EQ(7u, newly_acked_length);
 
   EXPECT_CALL(*ack_listener1, OnPacketAcked(7, _));
   EXPECT_CALL(*ack_listener1, OnPacketAcked(7, _));
   EXPECT_TRUE(headers_stream_->OnStreamFrameAcked(
       0, 7, false, QuicTime::Delta::Zero(), QuicTime::Zero(),
-      &newly_acked_length));
+      &newly_acked_length, /*is_retransmission=*/false));
   EXPECT_EQ(7u, newly_acked_length);
   EXPECT_TRUE(headers_stream_->OnStreamFrameAcked(
       7, 7, false, QuicTime::Delta::Zero(), QuicTime::Zero(),
-      &newly_acked_length));
+      &newly_acked_length, /*is_retransmission=*/false));
   EXPECT_EQ(7u, newly_acked_length);
   // Unsent data is acked.
   EXPECT_CALL(*ack_listener2, OnPacketAcked(7, _));
   EXPECT_TRUE(headers_stream_->OnStreamFrameAcked(
       14, 10, false, QuicTime::Delta::Zero(), QuicTime::Zero(),
-      &newly_acked_length));
+      &newly_acked_length, /*is_retransmission=*/false));
   EXPECT_EQ(7u, newly_acked_length);
 }
 
@@ -789,21 +789,21 @@ TEST_P(QuicHeadersStreamTest, FrameContainsMultipleHeaders) {
   EXPECT_CALL(*ack_listener2, OnPacketAcked(2, _));
   EXPECT_TRUE(headers_stream_->OnStreamFrameAcked(
       17, 13, false, QuicTime::Delta::Zero(), QuicTime::Zero(),
-      &newly_acked_length));
+      &newly_acked_length, /*is_retransmission=*/false));
   EXPECT_EQ(13u, newly_acked_length);
 
   EXPECT_CALL(*ack_listener2, OnPacketAcked(5, _));
   EXPECT_CALL(*ack_listener3, OnPacketAcked(7, _));
   EXPECT_TRUE(headers_stream_->OnStreamFrameAcked(
       30, 12, false, QuicTime::Delta::Zero(), QuicTime::Zero(),
-      &newly_acked_length));
+      &newly_acked_length, /*is_retransmission=*/false));
   EXPECT_EQ(12u, newly_acked_length);
 
   EXPECT_CALL(*ack_listener1, OnPacketAcked(14, _));
   EXPECT_CALL(*ack_listener2, OnPacketAcked(3, _));
   EXPECT_TRUE(headers_stream_->OnStreamFrameAcked(
       0, 17, false, QuicTime::Delta::Zero(), QuicTime::Zero(),
-      &newly_acked_length));
+      &newly_acked_length, /*is_retransmission=*/false));
   EXPECT_EQ(17u, newly_acked_length);
 }
 
@@ -833,7 +833,7 @@ TEST_P(QuicHeadersStreamTest, HeadersGetAckedMultipleTimes) {
   EXPECT_CALL(*ack_listener2, OnPacketAcked(5, _));
   EXPECT_TRUE(headers_stream_->OnStreamFrameAcked(
       15, 5, false, QuicTime::Delta::Zero(), QuicTime::Zero(),
-      &newly_acked_length));
+      &newly_acked_length, /*is_retransmission=*/false));
   EXPECT_EQ(5u, newly_acked_length);
 
   EXPECT_CALL(*ack_listener1, OnPacketAcked(9, _));
@@ -842,19 +842,19 @@ TEST_P(QuicHeadersStreamTest, HeadersGetAckedMultipleTimes) {
   EXPECT_CALL(*ack_listener3, OnPacketAcked(4, _));
   EXPECT_TRUE(headers_stream_->OnStreamFrameAcked(
       5, 20, false, QuicTime::Delta::Zero(), QuicTime::Zero(),
-      &newly_acked_length));
+      &newly_acked_length, /*is_retransmission=*/false));
   EXPECT_EQ(15u, newly_acked_length);
 
   // Duplicate ack.
   EXPECT_FALSE(headers_stream_->OnStreamFrameAcked(
       10, 7, false, QuicTime::Delta::Zero(), QuicTime::Zero(),
-      &newly_acked_length));
+      &newly_acked_length, /*is_retransmission=*/false));
   EXPECT_EQ(0u, newly_acked_length);
 
   EXPECT_CALL(*ack_listener1, OnPacketAcked(5, _));
   EXPECT_TRUE(headers_stream_->OnStreamFrameAcked(
       0, 12, false, QuicTime::Delta::Zero(), QuicTime::Zero(),
-      &newly_acked_length));
+      &newly_acked_length, /*is_retransmission=*/false));
   EXPECT_EQ(5u, newly_acked_length);
 
   EXPECT_CALL(*ack_listener3, OnPacketAcked(3, _));
@@ -862,7 +862,7 @@ TEST_P(QuicHeadersStreamTest, HeadersGetAckedMultipleTimes) {
   EXPECT_CALL(*ack_listener3, OnPacketAcked(7, _));
   EXPECT_TRUE(headers_stream_->OnStreamFrameAcked(
       22, 20, false, QuicTime::Delta::Zero(), QuicTime::Zero(),
-      &newly_acked_length));
+      &newly_acked_length, /*is_retransmission=*/false));
   EXPECT_EQ(17u, newly_acked_length);
 }
 

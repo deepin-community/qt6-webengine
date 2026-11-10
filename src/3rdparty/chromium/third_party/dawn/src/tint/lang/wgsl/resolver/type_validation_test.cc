@@ -384,7 +384,7 @@ TEST_F(ResolverTypeValidationTest, ArraySize_NamedOverride_PrivateVar) {
     GlobalVar("a", ty.array(Source{{12, 34}}, ty.f32(), "size"), core::AddressSpace::kPrivate);
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              "12:34 error: array with an 'override' element count can only be used as the store "
+              "12:34 error: 'array' with an 'override' element count can only be used as the store "
               "type of a 'var<workgroup>'");
 }
 
@@ -396,7 +396,7 @@ TEST_F(ResolverTypeValidationTest, ArraySize_NamedOverride_InArray) {
               core::AddressSpace::kWorkgroup);
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              "12:34 error: array with an 'override' element count can only be used as the store "
+              "12:34 error: 'array' with an 'override' element count can only be used as the store "
               "type of a 'var<workgroup>'");
 }
 
@@ -409,7 +409,7 @@ TEST_F(ResolverTypeValidationTest, ArraySize_NamedOverride_InStruct) {
     Structure("S", Vector{Member("a", ty.array(Source{{12, 34}}, ty.f32(), "size"))});
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              "12:34 error: array with an 'override' element count can only be used as the store "
+              "12:34 error: 'array' with an 'override' element count can only be used as the store "
               "type of a 'var<workgroup>'");
 }
 
@@ -425,7 +425,7 @@ TEST_F(ResolverTypeValidationTest, ArraySize_NamedOverride_FunctionVar_Explicit)
          });
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              "12:34 error: array with an 'override' element count can only be used as the store "
+              "12:34 error: 'array' with an 'override' element count can only be used as the store "
               "type of a 'var<workgroup>'");
 }
 
@@ -441,7 +441,7 @@ TEST_F(ResolverTypeValidationTest, ArraySize_NamedOverride_FunctionLet_Explicit)
          });
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              "12:34 error: array with an 'override' element count can only be used as the store "
+              "12:34 error: 'array' with an 'override' element count can only be used as the store "
               "type of a 'var<workgroup>'");
 }
 
@@ -459,7 +459,7 @@ TEST_F(ResolverTypeValidationTest, ArraySize_NamedOverride_FunctionVar_Implicit)
          });
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              "12:34 error: array with an 'override' element count can only be used as the store "
+              "12:34 error: 'array' with an 'override' element count can only be used as the store "
               "type of a 'var<workgroup>'");
 }
 
@@ -477,7 +477,7 @@ TEST_F(ResolverTypeValidationTest, ArraySize_NamedOverride_FunctionLet_Implicit)
          });
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              "12:34 error: array with an 'override' element count can only be used as the store "
+              "12:34 error: 'array' with an 'override' element count can only be used as the store "
               "type of a 'var<workgroup>'");
 }
 
@@ -493,9 +493,9 @@ TEST_F(ResolverTypeValidationTest, ArraySize_UnnamedOverride_Equivalence) {
     GlobalVar("b", ty.array(ty.f32(), Add("size", 1_i)), core::AddressSpace::kWorkgroup);
     WrapInFunction(Assign(Source{{12, 34}}, "a", "b"));
     EXPECT_FALSE(r()->Resolve());
-    EXPECT_EQ(r()->error(),
-              "12:34 error: cannot assign 'array<f32, [unnamed override-expression]>' to "
-              "'array<f32, [unnamed override-expression]>'");
+    EXPECT_EQ(
+        r()->error(),
+        R"(12:34 error: cannot assign 'array<f32, [unnamed override-expression]>' to 'array<f32, [unnamed override-expression]>')");
 }
 
 TEST_F(ResolverTypeValidationTest, ArraySize_NamedOverride_Param) {
@@ -536,8 +536,8 @@ TEST_F(ResolverTypeValidationTest, ArraySize_ModuleVar) {
               core::AddressSpace::kPrivate);
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
-              R"(12:34 error: var 'size' cannot be referenced at module-scope
-note: var 'size' declared here)");
+              R"(12:34 error: 'var size' cannot be referenced at module-scope
+note: 'var size' declared here)");
 }
 
 TEST_F(ResolverTypeValidationTest, ArraySize_FunctionConst) {
@@ -1099,23 +1099,43 @@ struct FormatParams {
     bool is_valid;
 };
 
-static constexpr FormatParams format_cases[] = {FormatParams{core::TexelFormat::kBgra8Unorm, true},
-                                                FormatParams{core::TexelFormat::kR32Float, true},
-                                                FormatParams{core::TexelFormat::kR32Sint, true},
-                                                FormatParams{core::TexelFormat::kR32Uint, true},
-                                                FormatParams{core::TexelFormat::kRg32Float, true},
-                                                FormatParams{core::TexelFormat::kRg32Sint, true},
-                                                FormatParams{core::TexelFormat::kRg32Uint, true},
-                                                FormatParams{core::TexelFormat::kRgba16Float, true},
-                                                FormatParams{core::TexelFormat::kRgba16Sint, true},
-                                                FormatParams{core::TexelFormat::kRgba16Uint, true},
-                                                FormatParams{core::TexelFormat::kRgba32Float, true},
-                                                FormatParams{core::TexelFormat::kRgba32Sint, true},
-                                                FormatParams{core::TexelFormat::kRgba32Uint, true},
-                                                FormatParams{core::TexelFormat::kRgba8Sint, true},
-                                                FormatParams{core::TexelFormat::kRgba8Snorm, true},
-                                                FormatParams{core::TexelFormat::kRgba8Uint, true},
-                                                FormatParams{core::TexelFormat::kRgba8Unorm, true}};
+static constexpr FormatParams format_cases[] = {
+    FormatParams{core::TexelFormat::kBgra8Unorm, true},
+    FormatParams{core::TexelFormat::kR32Float, true},
+    FormatParams{core::TexelFormat::kR32Sint, true},
+    FormatParams{core::TexelFormat::kR32Uint, true},
+    FormatParams{core::TexelFormat::kRg32Float, true},
+    FormatParams{core::TexelFormat::kRg32Sint, true},
+    FormatParams{core::TexelFormat::kRg32Uint, true},
+    FormatParams{core::TexelFormat::kRgba16Float, true},
+    FormatParams{core::TexelFormat::kRgba16Sint, true},
+    FormatParams{core::TexelFormat::kRgba16Uint, true},
+    FormatParams{core::TexelFormat::kRgba32Float, true},
+    FormatParams{core::TexelFormat::kRgba32Sint, true},
+    FormatParams{core::TexelFormat::kRgba32Uint, true},
+    FormatParams{core::TexelFormat::kRgba8Sint, true},
+    FormatParams{core::TexelFormat::kRgba8Snorm, true},
+    FormatParams{core::TexelFormat::kRgba8Uint, true},
+    FormatParams{core::TexelFormat::kRgba8Unorm, true},
+    // From "texture-formats-tier1"
+    FormatParams{core::TexelFormat::kR8Unorm, true},
+    FormatParams{core::TexelFormat::kR8Snorm, true},
+    FormatParams{core::TexelFormat::kR8Uint, true},
+    FormatParams{core::TexelFormat::kR8Sint, true},
+    FormatParams{core::TexelFormat::kRg8Unorm, true},
+    FormatParams{core::TexelFormat::kRg8Snorm, true},
+    FormatParams{core::TexelFormat::kRg8Uint, true},
+    FormatParams{core::TexelFormat::kRg8Sint, true},
+    FormatParams{core::TexelFormat::kR16Uint, true},
+    FormatParams{core::TexelFormat::kR16Sint, true},
+    FormatParams{core::TexelFormat::kR16Float, true},
+    FormatParams{core::TexelFormat::kRg16Uint, true},
+    FormatParams{core::TexelFormat::kRg16Sint, true},
+    FormatParams{core::TexelFormat::kRg16Float, true},
+    FormatParams{core::TexelFormat::kRgb10A2Uint, true},
+    FormatParams{core::TexelFormat::kRgb10A2Unorm, true},
+    FormatParams{core::TexelFormat::kRg11B10Ufloat, true},
+};
 
 using StorageTextureFormatTest = ResolverTestWithParam<FormatParams>;
 TEST_P(StorageTextureFormatTest, All) {
@@ -1511,7 +1531,7 @@ TEST_P(ResolverUntemplatedTypeUsedWithTemplateArgs, BuiltinAlias_UseWithTemplate
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
               R"(12:34 error: type 'A' does not take template arguments
-56:78 note: alias 'A' declared here)");
+56:78 note: 'alias A' declared here)");
 }
 
 INSTANTIATE_TEST_SUITE_P(BuiltinTypes,
@@ -1564,7 +1584,7 @@ TEST_F(ResolverUntemplatedTypeUsedWithTemplateArgs, Struct_Type) {
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
               R"(12:34 error: type 'S' does not take template arguments
-56:78 note: struct 'S' declared here)");
+56:78 note: 'struct S' declared here)");
 }
 
 TEST_F(ResolverUntemplatedTypeUsedWithTemplateArgs, Struct_Ctor) {
@@ -1576,7 +1596,7 @@ TEST_F(ResolverUntemplatedTypeUsedWithTemplateArgs, Struct_Ctor) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(), R"(12:34 error: type 'S' does not take template arguments
-note: struct 'S' declared here)");
+note: 'struct S' declared here)");
 }
 
 TEST_F(ResolverUntemplatedTypeUsedWithTemplateArgs, AliasedArray_Type) {
@@ -1589,7 +1609,7 @@ TEST_F(ResolverUntemplatedTypeUsedWithTemplateArgs, AliasedArray_Type) {
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(),
               R"(12:34 error: type 'A' does not take template arguments
-note: alias 'A' declared here)");
+note: 'alias A' declared here)");
 }
 
 TEST_F(ResolverUntemplatedTypeUsedWithTemplateArgs, AliasedArray_Ctor) {
@@ -1601,7 +1621,7 @@ TEST_F(ResolverUntemplatedTypeUsedWithTemplateArgs, AliasedArray_Ctor) {
 
     EXPECT_FALSE(r()->Resolve());
     EXPECT_EQ(r()->error(), R"(12:34 error: type 'A' does not take template arguments
-note: alias 'A' declared here)");
+note: 'alias A' declared here)");
 }
 
 }  // namespace TypeDoesNotTakeTemplateArgs

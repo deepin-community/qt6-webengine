@@ -6,7 +6,12 @@
 
 #include "base/command_line.h"
 #include "base/containers/contains.h"
+#include "base/strings/stringprintf.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/web_contents.h"
+#include "content/public/common/page_type.h"
 #include "extensions/browser/api/offscreen/offscreen_document_manager.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/extensions_browser_client.h"
@@ -33,8 +38,7 @@ content::BrowserContext& GetBrowserContextToUse(
 
   // The on-the-record profile always uses itself.
   if (!calling_context.IsOffTheRecord()) {
-    return *client->GetContextForOriginalOnly(&calling_context,
-                                              /*force_guest_profile=*/true);
+    return *client->GetContextForOriginalOnly(&calling_context);
   }
 
   DCHECK(util::IsIncognitoEnabled(extension.id(), &calling_context))
@@ -43,10 +47,9 @@ content::BrowserContext& GetBrowserContextToUse(
   // Split-mode extensions use the incognito (calling) context; spanning mode
   // extensions fall back to the original profile.
   bool is_split_mode = IncognitoInfo::IsSplitMode(&extension);
-  return is_split_mode ? *client->GetContextOwnInstance(
-                             &calling_context, /*force_guest_profile=*/true)
-                       : *client->GetContextRedirectedToOriginal(
-                             &calling_context, /*force_guest_profile=*/true);
+  return is_split_mode
+             ? *client->GetContextOwnInstance(&calling_context)
+             : *client->GetContextRedirectedToOriginal(&calling_context);
 }
 
 // Similar to the above, returns the OffscreenDocumentManager to use for the
@@ -71,7 +74,7 @@ ExtensionFunction::ResponseAction OffscreenCreateDocumentFunction::Run() {
 
   GURL url(params->parameters.url);
   if (!url.is_valid()) {
-    url = extension()->GetResourceURL(params->parameters.url);
+    url = extension()->ResolveExtensionURL(params->parameters.url);
   }
 
   if (!url.is_valid() || url::Origin::Create(url) != extension()->origin()) {
@@ -124,6 +127,11 @@ ExtensionFunction::ResponseAction OffscreenCreateDocumentFunction::Run() {
 }
 
 void OffscreenCreateDocumentFunction::OnBrowserContextShutdown() {
+  // This should never trigger if we've responded to the extension -- only one
+  // of OnBrowserContextShutdown() or SendResponseToExtension() should run,
+  // since they each Release() the reference from Run().
+  CHECK(!did_respond());
+
   // Release dangling lifetime pointers and bail. No point in responding now;
   // the context is shutting down. Reset `host_observer_` first to allay any
   // re-entrancy concerns about the host being destructed at this point.
@@ -140,7 +148,63 @@ void OffscreenCreateDocumentFunction::OnExtensionHostDestroyed(
 
 void OffscreenCreateDocumentFunction::OnExtensionHostDidStopFirstLoad(
     const ExtensionHost* host) {
+  content::NavigationEntry* nav_entry =
+      host->host_contents()->GetController().GetLastCommittedEntry();
+  // If the page failed to load, fire an error instead.
+  if (!nav_entry || nav_entry->GetPageType() == content::PAGE_TYPE_ERROR) {
+    // We need to do this asynchronously by posting a task since this is
+    // currently within the context of being notified as an observer that the
+    // ExtensionHost finished its first load. `NotifyPageFailedToLoad()` will
+    // delete the extension host, which isn't allowed in the middle of observer
+    // iteration.
+    // NOTE: We use a WeakPtr here (and *not* a ref count). We've already added
+    // (exactly) one reference to ensure we respond to the extension function,
+    // either in OnBrowserContextShutdown() or SendResponseToExtension(). Adding
+    // another reference here would potentially allow for both of those paths
+    // to trigger, causing two releases. If that happened and this didn't use a
+    // WeakPtr, the task would run with a deleted function.
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&OffscreenCreateDocumentFunction::NotifyPageFailedToLoad,
+                       weak_factory_.GetWeakPtr()));
+    return;
+  }
+
   SendResponseToExtension(NoArguments());
+}
+
+void OffscreenCreateDocumentFunction::NotifyPageFailedToLoad() {
+  OffscreenDocumentManager* manager =
+      GetManagerToUse(*browser_context(), *extension());
+  OffscreenDocumentHost* offscreen_document =
+      manager->GetOffscreenDocumentForExtension(*extension());
+  if (!offscreen_document ||
+      !host_observer_.IsObservingSource(offscreen_document)) {
+    // It's possible the offscreen document went away in between when we
+    // queued up the task to notify the page failed to load and when the
+    // task ran (or, rarer yet, that it went away and there's a whole new
+    // offscreen document in its place). In that case, the function should
+    // have already responded (such as due to the ExtensionHost closing), or
+    // it should be an edge case such as the browser shutting down. Bail out.
+    // ExtensionFunction's dtor will check that this function properly
+    // responded, if it should have.
+    return;
+  }
+
+  // In any other case, we shouldn't have responded to the extension yet.
+  CHECK(!did_respond());
+
+  // The document still exists. Since it failed to load, we should close it and
+  // notify the extension.
+
+  // Remove ourselves as an observer, since otherwise closing the document
+  // would trigger `OnExtensionHostDestroyed()`.
+  host_observer_.Reset();
+
+  // Close out the document and notify the calling extension.
+  manager->CloseOffscreenDocumentForExtension(*extension());
+  SendResponseToExtension(Error("Page failed to load."));
+  return;
 }
 
 void OffscreenCreateDocumentFunction::SendResponseToExtension(

@@ -9,10 +9,12 @@
 #include <linux/input.h>
 #include <unistd.h>
 
+#include <array>
 #include <memory>
 #include <utility>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
 #include "base/functional/bind.h"
@@ -114,11 +116,12 @@ void MockStylusButtonEventConverterEvdev::ConfigureReadMock(
     struct input_event* queue,
     long read_this_many,
     long queue_index) {
-  int nwrite = HANDLE_EINTR(write(write_pipe_, queue + queue_index,
-                                  sizeof(struct input_event) * read_this_many));
-  DCHECK(nwrite ==
-         static_cast<int>(sizeof(struct input_event) * read_this_many))
-      << "write() failed, errno: " << errno;
+  int nwrite = UNSAFE_TODO(
+      HANDLE_EINTR(write(write_pipe_, queue + queue_index,
+                         sizeof(struct input_event) * read_this_many)));
+  DPCHECK(nwrite ==
+          static_cast<int>(sizeof(struct input_event) * read_this_many))
+      << "write() failed";
 }
 
 }  // namespace ui
@@ -189,7 +192,7 @@ TEST_F(StylusButtonEventConverterEvdevTest, DellActivePenSingleClick) {
   std::unique_ptr<ui::MockStylusButtonEventConverterEvdev> dev =
       base::WrapUnique(CreateDevice(ui::kDellActivePenButton));
 
-  struct input_event mock_kernel_queue[] = {
+  auto mock_kernel_queue = std::to_array<input_event>({
       {{0, 0}, EV_MSC, MSC_SCAN, 0x700e3},
       {{0, 0}, EV_KEY, KEY_LEFTMETA, 1},
       {{0, 0}, EV_MSC, MSC_SCAN, 0x7006f},
@@ -201,7 +204,7 @@ TEST_F(StylusButtonEventConverterEvdevTest, DellActivePenSingleClick) {
       {{0, 0}, EV_MSC, MSC_SCAN, 0x700e3},
       {{0, 0}, EV_KEY, KEY_LEFTMETA, 0},
       {{0, 0}, EV_SYN, SYN_REPORT, 0},
-  };
+  });
 
   for (unsigned i = 0; i < std::size(mock_kernel_queue); ++i) {
     dev->ProcessEvent(mock_kernel_queue[i]);
@@ -213,7 +216,7 @@ TEST_F(StylusButtonEventConverterEvdevTest, DellActivePenDoubleClick) {
   std::unique_ptr<ui::MockStylusButtonEventConverterEvdev> dev =
       base::WrapUnique(CreateDevice(ui::kDellActivePenButton));
 
-  struct input_event mock_kernel_queue[] = {
+  auto mock_kernel_queue = std::to_array<input_event>({
       {{0, 0}, EV_MSC, MSC_SCAN, 0x700e3},
       {{0, 0}, EV_KEY, KEY_LEFTMETA, 1},
       {{0, 0}, EV_MSC, MSC_SCAN, 0x7006e},
@@ -225,7 +228,7 @@ TEST_F(StylusButtonEventConverterEvdevTest, DellActivePenDoubleClick) {
       {{0, 0}, EV_MSC, MSC_SCAN, 0x700e3},
       {{0, 0}, EV_KEY, KEY_LEFTMETA, 0},
       {{0, 0}, EV_SYN, SYN_REPORT, 0},
-  };
+  });
 
   for (unsigned i = 0; i < std::size(mock_kernel_queue); ++i) {
     dev->ProcessEvent(mock_kernel_queue[i]);
@@ -233,11 +236,11 @@ TEST_F(StylusButtonEventConverterEvdevTest, DellActivePenDoubleClick) {
   EXPECT_EQ(2u, size());
 
   ui::KeyEvent* event = dispatched_event(0);
-  EXPECT_EQ(ui::ET_KEY_PRESSED, event->type());
+  EXPECT_EQ(ui::EventType::kKeyPressed, event->type());
   EXPECT_TRUE(event->flags() & ui::EF_IS_STYLUS_BUTTON);
 
   event = dispatched_event(1);
-  EXPECT_EQ(ui::ET_KEY_RELEASED, event->type());
+  EXPECT_EQ(ui::EventType::kKeyReleased, event->type());
   EXPECT_TRUE(event->flags() & ui::EF_IS_STYLUS_BUTTON);
 }
 
@@ -245,7 +248,7 @@ TEST_F(StylusButtonEventConverterEvdevTest, DellActivePenLongPress) {
   std::unique_ptr<ui::MockStylusButtonEventConverterEvdev> dev =
       base::WrapUnique(CreateDevice(ui::kDellActivePenButton));
 
-  struct input_event mock_kernel_queue[] = {
+  auto mock_kernel_queue = std::to_array<input_event>({
       {{0, 0}, EV_MSC, MSC_SCAN, 0x700e3},
       {{0, 0}, EV_KEY, KEY_LEFTMETA, 1},
       {{0, 0}, EV_MSC, MSC_SCAN, 0x7006d},
@@ -257,7 +260,7 @@ TEST_F(StylusButtonEventConverterEvdevTest, DellActivePenLongPress) {
       {{0, 0}, EV_MSC, MSC_SCAN, 0x700e3},
       {{0, 0}, EV_KEY, KEY_LEFTMETA, 0},
       {{0, 0}, EV_SYN, SYN_REPORT, 0},
-  };
+  });
 
   for (unsigned i = 0; i < std::size(mock_kernel_queue); ++i) {
     dev->ProcessEvent(mock_kernel_queue[i]);

@@ -44,7 +44,7 @@ class FlossAdminClientObserver : public base::CheckedObserver {
   // Notification sent when the policy effect to a device changed.
   virtual void DevicePolicyEffectChanged(
       const FlossDeviceId& device_id,
-      const absl::optional<PolicyEffect>& effect) {}
+      const std::optional<PolicyEffect>& effect) {}
 
   // Notification sent when the service allowlist changed.
   virtual void ServiceAllowlistChanged(
@@ -86,11 +86,13 @@ class DEVICE_BLUETOOTH_EXPORT FlossAdminClient : public FlossDBusClient {
       ResponseCallback<std::vector<device::BluetoothUUID>> callback);
   virtual void GetDevicePolicyEffect(ResponseCallback<PolicyEffect> callback,
                                      FlossDeviceId device);
+  virtual void SetSimpleSecurePairingEnabled(ResponseCallback<Void> callback,
+                                             const bool enable);
 
  protected:
   // Handle callback |OnDevicePolicyEffectChanged| on exported object path.
   void OnDevicePolicyEffectChanged(const FlossDeviceId& device_id,
-                                   const absl::optional<PolicyEffect>& effect);
+                                   const std::optional<PolicyEffect>& effect);
   // Handle callback |OnServiceAllowlistChanged| on exported object path
   void OnServiceAllowlistChanged(
       const std::vector<std::vector<uint8_t>>& allowlist);
@@ -137,7 +139,7 @@ class DEVICE_BLUETOOTH_EXPORT FlossAdminClient : public FlossDBusClient {
       admin::kCallbackInterface};
 
   // Callback ID used for callbacks registered to this client.
-  absl::optional<uint32_t> callback_id_;
+  std::optional<uint32_t> callback_id_;
 
   // Signal when the client is ready to be used.
   base::OnceClosure on_ready_;

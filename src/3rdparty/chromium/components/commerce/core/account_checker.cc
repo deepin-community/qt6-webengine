@@ -3,10 +3,13 @@
 // found in the LICENSE file.
 
 #include "components/commerce/core/account_checker.h"
+
 #include "base/json/json_writer.h"
+#include "base/time/time.h"
 #include "base/values.h"
 #include "components/commerce/core/commerce_constants.h"
 #include "components/commerce/core/commerce_feature_list.h"
+#include "components/commerce/core/commerce_utils.h"
 #include "components/commerce/core/pref_names.h"
 #include "components/endpoint_fetcher/endpoint_fetcher.h"
 #include "components/prefs/pref_change_registrar.h"
@@ -15,16 +18,20 @@
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/sync/base/features.h"
-#include "components/sync/base/model_type.h"
 #include "components/sync/service/sync_service_utils.h"
+#include "components/sync/service/sync_user_settings.h"
 #include "components/unified_consent/url_keyed_data_collection_consent_helper.h"
+#include "google_apis/gaia/gaia_constants.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/data_decoder/public/cpp/data_decoder.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
+using endpoint_fetcher::EndpointFetcher;
+using endpoint_fetcher::EndpointResponse;
+
 namespace {
 
-const int64_t kTimeoutMs = 10000;
+constexpr base::TimeDelta kTimeout = base::Milliseconds(10000);
 const char kPriceTrackEmailPref[] = "price_track_email";
 const char kPreferencesKey[] = "preferences";
 
@@ -36,17 +43,21 @@ const char kNotificationsPrefUrl[] =
     "https://memex-pa.googleapis.com/v1/notifications/preferences";
 
 AccountChecker::AccountChecker(
+    std::string country,
+    std::string locale,
     PrefService* pref_service,
     signin::IdentityManager* identity_manager,
     syncer::SyncService* sync_service,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory)
-    : pref_service_(pref_service),
+    : country_(country),
+      locale_(locale),
+      pref_service_(pref_service),
       identity_manager_(identity_manager),
       sync_service_(sync_service),
       url_loader_factory_(url_loader_factory),
       weak_ptr_factory_(this) {
-  // TODO(crbug.com/1366165): Avoid pushing the fetched pref value to the server
-  // again.
+  // TODO(crbug.com/40239641): Avoid pushing the fetched pref value to the
+  // server again.
   if (pref_service) {
     pref_change_registrar_ = std::make_unique<PrefChangeRegistrar>();
     pref_change_registrar_->Init(pref_service);
@@ -66,28 +77,26 @@ bool AccountChecker::IsSignedIn() {
            identity_manager_->HasPrimaryAccount(signin::ConsentLevel::kSignin);
   }
   // The feature is not enabled, fallback to old behavior.
-  // TODO(crbug.com/1462978): Delete ConsentLevel::kSync usage once
+  // TODO(crbug.com/40067058): Delete ConsentLevel::kSync usage once
   // kReplaceSyncPromosWithSignInPromos is launched on all platforms. See
   // ConsentLevel::kSync documentation for details.
   return identity_manager_ &&
          identity_manager_->HasPrimaryAccount(signin::ConsentLevel::kSync);
 }
 
-bool AccountChecker::IsSyncingBookmarks() {
-  if (base::FeatureList::IsEnabled(
-          syncer::kReplaceSyncPromosWithSignInPromos)) {
-    return sync_service_ && syncer::GetUploadToGoogleState(
-                                sync_service_, syncer::ModelType::BOOKMARKS) ==
-                                syncer::UploadState::ACTIVE;
-  }
-  // The feature is not enabled, fallback to old behavior.
-  // TODO(crbug.com/1462978): Delete IsSyncFeatureActive() usage once
-  // kReplaceSyncPromosWithSignInPromos is launched on all platforms. See
-  // ConsentLevel::kSync documentation for details.
-  return sync_service_ && sync_service_->IsSyncFeatureActive() &&
-         syncer::GetUploadToGoogleState(sync_service_,
-                                        syncer::ModelType::BOOKMARKS) !=
-             syncer::UploadState::NOT_ACTIVE;
+bool AccountChecker::IsSyncTypeEnabled(syncer::UserSelectableType type) {
+  return sync_service_ && sync_service_->GetUserSettings() &&
+         sync_service_->GetUserSettings()->GetSelectedTypes().Has(type);
+}
+
+bool AccountChecker::IsSyncAvailable() {
+  return sync_service_ &&
+         sync_service_->GetTransportState() !=
+             syncer::SyncService::TransportState::DISABLED &&
+         sync_service_->GetTransportState() !=
+             syncer::SyncService::TransportState::PAUSED &&
+         sync_service_->GetTransportState() !=
+             syncer::SyncService::TransportState::PENDING_DESIRED_CONFIGURATION;
 }
 
 bool AccountChecker::IsAnonymizedUrlDataCollectionEnabled() {
@@ -110,6 +119,33 @@ bool AccountChecker::IsSubjectToParentalControls() {
 
   return capabilities.is_subject_to_parental_controls() ==
          signin::Tribool::kTrue;
+}
+
+bool AccountChecker::CanUseModelExecutionFeatures() {
+  if (!identity_manager_) {
+    return false;
+  }
+
+  AccountCapabilities capabilities =
+      identity_manager_
+          ->FindExtendedAccountInfo(identity_manager_->GetPrimaryAccountInfo(
+              signin::ConsentLevel::kSignin))
+          .capabilities;
+
+  return capabilities.can_use_model_execution_features() ==
+         signin::Tribool::kTrue;
+}
+
+std::string AccountChecker::GetCountry() {
+  return country_;
+}
+
+std::string AccountChecker::GetLocale() {
+  return locale_;
+}
+
+PrefService* AccountChecker::GetPrefs() {
+  return pref_service_.get();
 }
 
 void AccountChecker::FetchPriceEmailPref() {
@@ -150,9 +186,10 @@ void AccountChecker::FetchPriceEmailPref() {
           }
         })");
   auto endpoint_fetcher = CreateEndpointFetcher(
-      kOAuthName, GURL(kNotificationsPrefUrl), kGetHttpMethod, kContentType,
-      std::vector<std::string>{kOAuthScope}, kTimeoutMs, kEmptyPostData,
-      traffic_annotation);
+      kOAuthName, GURL(kNotificationsPrefUrl),
+      endpoint_fetcher::HttpMethod::kGet, kContentType,
+      std::vector<std::string>{GaiaConstants::kChromeMemexOAuth2Scope},
+      kTimeout, kEmptyPostData, traffic_annotation);
   endpoint_fetcher.get()->Fetch(base::BindOnce(
       &AccountChecker::HandleFetchPriceEmailPrefResponse,
       weak_ptr_factory_.GetWeakPtr(), std::move(endpoint_fetcher)));
@@ -175,7 +212,7 @@ void AccountChecker::OnFetchPriceEmailPrefJsonParsed(
   if (pref_service_ && is_waiting_for_pref_fetch_completion_ &&
       result.has_value() && result->is_dict()) {
     if (auto* preferences_map = result->GetDict().FindDict(kPreferencesKey)) {
-      if (absl::optional<bool> price_email_pref =
+      if (std::optional<bool> price_email_pref =
               preferences_map->FindBool(kPriceTrackEmailPref)) {
         // Only set the pref value when necessary since it could affect
         // PrefService::Preference::IsDefaultValue().
@@ -244,9 +281,10 @@ void AccountChecker::OnPriceEmailPrefChanged() {
           }
         })");
   auto endpoint_fetcher = CreateEndpointFetcher(
-      kOAuthName, GURL(kNotificationsPrefUrl), kPostHttpMethod, kContentType,
-      std::vector<std::string>{kOAuthScope}, kTimeoutMs, post_data,
-      traffic_annotation);
+      kOAuthName, GURL(kNotificationsPrefUrl),
+      endpoint_fetcher::HttpMethod::kPost, kContentType,
+      std::vector<std::string>{GaiaConstants::kChromeMemexOAuth2Scope},
+      kTimeout, post_data, traffic_annotation);
   endpoint_fetcher.get()->Fetch(base::BindOnce(
       &AccountChecker::HandleSendPriceEmailPrefResponse,
       weak_ptr_factory_.GetWeakPtr(), std::move(endpoint_fetcher)));
@@ -279,23 +317,32 @@ void AccountChecker::OnSendPriceEmailPrefJsonParsed(
 std::unique_ptr<EndpointFetcher> AccountChecker::CreateEndpointFetcher(
     const std::string& oauth_consumer_name,
     const GURL& url,
-    const std::string& http_method,
+    const endpoint_fetcher::HttpMethod http_method,
     const std::string& content_type,
     const std::vector<std::string>& scopes,
-    int64_t timeout_ms,
+    const base::TimeDelta& timeout,
     const std::string& post_data,
     const net::NetworkTrafficAnnotationTag& annotation_tag) {
-  // TODO(crbug.com/1462978): Delete ConsentLevel::kSync usage once
+  // TODO(crbug.com/40067058): Delete ConsentLevel::kSync usage once
   // kReplaceSyncPromosWithSignInPromos is launched on all platforms. See
   // ConsentLevel::kSync documentation for details.
   signin::ConsentLevel consent_level =
       base::FeatureList::IsEnabled(syncer::kReplaceSyncPromosWithSignInPromos)
           ? signin::ConsentLevel::kSignin
           : signin::ConsentLevel::kSync;
+  EndpointFetcher::RequestParams::Builder request_params =
+      EndpointFetcher::RequestParams::Builder(http_method, annotation_tag);
+  request_params.SetUrl(url)
+      .SetContentType(content_type)
+      .SetAuthType(endpoint_fetcher::OAUTH)
+      .SetOauthScopes(scopes)
+      .SetConsentLevel(consent_level)
+      .SetTimeout(timeout)
+      .SetOauthConsumerName(oauth_consumer_name)
+      .SetPostData(post_data);
+  MaybeUseAlternateShoppingServer(request_params);
   return std::make_unique<EndpointFetcher>(
-      url_loader_factory_, oauth_consumer_name, url, http_method, content_type,
-      scopes, timeout_ms, post_data, annotation_tag, identity_manager_,
-      consent_level);
+      url_loader_factory_, identity_manager_, request_params.Build());
 }
 
 }  // namespace commerce

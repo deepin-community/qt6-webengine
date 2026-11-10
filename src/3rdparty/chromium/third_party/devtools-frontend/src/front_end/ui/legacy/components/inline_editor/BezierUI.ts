@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import * as VisualLogging from '../../../visual_logging/visual_logging.js';
 import * as UI from '../../legacy.js';
 
 interface Params {
@@ -29,8 +30,8 @@ export class BezierUI {
 
   static drawVelocityChart(bezier: UI.Geometry.CubicBezier, path: Element, width: number): void {
     const height = Height;
-    let pathBuilder: (string|number)[]|(string | number)[] = ['M', 0, height];
-    /** @const */ const sampleSize = 1 / 40;
+    let pathBuilder: Array<string|number>|Array<string|number> = ['M', 0, height];
+    /** @constant */ const sampleSize = 1 / 40;
 
     let prev = bezier.evaluateAt(0);
     for (let t = sampleSize; t < 1 + sampleSize; t += sampleSize) {
@@ -65,6 +66,7 @@ export class BezierUI {
       void {
     this.drawLine(parentElement, 'bezier-control-line', startX, startY, controlX, controlY);
     const circle = UI.UIUtils.createSVGChild(parentElement, 'circle', 'bezier-control-circle');
+    circle.setAttribute('jslog', `${VisualLogging.controlPoint('bezier.control-circle').track({drag: true})}`);
     circle.setAttribute('cx', String(controlX + this.radius));
     circle.setAttribute('cy', String(controlY + this.radius + this.marginTop));
     circle.setAttribute('r', String(this.radius));

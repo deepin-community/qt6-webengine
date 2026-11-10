@@ -75,16 +75,19 @@ PerformanceEntryType PerformanceObserver::supportedEntryTypeMask(
   }
 
   PerformanceEntryType mask = types_supported_on_window;
-  if (RuntimeEnabledFeatures::NavigationIdEnabled(execution_context)) {
+  if (RuntimeEnabledFeatures::
+          BackForwardCacheRestorationPerformanceEntryEnabled(
+              execution_context)) {
     mask |= PerformanceEntry::kBackForwardCacheRestoration;
   }
   if (RuntimeEnabledFeatures::SoftNavigationHeuristicsEnabled(
           execution_context)) {
-    mask |= PerformanceEntry::kSoftNavigation;
+    mask |= PerformanceEntry::kSoftNavigation |
+            PerformanceEntry::kInteractionContentfulPaint;
   }
-  if (RuntimeEnabledFeatures::LongAnimationFrameTimingEnabled(
-          execution_context)) {
-    mask |= PerformanceEntry::kLongAnimationFrame;
+  mask |= PerformanceEntry::kLongAnimationFrame;
+  if (RuntimeEnabledFeatures::ContainerTimingEnabled(execution_context)) {
+    mask |= PerformanceEntry::kContainer;
   }
   return mask;
 }
@@ -103,6 +106,9 @@ Vector<AtomicString> PerformanceObserver::supportedEntryTypes(
     supportedEntryTypes.push_back(
         performance_entry_names::kBackForwardCacheRestoration);
   }
+  if (mask & PerformanceEntry::kContainer) {
+    supportedEntryTypes.push_back(performance_entry_names::kContainer);
+  }
   if (mask & PerformanceEntry::kElement) {
     supportedEntryTypes.push_back(performance_entry_names::kElement);
   }
@@ -111,6 +117,10 @@ Vector<AtomicString> PerformanceObserver::supportedEntryTypes(
   }
   if (mask & PerformanceEntry::kFirstInput) {
     supportedEntryTypes.push_back(performance_entry_names::kFirstInput);
+  }
+  if (mask & PerformanceEntry::kInteractionContentfulPaint) {
+    supportedEntryTypes.push_back(
+        performance_entry_names::kInteractionContentfulPaint);
   }
   if (mask & PerformanceEntry::kLargestContentfulPaint) {
     supportedEntryTypes.push_back(
@@ -351,7 +361,7 @@ bool PerformanceObserver::HasPendingActivity() const {
   return is_registered_;
 }
 
-void PerformanceObserver::Deliver(absl::optional<int> dropped_entries_count) {
+void PerformanceObserver::Deliver(std::optional<int> dropped_entries_count) {
   if (!GetExecutionContext())
     return;
   DCHECK(!GetExecutionContext()->IsContextPaused());

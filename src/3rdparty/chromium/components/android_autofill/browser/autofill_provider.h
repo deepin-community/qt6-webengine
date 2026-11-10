@@ -7,8 +7,8 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/time/time.h"
-#include "components/autofill/core/browser/autofill_manager.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/foundations/autofill_manager.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/mojom/autofill_types.mojom.h"
 #include "components/autofill/core/common/signatures.h"
@@ -17,10 +17,6 @@
 namespace content {
 class WebContents;
 }  // namespace content
-
-namespace gfx {
-class RectF;
-}  // namespace gfx
 
 namespace autofill {
 
@@ -33,49 +29,33 @@ class AutofillProvider : public content::WebContentsUserData<AutofillProvider> {
  public:
   ~AutofillProvider() override;
 
-  static bool is_crowdsourcing_manager_disabled_for_testing();
-  static void set_is_crowdsourcing_manager_disabled_for_testing();
-
+  // These events come from AutofillDriver.
+  // See autofill_driver.mojom for documentation.
   virtual void OnAskForValuesToFill(
       AndroidAutofillManager* manager,
       const FormData& form,
       const FormFieldData& field,
-      const gfx::RectF& bounding_box,
       AutofillSuggestionTriggerSource trigger_source) = 0;
-
-  virtual void OnTextFieldDidChange(AndroidAutofillManager* manager,
-                                    const FormData& form,
-                                    const FormFieldData& field,
-                                    const gfx::RectF& bounding_box,
-                                    const base::TimeTicks timestamp) = 0;
-
+  virtual void OnTextFieldValueChanged(AndroidAutofillManager* manager,
+                                       const FormData& form,
+                                       const FormFieldData& field,
+                                       const base::TimeTicks timestamp) = 0;
   virtual void OnTextFieldDidScroll(AndroidAutofillManager* manager,
                                     const FormData& form,
-                                    const FormFieldData& field,
-                                    const gfx::RectF& bounding_box) = 0;
-
-  virtual void OnSelectControlDidChange(AndroidAutofillManager* manager,
-                                        const FormData& form,
-                                        const FormFieldData& field,
-                                        const gfx::RectF& bounding_box) = 0;
-
+                                    const FormFieldData& field) = 0;
+  virtual void OnSelectControlSelectionChanged(AndroidAutofillManager* manager,
+                                               const FormData& form,
+                                               const FormFieldData& field) = 0;
   virtual void OnFormSubmitted(AndroidAutofillManager* manager,
                                const FormData& form,
-                               bool known_success,
                                mojom::SubmissionSource source) = 0;
-
-  virtual void OnFocusNoLongerOnForm(AndroidAutofillManager* manager,
-                                     bool had_interacted_form) = 0;
-
+  virtual void OnFocusOnNonFormField(AndroidAutofillManager* manager) = 0;
   virtual void OnFocusOnFormField(AndroidAutofillManager* manager,
                                   const FormData& form,
-                                  const FormFieldData& field,
-                                  const gfx::RectF& bounding_box) = 0;
-
+                                  const FormFieldData& field) = 0;
   virtual void OnDidFillAutofillFormData(AndroidAutofillManager* manager,
                                          const FormData& form,
                                          base::TimeTicks timestamp) = 0;
-
   virtual void OnHidePopup(AndroidAutofillManager* manager) = 0;
 
   virtual void OnServerPredictionsAvailable(AndroidAutofillManager& manager,

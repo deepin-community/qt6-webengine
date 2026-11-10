@@ -41,6 +41,7 @@ public:
      *  be set to false, and it is undefined what this returns.
      */
     int addInt(int a, int b) {
+        static_assert(sizeof(int) == 4, "int is not 4 bytes");
         if (b < 0 && a < std::numeric_limits<int>::min() - b) {
             fOK = false;
             return a;
@@ -51,16 +52,32 @@ public:
         return a + b;
     }
 
+    int subInt(int a, int b) {
+        if (b == std::numeric_limits<int>::min()) {
+            fOK = false;
+            return a;
+        }
+        return addInt(a, -b);
+    }
+
+    int mulInt(int x, int y) {
+        int64_t result = (int64_t)x * (int64_t)y;
+        if (result > std::numeric_limits<int>::max() || result < std::numeric_limits<int>::min()) {
+            fOK = false;
+        }
+        return (int)result;
+    }
+
     size_t alignUp(size_t x, size_t alignment) {
         SkASSERT(alignment && !(alignment & (alignment - 1)));
         return add(x, alignment - 1) & ~(alignment - 1);
     }
 
-    template <typename T> T castTo(size_t value) {
-        if (!SkTFitsIn<T>(value)) {
+    template <typename TDst, typename TSrc> TDst castTo(TSrc value) {
+        if (!SkTFitsIn<TDst, TSrc>(value)) {
             fOK = false;
         }
-        return static_cast<T>(value);
+        return static_cast<TDst>(value);
     }
 
     // These saturate to their results

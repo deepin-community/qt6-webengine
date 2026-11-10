@@ -40,6 +40,7 @@
 #include "dawn/native/ObjectType_autogen.h"
 #include "dawn/native/PassResourceUsageTracker.h"
 #include "dawn/native/dawn_platform.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 namespace dawn::native {
 
@@ -52,6 +53,7 @@ class ApiObjectBase;
 class EncodingContext {
   public:
     EncodingContext(DeviceBase* device, const ApiObjectBase* initialEncoder);
+    EncodingContext(DeviceBase* device, ErrorMonad::ErrorTag tag);
     ~EncodingContext();
 
     // Marks the encoding context as destroyed so that any future encodes will fail, and all
@@ -59,13 +61,12 @@ class EncodingContext {
     void Destroy();
 
     CommandIterator AcquireCommands();
-    CommandIterator* GetIterator();
 
     // Functions to handle encoder errors
     void HandleError(std::unique_ptr<ErrorData> error);
 
     inline bool ConsumedError(MaybeError maybeError) {
-        if (DAWN_UNLIKELY(maybeError.IsError())) {
+        if (maybeError.IsError()) [[unlikely]] {
             HandleError(maybeError.AcquireError());
             return true;
         }
@@ -74,7 +75,7 @@ class EncodingContext {
 
     template <typename... Args>
     inline bool ConsumedError(MaybeError maybeError, const char* formatStr, const Args&... args) {
-        if (DAWN_UNLIKELY(maybeError.IsError())) {
+        if (maybeError.IsError()) [[unlikely]] {
             std::unique_ptr<ErrorData> error = maybeError.AcquireError();
             if (error->GetType() == InternalErrorType::Validation) {
                 std::string out;
@@ -92,41 +93,51 @@ class EncodingContext {
         return false;
     }
 
-    inline bool CheckCurrentEncoder(const ApiObjectBase* encoder) {
-        if (mDestroyed) {
-            HandleError(DAWN_VALIDATION_ERROR("Recording in a destroyed %s.", mCurrentEncoder));
-            return false;
-        }
-        if (DAWN_UNLIKELY(encoder != mCurrentEncoder)) {
-            if (mCurrentEncoder != mTopLevelEncoder) {
-                // The top level encoder was used when a pass encoder was current.
-                HandleError(DAWN_VALIDATION_ERROR(
-                    "Command cannot be recorded while %s is locked and %s is currently open.",
-                    mTopLevelEncoder, mCurrentEncoder));
-            } else if (mTopLevelEncoder == nullptr) {
-                // Note: mTopLevelEncoder == nullptr is used as a flag for if Finish() has been
-                // called.
-                if (encoder->GetType() == ObjectType::CommandEncoder ||
-                    encoder->GetType() == ObjectType::RenderBundleEncoder) {
-                    HandleError(DAWN_VALIDATION_ERROR("%s is already finished.", encoder));
-                } else {
-                    HandleError(DAWN_VALIDATION_ERROR("Parent encoder of %s is already finished.",
-                                                      encoder));
-                }
-            } else {
-                HandleError(DAWN_VALIDATION_ERROR("Recording in an error %s.", encoder));
+    inline MaybeError ValidateCanEncodeOn(const ApiObjectBase* encoder) {
+        if (encoder != mCurrentEncoder) [[unlikely]] {
+            switch (mStatus) {
+                case Status::ErrorAtCreation:
+                    return DAWN_VALIDATION_ERROR("Recording in an error %s.", encoder);
+                case Status::ErrorInRecording:
+                    return DAWN_VALIDATION_ERROR("Recording in an already invalidated %s.",
+                                                 encoder);
+                case Status::Destroyed:
+                    return DAWN_VALIDATION_ERROR("Recording in a destroyed %s.", encoder);
+
+                case Status::Finished:
+                    // The encoder has been finished, select the correct error message.
+                    DAWN_INVALID_IF(encoder->GetType() == ObjectType::CommandEncoder ||
+                                        encoder->GetType() == ObjectType::RenderBundleEncoder,
+                                    "%s is already finished.", encoder);
+                    return DAWN_VALIDATION_ERROR("Parent encoder of %s is already finished.",
+                                                 encoder);
+
+                case Status::Open:
+                    // This could happen when an error child encoder is created on an otherwise
+                    // valid EncodingContext that then doesn't get notified of the current encoder
+                    // change.
+                    DAWN_INVALID_IF(encoder->IsError(), "Recording in an error %s.", encoder);
+
+                    // This happens when the CommandEncoder is used while a pass is open.
+                    DAWN_INVALID_IF(encoder == mTopLevelEncoder,
+                                    "Recording in %s which is locked while %s is open.", encoder,
+                                    mCurrentEncoder);
+
+                    // The remaining case is when an encoder is ended but we still try to encode
+                    // commands in it.
+                    return DAWN_VALIDATION_ERROR(
+                        "Commands cannot be recorded in %s which has already been ended.", encoder);
             }
-            return false;
         }
-        return true;
+        return {};
     }
 
     template <typename EncodeFunction>
     inline bool TryEncode(const ApiObjectBase* encoder, EncodeFunction&& encodeFunction) {
-        if (!CheckCurrentEncoder(encoder)) {
+        if (ConsumedError(ValidateCanEncodeOn(encoder))) {
             return false;
         }
-        DAWN_ASSERT(!mWasMovedToIterator);
+        DAWN_ASSERT(!mWereCommandsAcquired);
         return !ConsumedError(encodeFunction(&mPendingCommands));
     }
 
@@ -135,10 +146,10 @@ class EncodingContext {
                           EncodeFunction&& encodeFunction,
                           const char* formatStr,
                           const Args&... args) {
-        if (!CheckCurrentEncoder(encoder)) {
+        if (ConsumedError(ValidateCanEncodeOn(encoder), formatStr, args...)) {
             return false;
         }
-        DAWN_ASSERT(!mWasMovedToIterator);
+        DAWN_ASSERT(!mWereCommandsAcquired);
         return !ConsumedError(encodeFunction(&mPendingCommands), formatStr, args...);
     }
 
@@ -164,43 +175,54 @@ class EncodingContext {
     const ComputePassUsages& GetComputePassUsages() const;
     RenderPassUsages AcquireRenderPassUsages();
     ComputePassUsages AcquireComputePassUsages();
+    ityp::vector<PassIndex, IndirectDrawMetadata> AcquireIndirectDrawMetadata();
 
-    void PushDebugGroupLabel(const char* groupLabel);
+    void PushDebugGroupLabel(std::string_view groupLabel);
     void PopDebugGroupLabel();
 
   private:
+    enum class Status {
+        Open,
+        Finished,
+        ErrorAtCreation,
+        ErrorInRecording,
+        Destroyed,
+    };
+
     void CommitCommands(CommandAllocator allocator);
+    void CloseWithStatus(Status status);
 
-    bool IsFinished() const;
-    void MoveToIterator();
-
-    DeviceBase* mDevice;
+    raw_ptr<DeviceBase> mDevice;
 
     // There can only be two levels of encoders. Top-level and render/compute pass.
     // The top level encoder is the encoder the EncodingContext is created with.
-    // It doubles as flag to check if encoding has been Finished.
-    const ApiObjectBase* mTopLevelEncoder;
+    // It doubles as a flag for mStatus != Open when it is nullptr, so that a single comparison
+    // is necessary in ValidateCanEncodeOn.
+    raw_ptr<const ApiObjectBase> mTopLevelEncoder;
     // The current encoder must be the same as the encoder provided to TryEncode,
     // otherwise an error is produced. It may be nullptr if the EncodingContext is an error.
     // The current encoder changes with Enter/ExitPass which should be called by
     // CommandEncoder::Begin/EndPass.
-    const ApiObjectBase* mCurrentEncoder;
+    raw_ptr<const ApiObjectBase> mCurrentEncoder;
 
     RenderPassUsages mRenderPassUsages;
     bool mWereRenderPassUsagesAcquired = false;
     ComputePassUsages mComputePassUsages;
     bool mWereComputePassUsagesAcquired = false;
 
+    // One for each render pass.
+    ityp::vector<PassIndex, IndirectDrawMetadata> mIndirectDrawMetadata;
+    bool mWereIndirectDrawMetadataAcquired = false;
+
     CommandAllocator mPendingCommands;
 
     std::vector<CommandAllocator> mAllocators;
-    CommandIterator mIterator;
-    bool mWasMovedToIterator = false;
     bool mWereCommandsAcquired = false;
-    bool mDestroyed = false;
+    // Contains pointers to strings allocated inside the command allocators.
+    std::vector<std::string_view> mDebugGroupLabels;
 
+    Status mStatus;
     std::unique_ptr<ErrorData> mError;
-    std::vector<std::string> mDebugGroupLabels;
 };
 
 }  // namespace dawn::native

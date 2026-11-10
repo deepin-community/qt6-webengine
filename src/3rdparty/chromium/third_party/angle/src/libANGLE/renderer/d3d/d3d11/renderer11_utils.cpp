@@ -96,7 +96,7 @@ gl::TextureCaps GenerateTextureFormatCaps(gl::Version maxClientVersion,
     if (internalFormatInfo.depthBits == 0 && internalFormatInfo.stencilBits == 0)
     {
         texSupportMask |= D3D11_FORMAT_SUPPORT_TEXTURECUBE;
-        if (maxClientVersion.major > 2)
+        if (maxClientVersion >= gl::ES_3_0)
         {
             texSupportMask |= D3D11_FORMAT_SUPPORT_TEXTURE3D;
         }
@@ -975,8 +975,10 @@ void SetUAVRelatedResourceLimits(D3D_FEATURE_LEVEL featureLevel, gl::Caps *caps)
     // https://docs.microsoft.com/en-us/windows/desktop/direct3d11/overviews-direct3d-11-resources-limits
     // Resource size (in MB) for any of the preceding resources is min(max(128,0.25f * (amount of
     // dedicated VRAM)), 2048) MB. So we set it to 128MB to keep same with GL backend.
-    caps->maxShaderStorageBlockSize =
-        D3D11_REQ_RESOURCE_SIZE_IN_MEGABYTES_EXPRESSION_A_TERM * 1024 * 1024;
+    GLint maxResourceSize = D3D11_REQ_RESOURCE_SIZE_IN_MEGABYTES_EXPRESSION_A_TERM * 1024 * 1024;
+    caps->maxShaderStorageBlockSize = maxResourceSize;
+
+    caps->maxAtomicCounterBufferSize = maxResourceSize;
 
     // Allocate the remaining slots for images and shader storage blocks.
     // The maximum number of fragment shader outputs depends on the current context version, so we
@@ -1233,13 +1235,18 @@ int GetMaximumRenderToBufferWindowSize(D3D_FEATURE_LEVEL featureLevel)
     }
 }
 
-IntelDriverVersion GetIntelDriverVersion(const Optional<LARGE_INTEGER> driverVersion)
+angle::VersionTriple GetIntelDriverVersion(const Optional<LARGE_INTEGER> driverVersion)
 {
     if (!driverVersion.valid())
-        return IntelDriverVersion(0);
+    {
+        return angle::VersionTriple(0, 0, 0);
+    }
 
     DWORD lowPart = driverVersion.value().LowPart;
-    return IntelDriverVersion(HIWORD(lowPart) * 10000 + LOWORD(lowPart));
+
+    // Please refer the details at
+    // http://www.intel.com/content/www/us/en/support/graphics-drivers/000005654.html.
+    return angle::VersionTriple(HIWORD(lowPart), LOWORD(lowPart), 0);
 }
 
 }  // anonymous namespace
@@ -1631,6 +1638,7 @@ void GenerateCaps(ID3D11Device *device,
     extensions->fenceNV                     = GetEventQuerySupport(featureLevel);
     extensions->disjointTimerQueryEXT       = true;
     extensions->robustnessEXT               = true;
+    extensions->robustnessKHR               = true;
     // Direct3D guarantees to return zero for any resource that is accessed out of bounds.
     // See https://msdn.microsoft.com/en-us/library/windows/desktop/ff476332(v=vs.85).aspx
     // and https://msdn.microsoft.com/en-us/library/windows/desktop/ff476900(v=vs.85).aspx
@@ -1654,7 +1662,7 @@ void GenerateCaps(ID3D11Device *device,
     extensions->stencilTexturingANGLE       = (featureLevel >= D3D_FEATURE_LEVEL_10_1);
     extensions->multiviewOVR                = IsMultiviewSupported(featureLevel);
     extensions->multiview2OVR               = IsMultiviewSupported(featureLevel);
-    if (extensions->multiviewOVR || extensions->multiview2OVR)
+    if (extensions->multiviewOVR)
     {
         caps->maxViews = std::min(static_cast<GLuint>(GetMaximum2DTextureArraySize(featureLevel)),
                                   GetMaxViewportAndScissorRectanglesPerPipeline(featureLevel));
@@ -1672,7 +1680,6 @@ void GenerateCaps(ID3D11Device *device,
     extensions->unpackSubimageEXT                   = true;
     extensions->packSubimageNV                      = true;
     extensions->lossyEtcDecodeANGLE                 = true;
-    extensions->syncQueryCHROMIUM                   = GetEventQuerySupport(featureLevel);
     extensions->copyTextureCHROMIUM                 = true;
     extensions->copyCompressedTextureCHROMIUM       = true;
     extensions->textureStorageMultisample2dArrayOES = true;
@@ -1687,8 +1694,7 @@ void GenerateCaps(ID3D11Device *device,
         caps->maxInterpolationOffset          = +0.4375f;  // +0.5 - (2 ^ -4)
     }
     extensions->multiviewMultisampleANGLE =
-        ((extensions->multiviewOVR || extensions->multiview2OVR) &&
-         extensions->textureStorageMultisample2dArrayOES);
+        (extensions->multiviewOVR && extensions->textureStorageMultisample2dArrayOES);
     extensions->copyTexture3dANGLE      = true;
     extensions->textureBorderClampEXT   = true;
     extensions->textureBorderClampOES   = true;
@@ -1696,7 +1702,7 @@ void GenerateCaps(ID3D11Device *device,
     extensions->textureMultisampleANGLE = true;
     extensions->provokingVertexANGLE    = true;
     extensions->blendFuncExtendedEXT    = true;
-    // http://anglebug.com/4926
+    // http://anglebug.com/42263500
     extensions->texture3DOES                             = false;
     extensions->baseInstanceEXT                          = true;
     extensions->baseVertexBaseInstanceANGLE              = true;
@@ -1719,7 +1725,7 @@ void GenerateCaps(ID3D11Device *device,
     extensions->depthBufferFloat2NV = false;
 
     // GL_EXT_clip_control
-    extensions->clipControlEXT = (featureLevel >= D3D_FEATURE_LEVEL_9_3);
+    extensions->clipControlEXT = (featureLevel >= D3D_FEATURE_LEVEL_10_0);
 
     // GL_APPLE_clip_distance / GL_EXT_clip_cull_distance / GL_ANGLE_clip_cull_distance
     extensions->clipDistanceAPPLE         = true;
@@ -1748,8 +1754,8 @@ void GenerateCaps(ID3D11Device *device,
             extensions->shaderPixelLocalStorageCoherentANGLE = true;
             plsOptions->fragmentSyncType = ShFragmentSynchronizationType::RasterizerOrderViews_D3D;
         }
-        // TODO(anglebug.com/7279): If we add RG* support to pixel local storage, these are *NOT*
-        // in the set of common formats, so we need to query support for each individualy:
+        // TODO(anglebug.com/40096838): If we add RG* support to pixel local storage, these are
+        // *NOT* in the set of common formats, so we need to query support for each individualy:
         // https://learn.microsoft.com/en-us/windows/win32/direct3d11/typed-unordered-access-view-loads
         plsOptions->supportsNativeRGBA8ImageFormats =
             renderer11DeviceCaps.supportsUAVLoadStoreCommonFormats;
@@ -2136,8 +2142,6 @@ D3D11_QUERY ConvertQueryType(gl::QueryType type)
         case gl::QueryType::Timestamp:
             // A disjoint query is also created for timestamp
             return D3D11_QUERY_TIMESTAMP_DISJOINT;
-        case gl::QueryType::CommandsCompleted:
-            return D3D11_QUERY_EVENT;
         default:
             UNREACHABLE();
             return D3D11_QUERY_EVENT;
@@ -2496,7 +2500,7 @@ void InitializeFeatures(const Renderer11DeviceCaps &deviceCaps,
     bool isAMD             = IsAMD(adapterDesc.VendorId);
     bool isFeatureLevel9_3 = deviceCaps.featureLevel <= D3D_FEATURE_LEVEL_9_3;
 
-    IntelDriverVersion capsVersion = IntelDriverVersion(0);
+    angle::VersionTriple capsVersion;
     if (isIntel)
     {
         capsVersion = d3d11_gl::GetIntelDriverVersion(deviceCaps.driverVersion);
@@ -2513,13 +2517,13 @@ void InitializeFeatures(const Renderer11DeviceCaps &deviceCaps,
         bool driverVersionValid = deviceCaps.driverVersion.valid();
         if (driverVersionValid)
         {
-            WORD part1 = HIWORD(deviceCaps.driverVersion.value().LowPart);
-            WORD part2 = LOWORD(deviceCaps.driverVersion.value().LowPart);
+            angle::VersionTriple driverVersion(HIWORD(deviceCaps.driverVersion.value().LowPart),
+                                               LOWORD(deviceCaps.driverVersion.value().LowPart), 0);
 
             // Disable the workaround to fix a second driver bug on newer NVIDIA.
-            ANGLE_FEATURE_CONDITION(
-                features, depthStencilBlitExtraCopy,
-                (part1 <= 13u && part2 < 6881) && isNvidia && driverVersionValid);
+            ANGLE_FEATURE_CONDITION(features, depthStencilBlitExtraCopy,
+                                    driverVersion < angle::VersionTriple(13, 6881, 0) && isNvidia &&
+                                        driverVersionValid);
         }
         else
         {
@@ -2530,7 +2534,6 @@ void InitializeFeatures(const Renderer11DeviceCaps &deviceCaps,
 
     ANGLE_FEATURE_CONDITION(features, mrtPerfWorkaround, true);
     ANGLE_FEATURE_CONDITION(features, zeroMaxLodWorkaround, isFeatureLevel9_3);
-    ANGLE_FEATURE_CONDITION(features, useInstancedPointSpriteEmulation, isFeatureLevel9_3);
     ANGLE_FEATURE_CONDITION(features, allowES3OnFL100, false);
 
     // TODO(jmadill): Disable workaround when we have a fixed compiler DLL.
@@ -2545,34 +2548,34 @@ void InitializeFeatures(const Renderer11DeviceCaps &deviceCaps,
     ANGLE_FEATURE_CONDITION(features, useSystemMemoryForConstantBuffers, isIntel);
 
     ANGLE_FEATURE_CONDITION(features, callClearTwice,
-                            isIntel && isSkylake && capsVersion >= IntelDriverVersion(160000) &&
-                                capsVersion < IntelDriverVersion(164771));
+                            isIntel && isSkylake && capsVersion >= angle::VersionTriple(16, 0, 0) &&
+                                capsVersion < angle::VersionTriple(16, 4771, 0));
     ANGLE_FEATURE_CONDITION(features, emulateIsnanFloat,
-                            isIntel && isSkylake && capsVersion >= IntelDriverVersion(160000) &&
-                                capsVersion < IntelDriverVersion(164542));
+                            isIntel && isSkylake && capsVersion >= angle::VersionTriple(16, 0, 0) &&
+                                capsVersion < angle::VersionTriple(16, 4542, 0));
     ANGLE_FEATURE_CONDITION(features, rewriteUnaryMinusOperator,
                             isIntel && (isBroadwell || isHaswell) &&
-                                capsVersion >= IntelDriverVersion(150000) &&
-                                capsVersion < IntelDriverVersion(154624));
+                                capsVersion >= angle::VersionTriple(15, 0, 0) &&
+                                capsVersion < angle::VersionTriple(15, 4624, 0));
 
     ANGLE_FEATURE_CONDITION(features, addMockTextureNoRenderTarget,
-                            isIntel && capsVersion >= IntelDriverVersion(160000) &&
-                                capsVersion < IntelDriverVersion(164815));
+                            isIntel && capsVersion >= angle::VersionTriple(16, 0, 0) &&
+                                capsVersion < angle::VersionTriple(16, 4815, 0));
 
     // Haswell/Ivybridge drivers occasionally corrupt (small?) (vertex?) texture data uploads.
     ANGLE_FEATURE_CONDITION(features, setDataFasterThanImageUpload,
                             !(isIvyBridge || isBroadwell || isHaswell));
 
     ANGLE_FEATURE_CONDITION(features, disableB5G6R5Support,
-                            (isIntel && capsVersion >= IntelDriverVersion(150000) &&
-                             capsVersion < IntelDriverVersion(154539)) ||
+                            (isIntel && capsVersion >= angle::VersionTriple(15, 0, 0) &&
+                             capsVersion < angle::VersionTriple(15, 4539, 0)) ||
                                 isAMD);
 
     // TODO(jmadill): Disable when we have a fixed driver version.
     // The tiny stencil texture workaround involves using CopySubresource or UpdateSubresource on a
     // depth stencil texture.  This is not allowed until feature level 10.1 but since it is not
     // possible to support ES3 on these devices, there is no need for the workaround to begin with
-    // (anglebug.com/1572).
+    // (anglebug.com/42260536).
     ANGLE_FEATURE_CONDITION(features, emulateTinyStencilTextures,
                             isAMD && !(deviceCaps.featureLevel < D3D_FEATURE_LEVEL_10_1));
 
@@ -2607,6 +2610,8 @@ void InitializeFrontendFeatures(const DXGI_ADAPTER_DESC &adapterDesc,
     // The D3D backend's handling of compile and link is thread-safe
     ANGLE_FEATURE_CONDITION(features, compileJobIsThreadSafe, true);
     ANGLE_FEATURE_CONDITION(features, linkJobIsThreadSafe, true);
+
+    ANGLE_FEATURE_CONDITION(features, setNeedInitOnInvalidation, true);
 }
 
 void InitConstantBufferDesc(D3D11_BUFFER_DESC *constantBufferDescription, size_t byteWidth)

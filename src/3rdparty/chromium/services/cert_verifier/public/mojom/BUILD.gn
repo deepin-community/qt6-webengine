@@ -12,7 +12,10 @@ mojom("mojom") {
 
   deps = [ "//mojo/public/mojom/base" ]
 
-  public_deps = [ "//services/network/public/mojom" ]
+  public_deps = [
+    "//mojo/public/mojom/base:protobuf_support",
+    "//services/network/public/mojom",
+  ]
 
   enabled_features = []
 
@@ -21,6 +24,9 @@ mojom("mojom") {
   }
   if (chrome_root_store_supported) {
     enabled_features += [ "is_chrome_root_store_supported" ]
+    if (!is_chromeos) {
+      enabled_features += [ "is_platform_root_store_info_supported" ]
+    }
   }
 
   if (use_nss_certs) {

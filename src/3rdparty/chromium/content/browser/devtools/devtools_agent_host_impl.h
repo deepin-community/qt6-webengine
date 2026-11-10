@@ -43,14 +43,11 @@ class CONTENT_EXPORT DevToolsAgentHostImpl : public DevToolsAgentHost {
 
   // DevToolsAgentHost implementation.
   bool AttachClient(DevToolsAgentHostClient* client) override;
-  bool AttachClientWithoutWakeLock(DevToolsAgentHostClient* client) override;
   bool DetachClient(DevToolsAgentHostClient* client) override;
   void DispatchProtocolMessage(DevToolsAgentHostClient* client,
                                base::span<const uint8_t> message) override;
   bool IsAttached() override;
   void InspectElement(RenderFrameHost* frame_host, int x, int y) override;
-  void GetUniqueFormControlId(int node_id,
-                              GetUniqueFormControlIdCallback callback) override;
   std::string GetId() override;
   std::string CreateIOStreamFromData(
       scoped_refptr<base::RefCountedMemory> data) override;
@@ -89,6 +86,8 @@ class CONTENT_EXPORT DevToolsAgentHostImpl : public DevToolsAgentHost {
 
   bool Inspect();
 
+  scoped_refptr<DevToolsAgentHost> OpenDevTools();
+
   template <typename Handler>
   std::vector<Handler*> HandlersByName(const std::string& name) {
     std::vector<Handler*> result;
@@ -115,6 +114,8 @@ class CONTENT_EXPORT DevToolsAgentHostImpl : public DevToolsAgentHost {
 
   base::ProcessId GetProcessId() const { return process_id_; }
 
+  DevToolsSession* GetSessionByIdForTesting(const std::string& session_id);
+
  protected:
   explicit DevToolsAgentHostImpl(const std::string& id);
   ~DevToolsAgentHostImpl() override;
@@ -122,7 +123,7 @@ class CONTENT_EXPORT DevToolsAgentHostImpl : public DevToolsAgentHost {
   static bool ShouldForceCreation();
 
   // Returning |false| will block the attach.
-  virtual bool AttachSession(DevToolsSession* session, bool acquire_wake_lock);
+  virtual bool AttachSession(DevToolsSession* session);
   virtual void DetachSession(DevToolsSession* session);
   virtual void UpdateRendererChannel(bool force);
 
@@ -149,7 +150,7 @@ class CONTENT_EXPORT DevToolsAgentHostImpl : public DevToolsAgentHost {
 
   // Called when the corresponding renderer process notifies that the main
   // thread debugger is paused or resumed.
-  // TODO(https://crbug.com/1449114): Remove this method when we collect enough
+  // TODO(crbug.com/40269649): Remove this method when we collect enough
   // data to understand how likely that situation could happen.
   virtual void MainThreadDebuggerPaused();
   virtual void MainThreadDebuggerResumed();
@@ -166,8 +167,6 @@ class CONTENT_EXPORT DevToolsAgentHostImpl : public DevToolsAgentHost {
   friend class DevToolsRendererChannel;
 
   bool AttachInternal(std::unique_ptr<DevToolsSession> session);
-  bool AttachInternal(std::unique_ptr<DevToolsSession> session,
-                      bool acquire_wake_lock);
   void DetachInternal(DevToolsSession* session);
   void NotifyAttached();
   void NotifyDetached();

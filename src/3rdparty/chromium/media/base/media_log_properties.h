@@ -50,7 +50,7 @@ enum class MediaLogProperty {
 
   // Represents whether the media source supports range requests. A truthful
   // value here means that range requests aren't supported and seeking probably
-  // wont be supported.
+  // won't be supported.
   kIsStreaming,
 
   // The url and title of the frame containing the document that this media
@@ -102,6 +102,9 @@ enum class MediaLogProperty {
   // A playback quality metric that tries to account for large pauses and/or
   // discontinuities during playback.
   kVideoPlaybackFreezing,
+
+  // Triggered when buffered ranges are changed.
+  kHlsBufferedRanges,
 };
 
 MEDIA_LOG_PROPERTY_SUPPORTS_TYPE(kResolution, gfx::Size);
@@ -130,6 +133,7 @@ MEDIA_LOG_PROPERTY_SUPPORTS_TYPE(kVideoTracks, std::vector<VideoDecoderConfig>);
 MEDIA_LOG_PROPERTY_SUPPORTS_TYPE(kFramerate, double);
 MEDIA_LOG_PROPERTY_SUPPORTS_TYPE(kVideoPlaybackRoughness, double);
 MEDIA_LOG_PROPERTY_SUPPORTS_TYPE(kVideoPlaybackFreezing, base::TimeDelta);
+MEDIA_LOG_PROPERTY_SUPPORTS_TYPE(kHlsBufferedRanges, Ranges<base::TimeDelta>);
 
 // Convert the enum to a string (used for the front-end enum matching).
 MEDIA_EXPORT std::string MediaLogPropertyKeyToString(MediaLogProperty property);

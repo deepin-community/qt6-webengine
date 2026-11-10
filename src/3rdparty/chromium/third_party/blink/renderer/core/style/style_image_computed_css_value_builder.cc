@@ -21,9 +21,12 @@ namespace {
 const CSSPrimitiveValue* ComputeResolution(
     const CSSPrimitiveValue& resolution) {
   if (resolution.IsResolution()) {
+    std::optional<double> number = resolution.GetValueIfKnown();
+    // TODO(crbug.com/410746569): See comments in
+    // css_parsing_utils::ConsumeImageSetOption()
+    CHECK(number.has_value());
     return CSSNumericLiteralValue::Create(
-        resolution.ComputeDotsPerPixel(),
-        CSSPrimitiveValue::UnitType::kDotsPerPixel);
+        number.value(), CSSPrimitiveValue::UnitType::kDotsPerPixel);
   }
   return &resolution;
 }
@@ -75,10 +78,10 @@ CSSValue* StyleImageComputedCSSValueBuilder::Build(CSSValue* value) const {
   }
   if (auto* image_gradient_value =
           DynamicTo<cssvalue::CSSGradientValue>(value)) {
-    return image_gradient_value->ComputedCSSValue(style_, allow_visited_style_);
+    return image_gradient_value->ComputedCSSValue(style_, allow_visited_style_,
+                                                  value_phase_);
   }
   NOTREACHED();
-  return value;
 }
 
 }  // namespace blink

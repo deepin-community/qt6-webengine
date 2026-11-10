@@ -19,7 +19,7 @@
 
 #include "third_party/blink/renderer/modules/vibration/vibration_controller.h"
 
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_unsignedlong_unsignedlongsequence.h"
@@ -38,7 +38,7 @@ const unsigned kVibrationDurationMsMax = 10000;
 blink::VibrationController::VibrationPattern sanitizeVibrationPatternInternal(
     const blink::VibrationController::VibrationPattern& pattern) {
   blink::VibrationController::VibrationPattern sanitized = pattern;
-  wtf_size_t length = sanitized.size();
+  blink::wtf_size_t length = sanitized.size();
 
   // If the pattern is too long then truncate it.
   if (length > kVibrationPatternLengthMax) {
@@ -47,7 +47,7 @@ blink::VibrationController::VibrationPattern sanitizeVibrationPatternInternal(
   }
 
   // If any pattern entry is too long then truncate it.
-  for (wtf_size_t i = 0; i < length; ++i) {
+  for (blink::wtf_size_t i = 0; i < length; ++i) {
     if (sanitized[i] > kVibrationDurationMsMax)
       sanitized[i] = kVibrationDurationMsMax;
   }
@@ -78,7 +78,6 @@ VibrationController::SanitizeVibrationPattern(
           input->GetAsUnsignedLongSequence());
   }
   NOTREACHED();
-  return {};
 }
 
 // static
@@ -146,7 +145,6 @@ bool VibrationController::Vibrate(const VibrationPattern& pattern) {
 
   if (!frame->HasStickyUserActivation()) {
     String message;
-    // TODO(crbug.com/1254770): Update for embedded portals.
     if (frame->IsCrossOriginToNearestMainFrame()) {
       message =
           "Blocked call to navigator.vibrate inside a cross-origin "

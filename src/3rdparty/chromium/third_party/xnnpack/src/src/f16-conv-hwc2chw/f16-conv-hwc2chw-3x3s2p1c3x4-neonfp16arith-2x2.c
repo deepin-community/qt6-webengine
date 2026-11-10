@@ -7,9 +7,9 @@
 
 #include <arm_neon.h>
 
-#include <xnnpack/conv.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/math.h>
+#include "src/xnnpack/conv.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/math.h"
 
 
 void xnn_f16_conv_hwc2chw_ukernel_3x3s2p1c3x4__neonfp16arith_2x2(
@@ -17,15 +17,15 @@ void xnn_f16_conv_hwc2chw_ukernel_3x3s2p1c3x4__neonfp16arith_2x2(
     size_t input_width,
     size_t output_y_start,
     size_t output_y_end,
-    const void* input,
-    const void* zero,
-    const void* weights,
-    void* output,
+    const xnn_float16* input,
+    const xnn_float16* zero,
+    const xnn_float16* weights,
+    xnn_float16* output,
     size_t input_padding_top,
     size_t output_channels,
     size_t output_height_stride,
     size_t output_channel_stride,
-    const union xnn_f16_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f16_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(input_width != 0);
   assert(output_y_end > output_y_start);
@@ -47,29 +47,29 @@ void xnn_f16_conv_hwc2chw_ukernel_3x3s2p1c3x4__neonfp16arith_2x2(
   uint16_t* output1 = (uint16_t*) ((uintptr_t) output0 + output_height_stride);
 
   if XNN_UNPREDICTABLE(output_y_start < input_padding_top) {
-    i0 = zero;
+    i0 = (const uint16_t*) zero;
   }
 
-  const float16x4_t vmax = vreinterpret_f16_u16(vld1_dup_u16(&params->fp16arith.max));
-  const float16x4_t vmin = vreinterpret_f16_u16(vld1_dup_u16(&params->fp16arith.min));
+  const float16x4_t vmax = vreinterpret_f16_u16(vdup_n_u16(*(const uint16_t*) &params->scalar.max));
+  const float16x4_t vmin = vreinterpret_f16_u16(vdup_n_u16(*(const uint16_t*) &params->scalar.min));
 
   for (size_t output_y = output_y_start; output_y < output_y_end; output_y += 2) {
     const size_t input_y2 = output_y * 2 + 2 - input_padding_top;
     const size_t input_y4 = input_y2 + 2;
     if XNN_UNPREDICTABLE(input_y2 >= input_height) {
-      i2 = zero;
+      i2 = (const uint16_t*) zero;
     }
     if XNN_UNPREDICTABLE(input_y4 > input_height) {
-      i3 = zero;
+      i3 = (const uint16_t*) zero;
     }
     if XNN_UNPREDICTABLE(input_y4 >= input_height) {
-      i4 = zero;
+      i4 = (const uint16_t*) zero;
     }
     if XNN_UNPREDICTABLE(output_y + 2 > output_y_end) {
       output1 = output0;
     }
 
-    const uint16_t* w = weights;
+    const uint16_t* w = (const uint16_t*) weights;
     size_t c = output_channels;
     uint16_t* o0c0 = output0;
     uint16_t* o1c0 = output1;

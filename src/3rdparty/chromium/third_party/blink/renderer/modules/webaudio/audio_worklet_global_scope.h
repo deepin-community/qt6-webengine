@@ -79,9 +79,9 @@ class MODULES_EXPORT AudioWorkletGlobalScope final : public WorkletGlobalScope {
       MessagePortChannel,
       scoped_refptr<SerializedScriptValue> node_options);
 
-  AudioWorkletProcessorDefinition* FindDefinition(const String& name);
+  AudioWorkletProcessorDefinition* FindDefinition(const String& name) const;
 
-  unsigned NumberOfRegisteredDefinitions();
+  unsigned NumberOfRegisteredDefinitions() const;
 
   std::unique_ptr<Vector<CrossThreadAudioWorkletProcessorInfo>>
   WorkletProcessorInfoListForSynchronization();
@@ -135,8 +135,7 @@ class MODULES_EXPORT AudioWorkletGlobalScope final : public WorkletGlobalScope {
   // AudioWorkletObjectProxy manages the cross-thread messaging to
   // AudioWorkletMessagingProxy on the main thread. AudioWorkletObjectProxy
   // outlives AudioWorkletGlobalScope, this raw pointer is safe.
-  raw_ptr<AudioWorkletObjectProxy, ExperimentalRenderer> object_proxy_ =
-      nullptr;
+  raw_ptr<AudioWorkletObjectProxy> object_proxy_ = nullptr;
 };
 
 template <>

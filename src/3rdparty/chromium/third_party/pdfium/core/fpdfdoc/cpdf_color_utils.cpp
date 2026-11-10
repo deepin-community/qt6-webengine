@@ -9,7 +9,7 @@
 #include "core/fpdfapi/parser/cpdf_array.h"
 #include "core/fpdfdoc/cpdf_defaultappearance.h"
 #include "core/fxcrt/bytestring.h"
-#include "third_party/base/notreached.h"
+#include "core/fxcrt/notreached.h"
 
 namespace fpdfdoc {
 
@@ -30,11 +30,6 @@ CFX_Color CFXColorFromArray(const CPDF_Array& array) {
       break;
   }
   return rt;
-}
-
-CFX_Color CFXColorFromString(const ByteString& str) {
-  CPDF_DefaultAppearance appearance(str);
-  return appearance.GetColor().value_or(CFX_Color());
 }
 
 }  // namespace fpdfdoc

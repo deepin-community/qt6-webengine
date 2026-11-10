@@ -28,17 +28,27 @@
 #ifndef SRC_TINT_LANG_CORE_IR_BINARY_ENCODE_H_
 #define SRC_TINT_LANG_CORE_IR_BINARY_ENCODE_H_
 
-#include "src/tint/utils/containers/vector.h"
-#include "src/tint/utils/result/result.h"
+#include <memory>
 
-// Forward declarartion
+#include "src/tint/utils/containers/vector.h"
+#include "src/tint/utils/result.h"
+
+// Forward declarations
 namespace tint::core::ir {
 class Module;
 }  // namespace tint::core::ir
 
+namespace tint::core::ir::binary::pb {
+class Module;
+}
+
 namespace tint::core::ir::binary {
 
-Result<Vector<std::byte, 0>> Encode(const Module& module);
+// Encode the module into a proto representation.
+Result<std::unique_ptr<pb::Module>> EncodeToProto(const Module& module);
+
+// Encode the module into a binary representation.
+Result<Vector<std::byte, 0>> EncodeToBinary(const Module& module);
 
 }  // namespace tint::core::ir::binary
 

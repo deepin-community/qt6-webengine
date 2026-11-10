@@ -3,17 +3,20 @@
 // found in the LICENSE file.
 
 #include "components/password_manager/core/browser/well_known_change_password/well_known_change_password_state.h"
+
 #include <cstddef>
 
 #include "base/files/file_util.h"
+#include "base/task/current_thread.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_mock_time_task_runner.h"
+#include "base/time/time.h"
 #include "base/timer/mock_timer.h"
-#include "components/password_manager/core/browser/affiliation/affiliation_service_impl.h"
-#include "components/password_manager/core/browser/affiliation/mock_affiliation_fetcher.h"
-#include "components/password_manager/core/browser/affiliation/mock_affiliation_fetcher_factory.h"
-#include "components/password_manager/core/browser/affiliation/mock_affiliation_service.h"
+#include "components/affiliations/core/browser/affiliation_service_impl.h"
+#include "components/affiliations/core/browser/mock_affiliation_fetcher.h"
+#include "components/affiliations/core/browser/mock_affiliation_fetcher_factory.h"
+#include "components/affiliations/core/browser/mock_affiliation_service.h"
 #include "components/password_manager/core/browser/well_known_change_password/well_known_change_password_util.h"
 #include "net/base/isolation_info.h"
 #include "net/base/load_flags.h"
@@ -189,9 +192,10 @@ TEST_P(WellKnownChangePasswordStateTest, NoSupport_Redirect) {
 
 TEST_P(WellKnownChangePasswordStateTest,
        NoAwaitForPrefetchResultIfWellKnownChangePasswordSupported) {
-  MockAffiliationService mock_affiliation_service;
-  EXPECT_CALL(mock_affiliation_service, PrefetchChangePasswordURLs);
-  state()->PrefetchChangePasswordURLs(&mock_affiliation_service, {});
+  affiliations::MockAffiliationService mock_affiliation_service;
+  EXPECT_CALL(mock_affiliation_service, PrefetchChangePasswordURL);
+  state()->PrefetchChangePasswordURL(&mock_affiliation_service,
+                                     GURL("https://example.com"));
 
   EXPECT_CALL(*delegate(), OnProcessingFinished(true));
 
@@ -206,9 +210,10 @@ TEST_P(WellKnownChangePasswordStateTest,
 }
 
 TEST_P(WellKnownChangePasswordStateTest, TimeoutTriggersOnProcessingFinished) {
-  MockAffiliationService mock_affiliation_service;
-  EXPECT_CALL(mock_affiliation_service, PrefetchChangePasswordURLs);
-  state()->PrefetchChangePasswordURLs(&mock_affiliation_service, {});
+  affiliations::MockAffiliationService mock_affiliation_service;
+  EXPECT_CALL(mock_affiliation_service, PrefetchChangePasswordURL);
+  state()->PrefetchChangePasswordURL(&mock_affiliation_service,
+                                     GURL("https://example.com"));
 
   ResponseDelayParams params = GetParam();
   RespondeToChangePasswordRequest(net::HTTP_NOT_FOUND,
@@ -224,15 +229,21 @@ TEST_P(WellKnownChangePasswordStateTest, TimeoutTriggersOnProcessingFinished) {
 
 TEST_P(WellKnownChangePasswordStateTest,
        PrefetchCallbackTriggersOnProcessingFinished) {
-  auto mock_fetcher = std::make_unique<MockAffiliationFetcher>();
-  auto* raw_mock_fetcher = mock_fetcher.get();
-  auto mock_fetcher_factory = std::make_unique<MockAffiliationFetcherFactory>();
+  auto mock_fetcher = std::make_unique<affiliations::MockAffiliationFetcher>();
+  auto mock_fetcher_factory =
+      std::make_unique<affiliations::MockAffiliationFetcherFactory>();
+  base::OnceCallback<void(
+      affiliations::AffiliationFetcherInterface::FetchResult)>
+      fetch_result_callback;
+  EXPECT_CALL(*(mock_fetcher.get()), StartRequest)
+      .WillOnce(testing::SaveArgByMove<2>(&fetch_result_callback));
   EXPECT_CALL(*(mock_fetcher_factory.get()), CreateInstance)
       .WillOnce(testing::Return(testing::ByMove(std::move(mock_fetcher))));
   scoped_refptr<base::TestMockTimeTaskRunner> background_task_runner =
       base::MakeRefCounted<base::TestMockTimeTaskRunner>();
-  auto affiliation_service = std::make_unique<AffiliationServiceImpl>(
-      test_shared_loader_factory(), background_task_runner);
+  auto affiliation_service =
+      std::make_unique<affiliations::AffiliationServiceImpl>(
+          test_shared_loader_factory(), background_task_runner);
 
   network::TestNetworkConnectionTracker* network_connection_tracker =
       network::TestNetworkConnectionTracker::GetInstance();
@@ -241,9 +252,8 @@ TEST_P(WellKnownChangePasswordStateTest,
   affiliation_service->Init(network_connection_tracker, database_path);
   affiliation_service->SetFetcherFactoryForTesting(
       std::move(mock_fetcher_factory));
-
-  state()->PrefetchChangePasswordURLs(affiliation_service.get(),
-                                      {GURL("https://example.com")});
+  state()->PrefetchChangePasswordURL(affiliation_service.get(),
+                                     GURL("https://example.com"));
 
   ResponseDelayParams params = GetParam();
   RespondeToChangePasswordRequest(net::HTTP_NOT_FOUND,
@@ -254,10 +264,10 @@ TEST_P(WellKnownChangePasswordStateTest,
   FastForwardBy(base::Milliseconds(ms_to_forward));
 
   EXPECT_CALL(*delegate(), OnProcessingFinished(false));
-  static_cast<AffiliationFetcherDelegate*>(affiliation_service.get())
-      ->OnFetchSucceeded(
-          raw_mock_fetcher,
-          std::make_unique<AffiliationFetcherDelegate::Result>());
+  std::move(fetch_result_callback)
+      .Run(affiliations::AffiliationFetcherInterface::FetchResult());
+  // Unblocks tasks on the main runner that contains the prefetch closure.
+  FastForwardBy(base::Milliseconds(0));
 
   // Destroy the affiliation service and backend.
   affiliation_service->Shutdown();

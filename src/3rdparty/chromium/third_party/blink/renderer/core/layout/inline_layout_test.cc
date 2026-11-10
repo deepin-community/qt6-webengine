@@ -11,7 +11,6 @@
 #include "third_party/blink/renderer/core/testing/sim/sim_compositor.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_request.h"
 #include "third_party/blink/renderer/core/testing/sim/sim_test.h"
-#include "third_party/blink/renderer/platform/testing/runtime_enabled_features_test_helpers.h"
 #include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_names.h"
 
@@ -80,7 +79,7 @@ TEST_F(InlineLayoutTest, BlockWithTextAndAtomicInline) {
 
   StringBuilder expected_text;
   expected_text.Append("Hello ");
-  expected_text.Append(kObjectReplacementCharacter);
+  expected_text.Append(uchar::kObjectReplacementCharacter);
   expected_text.Append('.');
   auto first_child = To<InlineNode>(node.FirstChild());
   EXPECT_EQ(expected_text.ToString(),

@@ -1,17 +1,16 @@
-/* Copyright (c) 2023, Google Inc.
- *
- * Permission to use, copy, modify, and/or distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
- * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
- * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
+// Copyright 2023 The BoringSSL Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 //! Hash functions.
 //!
@@ -28,11 +27,23 @@
 //! let digest2: [u8; 32] = ctx.digest();
 //!
 //! assert_eq!(digest, digest2);
+//!
+//! // Hashing with dynamic dispatch.
+//! #[cfg(feature = "std")]
+//! {
+//!     fn update_hash(ctx: &mut dyn std::io::Write) {
+//!         ctx.write(b"hel");
+//!         ctx.write(b"lo");
+//!     }
+//!
+//!     let mut ctx = digest::Sha256::new();
+//!     update_hash(&mut ctx);
+//!     assert_eq!(ctx.digest(), digest);
+//! }
 //! ```
 
 use crate::{sealed, FfiSlice, ForeignTypeRef};
 use alloc::vec::Vec;
-use bssl_sys;
 
 #[non_exhaustive]
 #[doc(hidden)]
@@ -42,10 +53,12 @@ unsafe impl ForeignTypeRef for MdRef {
     type CType = bssl_sys::EVP_MD;
 }
 
-/// Used internally to parameterize other primitives.
+/// Provides the ability to hash in an algorithm-agnostic manner.
 pub trait Algorithm {
     /// The size of the resulting digest.
     const OUTPUT_LEN: usize;
+    /// The block length (in bytes).
+    const BLOCK_LEN: usize;
 
     /// Gets a reference to a message digest algorithm to be used by the HKDF implementation.
     #[doc(hidden)]
@@ -53,6 +66,15 @@ pub trait Algorithm {
 
     /// Hashes a message.
     fn hash_to_vec(input: &[u8]) -> Vec<u8>;
+
+    /// Create a new context for incremental hashing.
+    fn new() -> Self;
+
+    /// Hash the contents of `input`.
+    fn update(&mut self, input: &[u8]);
+
+    /// Finish the hashing and return the digest.
+    fn digest_to_vec(self) -> Vec<u8>;
 }
 
 /// The insecure SHA-1 hash algorithm.
@@ -68,6 +90,7 @@ pub struct InsecureSha1 {
 unsafe_iuf_algo!(
     InsecureSha1,
     20,
+    64,
     EVP_sha1,
     SHA1,
     SHA1_Init,
@@ -84,6 +107,7 @@ pub struct Sha256 {
 unsafe_iuf_algo!(
     Sha256,
     32,
+    64,
     EVP_sha256,
     SHA256,
     SHA256_Init,
@@ -100,6 +124,7 @@ pub struct Sha384 {
 unsafe_iuf_algo!(
     Sha384,
     48,
+    128,
     EVP_sha384,
     SHA384,
     SHA384_Init,
@@ -116,6 +141,7 @@ pub struct Sha512 {
 unsafe_iuf_algo!(
     Sha512,
     64,
+    128,
     EVP_sha512,
     SHA512,
     SHA512_Init,
@@ -132,6 +158,7 @@ pub struct Sha512_256 {
 unsafe_iuf_algo!(
     Sha512_256,
     32,
+    128,
     EVP_sha512_256,
     SHA512_256,
     SHA512_256_Init,

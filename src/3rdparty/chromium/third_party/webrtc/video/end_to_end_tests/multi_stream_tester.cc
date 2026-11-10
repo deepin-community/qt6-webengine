@@ -10,25 +10,39 @@
 
 #include "video/end_to_end_tests/multi_stream_tester.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
 #include "api/environment/environment.h"
 #include "api/environment/environment_factory.h"
+#include "api/rtp_parameters.h"
 #include "api/task_queue/task_queue_base.h"
+#include "api/task_queue/task_queue_factory.h"
 #include "api/test/create_frame_generator.h"
 #include "api/test/simulated_network.h"
 #include "api/test/video/function_video_encoder_factory.h"
 #include "api/video/builtin_video_bitrate_allocator_factory.h"
+#include "api/video/video_bitrate_allocator_factory.h"
+#include "api/video/video_codec_type.h"
+#include "api/video_codecs/sdp_video_format.h"
+#include "call/call.h"
+#include "call/call_config.h"
 #include "call/fake_network_pipe.h"
-#include "call/simulated_network.h"
+#include "call/video_receive_stream.h"
+#include "call/video_send_stream.h"
 #include "media/engine/internal_decoder_factory.h"
 #include "modules/video_coding/codecs/vp8/include/vp8.h"
 #include "rtc_base/task_queue_for_test.h"
-#include "test/call_test.h"
+#include "test/direct_transport.h"
 #include "test/encoder_settings.h"
+#include "test/frame_generator_capturer.h"
+#include "test/network/simulated_network.h"
 #include "test/video_test_constants.h"
+#include "video/config/video_encoder_config.h"
 
 namespace webrtc {
 
@@ -48,7 +62,8 @@ void MultiStreamTester::RunTest() {
   // to make test more stable.
   auto task_queue = env.task_queue_factory().CreateTaskQueue(
       "TaskQueue", TaskQueueFactory::Priority::HIGH);
-  CallConfig config(env);
+  CallConfig sender_config(env);
+  CallConfig receiver_config(env);
   std::unique_ptr<Call> sender_call;
   std::unique_ptr<Call> receiver_call;
   std::unique_ptr<test::DirectTransport> sender_transport;
@@ -58,14 +73,16 @@ void MultiStreamTester::RunTest() {
   VideoReceiveStreamInterface* receive_streams[kNumStreams];
   test::FrameGeneratorCapturer* frame_generators[kNumStreams];
   test::FunctionVideoEncoderFactory encoder_factory(
-      []() { return VP8Encoder::Create(); });
+      [](const Environment& env, const SdpVideoFormat& format) {
+        return CreateVp8Encoder(env);
+      });
   std::unique_ptr<VideoBitrateAllocatorFactory> bitrate_allocator_factory =
       CreateBuiltinVideoBitrateAllocatorFactory();
   InternalDecoderFactory decoder_factory;
 
   SendTask(task_queue.get(), [&]() {
-    sender_call = Call::Create(config);
-    receiver_call = Call::Create(config);
+    sender_call = Call::Create(std::move(sender_config));
+    receiver_call = Call::Create(std::move(receiver_config));
     sender_transport = CreateSendTransport(task_queue.get(), sender_call.get());
     receiver_transport =
         CreateReceiveTransport(task_queue.get(), receiver_call.get());
@@ -112,8 +129,8 @@ void MultiStreamTester::RunTest() {
 
       auto* frame_generator = new test::FrameGeneratorCapturer(
           &env.clock(),
-          test::CreateSquareFrameGenerator(width, height, absl::nullopt,
-                                           absl::nullopt),
+          test::CreateSquareFrameGenerator(width, height, std::nullopt,
+                                           std::nullopt),
           30, env.task_queue_factory());
       frame_generators[i] = frame_generator;
       send_streams[i]->SetSource(frame_generator,

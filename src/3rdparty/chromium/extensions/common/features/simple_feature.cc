@@ -14,13 +14,14 @@
 #include "base/containers/contains.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
+#include "base/no_destructor.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "components/crx_file/id_util.h"
-#include "content/public/common/content_features.h"
 #include "extensions/common/extension_api.h"
 #include "extensions/common/extension_features.h"
+#include "extensions/common/extension_id.h"
 #include "extensions/common/features/feature.h"
 #include "extensions/common/features/feature_channel.h"
 #include "extensions/common/features/feature_developer_mode_only.h"
@@ -47,10 +48,13 @@ struct AllowlistInfo {
   }
   std::string hashed_id;
 };
+
 // A singleton copy of the --allowlisted-extension-id so that we don't need to
 // copy it from the CommandLine each time.
-base::LazyInstance<AllowlistInfo>::Leaky g_allowlist_info =
-    LAZY_INSTANCE_INITIALIZER;
+AllowlistInfo& GetAllowlistInfo() {
+  static base::NoDestructor<AllowlistInfo> instance;
+  return *instance;
+}
 
 Feature::Availability IsAvailableToManifestForBind(
     const HashedExtensionId& hashed_id,
@@ -97,7 +101,6 @@ std::string GetDisplayName(Manifest::Type type) {
       NOTREACHED();
   }
   NOTREACHED();
-  return "";
 }
 
 // Gets a human-readable name for the given context type, suitable for giving
@@ -124,32 +127,12 @@ std::string GetDisplayName(mojom::ContextType context) {
       return "webui";
     case mojom::ContextType::kUntrustedWebUi:
       return "webui untrusted";
-    case mojom::ContextType::kLockscreenExtension:
-      return "lock screen app";
     case mojom::ContextType::kOffscreenExtension:
       return "offscreen document";
     case mojom::ContextType::kUserScript:
       return "user script";
   }
   NOTREACHED();
-  return "";
-}
-
-std::string GetDisplayName(version_info::Channel channel) {
-  switch (channel) {
-    case version_info::Channel::UNKNOWN:
-      return "trunk";
-    case version_info::Channel::CANARY:
-      return "canary";
-    case version_info::Channel::DEV:
-      return "dev";
-    case version_info::Channel::BETA:
-      return "beta";
-    case version_info::Channel::STABLE:
-      return "stable";
-  }
-  NOTREACHED();
-  return "";
 }
 
 std::string GetDisplayName(mojom::FeatureSessionType session_type) {
@@ -200,7 +183,7 @@ bool IsCommandLineSwitchEnabled(base::CommandLine* command_line,
 }
 
 bool IsAllowlistedForTest(const HashedExtensionId& hashed_id) {
-  const std::string& allowlisted_id = g_allowlist_info.Get().hashed_id;
+  const std::string& allowlisted_id = GetAllowlistInfo().hashed_id;
   return !allowlisted_id.empty() && allowlisted_id == hashed_id.value();
 }
 
@@ -208,13 +191,13 @@ bool IsAllowlistedForTest(const HashedExtensionId& hashed_id) {
 
 SimpleFeature::ScopedThreadUnsafeAllowlistForTest::
     ScopedThreadUnsafeAllowlistForTest(const std::string& id)
-    : previous_id_(g_allowlist_info.Get().hashed_id) {
-  g_allowlist_info.Get().hashed_id = HashedIdInHex(id);
+    : previous_id_(GetAllowlistInfo().hashed_id) {
+  GetAllowlistInfo().hashed_id = HashedIdInHex(id);
 }
 
 SimpleFeature::ScopedThreadUnsafeAllowlistForTest::
     ~ScopedThreadUnsafeAllowlistForTest() {
-  g_allowlist_info.Get().hashed_id = previous_id_;
+  GetAllowlistInfo().hashed_id = previous_id_;
 }
 
 SimpleFeature::SimpleFeature()
@@ -268,15 +251,6 @@ Feature::Availability SimpleFeature::IsAvailableToContextImpl(
     int context_id,
     bool check_developer_mode,
     const ContextData& context_data) const {
-  // Check the environment availability first. This is because, for features
-  // that use delegated availability checks, those checks should also include
-  // environment availability checks. By checking the environment first, if the
-  // feature isn't intended for the current environment, it will fail the
-  // availability check here first. If it passes the environment check, then the
-  // delegated availability check will run and we can return that result, either
-  // pass or fail. This also allows features that don't require delegated
-  // availability checks to proceed through their normal checks from environment
-  // on to manifest and then context availability.
   Availability environment_availability = GetEnvironmentAvailability(
       platform, GetCurrentChannel(), GetCurrentFeatureSessionType(), context_id,
       check_developer_mode);
@@ -284,11 +258,16 @@ Feature::Availability SimpleFeature::IsAvailableToContextImpl(
     return environment_availability;
 
   if (RequiresDelegatedAvailabilityCheck()) {
-    return HasDelegatedAvailabilityCheckHandler()
-               ? RunDelegatedAvailabilityCheck(
-                     extension, context, url, platform, context_id,
-                     check_developer_mode, std::move(context_data))
-               : CreateAvailability(MISSING_DELEGATED_AVAILABILITY_CHECK);
+    Feature::Availability delegated_availibility =
+        HasDelegatedAvailabilityCheckHandler()
+            ? RunDelegatedAvailabilityCheck(extension, context, url, platform,
+                                            context_id, check_developer_mode,
+                                            context_data)
+            : CreateAvailability(MISSING_DELEGATED_AVAILABILITY_CHECK);
+
+    if (!delegated_availibility.is_available()) {
+      return delegated_availibility;
+    }
   }
 
   if (extension) {
@@ -299,15 +278,10 @@ Feature::Availability SimpleFeature::IsAvailableToContextImpl(
       return manifest_availability;
   }
 
-  bool is_for_service_worker = false;
-  if (extension != nullptr && BackgroundInfo::IsServiceWorkerBased(extension) &&
-      url.is_valid()) {
-    const GURL script_url = extension->GetResourceURL(
-        BackgroundInfo::GetBackgroundServiceWorkerScript(extension));
-    if (script_url == url) {
-      is_for_service_worker = true;
-    }
-  }
+  bool is_for_service_worker =
+      extension && BackgroundInfo::IsServiceWorkerBased(extension) &&
+      url.is_valid() &&
+      url == BackgroundInfo::GetBackgroundServiceWorkerScriptURL(extension);
 
   Availability context_availability =
       GetContextAvailability(context, url, is_for_service_worker);
@@ -399,8 +373,8 @@ std::string SimpleFeature::GetAvailabilityMessage(
     case UNSUPPORTED_CHANNEL:
       return base::StringPrintf(
           "'%s' requires %s channel or newer, but this is the %s channel.",
-          name().c_str(), GetDisplayName(channel).c_str(),
-          GetDisplayName(GetCurrentChannel()).c_str());
+          name().c_str(), version_info::GetChannelString(channel).data(),
+          version_info::GetChannelString(GetCurrentChannel()).data());
     case MISSING_COMMAND_LINE_SWITCH:
       DCHECK(command_line_switch_);
       return base::StringPrintf(
@@ -424,7 +398,6 @@ std::string SimpleFeature::GetAvailabilityMessage(
   }
 
   NOTREACHED();
-  return std::string();
 }
 
 Feature::Availability SimpleFeature::CreateAvailability(
@@ -496,20 +469,6 @@ bool SimpleFeature::IsIdInAllowlist(const HashedExtensionId& hashed_id) const {
 }
 
 // static
-bool SimpleFeature::IsIdInArray(const std::string& extension_id,
-                                const char* const array[],
-                                size_t array_length) {
-  if (!IsValidExtensionId(extension_id))
-    return false;
-
-  const char* const* start = array;
-  const char* const* end = array + array_length;
-
-  return ((std::find(start, end, extension_id) != end) ||
-          (std::find(start, end, HashedIdInHex(extension_id)) != end));
-}
-
-// static
 bool SimpleFeature::IsIdInList(const HashedExtensionId& hashed_id,
                                const std::vector<std::string>& list) {
   if (!IsValidHashedExtensionId(hashed_id))
@@ -533,7 +492,6 @@ bool SimpleFeature::MatchesManifestLocation(
       return Manifest::IsUnpackedLocation(manifest_location);
   }
   NOTREACHED();
-  return false;
 }
 
 bool SimpleFeature::MatchesSessionTypes(
@@ -582,7 +540,7 @@ Feature::Availability SimpleFeature::CheckDependencies(
 }
 
 // static
-bool SimpleFeature::IsValidExtensionId(const std::string& extension_id) {
+bool SimpleFeature::IsValidExtensionId(const ExtensionId& extension_id) {
   // Belt-and-suspenders philosophy here. We should be pretty confident by this
   // point that we've validated the extension ID format, but in case something
   // slips through, we avoid a class of attack where creative ID manipulation
@@ -680,10 +638,33 @@ Feature::Availability SimpleFeature::GetEnvironmentAvailability(
   if (!MatchesSessionTypes(session_type))
     return CreateAvailability(INVALID_SESSION_TYPE, session_type);
 
-  if (check_developer_mode &&
-      base::FeatureList::IsEnabled(
-          extensions_features::kRestrictDeveloperModeAPIs) &&
-      developer_mode_only_ && !GetCurrentDeveloperMode(context_id)) {
+  bool debugger_api_restricted = base::FeatureList::IsEnabled(
+      extensions_features::kDebuggerAPIRestrictedToDevMode);
+
+  if (check_developer_mode && developer_mode_only_ &&
+      !GetCurrentDeveloperMode(context_id)) {
+    // TODO(crbug.com/390138269): Once the kUserScriptUserExtensionToggle
+    // feature is default enabled, we should make the
+    // kDebuggerAPIRestrictedToDevMode feature control dev mode restriction
+    // entirely and no longer be specific to the debugger API (while also
+    // setting the debugger API to use dev mode in the features file so the dev
+    // mode restriction is continued to be tested).
+
+    // Restrict the debugger feature to dev mode if the extension feature is
+    // enabled. But if the feature is disabled, then we treat it like any other
+    // API.
+    if (name() == "debugger" && !debugger_api_restricted) {
+      return CreateAvailability(IS_AVAILABLE);
+    }
+
+    if (name().starts_with("userScripts") &&
+        // TODO(crbug.com/390138269): Remove dev mode restriction from
+        // userScripts API when feature is enabled.
+        base::FeatureList::IsEnabled(
+            extensions_features::kUserScriptUserExtensionToggle)) {
+      return CreateAvailability(IS_AVAILABLE);
+    }
+
     return CreateAvailability(REQUIRES_DEVELOPER_MODE);
   }
 
@@ -749,7 +730,8 @@ Feature::Availability SimpleFeature::GetContextAvailability(
 
   // TODO(kalman): Consider checking |matches_| regardless of context type.
   // Fewer surprises, and if the feature configuration wants to isolate
-  // "matches" from say "blessed_extension" then they can use complex features.
+  // "matches" from say "privileged_extension" then they can use complex
+  // features.
   const bool supports_url_matching =
       context == mojom::ContextType::kWebPage ||
       context == mojom::ContextType::kWebUi ||

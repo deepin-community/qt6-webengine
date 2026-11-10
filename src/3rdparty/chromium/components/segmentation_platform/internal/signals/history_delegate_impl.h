@@ -16,7 +16,6 @@
 #include "components/history/core/browser/history_types.h"
 #include "components/segmentation_platform/internal/database/ukm_types.h"
 #include "components/segmentation_platform/internal/signals/url_signal_handler.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "url/gurl.h"
 
 namespace history {
@@ -68,7 +67,7 @@ class HistoryDelegateImpl : public UrlSignalHandler::HistoryDelegate {
   // List of URLs visited in the current session.
   // TODO(ssid): This list grows indefnitely, consider having a limit or LRU
   // cache.
-  std::unordered_set<UrlId, UrlId::Hasher> cached_history_urls_;
+  std::unordered_set<UrlId> cached_history_urls_;
 
   SEQUENCE_CHECKER(sequence_checker_);
   base::WeakPtrFactory<HistoryDelegateImpl> weak_factory_{this};

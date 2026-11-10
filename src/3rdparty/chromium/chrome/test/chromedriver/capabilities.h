@@ -6,7 +6,6 @@
 #define CHROME_TEST_CHROMEDRIVER_CAPABILITIES_H_
 
 #include <stddef.h>
-#include <third_party/abseil-cpp/absl/types/optional.h>
 
 #include <map>
 #include <memory>
@@ -24,6 +23,7 @@
 #include "chrome/test/chromedriver/chrome/log.h"
 #include "chrome/test/chromedriver/chrome/mobile_device.h"
 #include "chrome/test/chromedriver/net/net_util.h"
+#include "chrome/test/chromedriver/prompt_behavior.h"
 #include "chrome/test/chromedriver/session.h"
 
 namespace base {
@@ -43,7 +43,9 @@ class Switches {
   void SetSwitch(const std::string& name, const std::string& value);
   void SetSwitch(const std::string& name, const base::FilePath& value);
 
-  void SetMultivaluedSwitch(const std::string& name, const std::string& value);
+  void SetMultivaluedSwitch(const std::string& name,
+                            const std::string& value,
+                            const std::string_view& delimiter);
 
   // In case of same key, |switches| will override.
   void SetFromSwitches(const Switches& switches);
@@ -105,6 +107,9 @@ struct Capabilities {
   Status Parse(const base::Value::Dict& desired_caps,
                bool w3c_compliant = true);
 
+  // Migrate capabilities to maintain backward compatibility.
+  Status MigrateCapabilities();
+
   //
   // W3C defined capabilities
   //
@@ -127,7 +132,7 @@ struct Capabilities {
 
   bool strict_file_interactability;
 
-  std::string unhandled_prompt_behavior;
+  std::optional<PromptBehavior> unhandled_prompt_behavior;
 
   //
   // ChromeDriver specific capabilities
@@ -151,6 +156,8 @@ struct Capabilities {
 
   int android_devtools_port = 0;
 
+  bool enable_extension_targets = false;
+
   base::FilePath binary;
 
   // If provided, the remote debugging address to connect to.
@@ -160,6 +167,9 @@ struct Capabilities {
   // bound to ChromeDriver's process. If true, Chrome will not quit if
   // ChromeDriver dies.
   bool detach;
+  // Whether to attempt terminating the browser process gracefully before
+  // resorting to SIGKILL.
+  bool quit_gracefully = false;
 
   std::optional<MobileDevice> mobile_device;
 
@@ -193,7 +203,7 @@ struct Capabilities {
 
   std::set<WebViewInfo::Type> window_types;
 
-  bool webSocketUrl = false;
+  bool web_socket_url = false;
 };
 
 bool GetChromeOptionsDictionary(const base::Value::Dict& params,

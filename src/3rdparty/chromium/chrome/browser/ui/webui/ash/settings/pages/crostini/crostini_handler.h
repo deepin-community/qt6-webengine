@@ -15,10 +15,10 @@
 #include "chrome/browser/ash/crostini/crostini_port_forwarder.h"
 #include "chrome/browser/ash/guest_os/guest_id.h"
 #include "chrome/browser/ash/guest_os/guest_os_session_tracker.h"
-#include "chrome/browser/ash/settings/cros_settings.h"
 #include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
 #include "chromeos/ash/components/dbus/session_manager/session_manager_client.h"
 #include "chromeos/ash/components/network/network_state_handler_observer.h"
+#include "chromeos/ash/components/settings/cros_settings.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/services/app_service/public/cpp/intent.h"
 
@@ -116,11 +116,11 @@ class CrostiniHandler : public ::settings::SettingsPageUIHandler,
   // Fetches disk info for a VM, can be slow (seconds).
   void HandleGetCrostiniDiskInfo(const base::Value::List& args);
   void ResolveGetCrostiniDiskInfoCallback(
-      const std::string& callback_id,
+      std::string callback_id,
       std::unique_ptr<crostini::CrostiniDiskInfo> disk_info);
   // Handles a request to resize a Crostini disk.
   void HandleResizeCrostiniDisk(const base::Value::List& args);
-  void ResolveResizeCrostiniDiskCallback(const std::string& callback_id,
+  void ResolveResizeCrostiniDiskCallback(std::string callback_id,
                                          bool succeeded);
   // Returns a list of currently forwarded ports.
   void HandleGetCrostiniActivePorts(const base::Value::List& args);
@@ -128,12 +128,16 @@ class CrostiniHandler : public ::settings::SettingsPageUIHandler,
   void HandleGetCrostiniActiveNetworkInfo(const base::Value::List& args);
   // Checks if Crostini is running.
   void HandleCheckCrostiniIsRunning(const base::Value::List& args);
+  // Checks if Bruschetta is running.
+  void HandleCheckBruschettaIsRunning(const base::Value::List& args);
   // guest_os::ContainerStartedObserver
   void OnContainerStarted(const guest_os::GuestId& container_id) override;
   // crostini::ContainerShutdownObserver
   void OnContainerShutdown(const guest_os::GuestId& container_id) override;
   // Handles a request to shut down Crostini.
   void HandleShutdownCrostini(const base::Value::List& args);
+  // Handles a request to shut down Bruschetta.
+  void HandleShutdownBruschetta(const base::Value::List& args);
   // Handle a request for checking permission for changing ARC adb sideloading.
   void HandleCanChangeArcAdbSideloadingRequest(const base::Value::List& args);
   // Get permission of changing ARC adb sideloading
@@ -157,7 +161,7 @@ class CrostiniHandler : public ::settings::SettingsPageUIHandler,
   // Handle a request to open a file selector
   void HandleOpenContainerFileSelector(const base::Value::List& args);
   // Callback for CrostiniFileSelector
-  void OnContainerFileSelected(const std::string& callback_id,
+  void OnContainerFileSelected(std::string callback_id,
                                const base::FilePath& path);
 
   // Handle a request for the shared vmdevice info of all known containers

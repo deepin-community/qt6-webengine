@@ -9,7 +9,15 @@ export interface CanvasKitInitOptions {
      * the blob of WASM code). The correct url prefix should be applied.
      * @param file - the name of the file that is about to be loaded.
      */
-    locateFile(file: string): string;
+    locateFile?(file: string): string;
+
+    /**
+     * See https://emscripten.org/docs/api_reference/module.html#Module.instantiateWasm
+     */
+    instantiateWasm?(
+        imports: Record<string, any>,
+        successCallback: (instance: WebAssembly.Instance) => void
+    ): WebAssembly.Exports | {} | false;
 }
 
 export interface CanvasKit {
@@ -186,10 +194,10 @@ export interface CanvasKit {
      * Creates a Surface on a given canvas. If both GPU and CPU modes have been compiled in, this
      * will first try to create a GPU surface and then fallback to a CPU one if that fails. If just
      * the CPU mode has been compiled in, a CPU surface will be created.
-     * @param canvas - either the canvas element itself or a string with the DOM id of it.
+     * @param canvas - either a canvas or a string with the DOM id of it.
      * @deprecated - Use MakeSWCanvasSurface, MakeWebGLCanvasSurface, or MakeGPUCanvasSurface.
      */
-    MakeCanvasSurface(canvas: HTMLCanvasElement | string): Surface | null;
+    MakeCanvasSurface(canvas: HTMLCanvasElement | OffscreenCanvas | string): Surface | null;
 
     /**
      * Creates a Raster (CPU) Surface that will draw into the provided Malloc'd buffer. This allows
@@ -206,18 +214,19 @@ export interface CanvasKit {
 
     /**
      * Creates a CPU backed (aka raster) surface.
-     * @param canvas - either the canvas element itself or a string with the DOM id of it.
+     * @param canvas - either a canvas or a string with the DOM id of it.
      */
-    MakeSWCanvasSurface(canvas: HTMLCanvasElement | string): Surface | null;
+    MakeSWCanvasSurface(canvas: HTMLCanvasElement | OffscreenCanvas | string): Surface | null;
 
     /**
      * A helper for creating a WebGL backed (aka GPU) surface and falling back to a CPU surface if
      * the GPU one cannot be created. This works for both WebGL 1 and WebGL 2.
-     * @param canvas - Either the canvas element itself or a string with the DOM id of it.
+     * @param canvas - Either a canvas or a string with the DOM id of it.
      * @param colorSpace - One of the supported color spaces. Default is SRGB.
      * @param opts - Options that will get passed to the creation of the WebGL context.
      */
-    MakeWebGLCanvasSurface(canvas: HTMLCanvasElement | string, colorSpace?: ColorSpace,
+    MakeWebGLCanvasSurface(canvas: HTMLCanvasElement | OffscreenCanvas | string,
+                           colorSpace?: ColorSpace,
                            opts?: WebGLOptions): Surface | null;
 
     /**
@@ -235,7 +244,8 @@ export interface CanvasKit {
      * @param canvas
      * @param opts
      */
-    GetWebGLContext(canvas: HTMLCanvasElement, opts?: WebGLOptions): WebGLContextHandle;
+    GetWebGLContext(canvas: HTMLCanvasElement | OffscreenCanvas,
+                    opts?: WebGLOptions): WebGLContextHandle;
 
     /**
      * Creates a GrDirectContext from the given WebGL Context.
@@ -431,6 +441,7 @@ export interface CanvasKit {
     /**
      * Returns a Skottie animation built from the provided json string.
      * Requires that Skottie be compiled into CanvasKit.
+     * Note: this animation will not be able to display text or images.
      * @param json
      */
     MakeAnimation(json: string): SkottieAnimation;
@@ -570,6 +581,9 @@ export interface CanvasKit {
     readonly UnderlineDecoration: number;
     readonly OverlineDecoration: number;
     readonly LineThroughDecoration: number;
+
+    // Unicode enums
+    readonly CodeUnitFlags: CodeUnitFlagsEnumValues;
 }
 
 export interface Camera {
@@ -1727,6 +1741,12 @@ export interface Canvas extends EmbindObject<"Canvas"> {
     getDeviceClipBounds(output?: IRect): IRect;
 
     /**
+     * Returns true if the given rect, transformed by the current canvas
+     * transform, can be quickly determined to fall entirely outside the clip.
+     */
+    quickReject(rect: InputRect): boolean;
+
+    /**
      * Returns the current transform from local coordinates to the 'device', which for most
      * purposes means pixels.
      */
@@ -1810,9 +1830,10 @@ export interface Canvas extends EmbindObject<"Canvas"> {
      * @param bounds
      * @param backdrop
      * @param flags
+     * @param backdropFilterTileMode
      */
     saveLayer(paint?: Paint, bounds?: InputRect | null, backdrop?: ImageFilter | null,
-              flags?: SaveLayerFlag): number;
+              flags?: SaveLayerFlag, backdropFilterTileMode?: TileMode): number;
 
     /**
      * Scales the current matrix by sx on the x-axis and sy on the y-axis.
@@ -3107,6 +3128,11 @@ export interface Typeface extends EmbindObject<"Typeface"> {
      */
     getGlyphIDs(str: string, numCodePoints?: number,
                 output?: GlyphIDArray): GlyphIDArray;
+
+    /**
+     * Return the typeface family name.
+     */
+    getFamilyName(): string;
 }
 
 /**
@@ -4549,6 +4575,7 @@ export type TextBaseline = EmbindEnumEntity;
 export type TextDirection = EmbindEnumEntity;
 export type LineBreakType = EmbindEnumEntity;
 export type TextHeightBehavior = EmbindEnumEntity;
+export type CodeUnitFlags = EmbindEnumEntity;
 
 export interface AffinityEnumValues extends EmbindEnum {
     Upstream: Affinity;
@@ -4754,6 +4781,14 @@ export interface PlaceholderAlignmentEnumValues extends EmbindEnum {
     Top: PlaceholderAlignment;
     Bottom: PlaceholderAlignment;
     Middle: PlaceholderAlignment;
+}
+
+export interface CodeUnitFlagsEnumValues extends EmbindEnum {
+    NoCodeUnitFlag: CodeUnitFlags;
+    Whitespace: CodeUnitFlags;
+    Space: CodeUnitFlags;
+    Control: CodeUnitFlags;
+    Ideographic: CodeUnitFlags;
 }
 
 export interface PointModeEnumValues extends EmbindEnum {

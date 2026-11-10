@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-vsigmoid/scalar-rr2-lut2048-p1-div.c.in
 //   Generator: tools/xngen
@@ -9,10 +10,13 @@
 
 #include <assert.h>
 #include <math.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/math.h>
-#include <xnnpack/vunary.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vunary.h"
 
 
 // Note redefine as uint32[] to avoid redundant bitcasts.
@@ -22,21 +26,21 @@ void xnn_f32_vsigmoid_ukernel__scalar_rr2_lut2048_p1_div_u1(
     size_t batch,
     const float* input,
     float* output,
-    const union xnn_f32_sigmoid_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const struct xnn_f32_default_params* restrict params)
 {
   assert(batch != 0);
   assert(batch % sizeof(float) == 0);
   assert(input != NULL);
   assert(output != NULL);
 
-  const float vmagic_bias = params->scalar_rr2_lut2048_p1.magic_bias;
-  const float vminus_log2e = params->scalar_rr2_lut2048_p1.minus_log2e;
+  const float vmagic_bias = 0x1.800000p12f;
+  const float vminus_log2e = -0x1.715476p0f;
   const uint32_t vindex_mask = UINT32_C(0x7FF);
-  const float vln2_hi = params->scalar_rr2_lut2048_p1.ln2_hi;
-  const float vln2_lo = params->scalar_rr2_lut2048_p1.ln2_lo;
-  const float vc1 = params->scalar_rr2_lut2048_p1.c1;
-  const float vone = params->scalar_rr2_lut2048_p1.one;
-  const float vdenorm_cutoff = params->scalar_rr2_lut2048_p1.denorm_cutoff;
+  const float vln2_hi = 0x1.600000p-1f;
+  const float vln2_lo = 0x1.7217F8p-8f;
+  const float vc1 = -0x1.FFFFFEp-1f;
+  const float vone = 1.0f;
+  const float vdenorm_cutoff = 0x1.5D589Ep+6f;
 
   do {
     const float vx = *input++;

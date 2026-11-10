@@ -5,9 +5,12 @@
 #include "cc/base/rtree.h"
 
 #include <stddef.h>
+
 #include <utility>
+#include <vector>
 
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/fuzztest/src/fuzztest/fuzztest.h"
 
 namespace cc {
 namespace {
@@ -191,29 +194,6 @@ TEST(RTreeTest, GetBoundsWithEmptyRect) {
   EXPECT_EQ(expected_all_bounds, rtree.GetAllBoundsForTracing());
 }
 
-TEST(RTreeTest, BuildAfterReset) {
-  std::vector<gfx::Rect> rects;
-  rects.push_back(gfx::Rect(0, 0, 10, 10));
-  rects.push_back(gfx::Rect(0, 0, 10, 10));
-  rects.push_back(gfx::Rect(0, 0, 10, 10));
-  rects.push_back(gfx::Rect(0, 0, 10, 10));
-
-  RTree<size_t> rtree;
-  rtree.Build(rects);
-
-  // Resetting should give the same as an empty rtree.
-  rtree.Reset();
-  EXPECT_EQ(gfx::Rect(), *rtree.bounds());
-  EXPECT_TRUE(rtree.GetAllBoundsForTracing().empty());
-
-  // Should be able to rebuild from a reset rtree.
-  rtree.Build(rects);
-  EXPECT_EQ(gfx::Rect(0, 0, 10, 10), *rtree.bounds());
-  std::map<size_t, gfx::Rect> expected_all_bounds = {
-      {0, rects[0]}, {1, rects[1]}, {2, rects[2]}, {3, rects[3]}};
-  EXPECT_EQ(expected_all_bounds, rtree.GetAllBoundsForTracing());
-}
-
 TEST(RTreeTest, Payload) {
   using Container = std::vector<std::pair<gfx::Rect, float>>;
   Container data;
@@ -258,22 +238,6 @@ TEST(RTreeTest, InvalidBounds) {
   rtree.Build(rects);
 
   EXPECT_FALSE(rtree.has_valid_bounds());
-}
-
-TEST(RTreeTest, InvalidBoundsReset) {
-  std::vector<gfx::Rect> rects;
-  rects.push_back(gfx::Rect(-INT_MAX, -INT_MAX, INT_MAX, INT_MAX));
-  rects.push_back(gfx::Rect(100, 100, 10, 10));
-
-  RTree<size_t> rtree;
-  rtree.Build(rects);
-
-  EXPECT_FALSE(rtree.has_valid_bounds());
-
-  // Reset() should restore us to an empty (but valid) state.
-  rtree.Reset();
-  ASSERT_TRUE(rtree.has_valid_bounds());
-  EXPECT_EQ(gfx::Rect(), *rtree.bounds());
 }
 
 TEST(RTreeTest, InvalidBoundsSearch) {
@@ -322,5 +286,37 @@ TEST(RTreeTest, InvalidBoundsGetAllBounds) {
                                                      {4, rects[4]}};
   EXPECT_EQ(all_bounds, expected_all_bounds);
 }
+
+TEST(RTreeTest, LargeTreeDoesntCrash) {
+  // 11^6 + 1 = 1,771,562. This specific number was reported to cause a
+  // math error in the node_count calculation (crbug.com/447555058).
+  static constexpr size_t kLargeNodeCount = 1771562;
+  std::vector<gfx::Rect> rects;
+  rects.reserve(kLargeNodeCount);
+  for (size_t i = 0; i < kLargeNodeCount; ++i) {
+    rects.emplace_back(i, 0, 1, 1);
+  }
+  RTree<size_t> rtree;
+  // This should not trigger the CHECK_GT in AllocateNodeAtLevel because the
+  // capacity calculation is now correct.
+  rtree.Build(rects);
+}
+
+void BuildDoesNotCrash(const std::vector<gfx::Rect>& rects) {
+  RTree<size_t> rtree;
+  rtree.Build(rects);
+}
+
+auto ArbitraryRect() {
+  return fuzztest::Map(
+      [](int x, int y, int width, int height) {
+        return gfx::Rect(x, y, width, height);
+      },
+      fuzztest::Arbitrary<int>(), fuzztest::Arbitrary<int>(),
+      fuzztest::Arbitrary<int>(), fuzztest::Arbitrary<int>());
+}
+
+FUZZ_TEST(RTreeTest, BuildDoesNotCrash)
+    .WithDomains(fuzztest::VectorOf(ArbitraryRect()));
 
 }  // namespace cc

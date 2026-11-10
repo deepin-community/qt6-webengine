@@ -225,7 +225,7 @@ empty profile.
 On userdebug builds, all processes except for a small set of critical
 services can be profiled (to find the set of disallowed targets, look for
 `never_profile_heap` in [heapprofd.te](
-https://cs.android.com/android/platform/superproject/+/main:system/sepolicy/private/heapprofd.te?q=never_profile_heap).
+https://cs.android.com/android/platform/superproject/main/+/main:system/sepolicy/private/heapprofd.te?q=never_profile_heap).
 This restriction can be lifted by disabling SELinux by running
 `adb shell su root setenforce 0` or by passing `--disable-selinux` to the
 `heap_profile` script.
@@ -372,11 +372,14 @@ provide a deobfuscation map to turn them back into human readable.
 To do so, use the `PERFETTO_PROGUARD_MAP` environment variable, using the
 format `packagename=map_filename[:packagename=map_filename...]`, e.g.
 `PERFETTO_PROGUARD_MAP=com.example.pkg1=foo.txt:com.example.pkg2=bar.txt`.
-All tools
-(traceconv, trace_processor_shell, the heap_profile script) support specifying
-the `PERFETTO_PROGUARD_MAP` as an environment variable.
+All tools (traceconv, trace_processor_shell, the heap_profile script) support
+specifying the `PERFETTO_PROGUARD_MAP` as an environment variable.
 
-You can get a deobfuscation map for your trace using
+```
+PERFETTO_PROGUARD_MAP=com.example.pkg1=proguard_map1.txt:com.example.pkg2=proguard_map2.txt ./tools/heap_profile -n com.example.app
+```
+
+You can get a deobfuscation map for the trace you already collected using
 `tools/traceconv deobfuscate`. Then concatenate the resulting file to your
 trace to get a deobfuscated version of it (the input trace should be in the
 perfetto format, otherwise concatenation will not produce a reasonable output).
@@ -597,10 +600,10 @@ you might be hitting some pathological fragmentation problem in the allocator.
 
 ## Convert to pprof
 
-You can use [traceconv](/docs/quickstart/traceconv.md) to convert the heap dumps
+<!-- You can use [traceconv](/docs/quickstart/traceconv.md) to convert the heap dumps
 in a trace into the [pprof](https://github.com/google/pprof) format. These can
 then be viewed using the pprof CLI or a UI (e.g. Speedscope, or Google-internal
-pprof/).
+pprof/). -->
 
 ```bash
 tools/traceconv profile /tmp/profile
@@ -648,18 +651,23 @@ We can see all the functions are "malloc" and "realloc", which is not terribly
 informative. Usually we are interested in the _cumulative_ bytes allocated in
 a function (otherwise, we will always only see malloc / realloc). Chasing the
 parent_id of a callsite (not shown in this table) recursively is very hard in
-SQL.
-
-There is an **experimental** table that surfaces this information. The **API is
-subject to change**.
+SQL. However, we have a helper table in the standard library which does this
+for you.
 
 ```sql
-select name, map_name, cumulative_size
-       from experimental_flamegraph
-       where ts = 8300973884377
-            and upid = 1
-            and profile_type = 'native'
-       order by abs(cumulative_size) desc;
+INCLUDE PERFETTO MODULE android.memory.heap_profile.summary_tree;
+
+SELECT
+  -- The function name of the frame for this callstack.
+  name,
+  -- The name of the mapping containing the frame. This
+  -- can be a native binary, library, JAR or APK.
+  mapping_name AS map_name,
+  -- The amount of memory allocated and *not freed* with this
+  -- function appearing anywhere on the callstack.
+  cumulative_size
+FROM android_heap_profile_summary_tree;
+order by abs(cumulative_size) desc;
 ```
 
 | name | map_name | cumulative_size |

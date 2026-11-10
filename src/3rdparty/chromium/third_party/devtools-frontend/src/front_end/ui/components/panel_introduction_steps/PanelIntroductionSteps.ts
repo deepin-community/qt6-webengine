@@ -1,19 +1,18 @@
 // Copyright 2022 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
 
 import * as ComponentHelpers from '../../components/helpers/helpers.js';
-import * as LitHtml from '../../lit-html/lit-html.js';
+import {html, render} from '../../lit/lit.js';
+
 import panelIntroductionStepsStyles from './panelIntroductionSteps.css.js';
 
 export class PanelIntroductionSteps extends HTMLElement {
-  static readonly litTagName = LitHtml.literal`devtools-panel-introduction-steps`;
   readonly #shadow = this.attachShadow({mode: 'open'});
-  readonly #boundRender = this.#render.bind(this);
 
   connectedCallback(): void {
-    this.#shadow.adoptedStyleSheets = [panelIntroductionStepsStyles];
-    void ComponentHelpers.ScheduledRender.scheduleRender(this, this.#boundRender);
+    void ComponentHelpers.ScheduledRender.scheduleRender(this, this.#render);
   }
 
   #render(): void {
@@ -22,7 +21,8 @@ export class PanelIntroductionSteps extends HTMLElement {
     }
 
     // clang-format off
-    LitHtml.render(LitHtml.html`
+    render(html`
+      <style>${panelIntroductionStepsStyles}</style>
       <h1><slot name="title">slot: title</slot></h1>
 
       <ol class="intro-steps">
@@ -35,7 +35,7 @@ export class PanelIntroductionSteps extends HTMLElement {
   }
 }
 
-ComponentHelpers.CustomElements.defineComponent('devtools-panel-introduction-steps', PanelIntroductionSteps);
+customElements.define('devtools-panel-introduction-steps', PanelIntroductionSteps);
 
 declare global {
   interface HTMLElementTagNameMap {

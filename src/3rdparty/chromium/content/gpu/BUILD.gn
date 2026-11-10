@@ -3,8 +3,8 @@
 # found in the LICENSE file.
 
 import("//build/config/cast.gni")
-import("//build/config/chromeos/ui_mode.gni")
 import("//build/config/jumbo.gni")
+import("//build/config/ml.gni")
 import("//build/config/ui.gni")
 import("//gpu/vulkan/features.gni")
 import("//media/media_options.gni")
@@ -48,9 +48,7 @@ target(link_target_type, "gpu_sources") {
 
   deps = [
     "//base",
-    "//base/third_party/dynamic_annotations",
     "//build:branding_buildflags",
-    "//build:chromeos_buildflags",
     "//components/services/storage/public/mojom",
     "//components/viz/service",
     "//content:export",
@@ -59,7 +57,6 @@ target(link_target_type, "gpu_sources") {
     "//content/common:mojo_bindings",
     "//content/public/child:child_sources",
     "//content/public/common:common_sources",
-    "//gpu:gpu",
     "//gpu/ipc/common:command_buffer_traits",
     "//gpu/ipc/service",
     "//ipc",
@@ -73,14 +70,12 @@ target(link_target_type, "gpu_sources") {
     "//components/viz/service/main",
     "//components/services/quarantine/public/mojom",
     "//media/gpu/ipc/service",
-    "//media/mojo/clients:clients",
+    "//media/mojo/clients",
     "//sandbox/policy:chromecast_sandbox_allowlist_buildflags",
     "//services/service_manager/public/cpp",
     "//services/service_manager/public/mojom",
     "//services/tracing/public/cpp",
     "//services/viz/privileged/mojom",
-    "//services/webnn:webnn_service",
-    "//services/webnn/public/mojom",
     "//skia",
     "//third_party/angle:angle_gpu_info_util",
     "//ui/gfx/ipc",
@@ -89,14 +84,21 @@ target(link_target_type, "gpu_sources") {
     "//ui/latency/ipc",
   ]
 
-  if (!is_chromeos_ash || !is_chrome_branded) {
+  if (use_ml) {
+    deps += [
+      "//services/webnn:webnn_service",
+      "//services/webnn/public/mojom",
+    ]
+  }
+
+  if (!is_chromeos || !is_chrome_branded) {
     deps += [
       "//services/shape_detection:lib",
       "//services/shape_detection/public/mojom",
     ]
   }
 
-  if (is_chromeos_ash) {
+  if (is_chromeos) {
     deps += [
       "//components/services/font/public/cpp",
       "//components/services/font/public/mojom",
@@ -107,6 +109,7 @@ target(link_target_type, "gpu_sources") {
     deps += [
       "//components/tracing:graphics_provider",
       "//media",
+      "//sandbox/linux:sandbox_services",
     ]
   }
 

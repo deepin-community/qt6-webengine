@@ -16,8 +16,8 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/functional/callback_helpers.h"
+#include "base/notreached.h"
 #include "base/synchronization/lock.h"
-#include "base/template_util.h"
 #include "base/thread_annotations.h"
 
 namespace base {
@@ -56,7 +56,7 @@ class BarrierCallbackInfo {
 
 template <typename T>
 void ShouldNeverRun(T t) {
-  CHECK(false);
+  NOTREACHED();
 }
 
 }  // namespace internal
@@ -105,10 +105,10 @@ RepeatingCallback<void(T)> BarrierCallback(
     CallbackType<void(DoneArg)> done_callback) {
   if (num_callbacks == 0) {
     std::move(done_callback).Run({});
-    return BindRepeating(&internal::ShouldNeverRun<T>);
+    return base::BindRepeating(&internal::ShouldNeverRun<T>);
   }
 
-  return BindRepeating(
+  return base::BindRepeating(
       &internal::BarrierCallbackInfo<T, DoneArg>::Run,
       std::make_unique<internal::BarrierCallbackInfo<T, DoneArg>>(
           num_callbacks, std::move(done_callback)));

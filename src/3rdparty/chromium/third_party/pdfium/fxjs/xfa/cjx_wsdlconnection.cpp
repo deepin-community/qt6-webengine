@@ -6,12 +6,10 @@
 
 #include "fxjs/xfa/cjx_wsdlconnection.h"
 
-#include <vector>
-
+#include "core/fxcrt/span.h"
 #include "fxjs/cfx_v8.h"
 #include "fxjs/js_resources.h"
 #include "fxjs/xfa/cfxjse_value.h"
-#include "third_party/base/containers/span.h"
 #include "v8/include/v8-primitive.h"
 #include "xfa/fxfa/parser/cxfa_wsdlconnection.h"
 
@@ -32,8 +30,9 @@ bool CJX_WsdlConnection::DynamicTypeIs(TypeTag eType) const {
 CJS_Result CJX_WsdlConnection::execute(
     CFXJSE_Engine* runtime,
     pdfium::span<v8::Local<v8::Value>> params) {
-  if (!params.empty() && params.size() != 1)
+  if (!params.empty() && params.size() != 1) {
     return CJS_Result::Failure(JSMessage::kParamError);
+  }
 
   return CJS_Result::Success(runtime->NewBoolean(false));
 }

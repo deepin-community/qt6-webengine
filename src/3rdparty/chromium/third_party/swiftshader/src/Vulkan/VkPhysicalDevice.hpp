@@ -46,6 +46,8 @@ public:
 	bool hasExtendedFeatures(const VkPhysicalDeviceDepthClipEnableFeaturesEXT *features) const;
 	bool hasExtendedFeatures(const VkPhysicalDeviceBlendOperationAdvancedFeaturesEXT *features) const;
 	bool hasExtendedFeatures(const VkPhysicalDeviceExtendedDynamicStateFeaturesEXT *features) const;
+	bool hasExtendedFeatures(const VkPhysicalDeviceExtendedDynamicState2FeaturesEXT *features) const;
+	bool hasExtendedFeatures(const VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT *features) const;
 	bool hasExtendedFeatures(const VkPhysicalDevicePrivateDataFeatures *features) const;
 	bool hasExtendedFeatures(const VkPhysicalDeviceTextureCompressionASTCHDRFeatures *features) const;
 	bool hasExtendedFeatures(const VkPhysicalDeviceShaderDemoteToHelperInvocationFeatures *features) const;
@@ -60,9 +62,11 @@ public:
 	bool hasExtendedFeatures(const VkPhysicalDeviceProtectedMemoryFeatures *requested) const;
 	bool hasExtendedFeatures(const VkPhysicalDeviceBufferDeviceAddressFeatures *requested) const;
 	bool hasExtendedFeatures(const VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT *requested) const;
+	bool hasExtendedFeatures(const VkPhysicalDeviceUnifiedImageLayoutsFeaturesKHR *requested) const;
 	bool hasExtendedFeatures(const VkPhysicalDeviceGlobalPriorityQueryFeaturesKHR *requested) const;
 	bool hasExtendedFeatures(const VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT *requested) const;
 	bool hasExtendedFeatures(const VkPhysicalDeviceHostImageCopyFeaturesEXT *requested) const;
+	bool hasExtendedFeatures(const VkPhysicalDeviceIndexTypeUint8FeaturesEXT *requested) const;
 
 	const VkPhysicalDeviceProperties &getProperties() const;
 	void getProperties(VkPhysicalDeviceIDProperties *properties) const;

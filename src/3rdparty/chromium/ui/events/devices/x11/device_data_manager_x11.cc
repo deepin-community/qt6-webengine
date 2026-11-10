@@ -2,15 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "ui/events/devices/x11/device_data_manager_x11.h"
 
 #include <stddef.h>
 
 #include <algorithm>
+#include <array>
 #include <utility>
 
 #include "base/at_exit.h"
 #include "base/command_line.h"
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
@@ -80,7 +87,7 @@
 // When you add new data types, please make sure the order here is aligned
 // with the order in the DataType enum in the header file because we assume
 // they are in sync when updating the device list (see UpdateDeviceList).
-constexpr const char* kCachedAtoms[] = {
+constexpr auto kCachedAtoms = std::to_array<const char*>({
     AXIS_LABEL_PROP_REL_HWHEEL,
     AXIS_LABEL_PROP_REL_WHEEL,
     AXIS_LABEL_PROP_ABS_DBL_ORDINAL_X,
@@ -107,7 +114,7 @@ constexpr const char* kCachedAtoms[] = {
     AXIS_LABEL_PROP_ABS_PRESSURE,
     AXIS_LABEL_PROP_ABS_TILT_X,
     AXIS_LABEL_PROP_ABS_TILT_Y,
-};
+});
 
 // Make sure the sizes of enum and |kCachedAtoms| are aligned.
 static_assert(std::size(kCachedAtoms) ==
@@ -220,11 +227,16 @@ DeviceDataManagerX11::DeviceDataManagerX11()
     : high_precision_scrolling_disabled_(IsHighPrecisionScrollingDisabled()) {
   CHECK(x11::Connection::Get());
 
+  SelectDeviceEvents(x11::Input::XIEventMask::Hierarchy |
+                     x11::Input::XIEventMask::DeviceChanged);
+
   UpdateDeviceList(x11::Connection::Get());
   UpdateButtonMap();
 }
 
-DeviceDataManagerX11::~DeviceDataManagerX11() = default;
+DeviceDataManagerX11::~DeviceDataManagerX11() {
+  SelectDeviceEvents({});
+}
 
 bool DeviceDataManagerX11::IsXInput2Available() const {
   return x11::Connection::Get()->xinput_version() >=
@@ -342,7 +354,7 @@ void DeviceDataManagerX11::GetEventRawData(const x11::Event& x11_event,
   data->clear();
   const x11::Input::Fp3232* valuators = xiev->axisvalues.data();
   for (int i = 0; i <= valuator_count_[sourceid]; ++i) {
-    if (IsXinputMaskSet(xiev->valuator_mask.data(), i)) {
+    if (IsXinputMaskSet(base::as_byte_span(xiev->valuator_mask), i)) {
       int type = data_type_lookup_[sourceid][i];
       if (type != DT_LAST_ENTRY) {
         double valuator = Fp3232ToDouble(*valuators);
@@ -388,11 +400,13 @@ bool DeviceDataManagerX11::GetEventData(const x11::Event& x11_event,
   int val_index = valuator_lookup_[sourceid][type].number;
   int slot = 0;
   if (val_index >= 0) {
-    if (IsXinputMaskSet(xiev->valuator_mask.data(), val_index)) {
+    if (IsXinputMaskSet(base::as_byte_span(xiev->valuator_mask), val_index)) {
       const x11::Input::Fp3232* valuators = xiev->axisvalues.data();
       while (val_index--) {
-        if (IsXinputMaskSet(xiev->valuator_mask.data(), val_index))
-          ++valuators;
+        if (IsXinputMaskSet(base::as_byte_span(xiev->valuator_mask),
+                            val_index)) {
+           ++valuators;
+        }
       }
       *value = Fp3232ToDouble(*valuators);
       if (IsTouchDataType(type)) {
@@ -447,11 +461,13 @@ int DeviceDataManagerX11::GetScrollClassEventDetail(
   int horizontal_id = scroll_data_[sourceid].horizontal.number;
   int vertical_id = scroll_data_[sourceid].vertical.number;
   return (horizontal_id != -1 &&
-                  IsXinputMaskSet(xievent->valuator_mask.data(), horizontal_id)
+                  IsXinputMaskSet(base::as_byte_span(xievent->valuator_mask),
+                                  horizontal_id)
               ? SCROLL_TYPE_HORIZONTAL
               : 0) |
          (vertical_id != -1 &&
-                  IsXinputMaskSet(xievent->valuator_mask.data(), vertical_id)
+                  IsXinputMaskSet(base::as_byte_span(xievent->valuator_mask),
+                                  vertical_id)
               ? SCROLL_TYPE_VERTICAL
               : 0);
 }
@@ -486,7 +502,8 @@ bool DeviceDataManagerX11::HasEventData(const x11::Event& xev,
   if (type >= valuator_lookup_[sourceid].size())
     return false;
   const int idx = valuator_lookup_[sourceid][type].number;
-  return (idx >= 0) && IsXinputMaskSet(xiev->valuator_mask.data(), idx);
+  return (idx >= 0) &&
+         IsXinputMaskSet(base::as_byte_span(xiev->valuator_mask), idx);
 }
 
 bool DeviceDataManagerX11::IsScrollEvent(const x11::Event& x11_event) const {
@@ -575,8 +592,9 @@ void DeviceDataManagerX11::GetScrollClassOffsets(const x11::Event& x11_event,
   const int vertical_number = info->vertical.number;
 
   for (int i = 0; i <= valuator_count_[sourceid]; ++i) {
-    if (!IsXinputMaskSet(xiev->valuator_mask.data(), i))
+    if (!IsXinputMaskSet(base::as_byte_span(xiev->valuator_mask), i)) {
       continue;
+    }
     auto valuator = Fp3232ToDouble(*valuators);
     if (i == horizontal_number)
       *x_offset = ExtractAndUpdateScrollOffset(&info->horizontal, valuator);
@@ -745,14 +763,15 @@ void DeviceDataManagerX11::SetValuatorDataForTest(
     double value) {
   uint16_t device = static_cast<uint16_t>(devev->deviceid);
   int index = valuator_lookup_[device][type].number;
-  CHECK(!IsXinputMaskSet(devev->valuator_mask.data(), index));
+  CHECK(!IsXinputMaskSet(base::as_byte_span(devev->valuator_mask), index));
   CHECK(index >= 0 && index < valuator_count_[device]);
-  SetXinputMask(devev->valuator_mask.data(), index);
+  SetXinputMask(base::as_writable_byte_span(devev->valuator_mask), index);
 
   x11::Input::Fp3232* valuators = devev->axisvalues.data();
   for (int i = 0; i < index; ++i) {
-    if (IsXinputMaskSet(devev->valuator_mask.data(), i))
-      valuators++;
+    if (IsXinputMaskSet(base::as_byte_span(devev->valuator_mask), i)) {
+       UNSAFE_TODO(valuators++);
+    }
   }
   for (int i = DT_LAST_ENTRY - 1; i > valuators - devev->axisvalues.data();
        --i) {
@@ -908,6 +927,13 @@ void DeviceDataManagerX11::OnKeyboardDevicesUpdated(
   }
   // Notify base class of updated list.
   DeviceDataManager::OnKeyboardDevicesUpdated(keyboards);
+}
+
+void DeviceDataManagerX11::SelectDeviceEvents(
+    x11::Input::XIEventMask event_mask) {
+  auto* connection = x11::Connection::Get();
+  x11::Input::EventMask mask{x11::Input::DeviceId::All, {event_mask}};
+  connection->xinput().XISelectEvents({connection->default_root(), {mask}});
 }
 
 }  // namespace ui

@@ -7,15 +7,28 @@
 
 #include "src/pdf/SkPDFGradientShader.h"
 
+#include "include/core/SkAlphaType.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkPathTypes.h"
+#include "include/core/SkSpan.h"
+#include "include/core/SkStream.h"
 #include "include/core/SkTileMode.h"
-#include "include/docs/SkPDFDocument.h"
+#include "include/effects/SkGradientShader.h"
+#include "include/private/base/SkTemplates.h"
+#include "include/private/base/SkTo.h"
 #include "src/core/SkChecksum.h"
+#include "src/core/SkTHash.h"
 #include "src/pdf/SkPDFDocumentPriv.h"
 #include "src/pdf/SkPDFFormXObject.h"
 #include "src/pdf/SkPDFGraphicState.h"
 #include "src/pdf/SkPDFResourceDict.h"
 #include "src/pdf/SkPDFTypes.h"
 #include "src/pdf/SkPDFUtils.h"
+
+#include <cmath>
+#include <cstddef>
+#include <utility>
+#include <vector>
 
 using namespace skia_private;
 
@@ -54,9 +67,6 @@ static void unit_to_points_matrix(const SkPoint pts[2], SkMatrix* matrix) {
     matrix->postTranslate(pts[0].fX, pts[0].fY);
 }
 
-static const int kColorComponents = 3;
-typedef uint8_t ColorTuple[kColorComponents];
-
 /* Assumes t - startOffset is on the stack and does a linear interpolation on t
    between startOffset and endOffset from prevColor to curColor (for each color
    component), leaving the result in component order on the stack. It assumes
@@ -66,28 +76,21 @@ typedef uint8_t ColorTuple[kColorComponents];
    @param endColor    The current color.
    @param result      The result ps function.
  */
-static void interpolate_color_code(SkScalar range, SkColor beginColor, SkColor endColor,
+static void interpolate_color_code(SkScalar range, SkColor4f prevColor, SkColor4f curColor,
                                    SkDynamicMemoryWStream* result) {
     SkASSERT(range != SkIntToScalar(0));
 
     /* Linearly interpolate from the previous color to the current.
-       Scale the colors from 0..255 to 0..1 and determine the multipliers for interpolation.
+       Take the components 0..1 and determine the multipliers for interpolation.
        C{r,g,b}(t, section) = t - offset_(section-1) + t * Multiplier{r,g,b}.
      */
 
-    ColorTuple curColor = { SkTo<uint8_t>(SkColorGetR(endColor)),
-                            SkTo<uint8_t>(SkColorGetG(endColor)),
-                            SkTo<uint8_t>(SkColorGetB(endColor)) };
-
-    ColorTuple prevColor = { SkTo<uint8_t>(SkColorGetR(beginColor)),
-                             SkTo<uint8_t>(SkColorGetG(beginColor)),
-                             SkTo<uint8_t>(SkColorGetB(beginColor)) };
+    static const int kColorComponents = 3;
 
     // Figure out how to scale each color component.
     SkScalar multiplier[kColorComponents];
     for (int i = 0; i < kColorComponents; i++) {
-        static const SkScalar kColorScale = SkScalarInvert(255);
-        multiplier[i] = kColorScale * (curColor[i] - prevColor[i]) / range;
+        multiplier[i] = (curColor[i] - prevColor[i]) / range;
     }
 
     // Calculate when we no longer need to keep a copy of the input parameter t.
@@ -111,7 +114,7 @@ static void interpolate_color_code(SkScalar range, SkColor beginColor, SkColor e
         }
 
         if (multiplier[i] == 0) {
-            SkPDFUtils::AppendColorComponent(prevColor[i], result);
+            SkPDFUtils::AppendColorComponentF(prevColor[i], result);
             result->writeText(" ");
         } else {
             if (multiplier[i] != 1) {
@@ -119,7 +122,7 @@ static void interpolate_color_code(SkScalar range, SkColor beginColor, SkColor e
                 result->writeText(" mul ");
             }
             if (prevColor[i] != 0) {
-                SkPDFUtils::AppendColorComponent(prevColor[i], result);
+                SkPDFUtils::AppendColorComponentF(prevColor[i], result);
                 result->writeText(" add ");
             }
         }
@@ -132,7 +135,7 @@ static void interpolate_color_code(SkScalar range, SkColor beginColor, SkColor e
 
 static void write_gradient_ranges(const SkShaderBase::GradientInfo& info, SkSpan<size_t> rangeEnds,
                                   bool top, bool first, SkDynamicMemoryWStream* result) {
-    SkASSERT(rangeEnds.size() > 0);
+    SkASSERT(!rangeEnds.empty());
 
     size_t rangeEndIndex = rangeEnds[rangeEnds.size() - 1];
     SkScalar rangeEnd = info.fColorOffsets[rangeEndIndex];
@@ -241,11 +244,11 @@ static void gradient_function_code(const SkShaderBase::GradientInfo& info,
     // The initial range has no previous and contains a solid color.
     // Any t <= 0 will be handled by this initial range, so later t == 0 indicates a hit was found.
     result->writeText("dup 0 le {pop ");
-    SkPDFUtils::AppendColorComponent(SkColorGetR(info.fColors[0]), result);
+    SkPDFUtils::AppendColorComponentF(info.fColors[0].fR, result);
     result->writeText(" ");
-    SkPDFUtils::AppendColorComponent(SkColorGetG(info.fColors[0]), result);
+    SkPDFUtils::AppendColorComponentF(info.fColors[0].fG, result);
     result->writeText(" ");
-    SkPDFUtils::AppendColorComponent(SkColorGetB(info.fColors[0]), result);
+    SkPDFUtils::AppendColorComponentF(info.fColors[0].fB, result);
     result->writeText(" 0} if\n");
 
     // Optimize out ranges which don't make any visual difference.
@@ -254,8 +257,8 @@ static void gradient_function_code(const SkShaderBase::GradientInfo& info,
     for (int i = 1; i < info.fColorCount; ++i) {
         // Ignoring the alpha, is this range the same solid color as the next range?
         // This optimizes gradients where sometimes only the color or only the alpha is changing.
-        auto eqIgnoringAlpha = [](SkColor a, SkColor b) {
-            return SkColorSetA(a, 0x00) == SkColorSetA(b, 0x00);
+        auto eqIgnoringAlpha = [](SkColor4f a, SkColor4f b) {
+            return a.makeOpaque() == b.makeOpaque();
         };
         bool constantColorBothSides =
             eqIgnoringAlpha(info.fColors[i-1], info.fColors[i]) &&// This range is a solid color.
@@ -276,28 +279,28 @@ static void gradient_function_code(const SkShaderBase::GradientInfo& info,
 
     // Clamp the final color.
     result->writeText("0 gt {");
-    SkPDFUtils::AppendColorComponent(SkColorGetR(info.fColors[info.fColorCount - 1]), result);
+    SkPDFUtils::AppendColorComponentF(info.fColors[info.fColorCount - 1].fR, result);
     result->writeText(" ");
-    SkPDFUtils::AppendColorComponent(SkColorGetG(info.fColors[info.fColorCount - 1]), result);
+    SkPDFUtils::AppendColorComponentF(info.fColors[info.fColorCount - 1].fG, result);
     result->writeText(" ");
-    SkPDFUtils::AppendColorComponent(SkColorGetB(info.fColors[info.fColorCount - 1]), result);
+    SkPDFUtils::AppendColorComponentF(info.fColors[info.fColorCount - 1].fB, result);
     result->writeText("} if\n");
 }
 
-static std::unique_ptr<SkPDFDict> createInterpolationFunction(const ColorTuple& color1,
-                                                    const ColorTuple& color2) {
+static std::unique_ptr<SkPDFDict> createInterpolationFunction(const SkColor4f& color1,
+                                                              const SkColor4f& color2) {
     auto retval = SkPDFMakeDict();
 
     auto c0 = SkPDFMakeArray();
-    c0->appendColorComponent(color1[0]);
-    c0->appendColorComponent(color1[1]);
-    c0->appendColorComponent(color1[2]);
+    c0->appendColorComponentF(color1.fR);
+    c0->appendColorComponentF(color1.fG);
+    c0->appendColorComponentF(color1.fB);
     retval->insertObject("C0", std::move(c0));
 
     auto c1 = SkPDFMakeArray();
-    c1->appendColorComponent(color2[0]);
-    c1->appendColorComponent(color2[1]);
-    c1->appendColorComponent(color2[2]);
+    c1->appendColorComponentF(color2.fR);
+    c1->appendColorComponentF(color2.fG);
+    c1->appendColorComponentF(color2.fB);
     retval->insertObject("C1", std::move(c1));
 
     retval->insertObject("Domain", SkPDFMakeArray(0, 1));
@@ -313,7 +316,7 @@ static std::unique_ptr<SkPDFDict> gradientStitchCode(const SkShaderBase::Gradien
 
     // normalize color stops
     int colorCount = info.fColorCount;
-    std::vector<SkColor>  colors(info.fColors, info.fColors + colorCount);
+    std::vector<SkColor4f> colors(info.fColors, info.fColors + colorCount);
     std::vector<SkScalar> colorOffsets(info.fColorOffsets, info.fColorOffsets + colorCount);
 
     int i = 1;
@@ -343,17 +346,10 @@ static std::unique_ptr<SkPDFDict> gradientStitchCode(const SkShaderBase::Gradien
         colorOffsets[i - 1] -= 0.00001f;
     }
 
-    AutoSTMalloc<4, ColorTuple> colorDataAlloc(colorCount);
-    ColorTuple *colorData = colorDataAlloc.get();
-    for (int idx = 0; idx < colorCount; idx++) {
-        colorData[idx][0] = SkColorGetR(colors[idx]);
-        colorData[idx][1] = SkColorGetG(colors[idx]);
-        colorData[idx][2] = SkColorGetB(colors[idx]);
-    }
-
     // no need for a stitch function if there are only 2 stops.
-    if (colorCount == 2)
-        return createInterpolationFunction(colorData[0], colorData[1]);
+    if (colorCount == 2) {
+        return createInterpolationFunction(colors[0], colors[1]);
+    }
 
     auto encode = SkPDFMakeArray();
     auto bounds = SkPDFMakeArray();
@@ -370,7 +366,7 @@ static std::unique_ptr<SkPDFDict> gradientStitchCode(const SkShaderBase::Gradien
         encode->appendScalar(0);
         encode->appendScalar(1.0f);
 
-        functions->appendObject(createInterpolationFunction(colorData[idx-1], colorData[idx]));
+        functions->appendObject(createInterpolationFunction(colors[idx-1], colors[idx]));
     }
 
     retval->insertObject("Encode", std::move(encode));
@@ -600,6 +596,8 @@ static void twoPointConicalCode(const SkShaderBase::GradientInfo& info,
     gradient_function_code(info, function);
 
     // otherwise, just write black
+    // TODO: Correctly draw gradients_local_persepective, need to mask out this black
+    // The "gradients" gm works as falls into the 8.7.4.5.4 "Type 3 (Radial) Shadings" case.
     function->writeText("} {0 0 0} ifelse }");
 }
 
@@ -607,6 +605,16 @@ static void sweepCode(const SkShaderBase::GradientInfo& info,
                       const SkMatrix& perspectiveRemover,
                       SkDynamicMemoryWStream* function) {
     function->writeText("{exch atan 360 div\n");
+    const SkScalar bias = info.fPoint[1].y();
+    if (bias != 0.0f) {
+        SkPDFUtils::AppendScalar(bias, function);
+        function->writeText(" add\n");
+    }
+    const SkScalar scale = info.fPoint[1].x();
+    if (scale != 1.0f) {
+        SkPDFUtils::AppendScalar(scale, function);
+        function->writeText(" mul\n");
+    }
     tileModeCode((SkTileMode)info.fTileMode, function);
     gradient_function_code(info, function);
     function->writeText("}");
@@ -687,60 +695,70 @@ static SkPDFIndirectReference make_function_shader(SkPDFDocument* doc,
     bool doStitchFunctions = (state.fType == SkShaderBase::GradientType::kLinear ||
                               state.fType == SkShaderBase::GradientType::kRadial ||
                               state.fType == SkShaderBase::GradientType::kConical) &&
-                             (SkTileMode)info.fTileMode == SkTileMode::kClamp &&
+                             (info.fTileMode == SkTileMode::kClamp ||
+                              info.fTileMode == SkTileMode::kDecal) &&
                              !finalMatrix.hasPerspective();
 
-    int32_t shadingType = 1;
+    enum class ShadingType : int32_t {
+        Function = 1,
+        Axial = 2,
+        Radial = 3,
+        FreeFormGouraudTriangleMesh = 4,
+        LatticeFormGouraudTriangleMesh = 5,
+        CoonsPatchMesh = 6,
+        TensorProductPatchMesh = 7,
+    } shadingType;
+
     auto pdfShader = SkPDFMakeDict();
-    // The two point radial gradient further references
-    // state.fInfo
-    // in translating from x, y coordinates to the t parameter. So, we have
-    // to transform the points and radii according to the calculated matrix.
     if (doStitchFunctions) {
         pdfShader->insertObject("Function", gradientStitchCode(info));
-        shadingType = (state.fType == SkShaderBase::GradientType::kLinear) ? 2 : 3;
 
-        auto extend = SkPDFMakeArray();
-        extend->reserve(2);
-        extend->appendBool(true);
-        extend->appendBool(true);
-        pdfShader->insertObject("Extend", std::move(extend));
-
-        std::unique_ptr<SkPDFArray> coords;
-        if (state.fType == SkShaderBase::GradientType::kConical) {
-            SkScalar r1 = info.fRadius[0];
-            SkScalar r2 = info.fRadius[1];
-            SkPoint pt1 = info.fPoint[0];
-            SkPoint pt2 = info.fPoint[1];
-            FixUpRadius(pt1, r1, pt2, r2);
-
-            coords = SkPDFMakeArray(pt1.x(),
-                                    pt1.y(),
-                                    r1,
-                                    pt2.x(),
-                                    pt2.y(),
-                                    r2);
-        } else if (state.fType == SkShaderBase::GradientType::kRadial) {
-            const SkPoint& pt1 = info.fPoint[0];
-            coords = SkPDFMakeArray(pt1.x(),
-                                    pt1.y(),
-                                    0,
-                                    pt1.x(),
-                                    pt1.y(),
-                                    info.fRadius[0]);
-        } else {
-            const SkPoint& pt1 = info.fPoint[0];
-            const SkPoint& pt2 = info.fPoint[1];
-            coords = SkPDFMakeArray(pt1.x(),
-                                    pt1.y(),
-                                    pt2.x(),
-                                    pt2.y());
+        if (info.fTileMode == SkTileMode::kClamp) {
+            auto extend = SkPDFMakeArray();
+            extend->reserve(2);
+            extend->appendBool(true);
+            extend->appendBool(true);
+            pdfShader->insertObject("Extend", std::move(extend));
         }
 
+        std::unique_ptr<SkPDFArray> coords;
+        switch (state.fType) {
+            case SkShaderBase::GradientType::kLinear: {
+                shadingType = ShadingType::Axial;
+                const SkPoint& pt1 = info.fPoint[0];
+                const SkPoint& pt2 = info.fPoint[1];
+                coords = SkPDFMakeArray(pt1.x(), pt1.y(),
+                                        pt2.x(), pt2.y());
+            } break;
+            case SkShaderBase::GradientType::kRadial: {
+                shadingType = ShadingType::Radial;
+                const SkPoint& pt1 = info.fPoint[0];
+                coords = SkPDFMakeArray(pt1.x(), pt1.y(), 0,
+                                        pt1.x(), pt1.y(), info.fRadius[0]);
+            } break;
+            case SkShaderBase::GradientType::kConical: {
+                shadingType = ShadingType::Radial;
+                SkScalar r1 = info.fRadius[0];
+                SkScalar r2 = info.fRadius[1];
+                SkPoint pt1 = info.fPoint[0];
+                SkPoint pt2 = info.fPoint[1];
+                FixUpRadius(pt1, r1, pt2, r2);
+
+                coords = SkPDFMakeArray(pt1.x(), pt1.y(), r1,
+                                        pt2.x(), pt2.y(), r2);
+                break;
+            }
+            case SkShaderBase::GradientType::kSweep:
+            case SkShaderBase::GradientType::kNone:
+            default:
+                SkASSERT(false);
+                return SkPDFIndirectReference();
+        }
         pdfShader->insertObject("Coords", std::move(coords));
     } else {
-        // Depending on the type of the gradient, we want to transform the
-        // coordinate space in different ways.
+        shadingType = ShadingType::Function;
+
+        // Transform the coordinate space for the type of gradient.
         transformPoints[0] = info.fPoint[0];
         transformPoints[1] = info.fPoint[1];
         switch (state.fType) {
@@ -791,31 +809,31 @@ static SkPDFIndirectReference make_function_shader(SkPDFDocument* doc,
         if (!SkPDFUtils::InverseTransformBBox(finalMatrix, &bbox)) {
             return SkPDFIndirectReference();
         }
+
         SkDynamicMemoryWStream functionCode;
-
-        SkShaderBase::GradientInfo infoCopy = info;
-
-        if (state.fType == SkShaderBase::GradientType::kConical) {
-            SkMatrix inverseMapperMatrix;
-            if (!mapperMatrix.invert(&inverseMapperMatrix)) {
-                return SkPDFIndirectReference();
-            }
-            inverseMapperMatrix.mapPoints(infoCopy.fPoint, 2);
-            infoCopy.fRadius[0] = inverseMapperMatrix.mapRadius(info.fRadius[0]);
-            infoCopy.fRadius[1] = inverseMapperMatrix.mapRadius(info.fRadius[1]);
-        }
         switch (state.fType) {
             case SkShaderBase::GradientType::kLinear:
-                linearCode(infoCopy, perspectiveInverseOnly, &functionCode);
+                linearCode(info, perspectiveInverseOnly, &functionCode);
                 break;
             case SkShaderBase::GradientType::kRadial:
-                radialCode(infoCopy, perspectiveInverseOnly, &functionCode);
+                radialCode(info, perspectiveInverseOnly, &functionCode);
                 break;
-            case SkShaderBase::GradientType::kConical:
+            case SkShaderBase::GradientType::kConical: {
+                // The two point radial gradient further references state.fInfo
+                // in translating from x, y coordinates to the t parameter. So, we have
+                // to transform the points and radii according to the calculated matrix.
+                auto inverseMapperMatrix = mapperMatrix.invert();
+                if (!inverseMapperMatrix) {
+                    return SkPDFIndirectReference();
+                }
+                SkShaderBase::GradientInfo infoCopy = info;
+                inverseMapperMatrix->mapPoints(infoCopy.fPoint);
+                infoCopy.fRadius[0] = inverseMapperMatrix->mapRadius(info.fRadius[0]);
+                infoCopy.fRadius[1] = inverseMapperMatrix->mapRadius(info.fRadius[1]);
                 twoPointConicalCode(infoCopy, perspectiveInverseOnly, &functionCode);
-                break;
+            } break;
             case SkShaderBase::GradientType::kSweep:
-                sweepCode(infoCopy, perspectiveInverseOnly, &functionCode);
+                sweepCode(info, perspectiveInverseOnly, &functionCode);
                 break;
             default:
                 SkASSERT(false);
@@ -830,7 +848,7 @@ static SkPDFIndirectReference make_function_shader(SkPDFDocument* doc,
                                               std::move(rangeObject), doc));
     }
 
-    pdfShader->insertInt("ShadingType", shadingType);
+    pdfShader->insertInt("ShadingType", SkToS32(shadingType));
     pdfShader->insertName("ColorSpace", "DeviceRGB");
 
     SkPDFDict pdfFunctionShader("Pattern");
@@ -879,7 +897,7 @@ static std::unique_ptr<SkStreamAsset> create_pattern_fill_content(int gsIndex,
 static bool gradient_has_alpha(const SkPDFGradientShader::Key& key) {
     SkASSERT(key.fType != SkShaderBase::GradientType::kNone);
     for (int i = 0; i < key.fInfo.fColorCount; i++) {
-        if ((SkAlpha)SkColorGetA(key.fInfo.fColors[i]) != SK_AlphaOPAQUE) {
+        if (!key.fInfo.fColors[i].isOpaque()) {
             return true;
         }
     }
@@ -891,7 +909,7 @@ static SkPDFGradientShader::Key clone_key(const SkPDFGradientShader::Key& k) {
     SkPDFGradientShader::Key clone = {
         k.fType,
         k.fInfo,  // change pointers later.
-        std::unique_ptr<SkColor[]>(new SkColor[k.fInfo.fColorCount]),
+        std::unique_ptr<SkColor4f[]>(new SkColor4f[k.fInfo.fColorCount]),
         std::unique_ptr<SkScalar[]>(new SkScalar[k.fInfo.fColorCount]),
         k.fCanvasTransform,
         k.fShaderTransform,
@@ -910,8 +928,8 @@ static SkPDFIndirectReference create_smask_graphic_state(SkPDFDocument* doc,
     SkASSERT(state.fType != SkShaderBase::GradientType::kNone);
     SkPDFGradientShader::Key luminosityState = clone_key(state);
     for (int i = 0; i < luminosityState.fInfo.fColorCount; i++) {
-        SkAlpha alpha = SkColorGetA(luminosityState.fInfo.fColors[i]);
-        luminosityState.fInfo.fColors[i] = SkColorSetARGB(255, alpha, alpha, alpha);
+        float alpha = luminosityState.fInfo.fColors[i].fA;
+        luminosityState.fInfo.fColors[i] = SkColor4f{alpha, alpha, alpha, 1.0f};
     }
     luminosityState.fHash = hash(luminosityState);
 
@@ -936,7 +954,7 @@ static SkPDFIndirectReference make_alpha_function_shader(SkPDFDocument* doc,
     SkASSERT(state.fType != SkShaderBase::GradientType::kNone);
     SkPDFGradientShader::Key opaqueState = clone_key(state);
     for (int i = 0; i < opaqueState.fInfo.fColorCount; i++) {
-        opaqueState.fInfo.fColors[i] = SkColorSetA(opaqueState.fInfo.fColors[i], SK_AlphaOPAQUE);
+        opaqueState.fInfo.fColors[i].fA = 1.0f;
     }
     opaqueState.fHash = hash(opaqueState);
 
@@ -974,11 +992,17 @@ static SkPDFGradientShader::Key make_key(const SkShader* shader,
     key.fType = as_SB(shader)->asGradient(&key.fInfo);
     SkASSERT(SkShaderBase::GradientType::kNone != key.fType);
     SkASSERT(key.fInfo.fColorCount > 0);
-    key.fColors.reset(new SkColor[key.fInfo.fColorCount]);
-    key.fStops.reset(new SkScalar[key.fInfo.fColorCount]);
+    key.fColors = std::make_unique<SkColor4f[]>(key.fInfo.fColorCount);
+    key.fStops = std::make_unique<SkScalar[]>(key.fInfo.fColorCount);
     key.fInfo.fColors = key.fColors.get();
     key.fInfo.fColorOffsets = key.fStops.get();
     as_SB(shader)->asGradient(&key.fInfo);
+    if (SkToBool(key.fInfo.fGradientFlags & SkGradientShader::kInterpolateColorsInPremul_Flag)) {
+        for (auto&& c : SkSpan(key.fInfo.fColors, key.fInfo.fColorCount)) {
+            SkRGBA4f<kPremul_SkAlphaType> pm = c.premul();
+            c = SkColor4f{pm.fR, pm.fG, pm.fB, pm.fA};
+        }
+    }
     key.fHash = hash(key);
     return key;
 }
@@ -1002,9 +1026,9 @@ static SkPDFIndirectReference find_pdf_shader(SkPDFDocument* doc,
 }
 
 SkPDFIndirectReference SkPDFGradientShader::Make(SkPDFDocument* doc,
-                                             SkShader* shader,
-                                             const SkMatrix& canvasTransform,
-                                             const SkIRect& bbox) {
+                                                 SkShader* shader,
+                                                 const SkMatrix& canvasTransform,
+                                                 const SkIRect& bbox) {
     SkASSERT(shader);
     SkASSERT(as_SB(shader)->asGradient() != SkShaderBase::GradientType::kNone);
     SkPDFGradientShader::Key key = make_key(shader, canvasTransform, bbox);

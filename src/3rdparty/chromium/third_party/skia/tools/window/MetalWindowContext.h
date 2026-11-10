@@ -25,14 +25,10 @@ public:
 
     bool isValid() override { return fValid; }
 
-    void setDisplayParams(const DisplayParams& params) override;
-
-    void activate(bool isActive) override;
+    void setDisplayParams(std::unique_ptr<const DisplayParams> params) override;
 
 protected:
-    static NSURL* CacheURL();
-
-    MetalWindowContext(const DisplayParams&);
+    MetalWindowContext(std::unique_ptr<const DisplayParams>);
     // This should be called by subclass constructor. It is also called when window/display
     // parameters change. This will in turn call onInitializeContext().
     void initializeContext();
@@ -51,10 +47,6 @@ protected:
     sk_cfp<id<MTLCommandQueue>> fQueue;
     CAMetalLayer*               fMetalLayer;
     GrMTLHandle                 fDrawableHandle;
-#if SKGPU_GRAPHITE_METAL_SDK_VERSION >= 230
-    // wrapping this in sk_cfp throws up an availability warning, so we'll track lifetime manually
-    id<MTLBinaryArchive>        fPipelineArchive SK_API_AVAILABLE(macos(11.0),ios(14.0),tvos(14.0));
-#endif
 };
 
 }   // namespace skwindow::internal

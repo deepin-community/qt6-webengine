@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/platform/p2p/socket_client_impl.h"
 
+#include "base/compiler_specific.h"
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
@@ -40,7 +41,7 @@ P2PSocketClientImpl::P2PSocketClientImpl(bool batch_packets)
       state_(kStateUninitialized),
       random_socket_id_(0),
       next_packet_id_(0) {
-  crypto::RandBytes(&random_socket_id_, sizeof(random_socket_id_));
+  crypto::RandBytes(base::byte_span_from_ref(random_socket_id_));
 }
 
 P2PSocketClientImpl::~P2PSocketClientImpl() {
@@ -59,9 +60,10 @@ void P2PSocketClientImpl::Init(blink::P2PSocketClientDelegate* delegate) {
       &P2PSocketClientImpl::OnConnectionError, WTF::Unretained(this)));
 }
 
-uint64_t P2PSocketClientImpl::Send(const net::IPEndPoint& address,
-                                   base::span<const uint8_t> data,
-                                   const rtc::PacketOptions& options) {
+uint64_t P2PSocketClientImpl::Send(
+    const net::IPEndPoint& address,
+    base::span<const uint8_t> data,
+    const webrtc::AsyncSocketPacketOptions& options) {
   uint64_t unique_id = GetUniqueId(random_socket_id_, ++next_packet_id_);
 
   // Can send data only when the socket is open.
@@ -89,10 +91,11 @@ void P2PSocketClientImpl::DoSendBatch() {
   }
 }
 
-void P2PSocketClientImpl::SendWithPacketId(const net::IPEndPoint& address,
-                                           base::span<const uint8_t> data,
-                                           const rtc::PacketOptions& options,
-                                           uint64_t packet_id) {
+void P2PSocketClientImpl::SendWithPacketId(
+    const net::IPEndPoint& address,
+    base::span<const uint8_t> data,
+    const webrtc::AsyncSocketPacketOptions& options,
+    uint64_t packet_id) {
   TRACE_EVENT_NESTABLE_ASYNC_BEGIN0("p2p", "Send", packet_id);
 
   // Conditionally start or continue temporarily storing the packets of a batch.
@@ -109,7 +112,8 @@ void P2PSocketClientImpl::SendWithPacketId(const net::IPEndPoint& address,
     const auto& storage = batched_packets_storage_.back();
     batched_send_packets_.emplace_back(
         network::mojom::blink::P2PSendPacket::New(
-            base::span<const uint8_t>(storage.begin(), storage.end()),
+            UNSAFE_TODO(
+                base::span<const uint8_t>(storage.begin(), storage.end())),
             network::P2PPacketInfo(address, options, packet_id)));
     if (options.last_packet_in_batch) {
       DoSendBatch();
@@ -182,7 +186,7 @@ void P2PSocketClientImpl::DataReceived(
   if (delegate_) {
     for (auto& packet : packets) {
       delegate_->OnDataReceived(packet->socket_address, packet->data,
-                                packet->timestamp);
+                                packet->timestamp, packet->ecn);
     }
   }
 }

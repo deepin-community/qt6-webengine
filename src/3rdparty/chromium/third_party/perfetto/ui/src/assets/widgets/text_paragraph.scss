@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-@import "theme";
+@import "../theme";
 
 .pf-text-paragraph {
-  white-space:pre-wrap;
-  padding-top:5px;
-  padding-bottom:5px;
-  word-break:break-word;
+  white-space: pre-wrap;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  word-break: break-word;
 }

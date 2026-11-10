@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-vrnd/vrndz-sse2.c.in
 //   Generator: tools/xngen
@@ -8,26 +9,28 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <emmintrin.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/math.h>
-#include <xnnpack/vunary.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vunary.h"
 
 
 void xnn_f32_vrndz_ukernel__sse2_u8(
     size_t batch,
     const float* input,
     float* output,
-    const union xnn_f32_rnd_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f32_default_params* restrict params) XNN_OOB_READS
 {
   assert(batch != 0);
   assert(batch % sizeof(float) == 0);
   assert(input != NULL);
   assert(output != NULL);
 
-  const __m128i vmagic = _mm_load_si128((const __m128i*) params->sse2.sign_mask);
+  const __m128i vmagic = _mm_castps_si128(_mm_set1_ps(-0.0f));
   for (; batch >= 8 * sizeof(float); batch -= 8 * sizeof(float)) {
     const __m128 vx0123 = _mm_loadu_ps(input);
     const __m128 vx4567 = _mm_loadu_ps(input + 4);

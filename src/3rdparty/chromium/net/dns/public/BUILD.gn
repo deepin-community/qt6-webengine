@@ -37,6 +37,7 @@ source_set("public") {
     "resolve_error_info.cc",
     "resolve_error_info.h",
     "secure_dns_mode.h",
+    "secure_dns_policy.cc",
     "secure_dns_policy.h",
     "util.cc",
     "util.h",
@@ -90,4 +91,8 @@ source_set("tests") {
     "//testing/gmock",
     "//testing/gtest",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }

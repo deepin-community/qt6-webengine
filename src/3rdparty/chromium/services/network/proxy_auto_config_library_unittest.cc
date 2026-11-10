@@ -185,8 +185,12 @@ class MockUDPSocket : public net::DatagramClientSocket {
     ADD_FAILURE() << "Called SetDoNotFragment()";
     return net::ERR_UNEXPECTED;
   }
-  int SetRecvEcn() override {
-    ADD_FAILURE() << "Called SetRecvEcn()";
+  int SetRecvTos() override {
+    ADD_FAILURE() << "Called SetRecvTos()";
+    return net::ERR_UNEXPECTED;
+  }
+  int SetTos(net::DiffServCodePoint dscp, net::EcnCodePoint ecn) override {
+    ADD_FAILURE() << "Called SetTos()";
     return net::ERR_UNEXPECTED;
   }
   void SetMsgConfirm(bool confirm) override {
@@ -258,6 +262,11 @@ class MockUDPSocket : public net::DatagramClientSocket {
   void SetAsyncConnect(base::OnceClosure* connect_callback) {
     connect_async_ = true;
     connect_callback_ = connect_callback;
+  }
+
+  net::DscpAndEcn GetLastTos() const override {
+    ADD_FAILURE() << "Called GetLastTos()";
+    return {net::DSCP_DEFAULT, net::ECN_DEFAULT};
   }
 
  private:
@@ -444,14 +453,26 @@ class PacLibraryTest : public testing::Test {
 
 // Tests for actual PacMyIpAddress() and PacMyIpAddressEx() (real socket
 // connections and DNS results rather than mocks)
-TEST_F(PacLibraryTest, ActualPacMyIpAddress) {
+// https://crbug.com/407547495
+#if BUILDFLAG(IS_ANDROID)
+#define MAYBE_ActualPacMyIpAddress DISABLED_ActualPacMyIpAddress
+#else
+#define MAYBE_ActualPacMyIpAddress ActualPacMyIpAddress
+#endif
+TEST_F(PacLibraryTest, MAYBE_ActualPacMyIpAddress) {
   SetRealTest();
   auto my_ip_addresses = PacMyIpAddressForTest();
 
   VerifyActualMyIpAddresses(my_ip_addresses);
 }
 
-TEST_F(PacLibraryTest, ActualPacMyIpAddressEx) {
+// https://crbug.com/407547495
+#if BUILDFLAG(IS_ANDROID)
+#define MAYBE_ActualPacMyIpAddressEx DISABLED_ActualPacMyIpAddressEx
+#else
+#define MAYBE_ActualPacMyIpAddressEx ActualPacMyIpAddressEx
+#endif
+TEST_F(PacLibraryTest, MAYBE_ActualPacMyIpAddressEx) {
   SetRealTest();
   auto my_ip_addresses = PacMyIpAddressExForTest();
 

@@ -4,6 +4,7 @@
 
 #include "net/websockets/websocket_http3_handshake_stream.h"
 
+#include <string_view>
 #include <utility>
 
 #include "base/check.h"
@@ -21,7 +22,6 @@
 #include "net/http/http_response_info.h"
 #include "net/http/http_status_code.h"
 #include "net/spdy/spdy_http_utils.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/http2_header_block.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/websockets/websocket_basic_stream.h"
 #include "net/websockets/websocket_deflate_predictor_impl.h"
@@ -34,7 +34,7 @@ struct AlternativeService;
 
 namespace {
 
-bool ValidateStatus(const HttpResponseHeaders* headers) {
+bool ValidateStatusWH3HS(const HttpResponseHeaders* headers) {
   return headers->GetStatusLine() == "HTTP/1.1 200";
 }
 
@@ -76,7 +76,20 @@ int WebSocketHttp3HandshakeStream::InitializeStream(
   priority_ = priority;
   net_log_ = net_log;
   request_time_ = base::Time::Now();
-  return OK;
+
+  int ret = OK;
+  if (!can_send_early) {
+    ret = session_->WaitForHandshakeConfirmation(
+        base::BindOnce(&WebSocketHttp3HandshakeStream::OnHandshakeConfirmed,
+                       weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+  }
+  return ret;
+}
+
+void WebSocketHttp3HandshakeStream::OnHandshakeConfirmed(
+    CompletionOnceCallback callback,
+    int rv) {
+  std::move(callback).Run(rv);
 }
 
 int WebSocketHttp3HandshakeStream::SendRequest(
@@ -93,7 +106,7 @@ int WebSocketHttp3HandshakeStream::SendRequest(
 
   if (!session_) {
     constexpr int rv = ERR_CONNECTION_CLOSED;
-    OnFailure("Connection closed before sending request.", rv, absl::nullopt);
+    OnFailure("Connection closed before sending request.", rv, std::nullopt);
     return rv;
   }
 
@@ -102,7 +115,7 @@ int WebSocketHttp3HandshakeStream::SendRequest(
   IPEndPoint address;
   int result = session_->GetPeerAddress(&address);
   if (result != OK) {
-    OnFailure("Error getting IP address.", result, absl::nullopt);
+    OnFailure("Error getting IP address.", result, std::nullopt);
     return result;
   }
   http_response_info_->remote_endpoint = address;
@@ -111,10 +124,8 @@ int WebSocketHttp3HandshakeStream::SendRequest(
       request_info_->url, base::Time::Now());
   request->headers = request_headers;
 
-  AddVectorHeaderIfNonEmpty(websockets::kSecWebSocketExtensions,
-                            requested_extensions_, &request->headers);
-  AddVectorHeaderIfNonEmpty(websockets::kSecWebSocketProtocol,
-                            requested_sub_protocols_, &request->headers);
+  AddVectorHeaders(requested_extensions_, requested_sub_protocols_,
+                   &request->headers);
 
   CreateSpdyHeadersFromHttpRequestForWebSocket(
       request_info_->url, request->headers, &http3_request_headers_);
@@ -211,10 +222,6 @@ bool WebSocketHttp3HandshakeStream::GetLoadTimingInfo(
 void WebSocketHttp3HandshakeStream::GetSSLInfo(SSLInfo* ssl_info) {}
 
 // TODO(momoka): Implement this.
-void WebSocketHttp3HandshakeStream::GetSSLCertRequestInfo(
-    SSLCertRequestInfo* cert_request_info) {}
-
-// TODO(momoka): Implement this.
 int WebSocketHttp3HandshakeStream::GetRemoteEndpoint(IPEndPoint* endpoint) {
   return 0;
 }
@@ -242,7 +249,7 @@ const std::set<std::string>& WebSocketHttp3HandshakeStream::GetDnsAliases()
 }
 
 // TODO(momoka): Implement this.
-base::StringPiece WebSocketHttp3HandshakeStream::GetAcceptChViaAlps() const {
+std::string_view WebSocketHttp3HandshakeStream::GetAcceptChViaAlps() const {
   return {};
 }
 
@@ -281,7 +288,7 @@ void WebSocketHttp3HandshakeStream::OnHeadersSent() {
 }
 
 void WebSocketHttp3HandshakeStream::OnHeadersReceived(
-    const spdy::Http2HeaderBlock& response_headers) {
+    const quiche::HttpHeaderBlock& response_headers) {
   DCHECK(!response_headers_complete_);
   DCHECK(http_response_info_);
 
@@ -294,7 +301,8 @@ void WebSocketHttp3HandshakeStream::OnHeadersReceived(
   // Do not store SSLInfo in the response here, HttpNetworkTransaction will take
   // care of that part.
   http_response_info_->was_alpn_negotiated = true;
-  http_response_info_->response_time = base::Time::Now();
+  http_response_info_->response_time =
+      http_response_info_->original_response_time = base::Time::Now();
   http_response_info_->request_time = request_time_;
   http_response_info_->connection_info = HttpConnectionInfo::kHTTP2;
   http_response_info_->alpn_negotiated_protocol =
@@ -321,7 +329,7 @@ void WebSocketHttp3HandshakeStream::OnClose(int status) {
   }
 
   OnFailure(base::StrCat({"Stream closed with error: ", ErrorToString(status)}),
-            status, absl::nullopt);
+            status, std::nullopt);
 
   if (callback_) {
     std::move(callback_).Run(status);
@@ -365,7 +373,7 @@ int WebSocketHttp3HandshakeStream::ValidateUpgradeResponse(
     const HttpResponseHeaders* headers) {
   extension_params_ = std::make_unique<WebSocketExtensionParams>();
   std::string failure_message;
-  if (!ValidateStatus(headers)) {
+  if (!ValidateStatusWH3HS(headers)) {
     result_ = HandshakeResult::HTTP3_INVALID_STATUS;
   } else if (!ValidateSubProtocol(headers, requested_sub_protocols_,
                                   &sub_protocol_, &failure_message)) {
@@ -380,7 +388,7 @@ int WebSocketHttp3HandshakeStream::ValidateUpgradeResponse(
 
   const int rv = ERR_INVALID_RESPONSE;
   OnFailure("Error during WebSocket handshake: " + failure_message, rv,
-            absl::nullopt);
+            std::nullopt);
   return rv;
 }
 
@@ -388,7 +396,7 @@ int WebSocketHttp3HandshakeStream::ValidateUpgradeResponse(
 void WebSocketHttp3HandshakeStream::OnFailure(
     const std::string& message,
     int net_error,
-    absl::optional<int> response_code) {
+    std::optional<int> response_code) {
   stream_request_->OnFailure(message, net_error, response_code);
 }
 

@@ -6,12 +6,18 @@
 
 #include <string>
 
-#include "components/prefs/android/jni_headers/PrefService_jni.h"
+#include "base/android/jni_string.h"
+#include "base/values.h"
 #include "components/prefs/pref_service.h"
+#include "components/prefs/prefs_export.h"
 
-using base::android::AttachCurrentThread;
-using base::android::JavaParamRef;
-using base::android::ScopedJavaLocalRef;
+// Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/prefs/android/jni_headers/PrefService_jni.h"
+
+using jni_zero::AttachCurrentThread;
+using jni_zero::JavaParamRef;
+using jni_zero::JavaRef;
+using jni_zero::ScopedJavaLocalRef;
 
 PrefServiceAndroid::PrefServiceAndroid(PrefService* pref_service)
     : pref_service_(pref_service) {}
@@ -25,7 +31,7 @@ PrefServiceAndroid::~PrefServiceAndroid() {
 
 // static
 PrefService* PrefServiceAndroid::FromPrefServiceAndroid(
-    const JavaParamRef<jobject>& obj) {
+    const JavaRef<jobject>& obj) {
   if (obj.is_null()) {
     return nullptr;
   }
@@ -102,6 +108,19 @@ void PrefServiceAndroid::SetDouble(JNIEnv* env,
       base::android::ConvertJavaStringToUTF8(env, j_preference), j_value);
 }
 
+jlong PrefServiceAndroid::GetLong(JNIEnv* env,
+                                  const JavaParamRef<jstring>& j_preference) {
+  return pref_service_->GetInt64(
+      base::android::ConvertJavaStringToUTF8(env, j_preference));
+}
+
+void PrefServiceAndroid::SetLong(JNIEnv* env,
+                                 const JavaParamRef<jstring>& j_preference,
+                                 const jlong j_value) {
+  pref_service_->SetInt64(
+      base::android::ConvertJavaStringToUTF8(env, j_preference), j_value);
+}
+
 ScopedJavaLocalRef<jstring> PrefServiceAndroid::GetString(
     JNIEnv* env,
     const JavaParamRef<jstring>& j_preference) {
@@ -124,6 +143,31 @@ jboolean PrefServiceAndroid::IsManagedPreference(
     const JavaParamRef<jstring>& j_preference) {
   return pref_service_->IsManagedPreference(
       base::android::ConvertJavaStringToUTF8(env, j_preference));
+}
+
+jboolean PrefServiceAndroid::HasRecommendation(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jstring>& j_preference) {
+  const PrefService::Preference* pref = pref_service_->FindPreference(
+      base::android::ConvertJavaStringToUTF8(env, j_preference));
+  return pref && pref->GetRecommendedValue() != nullptr;
+}
+
+jboolean PrefServiceAndroid::IsFollowingRecommendation(
+    JNIEnv* env,
+    const JavaParamRef<jstring>& j_preference) {
+  const PrefService::Preference* pref = pref_service_->FindPreference(
+      base::android::ConvertJavaStringToUTF8(env, j_preference));
+  return pref && pref->GetRecommendedValue() &&
+         *pref->GetRecommendedValue() == *pref->GetValue();
+}
+
+jboolean PrefServiceAndroid::IsRecommendedPreference(
+    JNIEnv* env,
+    const JavaParamRef<jstring>& j_preference) {
+  const PrefService::Preference* pref = pref_service_->FindPreference(
+      base::android::ConvertJavaStringToUTF8(env, j_preference));
+  return pref && pref->IsRecommended();
 }
 
 jboolean PrefServiceAndroid::IsDefaultValuePreference(

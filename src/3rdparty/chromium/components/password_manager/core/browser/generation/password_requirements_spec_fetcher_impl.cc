@@ -4,16 +4,21 @@
 
 #include "components/password_manager/core/browser/generation/password_requirements_spec_fetcher_impl.h"
 
+#include <string_view>
+
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
-#include "base/hash/md5.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "components/autofill/core/browser/proto/password_requirements.pb.h"
 #include "components/autofill/core/browser/proto/password_requirements_shard.pb.h"
 #include "components/password_manager/core/browser/generation/password_requirements_spec_printer.h"
+#include "crypto/obsolete/md5.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
@@ -24,6 +29,10 @@
 #include "url/url_canon.h"
 
 namespace autofill {
+
+crypto::obsolete::Md5 MakeMd5HasherForPasswordRequirementsSpec() {
+  return {};
+}
 
 PasswordRequirementsSpecFetcherImpl::PasswordRequirementsSpecFetcherImpl(
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
@@ -63,10 +72,11 @@ std::string GetHashPrefix(const GURL& origin, size_t prefix_length) {
       net::registry_controlled_domains::GetDomainAndRegistry(
           origin, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
 
-  base::MD5Digest digest;
-  base::MD5Sum(domain_and_registry.data(), domain_and_registry.size(), &digest);
+  crypto::obsolete::Md5 md5 = MakeMd5HasherForPasswordRequirementsSpec();
+  md5.Update(domain_and_registry);
+  std::array<uint8_t, crypto::obsolete::Md5::kSize> digest = md5.Finish();
 
-  for (auto& byte : digest.a) {
+  for (auto& byte : digest) {
     if (prefix_length >= 8) {
       prefix_length -= 8;
       continue;
@@ -79,7 +89,7 @@ std::string GetHashPrefix(const GURL& origin, size_t prefix_length) {
     }
   }
 
-  return base::MD5DigestToBase16(digest).substr(0, 4);
+  return base::ToLowerASCII(base::HexEncode(digest)).substr(0, 4);
 }
 
 // Returns the URL on gstatic.com where the passwords spec file can be found
@@ -114,7 +124,7 @@ void PasswordRequirementsSpecFetcherImpl::Fetch(GURL origin,
 
   // Canonicalize away trailing periods in hostname.
   while (!origin.host_piece().empty() && origin.host_piece().back() == '.') {
-    base::StringPiece new_host =
+    std::string_view new_host =
         origin.host_piece().substr(0, origin.host_piece().length() - 1);
     GURL::Replacements replacements;
     replacements.SetHostStr(new_host);
@@ -217,7 +227,7 @@ void PasswordRequirementsSpecFetcherImpl::OnFetchComplete(
     // Search shard for matches for origin by looking up the (canonicalized)
     // host name and then stripping domain prefixes until the eTLD+1 is reached.
     DCHECK(!origin.HostIsIPAddress());
-    // |host| is a std::string instead of StringPiece as the protbuf::Map
+    // |host| is a std::string instead of std::string_view as the protbuf::Map
     // implementation does not support StringPieces as parameters for find.
     std::string host = origin.host();
     auto host_iter = shard.specs().find(host);

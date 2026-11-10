@@ -20,10 +20,12 @@
 
 #include "libavutil/common.h"
 #include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/tx.h"
-#include "internal.h"
+
+#include "filters.h"
 #include "video.h"
 #include "window_func.h"
 
@@ -95,11 +97,11 @@ static const AVOption fftdnoiz_options[] = {
     { "overlap", "set block overlap",
         OFFSET(overlap),    AV_OPT_TYPE_FLOAT, {.dbl=0.5},    0.2, 0.8, .flags = FLAGS },
     { "method",  "set method of denoising",
-        OFFSET(method),     AV_OPT_TYPE_INT,   {.i64=0},        0,   1, .flags = TFLAGS, "method" },
+        OFFSET(method),     AV_OPT_TYPE_INT,   {.i64=0},        0,   1, .flags = TFLAGS, .unit = "method" },
     { "wiener", "wiener method",
-        0,                  AV_OPT_TYPE_CONST, {.i64=0},        0,   0, .flags = TFLAGS, "method" },
+        0,                  AV_OPT_TYPE_CONST, {.i64=0},        0,   0, .flags = TFLAGS, .unit = "method" },
     { "hard",   "hard thresholding",
-        0,                  AV_OPT_TYPE_CONST, {.i64=1},        0,   0, .flags = TFLAGS, "method" },
+        0,                  AV_OPT_TYPE_CONST, {.i64=1},        0,   0, .flags = TFLAGS, .unit = "method" },
     { "prev",    "set number of previous frames for temporal denoising",
         OFFSET(nb_prev),    AV_OPT_TYPE_INT,   {.i64=0},        0,   1, .flags = FLAGS },
     { "next",    "set number of next frames for temporal denoising",
@@ -745,16 +747,16 @@ static const AVFilterPad fftdnoiz_outputs[] = {
     },
 };
 
-const AVFilter ff_vf_fftdnoiz = {
-    .name          = "fftdnoiz",
-    .description   = NULL_IF_CONFIG_SMALL("Denoise frames using 3D FFT."),
+const FFFilter ff_vf_fftdnoiz = {
+    .p.name        = "fftdnoiz",
+    .p.description = NULL_IF_CONFIG_SMALL("Denoise frames using 3D FFT."),
+    .p.priv_class  = &fftdnoiz_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL |
+                     AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(FFTdnoizContext),
     .uninit        = uninit,
     FILTER_INPUTS(fftdnoiz_inputs),
     FILTER_OUTPUTS(fftdnoiz_outputs),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
-    .priv_class    = &fftdnoiz_class,
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL |
-                     AVFILTER_FLAG_SLICE_THREADS,
     .process_command = ff_filter_process_command,
 };

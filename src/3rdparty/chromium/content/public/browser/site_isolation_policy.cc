@@ -34,6 +34,7 @@ namespace content {
 namespace {
 
 bool g_disable_flag_caching_for_tests = false;
+bool g_ignore_origin_keyed_process_overrides_for_testing = false;
 
 bool IsDisableSiteIsolationFlagPresent() {
   static const bool site_isolation_disabled =
@@ -101,16 +102,17 @@ bool SiteIsolationPolicy::UseDedicatedProcessesForAllSites() {
 // static
 bool SiteIsolationPolicy::AreIsolatedSandboxedIframesEnabled() {
   // This feature is controlled by kIsolateSandboxedIframes, and depends on
-  // partial Site Isolation being enabled. It also requires new base URL
-  // behavior, so it implicitly causes
-  // blink::features::IsNewBaseUrlInheritanceBehaviorEnabled() to return true,
-  // and can't be enabled if the new base URL behavior has been disabled by
-  // enterprise policy.
+  // partial Site Isolation being enabled.
   return base::FeatureList::IsEnabled(
              blink::features::kIsolateSandboxedIframes) &&
-         !IsSiteIsolationDisabled(SiteIsolationMode::kPartialSiteIsolation) &&
-         !base::CommandLine::ForCurrentProcess()->HasSwitch(
-             blink::switches::kDisableNewBaseUrlInheritanceBehavior);
+         !IsSiteIsolationDisabled(SiteIsolationMode::kPartialSiteIsolation);
+}
+
+// static
+bool SiteIsolationPolicy::IsSitePerProcessOrStricter() {
+  return UseDedicatedProcessesForAllSites() ||
+         IsStrictOriginIsolationEnabled() ||
+         AreOriginKeyedProcessesEnabledByDefault();
 }
 
 // static
@@ -204,6 +206,29 @@ bool SiteIsolationPolicy::IsOriginAgentClusterEnabled() {
 }
 
 // static
+bool SiteIsolationPolicy::AreOriginKeyedProcessesEnabledByDefault() {
+  if (!UseDedicatedProcessesForAllSites()) {
+    return false;
+  }
+
+  // Check if the feature is explicitly overridden by the user or enterprise
+  // policy. This will ignore memory limits.
+  std::optional<bool> overridden_value =
+      GetContentClient()->browser()->GetOverrideValueForOriginKeyedProcesses();
+  if (overridden_value.has_value() &&
+      !g_ignore_origin_keyed_process_overrides_for_testing) {
+    return overridden_value.value();
+  }
+
+  // Note: This function and GetOverrideValueForOriginKeyedProcesses() are
+  // expected to be the only places features::kOriginKeyedProcessesByDefault is
+  // checked outside of tests.
+  return base::FeatureList::IsEnabled(
+             features::kOriginKeyedProcessesByDefault) &&
+         !GetContentClient()->browser()->ShouldDisableOriginIsolation();
+}
+
+// static
 bool SiteIsolationPolicy::AreOriginAgentClustersEnabledByDefault(
     BrowserContext* browser_context) {
   // OriginAgentClusters are enabled by default if OriginAgentCluster and
@@ -216,8 +241,7 @@ bool SiteIsolationPolicy::AreOriginAgentClustersEnabledByDefault(
   return IsOriginAgentClusterEnabled() &&
          (base::FeatureList::IsEnabled(
               blink::features::kOriginAgentClusterDefaultEnabled) ||
-          base::FeatureList::IsEnabled(
-              features::kOriginKeyedProcessesByDefault)) &&
+          AreOriginKeyedProcessesEnabledByDefault()) &&
          !GetContentClient()->browser()->ShouldDisableOriginAgentClusterDefault(
              browser_context);
 }
@@ -321,6 +345,11 @@ bool SiteIsolationPolicy::ShouldUrlUseApplicationIsolationLevel(
 // static
 void SiteIsolationPolicy::DisableFlagCachingForTesting() {
   g_disable_flag_caching_for_tests = true;
+}
+
+// static
+void SiteIsolationPolicy::IgnoreOriginKeyedProcessOverridesForTesting() {
+  g_ignore_origin_keyed_process_overrides_for_testing = true;
 }
 
 // static

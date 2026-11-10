@@ -7,14 +7,14 @@ import * as Security from '../../panels/security/security.js';
 import {TestRunner} from '../test_runner/test_runner.js';
 
 /**
- * @fileoverview using private properties isn't a Closure violation in tests.
+ * @file using private properties isn't a Closure violation in tests.
  */
 export const SecurityTestRunner = {};
 
 SecurityTestRunner.dumpSecurityPanelSidebarOrigins = function() {
   for (const key in Security.SecurityPanel.OriginGroup) {
     const originGroup = Security.SecurityPanel.OriginGroup[key];
-    const element = Security.SecurityPanel.SecurityPanel.instance().sidebarTree.originGroups.get(originGroup);
+    const element = Security.SecurityPanel.SecurityPanel.instance().sidebar.originGroups.get(originGroup);
 
     if (element.hidden) {
       continue;

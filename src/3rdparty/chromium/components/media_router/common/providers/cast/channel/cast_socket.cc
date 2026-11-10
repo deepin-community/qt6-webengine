@@ -19,7 +19,6 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/observer_list.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/sys_byteorder.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "components/media_router/common/providers/cast/channel/cast_auth_util.h"
@@ -38,14 +37,14 @@
 #include "net/base/net_errors.h"
 #include "net/ssl/ssl_info.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
+#include "services/network/public/mojom/network_context.mojom.h"
 #include "third_party/openscreen/src/cast/common/channel/proto/cast_channel.pb.h"
 
 // Helper for logging data with remote host IP and authentication state.
 // Assumes |ip_endpoint_| of type net::IPEndPoint and |channel_auth_| of enum
 // type ChannelAuthType are available in the current scope.
-#define CONNECTION_INFO()                                             \
-  "[" << open_params_.ip_endpoint.ToString() << ", auth=SSL_VERIFIED" \
-      << "] "
+#define CONNECTION_INFO() \
+  "[" << open_params_.ip_endpoint.ToString() << ", auth=SSL_VERIFIED" << "] "
 #define VLOG_WITH_CONNECTION(level) VLOG(level) << CONNECTION_INFO()
 #define LOG_WITH_CONNECTION(level) LOG(level) << CONNECTION_INFO()
 
@@ -61,8 +60,8 @@ bool IsTerminalState(ConnectionState state) {
 void OnConnected(
     network::mojom::NetworkContext::CreateTCPConnectedSocketCallback callback,
     int result,
-    const absl::optional<net::IPEndPoint>& local_addr,
-    const absl::optional<net::IPEndPoint>& peer_addr,
+    const std::optional<net::IPEndPoint>& local_addr,
+    const std::optional<net::IPEndPoint>& peer_addr,
     mojo::ScopedDataPipeConsumerHandle receive_stream,
     mojo::ScopedDataPipeProducerHandle send_stream) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -73,12 +72,12 @@ void OnConnected(
 }
 
 void ConnectOnUIThread(
-    CastSocketImpl::NetworkContextGetter network_context_getter,
+    network::NetworkContextGetter network_context_getter,
     const net::AddressList& remote_address_list,
     mojo::PendingReceiver<network::mojom::TCPConnectedSocket> receiver,
     network::mojom::NetworkContext::CreateTCPConnectedSocketCallback callback) {
   network_context_getter.Run()->CreateTCPConnectedSocket(
-      absl::nullopt /* local_addr */, remote_address_list,
+      std::nullopt /* local_addr */, remote_address_list,
       nullptr /* tcp_connected_socket_options */,
       net::MutableNetworkTrafficAnnotationTag(
           CastSocketImpl::GetNetworkTrafficAnnotationTag()),
@@ -92,18 +91,20 @@ CastSocket::Observer::~Observer() {
   CHECK(!IsInObserverList());
 }
 
-CastSocketImpl::CastSocketImpl(NetworkContextGetter network_context_getter,
-                               const CastSocketOpenParams& open_params,
-                               const scoped_refptr<Logger>& logger)
+CastSocketImpl::CastSocketImpl(
+    network::NetworkContextGetter network_context_getter,
+    const CastSocketOpenParams& open_params,
+    const scoped_refptr<Logger>& logger)
     : CastSocketImpl(network_context_getter,
                      open_params,
                      logger,
                      AuthContext::Create()) {}
 
-CastSocketImpl::CastSocketImpl(NetworkContextGetter network_context_getter,
-                               const CastSocketOpenParams& open_params,
-                               const scoped_refptr<Logger>& logger,
-                               const AuthContext& auth_context)
+CastSocketImpl::CastSocketImpl(
+    network::NetworkContextGetter network_context_getter,
+    const CastSocketOpenParams& open_params,
+    const scoped_refptr<Logger>& logger,
+    const AuthContext& auth_context)
     : channel_id_(0),
       open_params_(open_params),
       logger_(logger),
@@ -119,14 +120,17 @@ CastSocketImpl::CastSocketImpl(NetworkContextGetter network_context_getter,
   DCHECK(open_params.ip_endpoint.address().IsValid());
 }
 
+CastSocket::~CastSocket() = default;
+
 CastSocketImpl::~CastSocketImpl() {
   // Ensure that resources are freed but do not run pending callbacks that
   // would result in re-entrancy.
   CloseInternal();
 
   error_state_ = ChannelError::UNKNOWN;
-  for (auto& connect_callback : connect_callbacks_)
+  for (auto& connect_callback : connect_callbacks_) {
     std::move(connect_callback).Run(this);
+  }
   connect_callbacks_.clear();
 }
 
@@ -251,8 +255,9 @@ CastTransport* CastSocketImpl::transport() const {
 
 void CastSocketImpl::AddObserver(Observer* observer) {
   DCHECK(observer);
-  if (!observers_.HasObserver(observer))
+  if (!observers_.HasObserver(observer)) {
     observers_.AddObserver(observer);
+  }
 }
 
 void CastSocketImpl::RemoveObserver(Observer* observer) {
@@ -366,10 +371,6 @@ void CastSocketImpl::DoConnectLoop(int result) {
         break;
       default:
         NOTREACHED() << "Unknown state in connect flow: " << AsInteger(state);
-        SetConnectState(ConnectionState::FINISHED);
-        SetErrorState(ChannelError::UNKNOWN);
-        DoConnectCallback();
-        return;
     }
   } while (rv != net::ERR_IO_PENDING && !IsTerminalState(connect_state_));
   // Exit the state machine if an asynchronous network operation is pending
@@ -560,8 +561,8 @@ int CastSocketImpl::DoAuthChallengeReplyComplete(int result) {
 
 void CastSocketImpl::OnConnect(
     int result,
-    const absl::optional<net::IPEndPoint>& local_addr,
-    const absl::optional<net::IPEndPoint>& peer_addr,
+    const std::optional<net::IPEndPoint>& local_addr,
+    const std::optional<net::IPEndPoint>& peer_addr,
     mojo::ScopedDataPipeConsumerHandle receive_stream,
     mojo::ScopedDataPipeProducerHandle send_stream) {
   DoConnectLoop(result);
@@ -571,13 +572,14 @@ void CastSocketImpl::OnUpgradeToTLS(
     int result,
     mojo::ScopedDataPipeConsumerHandle receive_stream,
     mojo::ScopedDataPipeProducerHandle send_stream,
-    const absl::optional<net::SSLInfo>& ssl_info) {
+    const std::optional<net::SSLInfo>& ssl_info) {
   if (result == net::OK) {
     mojo_data_pump_ = std::make_unique<MojoDataPump>(std::move(receive_stream),
                                                      std::move(send_stream));
   }
-  if (ssl_info.has_value() && ssl_info->cert)
+  if (ssl_info.has_value() && ssl_info->cert) {
     peer_cert_ = ssl_info->cert;
+  }
   DoConnectLoop(result);
 }
 
@@ -602,8 +604,9 @@ void CastSocketImpl::DoConnectCallback() {
     CloseInternal();
   }
 
-  for (auto& connect_callback : connect_callbacks_)
+  for (auto& connect_callback : connect_callbacks_) {
     std::move(connect_callback).Run(this);
+  }
   connect_callbacks_.clear();
 }
 
@@ -626,6 +629,7 @@ void CastSocketImpl::CloseInternal() {
                           << ReadyStateToString(ready_state_);
   observers_.Clear();
   delegate_.reset();
+  auth_delegate_ = nullptr;
   transport_.reset();
   mojo_data_pump_.reset();
   socket_.reset();
@@ -654,8 +658,9 @@ void CastSocketImpl::SetConnectState(ConnectionState connect_state) {
 void CastSocketImpl::SetReadyState(ReadyState ready_state) {
   if (ready_state_ != ready_state) {
     ready_state_ = ready_state;
-    for (auto& observer : observers_)
+    for (auto& observer : observers_) {
       observer.OnReadyStateChanged(*this);
+    }
   }
 }
 
@@ -673,19 +678,22 @@ CastSocketImpl::CastSocketMessageDelegate::CastSocketMessageDelegate(
   DCHECK(socket_);
 }
 
-CastSocketImpl::CastSocketMessageDelegate::~CastSocketMessageDelegate() {}
+CastSocketImpl::CastSocketMessageDelegate::~CastSocketMessageDelegate() =
+    default;
 
 // CastTransport::Delegate implementation.
 void CastSocketImpl::CastSocketMessageDelegate::OnError(
     ChannelError error_state) {
-  for (auto& observer : socket_->observers_)
+  for (auto& observer : socket_->observers_) {
     observer.OnError(*socket_, error_state);
+  }
 }
 
 void CastSocketImpl::CastSocketMessageDelegate::OnMessage(
     const CastMessage& message) {
-  for (auto& observer : socket_->observers_)
+  for (auto& observer : socket_->observers_) {
     observer.OnMessage(*socket_, message);
+  }
 }
 
 void CastSocketImpl::CastSocketMessageDelegate::Start() {}

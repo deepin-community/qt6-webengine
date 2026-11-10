@@ -38,22 +38,13 @@ class StandaloneTrustedVaultBackend;
 // Reading of the file is done lazily.
 class StandaloneTrustedVaultClient : public TrustedVaultClient {
  public:
-  // Allows to observe backend state changes for testing. Production code should
-  // use TrustedVaultClient::Observer.
-  class DebugObserver : public base::CheckedObserver {
-   public:
-    DebugObserver() = default;
-    DebugObserver(const DebugObserver&) = delete;
-    DebugObserver& operator=(const DebugObserver&) = delete;
-    ~DebugObserver() override = default;
-
-    virtual void OnBackendStateChanged() = 0;
-  };
-
   // |base_dir| is the directory in which to create snapshot
   // files. |identity_manager| must not be null and must outlive this object.
   // |url_loader_factory| must not be null.
   StandaloneTrustedVaultClient(
+#if BUILDFLAG(IS_MAC)
+      const std::string& icloud_keychain_access_group_prefix,
+#endif
       SecurityDomainId security_domain,
       const base::FilePath& base_dir,
       signin::IdentityManager* identity_manager,
@@ -72,14 +63,14 @@ class StandaloneTrustedVaultClient : public TrustedVaultClient {
       const CoreAccountInfo& account_info,
       base::OnceCallback<void(const std::vector<std::vector<uint8_t>>&)> cb)
       override;
-  void StoreKeys(const std::string& gaia_id,
+  void StoreKeys(const GaiaId& gaia_id,
                  const std::vector<std::vector<uint8_t>>& keys,
                  int last_key_version) override;
   void MarkLocalKeysAsStale(const CoreAccountInfo& account_info,
                             base::OnceCallback<void(bool)> cb) override;
   void GetIsRecoverabilityDegraded(const CoreAccountInfo& account_info,
                                    base::OnceCallback<void(bool)> cb) override;
-  void AddTrustedRecoveryMethod(const std::string& gaia_id,
+  void AddTrustedRecoveryMethod(const GaiaId& gaia_id,
                                 const std::vector<uint8_t>& public_key,
                                 int method_type_hint,
                                 base::OnceClosure cb) override;
@@ -88,32 +79,28 @@ class StandaloneTrustedVaultClient : public TrustedVaultClient {
   // Runs |cb| when all requests have completed.
   void WaitForFlushForTesting(base::OnceClosure cb) const;
   void FetchBackendPrimaryAccountForTesting(
-      base::OnceCallback<void(const absl::optional<CoreAccountInfo>&)> callback)
+      base::OnceCallback<void(const std::optional<CoreAccountInfo>&)> callback)
       const;
   void FetchIsDeviceRegisteredForTesting(
-      const std::string& gaia_id,
+      const GaiaId& gaia_id,
       base::OnceCallback<void(bool)> callback);
-  void AddDebugObserverForTesting(DebugObserver* debug_observer);
-  void RemoveDebugObserverForTesting(DebugObserver* debug_observer);
-  // TODO(crbug.com/1201659): This this API and rely exclusively on
+  // TODO(crbug.com/40178774): This this API and rely exclusively on
   // FakeSecurityDomainsServer.
   void GetLastAddedRecoveryMethodPublicKeyForTesting(
       base::OnceCallback<void(const std::vector<uint8_t>&)> callback);
   void GetLastKeyVersionForTesting(
-      const std::string& gaia_id,
+      const GaiaId& gaia_id,
       base::OnceCallback<void(int last_key_version)> callback);
 
  private:
   void NotifyTrustedVaultKeysChanged();
   void NotifyRecoverabilityDegradedChanged();
-  void NotifyBackendStateChanged();
 
   const scoped_refptr<base::SequencedTaskRunner> backend_task_runner_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 
   base::ObserverList<Observer> observer_list_;
-  base::ObserverList<DebugObserver> debug_observer_list_;
 
   // Allows access token fetching for primary account on the ui thread. Passed
   // as WeakPtr to TrustedVaultAccessTokenFetcherImpl.

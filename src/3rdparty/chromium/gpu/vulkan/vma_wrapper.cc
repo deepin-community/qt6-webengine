@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "gpu/vulkan/vma_wrapper.h"
 
-#include <algorithm>
+#include "gpu/vulkan/vma_wrapper.h"
 
 #include <vk_mem_alloc.h>
 
-#include "base/metrics/histogram_functions.h"
+#include <algorithm>
+#include <array>
+
+#include "base/check_op.h"
 #include "build/build_config.h"
 #include "gpu/vulkan/vulkan_function_pointers.h"
 
@@ -74,10 +76,6 @@ VkResult CreateAllocator(VkPhysicalDevice physical_device,
   bool vk_ext_memory_budget_supported = gfx::HasExtension(
       enabled_extensions, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
 
-  // Collect data on how often it is supported.
-  base::UmaHistogramBoolean("GPU.Vulkan.ExtMemoryBudgetSupported",
-                            vk_ext_memory_budget_supported);
-
   // Enable VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT flag if extension is
   // available.
   if (vk_ext_memory_budget_supported) {
@@ -91,7 +89,7 @@ VkResult CreateAllocator(VkPhysicalDevice physical_device,
   if (!is_thread_safe) {
     allocator_info.flags |= VMA_ALLOCATOR_CREATE_EXTERNALLY_SYNCHRONIZED_BIT;
   }
-#if defined(TOOLKIT_QT)
+#if BUILDFLAG(IS_QTWEBENGINE)
   VkPhysicalDeviceMemoryProperties mem_properties;
   function_pointers->vkGetPhysicalDeviceMemoryProperties(physical_device,
                                                          &mem_properties);
@@ -108,7 +106,7 @@ VkResult CreateAllocator(VkPhysicalDevice physical_device,
     }
   }
   allocator_info.pTypeExternalMemoryHandleTypes = external_memory_handle_types.data();
-#endif  // defined(TOOLKIT_QT)
+#endif  // BUILDFLAG(IS_QTWEBENGINE)
 
   return vmaCreateAllocator(&allocator_info, pAllocator);
 }
@@ -208,10 +206,10 @@ void GetBudget(VmaAllocator allocator, VmaBudget* budget) {
 
 std::pair<uint64_t, uint64_t> GetTotalAllocatedAndUsedMemory(
     VmaAllocator allocator) {
-  // See GrVkMemoryAllocatorImpl::totalAllocatedAndUsedMemory() in skia for
+  // See VulkanAMDMemoryAllocator::totalAllocatedAndUsedMemory() in skia for
   // reference.
-  VmaBudget budget[VK_MAX_MEMORY_HEAPS];
-  GetBudget(allocator, budget);
+  std::array<VmaBudget, VK_MAX_MEMORY_HEAPS> budget;
+  GetBudget(allocator, budget.data());
   const VkPhysicalDeviceMemoryProperties* pPhysicalDeviceMemoryProperties;
   vmaGetMemoryProperties(allocator, &pPhysicalDeviceMemoryProperties);
   uint64_t total_allocated_memory = 0, total_used_memory = 0;

@@ -4,10 +4,11 @@
 
 #include "base/nix/mime_util_xdg.h"
 
-#include <arpa/inet.h>
+#include <algorithm>
 #include <memory>
 #include <utility>
 
+#include "base/byte_count.h"
 #include "base/check.h"
 #include "base/containers/stack.h"
 #include "base/environment.h"
@@ -16,7 +17,7 @@
 #include "base/logging.h"
 #include "base/nix/xdg_util.h"
 #include "base/no_destructor.h"
-#include "base/ranges/algorithm.h"
+#include "base/numerics/byte_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversion_utils.h"
 #include "build/build_config.h"
@@ -30,7 +31,7 @@ namespace {
 
 // Ridiculously large size for a /usr/share/mime/mime.cache file.
 // Default file is about 100KB, allow up to 10MB.
-constexpr size_t kMaxMimeTypesFileSize = 10 * 1024 * 1024;
+constexpr ByteCount kMaxMimeTypesFileSize = MiB(10);
 // Maximum number of nodes to allow in reverse suffix tree.
 // Default file has ~3K nodes, allow up to 30K.
 constexpr size_t kMaxNodes = 30000;
@@ -76,7 +77,8 @@ bool ReadInt(const std::string& buf,
                << ", string size=" << buf.size();
     return false;
   }
-  *result = ntohl(*reinterpret_cast<const uint32_t*>(buf.c_str() + offset));
+  auto bytes = base::as_byte_span(buf);
+  *result = base::U32FromBigEndian(bytes.subspan(offset).first<4u>());
   if (*result < min_result || *result > max_result) {
     LOG(ERROR) << "Invalid " << field_name << "=" << *result
                << " not between min_result=" << min_result
@@ -114,7 +116,8 @@ bool ParseMimeTypes(const FilePath& file_path, MimeTypeMap& out_mime_types) {
   //                  0x100 = case-sensitive
 
   std::string buf;
-  if (!ReadFileToStringWithMaxSize(file_path, &buf, kMaxMimeTypesFileSize)) {
+  if (!ReadFileToStringWithMaxSize(file_path, &buf,
+                                   kMaxMimeTypesFileSize.InBytes())) {
     LOG(ERROR) << "Failed reading in mime.cache file: " << file_path;
     return false;
   }
@@ -192,11 +195,13 @@ bool ParseMimeTypes(const FilePath& file_path, MimeTypeMap& out_mime_types) {
         }
         p += 4;
         if (n.ext.size() > 0 && n.ext[0] == '.') {
-          std::string ext = n.ext.substr(1);
+          std::string_view ext = std::string_view(n.ext).substr(1u);
           auto it = out_mime_types.find(ext);
           if (it == out_mime_types.end() || weight > it->second.weight) {
-            out_mime_types[ext] = {std::string(buf.c_str() + mime_type_offset),
-                                   weight};
+            // Use the mime type string from `buf` up to the first NUL.
+            auto mime_type = std::string_view(buf).substr(mime_type_offset);
+            mime_type = mime_type.substr(0u, mime_type.find('\0'));
+            out_mime_types[std::string(ext)] = {std::string(mime_type), weight};
           }
         }
         continue;
@@ -252,24 +257,24 @@ std::string GetFileMimeType(const FilePath& filepath) {
   // check every 5s and reload if any files have changed.
 #if !BUILDFLAG(IS_CHROMEOS)
   static Time last_check;
-  // Lock is required since this may be called on any thread.
+  // Lock is required since this may be called on any thread. The lock is held
+  // until the function returns to ensure that the map lookup and result copy
+  // are thread-safe if a reload occurs concurrently.
   static NoDestructor<Lock> lock;
-  {
-    AutoLock scoped_lock(*lock);
+  AutoLock scoped_lock(*lock);
 
-    Time now = Time::Now();
-    if (last_check + Seconds(5) < now) {
-      if (ranges::any_of(*xdg_mime_files, [](const FileInfo& file_info) {
-            File::Info info;
-            return !GetFileInfo(file_info.path, &info) ||
-                   info.last_modified != file_info.last_modified;
-          })) {
-        mime_type_map->clear();
-        xdg_mime_files->clear();
-        LoadAllMimeCacheFiles(*mime_type_map, *xdg_mime_files);
-      }
-      last_check = now;
+  Time now = Time::Now();
+  if (last_check + Seconds(5) < now) {
+    if (std::ranges::any_of(*xdg_mime_files, [](const FileInfo& file_info) {
+          File::Info info;
+          return !GetFileInfo(file_info.path, &info) ||
+                 info.last_modified != file_info.last_modified;
+        })) {
+      mime_type_map->clear();
+      xdg_mime_files->clear();
+      LoadAllMimeCacheFiles(*mime_type_map, *xdg_mime_files);
     }
+    last_check = now;
   }
 #endif
 

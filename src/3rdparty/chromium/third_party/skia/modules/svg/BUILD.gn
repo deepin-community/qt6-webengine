@@ -19,9 +19,11 @@ if (skia_enable_svg && skia_use_expat) {
     sources = skia_svg_sources
     configs = [ "../../:skia_private" ]
     deps = [
+      "../..:pathops",
       "../..:skia",
       "../skresources",
       "../skshaper",
+      "../skunicode",
     ]
   }
 
@@ -57,6 +59,7 @@ if (skia_enable_svg && skia_use_expat) {
         ":svg",
         "../..:skia",
         "../..:test",
+        "../skshaper",
       ]
     }
   }

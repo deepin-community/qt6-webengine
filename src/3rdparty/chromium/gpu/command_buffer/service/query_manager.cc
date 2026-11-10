@@ -9,6 +9,7 @@
 
 #include "base/atomicops.h"
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/notreached.h"
 #include "base/time/time.h"
@@ -338,7 +339,7 @@ QueryManager::Query* QueryManager::CreateQuery(
 void QueryManager::GenQueries(GLsizei n, const GLuint* queries) {
   DCHECK_GE(n, 0);
   for (GLsizei i = 0; i < n; ++i) {
-    generated_query_ids_.insert(queries[i]);
+    generated_query_ids_.insert(UNSAFE_TODO(queries[i]));
   }
 }
 
@@ -509,7 +510,7 @@ void QueryManager::EndQuery(Query* query, base::subtle::Atomic32 submit_count) {
 
   // Remove from active query map if it is active.
   ActiveQueryMap::iterator active_it = active_queries_.find(query->target());
-  DCHECK(active_it != active_queries_.end());
+  CHECK(active_it != active_queries_.end());
   DCHECK(query == active_it->second.get());
   active_queries_.erase(active_it);
 

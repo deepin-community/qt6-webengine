@@ -10,6 +10,7 @@
 #include <optional>
 
 #include "base/check.h"
+#include "base/containers/span.h"
 #include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_restrictions.h"
@@ -29,19 +30,15 @@ namespace {
 // static
 SkBitmap DeserializeImage(const std::string& image_data) {
   base::AssertLongCPUWorkAllowed();
-  SkBitmap image;
-  gfx::PNGCodec::Decode(
-      reinterpret_cast<const unsigned char*>(image_data.data()),
-      image_data.length(), &image);
-  return image;
+  return gfx::PNGCodec::Decode(base::as_byte_span(image_data));
 }
 
 // static
 std::vector<unsigned char> SerializeImage(const SkBitmap& image) {
   base::AssertLongCPUWorkAllowed();
-  std::vector<unsigned char> image_data;
-  gfx::PNGCodec::EncodeBGRASkBitmap(image, false, &image_data);
-  return image_data;
+  std::optional<std::vector<uint8_t>> image_data =
+      gfx::PNGCodec::EncodeBGRASkBitmap(image, /*discard_transparency=*/false);
+  return image_data.value_or(std::vector<uint8_t>());
 }
 
 }  // namespace
@@ -184,6 +181,10 @@ bool DeserializeNotificationDatabaseData(const std::string& input,
 
   output->notification_resources = std::nullopt;
 
+  output->serialized_metadata =
+      std::map<std::string, std::string>(message.serialized_metadata().begin(),
+                                         message.serialized_metadata().end());
+
   return true;
 }
 
@@ -308,6 +309,9 @@ bool SerializeNotificationDatabaseData(const NotificationDatabaseData& input,
   message.set_has_triggered(input.has_triggered);
 
   message.set_is_shown_by_browser(input.is_shown_by_browser);
+
+  message.mutable_serialized_metadata()->insert(
+      input.serialized_metadata.begin(), input.serialized_metadata.end());
 
   return message.SerializeToString(output);
 }

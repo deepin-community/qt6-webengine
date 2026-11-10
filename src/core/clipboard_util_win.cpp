@@ -1,6 +1,7 @@
 // Copyright (C) 2007, 2008 Apple Inc. All rights reserved.
 // Copyright (c) 2012 The Chromium Authors. All rights reserved.
 // SPDX-License-Identifier: BSD-3-Clause
+// Qt-Security score:critical reason:data-parser
 
 #include <string>
 
@@ -26,15 +27,15 @@ std::string HtmlToCFHtml(const std::string &html, const std::string &base_url)
 #define MAKE_NUMBER_FORMAT_2(digits) "%0" #digits "u"
 #define NUMBER_FORMAT MAKE_NUMBER_FORMAT_1(MAX_DIGITS)
 
-    static const char *header = "Version:0.9\r\n"
-                                "StartHTML:" NUMBER_FORMAT "\r\n"
-                                "EndHTML:" NUMBER_FORMAT "\r\n"
-                                "StartFragment:" NUMBER_FORMAT "\r\n"
-                                "EndFragment:" NUMBER_FORMAT "\r\n";
-    static const char *source_url_prefix = "SourceURL:";
+    static constexpr char header[] = "Version:0.9\r\n"
+                                     "StartHTML:" NUMBER_FORMAT "\r\n"
+                                     "EndHTML:" NUMBER_FORMAT "\r\n"
+                                     "StartFragment:" NUMBER_FORMAT "\r\n"
+                                     "EndFragment:" NUMBER_FORMAT "\r\n";
+    static constexpr char source_url_prefix[] = "SourceURL:";
 
-    static const char *start_markup = "<html>\r\n<body>\r\n<!--StartFragment-->";
-    static const char *end_markup = "<!--EndFragment-->\r\n</body>\r\n</html>";
+    static constexpr char start_markup[] = "<html>\r\n<body>\r\n<!--StartFragment-->";
+    static constexpr char end_markup[] = "<!--EndFragment-->\r\n</body>\r\n</html>";
 
     // Calculate offsets
     size_t start_html_offset = strlen(header) - strlen(NUMBER_FORMAT) * 4 + MAX_DIGITS * 4;

@@ -26,6 +26,7 @@
 
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_resource_paint_server.h"
 #include "third_party/blink/renderer/core/svg/svg_gradient_element.h"
+#include "third_party/blink/renderer/platform/graphics/gradient.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_map.h"
 
 namespace blink {
@@ -46,7 +47,8 @@ class LayoutSVGResourceGradient : public LayoutSVGResourcePaintServer {
                    const gfx::RectF& reference_box,
                    const AffineTransform* additional_transform,
                    const AutoDarkMode& auto_dark_mode,
-                   cc::PaintFlags&) final;
+                   cc::PaintFlags& flags,
+                   PaintFlags paint_flags) final;
 
   bool IsChildAllowed(LayoutObject* child, const ComputedStyle&) const final;
 
@@ -58,7 +60,7 @@ class LayoutSVGResourceGradient : public LayoutSVGResourcePaintServer {
                            const SVGLength& x,
                            const SVGLength& y) const;
   float ResolveRadius(SVGUnitTypes::SVGUnitType type, const SVGLength& r) const;
-  static GradientSpreadMethod PlatformSpreadMethodFromSVGType(
+  static Gradient::SpreadMethod PlatformSpreadMethodFromSVGType(
       SVGSpreadMethodType);
 
   mutable bool should_collect_gradient_attributes_ = true;

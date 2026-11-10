@@ -8,7 +8,6 @@
 #include <windows.foundation.h>
 
 #include "base/logging.h"
-#include "base/strings/string_piece.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "base/win/core_winrt_util.h"
@@ -44,6 +43,18 @@ HRESULT MediaFoundationProtectionManager::RuntimeClassInitialize(
   RETURN_IF_FAILED(
       base::win::RoActivateInstance(property_set_id.get(), &property_set_));
   return S_OK;
+}
+
+IFACEMETHODIMP_(ULONG) MediaFoundationProtectionManager::Release() {
+  ULONG ref_count = InternalRelease();
+  if (ref_count == 0) {
+    if (task_runner_ && !task_runner_->RunsTasksInCurrentSequence()) {
+      task_runner_->DeleteSoon(FROM_HERE, this);
+    } else {
+      delete this;
+    }
+  }
+  return ref_count;
 }
 
 HRESULT MediaFoundationProtectionManager::SetCdmProxy(

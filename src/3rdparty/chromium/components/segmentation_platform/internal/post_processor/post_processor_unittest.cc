@@ -57,7 +57,7 @@ proto::OutputConfig GetTestOutputConfigForBinaryClassifier() {
 
 proto::OutputConfig GetTestOutputConfigForMultiClassClassifier(
     int top_k_outputs,
-    absl::optional<float> threshold) {
+    std::optional<float> threshold) {
   proto::SegmentationModelMetadata model_metadata;
   MetadataWriter writer(&model_metadata);
 
@@ -69,8 +69,8 @@ proto::OutputConfig GetTestOutputConfigForMultiClassClassifier(
       {kVoiceUser, kVoiceUserTTL},
       {kShoppingUser, kShoppingUserTTL},
   };
-  writer.AddOutputConfigForMultiClassClassifier(labels.begin(), labels.size(),
-                                                top_k_outputs, threshold);
+  writer.AddOutputConfigForMultiClassClassifier(labels, top_k_outputs,
+                                                threshold);
   writer.AddPredictedResultTTLInOutputConfig(ttl_for_labels, kDefaultTTL,
                                              proto::TimeUnit::DAY);
   return model_metadata.output_config();
@@ -78,8 +78,7 @@ proto::OutputConfig GetTestOutputConfigForMultiClassClassifier(
 
 proto::OutputConfig GetTestOutputConfigForMultiClassClassifier(
     int top_k_outputs,
-    const float* per_class_thresholds,
-    size_t per_class_thresholds_length) {
+    const base::span<float> per_class_thresholds) {
   proto::SegmentationModelMetadata model_metadata;
   MetadataWriter writer(&model_metadata);
 
@@ -91,9 +90,8 @@ proto::OutputConfig GetTestOutputConfigForMultiClassClassifier(
       {kVoiceUser, kVoiceUserTTL},
       {kShoppingUser, kShoppingUserTTL},
   };
-  writer.AddOutputConfigForMultiClassClassifier(
-      labels.begin(), labels.size(), top_k_outputs, per_class_thresholds,
-      per_class_thresholds_length);
+  writer.AddOutputConfigForMultiClassClassifier(labels, top_k_outputs,
+                                                per_class_thresholds);
   writer.AddPredictedResultTTLInOutputConfig(ttl_for_labels, kDefaultTTL,
                                              proto::TimeUnit::DAY);
   return model_metadata.output_config();
@@ -156,7 +154,7 @@ TEST(PostProcessorTest, MultiClassClassifierWithTopKLessThanElements) {
       /*model_scores=*/{0.5, 0.2, 0.4, 0.7},
       GetTestOutputConfigForMultiClassClassifier(
           /*top_k-outputs=*/2,
-          /*threshold=*/absl::nullopt),
+          /*threshold=*/std::nullopt),
       /*timestamp=*/base::Time::Now(), /*model_version=*/1);
   std::vector<std::string> top_k_labels =
       post_processor.GetClassifierResults(prediction_result);
@@ -170,7 +168,7 @@ TEST(PostProcessorTest, MultiClassClassifierWithTopKEqualToElements) {
       /*model_scores=*/{0.5, 0.2, 0.4, 0.7},
       GetTestOutputConfigForMultiClassClassifier(
           /*top_k-outputs=*/4,
-          /*threshold=*/absl::nullopt),
+          /*threshold=*/std::nullopt),
       /*timestamp=*/base::Time::Now(), /*model_version=*/1);
   std::vector<std::string> top_k_labels =
       post_processor.GetClassifierResults(prediction_result);
@@ -237,8 +235,7 @@ TEST(PostProcessorTest, MultiClassClassifierWithPerClassThresholds) {
           /*model_scores=*/{0.5, 0.2, 0.4, 0.7},
           GetTestOutputConfigForMultiClassClassifier(
               /*top_k-outputs=*/4,
-              /*per_class_thresholds = */ per_class_thresholds.begin(),
-              per_class_thresholds.size()),
+              /*per_class_thresholds=*/per_class_thresholds),
           /*timestamp=*/base::Time::Now(), /*model_version=*/1));
   // Return labels greater or equal than its threshold sorted by score.
   EXPECT_THAT(top_k_labels, testing::ElementsAre(kShareUser, kNewTabUser));
@@ -318,7 +315,7 @@ TEST(PostProcessorTest,
       /*model_scores=*/{0.5, 0.2, 0.4, 0.7},
       GetTestOutputConfigForMultiClassClassifier(
           /*top_k-outputs=*/2,
-          /*threshold=*/absl::nullopt),
+          /*threshold=*/std::nullopt),
       /*timestamp=*/base::Time::Now(), /*model_version=*/1);
   ClassificationResult classification_result =
       post_processor.GetPostProcessedClassificationResult(
@@ -369,6 +366,25 @@ TEST(PostProcessorTest, GetRawResult) {
   EXPECT_EQ(pred_result.SerializeAsString(), result.result.SerializeAsString());
   EXPECT_EQ(PredictionStatus::kSucceeded, result.status);
   EXPECT_NEAR(0.1, *result.GetResultForLabel("Output1"), 0.001);
+  base::flat_map<std::string, float> all_results = result.GetAllResults();
+  EXPECT_EQ(all_results.size(), 3u);
+  EXPECT_NEAR(0.2, all_results["Output2"], 0.001);
+}
+
+TEST(PostProcessorTest, GetRawResultForMulticlassClassifier) {
+  proto::PredictionResult pred_result = metadata_utils::CreatePredictionResult(
+      /*model_scores=*/{1, 3, 5, 7},
+      GetTestOutputConfigForMultiClassClassifier(/*top_k-outputs=*/2,
+                                                 /*threshold=*/0.5),
+      /*timestamp=*/base::Time::Now(), /*model_version=*/1);
+  RawResult result =
+      PostProcessor().GetRawResult(pred_result, PredictionStatus::kSucceeded);
+  EXPECT_EQ(PredictionStatus::kSucceeded, result.status);
+  EXPECT_NEAR(5, *result.GetResultForLabel(kVoiceUser), 0.001);
+  base::flat_map<std::string, float> all_results = result.GetAllResults();
+  EXPECT_EQ(all_results.size(), 4u);
+  EXPECT_NEAR(1, all_results[kShareUser], 0.001);
+  EXPECT_NEAR(3, all_results[kNewTabUser], 0.001);
 }
 
 TEST(PostProcessorTest, IsClassificationModel) {

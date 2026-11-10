@@ -29,22 +29,24 @@ class PeerConnectionDependencyFactory;
 // `GetOrCreateRemoteTrackAdapter()` which must not be called from the main
 // thread.
 class MODULES_EXPORT WebRtcMediaStreamTrackAdapterMap
-    : public WTF::ThreadSafeRefCounted<WebRtcMediaStreamTrackAdapterMap> {
+    : public ThreadSafeRefCounted<WebRtcMediaStreamTrackAdapterMap> {
  public:
   // Acts as an accessor to adapter members without leaking a reference to the
   // adapter. When the last |AdapterRef| is destroyed, the corresponding adapter
   // is |Dispose|d and removed from the map.
   class MODULES_EXPORT AdapterRef {
    public:
-    // Must be invoked on the main thread. If this was the last reference to the
-    // adapter it will be disposed and removed from the map.
+    // Usually invoked on the main thread. If invoked on another thread,
+    // disposal is posted to the main thread. When the last reference to the
+    // adapter is destroyed, it is disposed and removed from the map.
     ~AdapterRef();
 
     std::unique_ptr<AdapterRef> Copy() const;
     bool is_initialized() const { return adapter_->is_initialized(); }
     void InitializeOnMainThread();
     MediaStreamComponent* track() const { return adapter_->track(); }
-    rtc::scoped_refptr<webrtc::MediaStreamTrackInterface> webrtc_track() const {
+    webrtc::scoped_refptr<webrtc::MediaStreamTrackInterface> webrtc_track()
+        const {
       return adapter_->webrtc_track();
     }
 
@@ -79,9 +81,8 @@ class MODULES_EXPORT WebRtcMediaStreamTrackAdapterMap
 
   // Gets a new reference to the local track adapter, or null if no such adapter
   // was found. When all references are destroyed the adapter is disposed and
-  // removed from the map. This method can be called from any thread, but
-  // references must be destroyed on the main thread.
-  // The adapter is a associated with a blink and webrtc track, lookup works by
+  // removed from the map. This method can be called from any thread.
+  // The adapter is associated with a blink and webrtc track, lookup works by
   // either track.
   std::unique_ptr<AdapterRef> GetLocalTrackAdapter(
       MediaStreamComponent* component);
@@ -90,16 +91,15 @@ class MODULES_EXPORT WebRtcMediaStreamTrackAdapterMap
   // Invoke on the main thread. Gets a new reference to the local track adapter
   // for the web track. If no adapter exists for the track one is created and
   // initialized. When all references are destroyed the adapter is disposed and
-  // removed from the map. References must be destroyed on the main thread.
+  // removed from the map.
   std::unique_ptr<AdapterRef> GetOrCreateLocalTrackAdapter(
       MediaStreamComponent* component);
   size_t GetLocalTrackCount() const;
 
   // Gets a new reference to the remote track adapter. When all references are
   // destroyed the adapter is disposed and removed from the map. This method can
-  // be called from any thread, but references must be destroyed on the main
-  // thread. The adapter is a associated with a blink and webrtc track, lookup
-  // works by either track.
+  // be called from any thread. The adapter is a associated with a blink and
+  // webrtc track, lookup works by either track.
   // First variety: If an adapter exists it will already be initialized, if one
   // does not exist null is returned.
   std::unique_ptr<AdapterRef> GetRemoteTrackAdapter(
@@ -113,13 +113,18 @@ class MODULES_EXPORT WebRtcMediaStreamTrackAdapterMap
   // track adapter for the webrtc track. If no adapter exists for the track one
   // is created and initialization completes on the main thread in a post. When
   // all references are destroyed the adapter is disposed and removed from the
-  // map. References must be destroyed on the main thread.
+  // map.
   std::unique_ptr<AdapterRef> GetOrCreateRemoteTrackAdapter(
       scoped_refptr<webrtc::MediaStreamTrackInterface> webrtc_track);
   size_t GetRemoteTrackCount() const;
 
  private:
-  friend class WTF::ThreadSafeRefCounted<WebRtcMediaStreamTrackAdapterMap>;
+  static void DisposeAdapterRef(
+      scoped_refptr<WebRtcMediaStreamTrackAdapterMap> map,
+      AdapterRef::Type type,
+      scoped_refptr<blink::WebRtcMediaStreamTrackAdapter> adapter);
+
+  friend class ThreadSafeRefCounted<WebRtcMediaStreamTrackAdapterMap>;
 
   // "(MediaStreamComponent, webrtc::MediaStreamTrackInterface) ->
   // WebRtcMediaStreamTrackAdapter" maps. The primary key is based on the object

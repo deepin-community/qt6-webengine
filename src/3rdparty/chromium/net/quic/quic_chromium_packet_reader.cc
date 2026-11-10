@@ -8,9 +8,11 @@
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/task/single_thread_task_runner.h"
+#include "net/base/features.h"
 #include "net/base/net_errors.h"
 #include "net/quic/address_utils.h"
 #include "net/third_party/quiche/src/quiche/quic/core/quic_clock.h"
+#include "net/third_party/quiche/src/quiche/quic/core/quic_types.h"
 
 namespace net {
 
@@ -80,6 +82,11 @@ void QuicChromiumPacketReader::CloseSocket() {
   socket_->Close();
 }
 
+static_assert(static_cast<EcnCodePoint>(quic::ECN_NOT_ECT) == ECN_NOT_ECT &&
+                  static_cast<EcnCodePoint>(quic::ECN_ECT1) == ECN_ECT1 &&
+                  static_cast<EcnCodePoint>(quic::ECN_ECT0) == ECN_ECT0 &&
+                  static_cast<EcnCodePoint>(quic::ECN_CE) == ECN_CE,
+              "Mismatch ECN codepoint values");
 bool QuicChromiumPacketReader::ProcessReadResult(int result) {
   read_pending_ = false;
   if (result <= 0 && net_log_.IsCapturing()) {
@@ -100,7 +107,14 @@ bool QuicChromiumPacketReader::ProcessReadResult(int result) {
     return visitor_->OnReadError(result, socket_.get());
   }
 
-  quic::QuicReceivedPacket packet(read_buffer_->data(), result, clock_->Now());
+  DscpAndEcn tos = socket_->GetLastTos();
+  quic::QuicEcnCodepoint ecn = static_cast<quic::QuicEcnCodepoint>(tos.ecn);
+  quic::QuicReceivedPacket packet(read_buffer_->data(), result, clock_->Now(),
+                                  /*owns_buffer=*/false, /*ttl=*/0,
+                                  /*ttl_valid=*/true,
+                                  /*packet_headers=*/nullptr,
+                                  /*headers_length=*/0,
+                                  /*owns_header_buffer=*/false, ecn);
   IPEndPoint local_address;
   IPEndPoint peer_address;
   socket_->GetLocalAddress(&local_address);
@@ -114,8 +128,9 @@ bool QuicChromiumPacketReader::ProcessReadResult(int result) {
 }
 
 void QuicChromiumPacketReader::OnReadComplete(int result) {
-  if (ProcessReadResult(result))
+  if (ProcessReadResult(result)) {
     StartReading();
+  }
 }
 
 }  // namespace net

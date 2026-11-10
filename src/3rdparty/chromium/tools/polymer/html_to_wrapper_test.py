@@ -63,8 +63,10 @@ class HtmlToWrapperTest(unittest.TestCase):
     self.assertMultiLineEqual(str(expected_wrapper), str(actual_wrapper))
 
   def testHtmlToWrapperPolymerElement(self):
-    self._run_test('html_to_wrapper/foo.html', 'html_to_wrapper/foo.html.ts',
-                   'html_to_wrapper/expected/foo.html.ts')
+    self._run_test('html_to_wrapper/foo.html',
+                   'html_to_wrapper/foo.html.ts',
+                   'html_to_wrapper/expected/foo.html.ts',
+                   template='polymer')
 
   def testHtmlToWrapperPolymerElement_Detect(self):
     self._run_test('html_to_wrapper/foo.html',
@@ -75,8 +77,7 @@ class HtmlToWrapperTest(unittest.TestCase):
   def testHtmlToWrapperLitElement(self):
     self._run_test('html_to_wrapper/foo_lit.html',
                    'html_to_wrapper/foo_lit.html.ts',
-                   'html_to_wrapper/expected/foo_lit.html.ts',
-                   template='lit')
+                   'html_to_wrapper/expected/foo_lit.html.ts')
 
   def testHtmlToWrapperLitElement_Detect(self):
     self._run_test('html_to_wrapper/foo_lit.html',
@@ -84,11 +85,16 @@ class HtmlToWrapperTest(unittest.TestCase):
                    'html_to_wrapper/expected/foo_lit.html.ts',
                    template='detect')
 
+  def testHtmlToWrapperLitElement_Minify(self):
+    self._run_test('html_to_wrapper/foo_lit.html',
+                   'html_to_wrapper/foo_lit.html.ts',
+                   'html_to_wrapper/expected/foo_lit.html.ts',
+                   minify=True)
+
   def testHtmlToWrapperLitElement_WithImports(self):
     self._run_test('html_to_wrapper/foo_lit_with_imports.html',
                    'html_to_wrapper/foo_lit_with_imports.html.ts',
-                   'html_to_wrapper/expected/foo_lit_with_imports.html.ts',
-                   template='lit')
+                   'html_to_wrapper/expected/foo_lit_with_imports.html.ts')
 
   def testHtmlToWrapperNativeElement(self):
     self._run_test('html_to_wrapper/foo_native.html',
@@ -105,12 +111,31 @@ class HtmlToWrapperTest(unittest.TestCase):
   def testHtmlToWrapperIcons(self):
     self._run_test('html_to_wrapper/icons.html',
                    'html_to_wrapper/icons.html.ts',
-                   'html_to_wrapper/expected/icons.html.ts')
+                   'html_to_wrapper/expected/icons.html.ts',
+                   template='polymer')
+
+  def testHtmlToWrapperIconsLit(self):
+    self._run_test('html_to_wrapper/cr_icons.html',
+                   'html_to_wrapper/cr_icons.html.ts',
+                   'html_to_wrapper/expected/cr_icons.html.ts')
+
+  def testHtmlToWrapperIconsLit_Detect(self):
+    self._run_test('html_to_wrapper/cr_icons.html',
+                   'html_to_wrapper/cr_icons.html.ts',
+                   'html_to_wrapper/expected/cr_icons.html.ts',
+                   template='detect')
+
+  def testHtmlToWrapperLitFromPolymer(self):
+    self._run_test('html_to_wrapper/icons_lit.html',
+                   'html_to_wrapper/icons_lit.html.ts',
+                   'html_to_wrapper/expected/cr_icons.html.ts',
+                   template='detect')
 
   def testHtmlToWrapper_Minify(self):
     self._run_test('html_to_wrapper/foo.html',
                    'html_to_wrapper/foo.html.ts',
                    'html_to_wrapper/expected/foo.min.html.ts',
+                   template='polymer',
                    minify=True)
 
   def testHtmlToWrapper_MinifyDetect(self):
@@ -124,6 +149,7 @@ class HtmlToWrapperTest(unittest.TestCase):
     self._run_test('html_to_wrapper/foo.html',
                    'html_to_wrapper/foo.html.js',
                    'html_to_wrapper/expected/foo.html.ts',
+                   template='polymer',
                    use_js=True)
 
   def testHtmlToWrapper_UseJsDetect(self):
@@ -137,12 +163,14 @@ class HtmlToWrapperTest(unittest.TestCase):
     self._run_test('html_to_wrapper/foo.html',
                    'html_to_wrapper/foo.html.ts',
                    'html_to_wrapper/expected/foo.html.ts',
+                   template='polymer',
                    scheme='relative')
 
   def testHtmlToWrapperSchemeChrome(self):
     self._run_test('html_to_wrapper/foo.html',
                    'html_to_wrapper/foo.html.ts',
                    'html_to_wrapper/expected/foo_chrome.html.ts',
+                   template='polymer',
                    scheme='chrome')
 
 

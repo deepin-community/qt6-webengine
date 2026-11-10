@@ -9,8 +9,8 @@
 
 #include <iosfwd>
 #include <string>
+#include <string_view>
 
-#include "base/format_macros.h"
 #include "base/hash/hash.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "components/viz/common/surfaces/local_surface_id.h"
@@ -60,7 +60,7 @@ class VIZ_COMMON_EXPORT SurfaceId {
 
   std::string ToString() const;
 
-  std::string ToString(base::StringPiece frame_sink_debug_label) const;
+  std::string ToString(std::string_view frame_sink_debug_label) const;
 
   // Returns whether this SurfaceId was generated after |other|.
   bool IsNewerThan(const SurfaceId& other) const;
@@ -85,6 +85,21 @@ class VIZ_COMMON_EXPORT SurfaceId {
 
   bool operator<(const SurfaceId& other) const {
     return std::tie(frame_sink_id_, local_surface_id_) <
+           std::tie(other.frame_sink_id_, other.local_surface_id_);
+  }
+
+  bool operator<=(const SurfaceId& other) const {
+    return std::tie(frame_sink_id_, local_surface_id_) <=
+           std::tie(other.frame_sink_id_, other.local_surface_id_);
+  }
+
+  bool operator>(const SurfaceId& other) const {
+    return std::tie(frame_sink_id_, local_surface_id_) >
+           std::tie(other.frame_sink_id_, other.local_surface_id_);
+  }
+
+  bool operator>=(const SurfaceId& other) const {
+    return std::tie(frame_sink_id_, local_surface_id_) >=
            std::tie(other.frame_sink_id_, other.local_surface_id_);
   }
 

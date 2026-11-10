@@ -23,11 +23,13 @@
 
 #include "libavutil/avassert.h"
 #include "libavutil/mathematics.h"
+#include "libavutil/mem.h"
 #include "libavutil/timestamp.h"
 
 #include "libavcodec/avcodec.h"
 
 #include "avformat.h"
+#include "avformat_internal.h"
 #include "avio_internal.h"
 #include "demux.h"
 #include "internal.h"
@@ -288,7 +290,7 @@ static int64_t read_timestamp(AVFormatContext *s, int stream_index, int64_t *ppo
 int ff_seek_frame_binary(AVFormatContext *s, int stream_index,
                          int64_t target_ts, int flags)
 {
-    const AVInputFormat *const avif = s->iformat;
+    const FFInputFormat *const avif = ffifmt(s->iformat);
     int64_t pos_min = 0, pos_max = 0, pos, pos_limit;
     int64_t ts_min, ts_max, ts;
     int index;
@@ -580,8 +582,8 @@ static int seek_frame_generic(AVFormatContext *s, int stream_index,
         return -1;
 
     ff_read_frame_flush(s);
-    if (s->iformat->read_seek)
-        if (s->iformat->read_seek(s, stream_index, timestamp, flags) >= 0)
+    if (ffifmt(s->iformat)->read_seek)
+        if (ffifmt(s->iformat)->read_seek(s, stream_index, timestamp, flags) >= 0)
             return 0;
     ie = &sti->index_entries[index];
     if ((ret = avio_seek(s->pb, ie->pos, SEEK_SET)) < 0)
@@ -617,15 +619,15 @@ static int seek_frame_internal(AVFormatContext *s, int stream_index,
     }
 
     /* first, we try the format specific seek */
-    if (s->iformat->read_seek) {
+    if (ffifmt(s->iformat)->read_seek) {
         ff_read_frame_flush(s);
-        ret = s->iformat->read_seek(s, stream_index, timestamp, flags);
+        ret = ffifmt(s->iformat)->read_seek(s, stream_index, timestamp, flags);
     } else
         ret = -1;
     if (ret >= 0)
         return 0;
 
-    if (s->iformat->read_timestamp &&
+    if (ffifmt(s->iformat)->read_timestamp &&
         !(s->iformat->flags & AVFMT_NOBINSEARCH)) {
         ff_read_frame_flush(s);
         return ff_seek_frame_binary(s, stream_index, timestamp, flags);
@@ -641,7 +643,7 @@ int av_seek_frame(AVFormatContext *s, int stream_index,
 {
     int ret;
 
-    if (s->iformat->read_seek2 && !s->iformat->read_seek) {
+    if (ffifmt(s->iformat)->read_seek2 && !ffifmt(s->iformat)->read_seek) {
         int64_t min_ts = INT64_MIN, max_ts = INT64_MAX;
         if ((flags & AVSEEK_FLAG_BACKWARD))
             max_ts = timestamp;
@@ -662,6 +664,9 @@ int av_seek_frame(AVFormatContext *s, int stream_index,
 int avformat_seek_file(AVFormatContext *s, int stream_index, int64_t min_ts,
                        int64_t ts, int64_t max_ts, int flags)
 {
+    int dir;
+    int ret;
+
     if (min_ts > ts || max_ts < ts)
         return -1;
     if (stream_index < -1 || stream_index >= (int)s->nb_streams)
@@ -671,7 +676,7 @@ int avformat_seek_file(AVFormatContext *s, int stream_index, int64_t min_ts,
         flags |= AVSEEK_FLAG_ANY;
     flags &= ~AVSEEK_FLAG_BACKWARD;
 
-    if (s->iformat->read_seek2) {
+    if (ffifmt(s->iformat)->read_seek2) {
         int ret;
         ff_read_frame_flush(s);
 
@@ -687,7 +692,7 @@ int avformat_seek_file(AVFormatContext *s, int stream_index, int64_t min_ts,
             stream_index = 0;
         }
 
-        ret = s->iformat->read_seek2(s, stream_index, min_ts,
+        ret = ffifmt(s->iformat)->read_seek2(s, stream_index, min_ts,
                                      ts, max_ts, flags);
 
         if (ret >= 0)
@@ -695,32 +700,21 @@ int avformat_seek_file(AVFormatContext *s, int stream_index, int64_t min_ts,
         return ret;
     }
 
-    if (s->iformat->read_timestamp) {
-        // try to seek via read_timestamp()
-    }
-
     // Fall back on old API if new is not implemented but old is.
     // Note the old API has somewhat different semantics.
-    if (s->iformat->read_seek || 1) {
-        int dir = (ts - (uint64_t)min_ts > (uint64_t)max_ts - ts ? AVSEEK_FLAG_BACKWARD : 0);
-        int ret = av_seek_frame(s, stream_index, ts, flags | dir);
-        if (ret < 0 && ts != min_ts && max_ts != ts) {
-            ret = av_seek_frame(s, stream_index, dir ? max_ts : min_ts, flags | dir);
-            if (ret >= 0)
-                ret = av_seek_frame(s, stream_index, ts, flags | (dir^AVSEEK_FLAG_BACKWARD));
-        }
-        return ret;
+    dir = (ts - (uint64_t)min_ts > (uint64_t)max_ts - ts ? AVSEEK_FLAG_BACKWARD : 0);
+    ret = av_seek_frame(s, stream_index, ts, flags | dir);
+    if (ret < 0 && ts != min_ts && max_ts != ts) {
+        ret = av_seek_frame(s, stream_index, dir ? max_ts : min_ts, flags | dir);
+        if (ret >= 0)
+            ret = av_seek_frame(s, stream_index, ts, flags | (dir^AVSEEK_FLAG_BACKWARD));
     }
-
-    // try some generic seek like seek_frame_generic() but with new ts semantics
-    return -1; //unreachable
+    return ret;
 }
 
 /** Flush the frame reader. */
 void ff_read_frame_flush(AVFormatContext *s)
 {
-    FFFormatContext *const si = ffformatcontext(s);
-
     ff_flush_packet_queue(s);
 
     /* Reset read state for each stream. */
@@ -744,11 +738,6 @@ void ff_read_frame_flush(AVFormatContext *s)
 
         for (int j = 0; j < MAX_REORDER_DELAY + 1; j++)
             sti->pts_buffer[j] = AV_NOPTS_VALUE;
-
-#if FF_API_AVSTREAM_SIDE_DATA
-        if (si->inject_global_side_data)
-            sti->inject_global_side_data = 1;
-#endif
 
         sti->skip_samples = 0;
     }

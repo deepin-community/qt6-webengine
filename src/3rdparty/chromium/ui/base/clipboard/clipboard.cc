@@ -4,26 +4,28 @@
 
 #include "ui/base/clipboard/clipboard.h"
 
+#include <algorithm>
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <string_view>
+#include <variant>
 
 #include "base/check.h"
 #include "base/containers/contains.h"
-#include "base/functional/overloaded.h"
 #include "base/json/json_reader.h"
 #include "base/memory/ptr_util.h"
 #include "base/no_destructor.h"
 #include "base/notreached.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/types/optional_util.h"
 #include "build/build_config.h"
 #include "net/base/mime_util.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/clipboard/clipboard_constants.h"
+#include "ui/base/clipboard/clipboard_util.h"
 #include "ui/gfx/geometry/size.h"
 #include "url/gurl.h"
 
@@ -78,7 +80,7 @@ void Clipboard::SetAllowedThreads(
   base::AutoLock lock(ClipboardMapLock());
 
   AllowedThreads().clear();
-  base::ranges::copy(allowed_threads, std::back_inserter(AllowedThreads()));
+  std::ranges::copy(allowed_threads, std::back_inserter(AllowedThreads()));
 }
 
 // static
@@ -166,7 +168,7 @@ std::map<std::string, std::string> Clipboard::ExtractCustomPlatformNames(
     ReadData(ui::ClipboardFormatType::WebCustomFormatMap(), data_dst,
              &custom_format_json);
     if (!custom_format_json.empty()) {
-      absl::optional<base::Value> json_val =
+      std::optional<base::Value> json_val =
           base::JSONReader::Read(custom_format_json);
       if (json_val.has_value() && json_val->is_dict()) {
         for (const auto it : json_val->GetDict()) {
@@ -227,8 +229,8 @@ void Clipboard::DispatchPortableRepresentation(const ObjectMapParams& params) {
   // arguments to write are empty. Historically, `params` was passed as a vector
   // of byte vectors, and if any of the byte vectors were empty, this would
   // simply early return.
-  absl::visit(
-      base::Overloaded{
+  std::visit(
+      absl::Overload{
           [&](const BitmapData& data) {
             // Unlike many of the other types, this does not perform an empty
             // check. Due to a historical quirk of how bitmaps were transferred
@@ -241,7 +243,7 @@ void Clipboard::DispatchPortableRepresentation(const ObjectMapParams& params) {
               return;
             }
 
-            WriteHTML(data.markup, data.source_url, params.content_type);
+            WriteHTML(data.markup, data.source_url);
           },
           [&](const RtfData& data) {
             if (data.data.empty()) {
@@ -251,7 +253,8 @@ void Clipboard::DispatchPortableRepresentation(const ObjectMapParams& params) {
             WriteRTF(data.data);
           },
           [&](const BookmarkData& data) {
-            if (data.title.empty() || data.url.empty()) {
+            if (ui::clipboard_util::ShouldSkipBookmark(
+                    base::UTF8ToUTF16(data.title), data.url)) {
               return;
             }
 
@@ -265,13 +268,6 @@ void Clipboard::DispatchPortableRepresentation(const ObjectMapParams& params) {
             WriteText(data.data);
           },
           [&](const WebkitData& data) { WriteWebSmartPaste(); },
-          [&](const RawData& data) {
-            if (data.data.empty()) {
-              return;
-            }
-
-            WriteData(data.format, base::as_bytes(base::make_span(data.data)));
-          },
           [&](const SvgData& data) {
             if (data.markup.empty()) {
               return;
@@ -292,27 +288,24 @@ void Clipboard::DispatchPortableRepresentation(const ObjectMapParams& params) {
             }
 
             WriteData(ClipboardFormatType::WebCustomFormatMap(),
-                      base::as_bytes(base::make_span(data.data)));
+                      base::as_byte_span(data.data));
           },
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-          [&](const EncodedDataTransferEndpointData& data) {
-            if (data.data.empty()) {
-              return;
-            }
-
-            WriteData(ClipboardFormatType::DataTransferEndpointDataType(),
-                      base::as_bytes(base::make_span(data.data)));
-          },
-#endif
       },
       params.data);
 }
 
+void Clipboard::DispatchPortableRepresentation(const RawData& data) {
+  if (data.data.empty()) {
+    return;
+  }
+
+  WriteData(data.format, base::as_byte_span(data.data));
+}
+
 Clipboard::ObjectMapParams::ObjectMapParams() = default;
 
-Clipboard::ObjectMapParams::ObjectMapParams(Data data,
-                                            ClipboardContentType content_type)
-    : data(std::move(data)), content_type(content_type) {}
+Clipboard::ObjectMapParams::ObjectMapParams(Data data)
+    : data(std::move(data)) {}
 
 Clipboard::ObjectMapParams::ObjectMapParams(const ObjectMapParams& other) =
     default;
@@ -329,7 +322,7 @@ void Clipboard::DispatchPlatformRepresentations(
     std::vector<Clipboard::PlatformRepresentation> platform_representations) {
   for (const auto& representation : platform_representations) {
     WriteData(ClipboardFormatType::CustomPlatformType(representation.format),
-              base::as_bytes(base::make_span(representation.data)));
+              base::as_byte_span(representation.data));
   }
 }
 
@@ -355,14 +348,13 @@ void Clipboard::RemoveObserver(ClipboardWriteObserver* observer) {
   write_observers_.RemoveObserver(observer);
 }
 
-void Clipboard::NotifyCopyWithUrl(const base::StringPiece text,
+void Clipboard::NotifyCopyWithUrl(std::string_view text,
                                   const GURL& frame,
                                   const GURL& main_frame) {
   GURL text_url(text);
   if (text_url.is_valid()) {
-    for (ClipboardWriteObserver& obs : write_observers_) {
-      obs.OnCopyURL(text_url, frame, main_frame);
-    }
+    write_observers_.Notify(&ClipboardWriteObserver::OnCopyURL, text_url, frame,
+                            main_frame);
   }
 }
 
@@ -388,8 +380,6 @@ base::Lock& Clipboard::ClipboardMapLock() {
 bool Clipboard::IsMarkedByOriginatorAsConfidential() const {
   return false;
 }
-
-void Clipboard::MarkAsConfidential() {}
 
 void Clipboard::ReadAvailableTypes(ClipboardBuffer buffer,
                                    const DataTransferEndpoint* data_dst,
@@ -443,12 +433,13 @@ void Clipboard::ReadRTF(ClipboardBuffer buffer,
   std::move(callback).Run(std::move(result));
 }
 
-void Clipboard::ReadCustomData(ClipboardBuffer buffer,
-                               const std::u16string& type,
-                               const DataTransferEndpoint* data_dst,
-                               ReadCustomDataCallback callback) const {
+void Clipboard::ReadDataTransferCustomData(
+    ClipboardBuffer buffer,
+    const std::u16string& type,
+    const DataTransferEndpoint* data_dst,
+    ReadDataTransferCustomDataCallback callback) const {
   std::u16string result;
-  ReadCustomData(buffer, type, data_dst, &result);
+  ReadDataTransferCustomData(buffer, type, data_dst, &result);
   std::move(callback).Run(std::move(result));
 }
 

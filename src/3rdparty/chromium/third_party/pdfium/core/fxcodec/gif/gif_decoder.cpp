@@ -23,19 +23,17 @@ GifDecoder::Status GifDecoder::ReadHeader(
     ProgressiveDecoderIface::Context* pContext,
     int* width,
     int* height,
-    int* pal_num,
-    CFX_GifPalette** pal_pp,
+    pdfium::span<CFX_GifPalette>* palette,
     int* bg_index) {
   auto* context = static_cast<CFX_GifContext*>(pContext);
   Status ret = context->ReadHeader();
-  if (ret != Status::kSuccess)
+  if (ret != Status::kSuccess) {
     return ret;
+  }
 
   *width = context->width_;
   *height = context->height_;
-  *pal_num = (2 << context->global_palette_exp_);
-  *pal_pp = context->global_palette_.empty() ? nullptr
-                                             : context->global_palette_.data();
+  *palette = context->global_palette_;
   *bg_index = context->bc_index_;
   return Status::kSuccess;
 }
@@ -45,8 +43,9 @@ std::pair<GifDecoder::Status, size_t> GifDecoder::LoadFrameInfo(
     ProgressiveDecoderIface::Context* pContext) {
   auto* context = static_cast<CFX_GifContext*>(pContext);
   Status ret = context->GetFrame();
-  if (ret != Status::kSuccess)
+  if (ret != Status::kSuccess) {
     return {ret, 0};
+  }
   return {Status::kSuccess, context->GetFrameNum()};
 }
 

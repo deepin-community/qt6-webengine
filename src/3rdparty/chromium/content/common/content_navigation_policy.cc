@@ -11,15 +11,10 @@
 #include "base/system/sys_info.h"
 #include "build/build_config.h"
 #include "content/common/features.h"
+#include "content/public/common/content_client.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "net/base/features.h"
-
-namespace features {
-BASE_FEATURE(kBackForwardCache_NoMemoryLimit_Trial,
-             "BackForwardCache_NoMemoryLimit_Trial",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-}
 
 namespace content {
 
@@ -66,13 +61,6 @@ bool IsBackForwardCacheEnabled() {
   if (!has_enough_memory) {
     // When the device does not have enough memory for BackForwardCache, return
     // false so we won't try to put things in the back/forward cache.
-    // Also, trigger the activation of the BackForwardCache_NoMemoryLimit_Trial
-    // field trial by querying the feature flag. With this, we guarantee that
-    // all devices that do not have enough memory for BackForwardCache will be
-    // included in that field trial. See case #1 in the comment for the
-    // BackForwardCache_NoMemoryLimit_Trial in the header file for more details.
-    base::FeatureList::IsEnabled(
-        features::kBackForwardCache_NoMemoryLimit_Trial);
     return false;
   }
 
@@ -86,15 +74,7 @@ bool IsBackForwardCacheEnabled() {
   // memory for BackForwardCache, and those devices only.
   if (base::FeatureList::IsEnabled(features::kBackForwardCache)) {
     // When the device does have enough memory for BackForwardCache, return
-    // true so we won't try to put things in the back/forward cache. Also,
-    // trigger the activation of the BackForwardCache_NoMemoryLimit_Trial field
-    // trial by querying the feature flag. With this, we guarantee that all
-    // devices that do have enough memory for BackForwardCache and have the
-    // BackForwardCache feature flag enabled will be included in that field
-    // trial. See case #2 in the comment for the
-    // BackForwardCache_NoMemoryLimit_Trial in the header file for more details.
-    base::FeatureList::IsEnabled(
-        features::kBackForwardCache_NoMemoryLimit_Trial);
+    // true so we won't try to put things in the back/forward cache.
     return true;
   }
   return false;
@@ -104,8 +84,6 @@ bool CanCrossSiteNavigationsProactivelySwapBrowsingInstances() {
   return IsBackForwardCacheEnabled();
 }
 
-const char kRenderDocumentLevelParameterName[] = "level";
-
 constexpr base::FeatureParam<RenderDocumentLevel>::Option
     render_document_levels[] = {
         {RenderDocumentLevel::kCrashedFrame, "crashed-frame"},
@@ -114,7 +92,12 @@ constexpr base::FeatureParam<RenderDocumentLevel>::Option
         {RenderDocumentLevel::kAllFrames, "all-frames"}};
 const base::FeatureParam<RenderDocumentLevel> render_document_level{
     &features::kRenderDocument, kRenderDocumentLevelParameterName,
-    RenderDocumentLevel::kCrashedFrame, &render_document_levels};
+#if BUILDFLAG(IS_ANDROID)
+    RenderDocumentLevel::kAllFrames,
+#else
+    RenderDocumentLevel::kSubframe,
+#endif
+    &render_document_levels};
 
 RenderDocumentLevel GetRenderDocumentLevel() {
   if (base::FeatureList::IsEnabled(features::kRenderDocument))
@@ -130,12 +113,18 @@ bool ShouldCreateNewRenderFrameHostOnSameSiteNavigation(
     bool is_main_frame,
     bool is_local_root,
     bool has_committed_any_navigation,
-    bool must_be_replaced) {
+    bool must_be_replaced,
+    bool client_overrides_level) {
   if (must_be_replaced) {
     return true;
   }
   if (!has_committed_any_navigation) {
     return false;
+  }
+  if (client_overrides_level) {
+    // If the client overrides the level, allow swapping regardless of the
+    // level.
+    return true;
   }
   RenderDocumentLevel level = GetRenderDocumentLevel();
   if (is_main_frame) {
@@ -185,15 +174,6 @@ NavigationQueueingFeatureLevel GetNavigationQueueingFeatureLevel() {
 }
 
 bool ShouldAvoidRedundantNavigationCancellations() {
-  // If the experimental early RenderFrameHost swap for history navigations is
-  // turned on, this must return true so that when the old RFH is unloaded as
-  // part of the early swap, this doesn't cancel the navigation that's still
-  // ongoing in the new RFH.
-  if (base::FeatureList::IsEnabled(
-          features::kEarlyDocumentSwapForBackForwardTransitions)) {
-    return true;
-  }
-
   return GetNavigationQueueingFeatureLevel() >=
          NavigationQueueingFeatureLevel::kAvoidRedundantCancellations;
 }
@@ -203,23 +183,13 @@ bool ShouldQueueNavigationsWhenPendingCommitRFHExists() {
          NavigationQueueingFeatureLevel::kFull;
 }
 
-bool ShouldRestrictCanAccessDataForOriginToUIThread() {
-  // Only restrict calls to the UI thread if:
-  // - the feature is enabled
-  // - the new blob URL support is enabled
-  // - ChildProcessSecurityPolicy's requested file set is checked in
-  //   CanRequestURL() rather than CanCommitURL(). This feature is required for
-  //   some tests for pass with Citadel checks.
-  return base::FeatureList::IsEnabled(
-             features::kRestrictCanAccessDataForOriginToUIThread) &&
-         base::FeatureList::IsEnabled(
-             net::features::kSupportPartitionedBlobUrl) &&
-         base::FeatureList::IsEnabled(
-             features::kRequestFileSetCheckedInCanRequestURL);
-}
-
 bool ShouldCreateSiteInstanceForDataUrls() {
   return base::FeatureList::IsEnabled(features::kSiteInstanceGroupsForDataUrls);
+}
+
+bool ShouldUseDefaultSiteInstanceGroup() {
+  return GetContentClient()->ShouldAllowDefaultSiteInstanceGroup() &&
+         base::FeatureList::IsEnabled(features::kDefaultSiteInstanceGroups);
 }
 
 }  // namespace content

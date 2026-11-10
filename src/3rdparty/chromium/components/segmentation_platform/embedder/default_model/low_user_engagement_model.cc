@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "components/segmentation_platform/embedder/default_model/low_user_engagement_model.h"
 
 #include <array>
@@ -88,12 +89,12 @@ void LowUserEngagementModel::ExecuteModelWithInput(
   // Invalid inputs.
   if (inputs.size() != 28) {
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE, base::BindOnce(std::move(callback), absl::nullopt));
+        FROM_HERE, base::BindOnce(std::move(callback), std::nullopt));
     return;
   }
 
   float result = 0;
-  bool weeks[4]{};
+  std::array<bool, 4> weeks = {};
   for (unsigned i = 0; i < 28; ++i) {
     int week_idx = i / 7;
     weeks[week_idx] = weeks[week_idx] || inputs[i];

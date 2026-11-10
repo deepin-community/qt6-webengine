@@ -27,22 +27,52 @@ def _IsEnabled(definition, enabled_features):
   if not definition.attribute_list:
     return True
 
-  already_defined = False
-  for a in definition.attribute_list:
-    if a.key == 'EnableIf' or a.key == 'EnableIfNot':
-      if already_defined:
+  has_condition = False
+  condition = None  # EnableIf or EnableIfNot
+  value = None
+  for attribute in definition.attribute_list:
+    if attribute.key.name == 'EnableIf' or attribute.key.name == 'EnableIfNot':
+      if has_condition:
         raise EnableIfError(
             definition.filename,
             "EnableIf/EnableIfNot attribute may only be set once per field.",
-            definition.lineno)
-      already_defined = True
+            definition.start.line)
+      condition = attribute.key.name
+      value = attribute.value
+      has_condition = True
 
-  for attribute in definition.attribute_list:
-    if attribute.key == 'EnableIf' and attribute.value not in enabled_features:
-      return False
-    if attribute.key == 'EnableIfNot' and attribute.value in enabled_features:
-      return False
-  return True
+  # No EnableIf/EnableIfNot to filter by, so item is defined.
+  if not has_condition:
+    return True
+
+  # Common case is to have a single attribute value so shortcut that:
+  if not isinstance(value, ast.NodeListBase):
+    if condition == 'EnableIf':
+      if value.name not in enabled_features:
+        return False
+    if condition == 'EnableIfNot':
+      if value.name in enabled_features:
+        return False
+    return True
+
+  condition_met = False
+  if isinstance(value, ast.AttributeValueOrList):
+    for item in value:
+      if item.name in enabled_features:
+        condition_met = True
+        break
+  elif isinstance(value, ast.AttributeValueAndList):
+    for item in value:
+      if item.name in enabled_features:
+        condition_met = True
+        continue
+      condition_met = False
+      break
+
+  if condition == 'EnableIf':
+    return condition_met
+
+  return not condition_met
 
 
 def _FilterDisabledFromNodeList(node_list, enabled_features):

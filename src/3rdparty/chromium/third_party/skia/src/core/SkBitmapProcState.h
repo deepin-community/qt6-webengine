@@ -16,9 +16,9 @@
 #include "include/core/SkScalar.h"
 #include "include/private/base/SkAssert.h"
 #include "include/private/base/SkCPUTypes.h"
+#include "include/private/base/SkDebug.h"
 #include "include/private/base/SkFixed.h"
 #include "src/base/SkArenaAlloc.h"
-#include "src/core/SkMatrixPriv.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -61,7 +61,6 @@ struct SkBitmapProcState {
     SkTileMode              fTileModeY;
     bool                    fBilerp;
 
-    SkMatrixPriv::MapXYProc fInvProc;           // chooseProcs
     SkFractionalInt     fInvSxFractionalInt;
     SkFractionalInt     fInvKyFractionalInt;
 
@@ -161,10 +160,10 @@ class SkBitmapProcStateAutoMapper {
 public:
     SkBitmapProcStateAutoMapper(const SkBitmapProcState& s, int x, int y,
                                 SkPoint* scalarPoint = nullptr) {
-        SkPoint pt;
-        s.fInvProc(s.fInvMatrix,
-                   SkIntToScalar(x) + SK_ScalarHalf,
-                   SkIntToScalar(y) + SK_ScalarHalf, &pt);
+        SkPoint pt = s.fInvMatrix.mapPoint({
+            SkIntToScalar(x) + SK_ScalarHalf,
+            SkIntToScalar(y) + SK_ScalarHalf,
+        });
 
         SkFixed biasX = 0, biasY = 0;
         if (s.fBilerp) {
@@ -216,6 +215,8 @@ namespace SkOpts {
     // SkBitmapProcState optimized Shader, Sample, or Matrix procs.
     extern void (*S32_alpha_D32_filter_DX)(const SkBitmapProcState&,
                                            const uint32_t* xy, int count, SkPMColor*);
+    extern void (*S32_alpha_D32_filter_DXDY)(const SkBitmapProcState&,
+                                             const uint32_t* xy, int count, SkPMColor*);
 
     void Init_BitmapProcState();
 }  // namespace SkOpts

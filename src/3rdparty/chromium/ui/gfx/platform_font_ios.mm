@@ -38,11 +38,18 @@ std::string GetFamilyNameFromTypeface(sk_sp<SkTypeface> typeface) {
 // PlatformFontIOS, public:
 
 PlatformFontIOS::PlatformFontIOS() {
+#if BUILDFLAG(IS_IOS_TVOS)
+  // TODO(https://crbug.com/404394287): Need to determine the appropriate
+  // default font size for tvOS.
+  UIFont* system_font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+  font_size_ = static_cast<int>(system_font.pointSize);
+#else
   font_size_ = UIFont.systemFontSize;
+  UIFont* system_font = [UIFont systemFontOfSize:font_size_];
+#endif
+  font_name_ = base::SysNSStringToUTF8(system_font.fontName);
   style_ = Font::NORMAL;
   weight_ = Font::Weight::NORMAL;
-  UIFont* system_font = [UIFont systemFontOfSize:font_size_];
-  font_name_ = base::SysNSStringToUTF8(system_font.fontName);
   CalculateMetrics();
 }
 
@@ -62,7 +69,7 @@ PlatformFontIOS::PlatformFontIOS(const std::string& font_name, int font_size) {
 PlatformFontIOS::PlatformFontIOS(
     sk_sp<SkTypeface> typeface,
     int font_size_pixels,
-    const absl::optional<FontRenderParams>& params) {
+    const std::optional<FontRenderParams>& params) {
   InitWithNameSizeAndStyle(GetFamilyNameFromTypeface(typeface),
                            font_size_pixels,
                            (typeface->isItalic() ? Font::ITALIC : Font::NORMAL),
@@ -214,7 +221,7 @@ PlatformFont* PlatformFont::CreateFromNameAndSize(const std::string& font_name,
 PlatformFont* PlatformFont::CreateFromSkTypeface(
     sk_sp<SkTypeface> typeface,
     int font_size_pixels,
-    const absl::optional<FontRenderParams>& params) {
+    const std::optional<FontRenderParams>& params) {
   return new PlatformFontIOS(typeface, font_size_pixels, params);
 }
 

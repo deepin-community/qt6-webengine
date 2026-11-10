@@ -8,7 +8,6 @@
 #include "third_party/blink/renderer/core/layout/length_utils.h"
 #include "third_party/blink/renderer/core/layout/logical_box_fragment.h"
 #include "third_party/blink/renderer/core/layout/mathml/math_layout_utils.h"
-#include "third_party/blink/renderer/core/layout/out_of_flow_layout_part.h"
 #include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/stretchy_operator_shaper.h"
 
@@ -17,8 +16,8 @@ namespace blink {
 namespace {
 
 bool HasBaseGlyphForRadical(const ComputedStyle& style) {
-  const SimpleFontData* font_data = style.GetFont().PrimaryFont();
-  return font_data && font_data->GlyphForCharacter(kSquareRootCharacter);
+  const SimpleFontData* font_data = style.GetFont()->PrimaryFont();
+  return font_data && font_data->GlyphForCharacter(uchar::kSquareRoot);
 }
 
 }  // namespace
@@ -122,22 +121,22 @@ const LayoutResult* MathRadicalLayoutAlgorithm::Layout() {
   StretchyOperatorShaper::Metrics surd_metrics;
   if (HasBaseGlyphForRadical(Style())) {
     // Stretch the radical operator to cover the base height.
-    StretchyOperatorShaper shaper(kSquareRootCharacter,
-                                  OpenTypeMathStretchData::Vertical);
+    StretchyOperatorShaper shaper(uchar::kSquareRoot,
+                                  OpenTypeMathStretchData::Vertical,
+                                  GetConstraintSpace().Direction());
     float target_size = base_ascent + base_descent + vertical.vertical_gap +
                         vertical.rule_thickness;
-    scoped_refptr<ShapeResult> shape_result =
-        shaper.Shape(&Style().GetFont(), target_size, &surd_metrics);
+    const ShapeResult* shape_result =
+        shaper.Shape(Style().GetFont(), target_size, &surd_metrics);
     const ShapeResultView* shape_result_view =
-        ShapeResultView::Create(shape_result.get());
+        ShapeResultView::Create(shape_result);
     LayoutUnit operator_inline_offset = index_inline_size +
                                         horizontal.kern_before_degree +
                                         horizontal.kern_after_degree;
     container_builder_.SetMathMLPaintInfo(MakeGarbageCollected<MathMLPaintInfo>(
-        kSquareRootCharacter, shape_result_view,
-        LayoutUnit(surd_metrics.advance), LayoutUnit(surd_metrics.ascent),
-        LayoutUnit(surd_metrics.descent), base_margins,
-        operator_inline_offset));
+        uchar::kSquareRoot, shape_result_view, LayoutUnit(surd_metrics.advance),
+        LayoutUnit(surd_metrics.ascent), LayoutUnit(surd_metrics.descent),
+        base_margins, operator_inline_offset));
   }
 
   // Determine the metrics of the radical operator + the base.
@@ -185,13 +184,13 @@ const LayoutResult* MathRadicalLayoutAlgorithm::Layout() {
 
   auto total_block_size = ascent + descent + BorderScrollbarPadding().block_end;
   LayoutUnit block_size = ComputeBlockSizeForFragment(
-      GetConstraintSpace(), Style(), BorderPadding(), total_block_size,
+      GetConstraintSpace(), Node(), BorderPadding(), total_block_size,
       container_builder_.InitialBorderBoxSize().inline_size);
 
   container_builder_.SetIntrinsicBlockSize(total_block_size);
   container_builder_.SetFragmentsTotalBlockSize(block_size);
 
-  OutOfFlowLayoutPart(Node(), GetConstraintSpace(), &container_builder_).Run();
+  container_builder_.HandleOofsAndSpecialDescendants();
 
   return container_builder_.ToBoxFragment();
 }
@@ -223,8 +222,8 @@ MinMaxSizesResult MathRadicalLayoutAlgorithm::ComputeMinMaxSizes(
         std::max(-index_result.sizes.max_size, horizontal.kern_after_degree);
   }
   if (HasBaseGlyphForRadical(Style())) {
-    sizes += GetMinMaxSizesForVerticalStretchyOperator(Style(),
-                                                       kSquareRootCharacter);
+    sizes += GetMinMaxSizesForVerticalStretchyOperator(
+        Style(), uchar::kSquareRoot, GetConstraintSpace().Direction());
   }
   if (base) {
     const auto base_result = ComputeMinAndMaxContentContributionForMathChild(

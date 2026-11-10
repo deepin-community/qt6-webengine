@@ -110,7 +110,7 @@ bool ShortcutUpdate::ShortcutSourceChanged() const {
                                       ShortcutSource::kUnknown);
 }
 
-absl::optional<apps::IconKey> ShortcutUpdate::IconKey() const {
+std::optional<apps::IconKey> ShortcutUpdate::IconKey() const {
   return MergeIconKey(
       state_ && state_->icon_key.has_value() ? &state_->icon_key.value()
                                              : nullptr,
@@ -129,8 +129,8 @@ bool ShortcutUpdate::IconKeyChanged() const {
                       &(delta_->icon_key.value())) != state_->icon_key;
 }
 
-absl::optional<bool> ShortcutUpdate::AllowRemoval() const {
-  GET_VALUE_WITH_FALLBACK(allow_removal, absl::nullopt)
+std::optional<bool> ShortcutUpdate::AllowRemoval() const {
+  GET_VALUE_WITH_FALLBACK(allow_removal, std::nullopt)
 }
 
 bool ShortcutUpdate::AllowRemovalChanged() const {
@@ -149,8 +149,7 @@ std::ostream& operator<<(std::ostream& out,
   out << "HostAppId: " << shortcut_update.HostAppId() << std::endl;
   out << "LocalId: " << shortcut_update.LocalId() << std::endl;
   out << "Name: " << shortcut_update.Name() << std::endl;
-  out << "ShortcutSource: " << EnumToString(shortcut_update.ShortcutSource())
-      << std::endl;
+  out << "ShortcutSource: " << shortcut_update.ShortcutSource() << std::endl;
   out << "AllowRemoval: " << PRINT_OPTIONAL_BOOL(shortcut_update.AllowRemoval())
       << std::endl;
   return out;

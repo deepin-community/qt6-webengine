@@ -16,28 +16,29 @@
 #define FUZZTEST_FUZZTEST_INTERNAL_DOMAINS_FILTER_IMPL_H_
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 
 #include "absl/random/bit_gen_ref.h"
+#include "absl/status/status.h"
 #include "absl/strings/str_format.h"
+#include "./fuzztest/internal/domains/domain.h"
 #include "./fuzztest/internal/domains/domain_base.h"
 #include "./fuzztest/internal/logging.h"
 #include "./fuzztest/internal/serialization.h"
-#include "./fuzztest/internal/status.h"
-#include "./fuzztest/internal/type_support.h"
 
 namespace fuzztest::internal {
 
-template <typename Pred, typename Inner>
+template <typename T>
 class FilterImpl
-    : public DomainBase<FilterImpl<Pred, Inner>, value_type_t<Inner>,
-                        corpus_type_t<Inner>> {
+    : public domain_implementor::DomainBase<FilterImpl<T>, T,
+                                            GenericDomainCorpusType> {
  public:
   using typename FilterImpl::DomainBase::corpus_type;
   using typename FilterImpl::DomainBase::value_type;
 
   FilterImpl() = default;
-  explicit FilterImpl(Pred predicate, Inner inner)
+  explicit FilterImpl(std::function<bool(const T&)> predicate, Domain<T> inner)
       : predicate_(std::move(predicate)), inner_(std::move(inner)) {}
 
   corpus_type Init(absl::BitGenRef prng) {
@@ -48,10 +49,12 @@ class FilterImpl
     }
   }
 
-  void Mutate(corpus_type& val, absl::BitGenRef prng, bool only_shrink) {
+  void Mutate(corpus_type& val, absl::BitGenRef prng,
+              const domain_implementor::MutationMetadata& metadata,
+              bool only_shrink) {
     corpus_type original_val = val;
     while (true) {
-      inner_.Mutate(val, prng, only_shrink);
+      inner_.Mutate(val, prng, metadata, only_shrink);
       if (RunFilter(val)) return;
       val = original_val;
     }
@@ -75,6 +78,12 @@ class FilterImpl
   }
 
   absl::Status ValidateCorpusValue(const corpus_type& corpus_value) const {
+    if (const auto inner_validate_status =
+            inner_.ValidateCorpusValue(corpus_value);
+        !inner_validate_status.ok()) {
+      return Prefix(inner_validate_status,
+                    "Invalid corpus value for the inner domain in Filter()");
+    }
     if (predicate_(GetValue(corpus_value))) return absl::OkStatus();
     return absl::InvalidArgumentError(
         "Value does not match Filter() predicate.");
@@ -86,8 +95,10 @@ class FilterImpl
     bool res = predicate_(GetValue(v));
     if (!res) {
       ++num_skips_;
-      if (num_skips_ > 100 && num_skips_ > .9 * num_values_) {
-        AbortInTest(absl::StrFormat(R"(
+      FUZZTEST_INTERNAL_CHECK_PRECONDITION(
+          num_skips_ <= 100 || static_cast<double>(num_skips_) <=
+                                   .9 * static_cast<double>(num_values_),
+          absl::StrFormat(R"(
 
 [!] Ineffective use of Filter() detected!
 
@@ -98,14 +109,13 @@ Please use Filter() only to skip unlikely values. To filter out a significant
 chunk of the input domain, consider defining a custom domain by construction.
 See more details in the User Guide.
 )",
-                                    num_skips_, num_values_));
-      }
+                          num_skips_, num_values_));
     }
     return res;
   }
 
-  Pred predicate_;
-  Inner inner_;
+  std::function<bool(const T&)> predicate_;
+  Domain<T> inner_;
   uint64_t num_values_ = 0;
   uint64_t num_skips_ = 0;
 };

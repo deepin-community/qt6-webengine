@@ -5,6 +5,7 @@
 #include "content/browser/aggregation_service/aggregation_service_impl.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -16,6 +17,7 @@
 #include "base/metrics/histogram_base.h"
 #include "base/run_loop.h"
 #include "base/scoped_observation.h"
+#include "base/strings/string_util.h"
 #include "base/test/bind.h"
 #include "base/test/gmock_callback_support.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -57,14 +59,21 @@ auto InvokeCallback(std::optional<AggregatableReport> report,
 }
 
 AggregatableReport CreateExampleAggregatableReport() {
-  std::vector<AggregatableReport::AggregationServicePayload> payloads;
-  payloads.emplace_back(/*payload=*/kABCD1234AsBytes,
-                        /*key_id=*/"key_1",
-                        /*debug_cleartext_payload=*/std::nullopt);
-  return AggregatableReport(std::move(payloads), "example_shared_info",
+  return AggregatableReport(AggregatableReport::AggregationServicePayload(
+                                /*payload=*/kABCD1234AsBytes,
+                                /*key_id=*/"key_1",
+                                /*debug_cleartext_payload=*/std::nullopt),
+                            "example_shared_info",
                             /*debug_key=*/std::nullopt,
                             /*additional_fields=*/{},
                             /*aggregation_coordinator_origin=*/std::nullopt);
+}
+
+AggregatableReportRequest CreateExampleRequestWithDelayType(
+    AggregatableReportRequest::DelayType delay_type) {
+  return aggregation_service::CreateExampleRequest(
+      /*failed_send_attempts=*/0,
+      /*aggregation_coordinator_origin=*/std::nullopt, delay_type);
 }
 
 }  // namespace
@@ -93,8 +102,9 @@ class MockAggregatableReportSender : public AggregatableReportSender {
 
   MOCK_METHOD(void,
               SendReport,
-              (const GURL& url,
+              (GURL url,
                const base::Value& contents,
+               std::optional<AggregatableReportRequest::DelayType> delay_type,
                ReportSentCallback callback),
               (override));
 };
@@ -193,17 +203,33 @@ class AggregationServiceImplTest : public testing::Test {
   //                histogram.
   void VerifyScheduledHistograms(
       std::vector<base::Bucket> statuses = {},
-      base::HistogramBase::Count num_successful_sends = 0,
-      base::HistogramBase::Count num_assemblies = 0,
-      base::HistogramBase::Count num_attempted_sends = 0) {
+      base::HistogramBase::Count32 num_successful_sends = 0,
+      base::HistogramBase::Count32 num_assemblies = 0,
+      base::HistogramBase::Count32 num_attempted_sends = 0,
+      bool scheduled_with_full_delay = true) {
     EXPECT_THAT(
         histogram_tester_.GetAllSamples(
             "PrivacySandbox.AggregationService.ScheduledRequests.Status"),
         base::BucketsAreArray(statuses));
+    EXPECT_THAT(histogram_tester_.GetAllSamples(base::JoinString(
+                    {"PrivacySandbox.AggregationService",
+                     scheduled_with_full_delay ? "ScheduledWithFullDelay"
+                                               : "ScheduledWithReducedDelay",
+                     "FinalRequestStatus"},
+                    ".")),
+                base::BucketsAreArray(statuses));
 
     histogram_tester_.ExpectTotalCount(
         "PrivacySandbox.AggregationService.ScheduledRequests."
         "NumRetriesBeforeSuccess",
+        num_successful_sends);
+    histogram_tester_.ExpectTotalCount(
+        base::JoinString(
+            {"PrivacySandbox.AggregationService",
+             scheduled_with_full_delay ? "ScheduledWithFullDelay"
+                                       : "ScheduledWithReducedDelay",
+             "NumRetriesBeforeSuccess"},
+            "."),
         num_successful_sends);
 
     histogram_tester_.ExpectTotalCount(
@@ -231,11 +257,15 @@ class AggregationServiceImplTest : public testing::Test {
   //                histogram.
   void VerifyUnscheduledHistograms(
       std::vector<base::Bucket> statuses = {},
-      base::HistogramBase::Count num_assemblies = 0,
-      base::HistogramBase::Count num_attempted_sends = 0) {
+      base::HistogramBase::Count32 num_assemblies = 0,
+      base::HistogramBase::Count32 num_attempted_sends = 0) {
     EXPECT_THAT(
         histogram_tester_.GetAllSamples(
             "PrivacySandbox.AggregationService.UnscheduledRequests.Status"),
+        base::BucketsAreArray(statuses));
+    EXPECT_THAT(
+        histogram_tester_.GetAllSamples(
+            "PrivacySandbox.AggregationService.Unscheduled.FinalRequestStatus"),
         base::BucketsAreArray(statuses));
 
     histogram_tester_.ExpectTotalCount(
@@ -316,25 +346,6 @@ TEST_F(AggregationServiceImplTest, AssembleReport_Fail) {
   VerifyUnscheduledHistograms();
 }
 
-TEST_F(AggregationServiceImplTest, SendReport) {
-  EXPECT_CALL(*test_sender_, SendReport)
-      .WillOnce(base::test::RunOnceCallback<2>(
-          AggregatableReportSender::RequestStatus::kOk));
-
-  base::RunLoop run_loop;
-  service_impl_->SendReport(
-      GURL("https://example.com/reports"), CreateExampleAggregatableReport(),
-      base::BindLambdaForTesting([&](AggregationService::SendStatus status) {
-        EXPECT_EQ(status, AggregationService::SendStatus::kOk);
-        run_loop.Quit();
-      }));
-
-  run_loop.Run();
-
-  VerifyScheduledHistograms();
-  VerifyUnscheduledHistograms();
-}
-
 TEST_F(AggregationServiceImplTest, ScheduleReport_Success) {
   std::vector<AggregationServiceStorage::RequestAndId> requests_and_ids;
 
@@ -356,7 +367,7 @@ TEST_F(AggregationServiceImplTest, ScheduleReport_Success) {
           InvokeCallback(CreateExampleAggregatableReport(),
                          AggregatableReportAssembler::AssemblyStatus::kOk));
   EXPECT_CALL(*test_sender_, SendReport)
-      .WillOnce(base::test::RunOnceCallback<2>(
+      .WillOnce(base::test::RunOnceCallback<3>(
           AggregatableReportSender::RequestStatus::kOk));
   EXPECT_CALL(*test_scheduler_, NotifyInProgressRequestSucceeded(request_id));
 
@@ -372,6 +383,57 @@ TEST_F(AggregationServiceImplTest, ScheduleReport_Success) {
 
   histogram_tester_.ExpectUniqueSample(
       "PrivacySandbox.AggregationService.ScheduledRequests."
+      "NumRetriesBeforeSuccess",
+      /*sample=*/0, 1);
+  histogram_tester_.ExpectUniqueSample(
+      "PrivacySandbox.AggregationService.ScheduledWithFullDelay."
+      "NumRetriesBeforeSuccess",
+      /*sample=*/0, 1);
+}
+
+TEST_F(AggregationServiceImplTest, ScheduleReport_Success_ReducedDelay) {
+  std::vector<AggregationServiceStorage::RequestAndId> requests_and_ids;
+
+  // Request IDs begin at 1.
+  AggregationServiceStorage::RequestId request_id(1);
+
+  EXPECT_CALL(*test_scheduler_, ScheduleRequest)
+      .WillOnce([&](AggregatableReportRequest request) {
+        requests_and_ids.push_back(AggregationServiceStorage::RequestAndId{
+            .request = std::move(request),
+            .id = request_id,
+        });
+      });
+
+  service_impl_->ScheduleReport(CreateExampleRequestWithDelayType(
+      AggregatableReportRequest::DelayType::ScheduledWithReducedDelay));
+
+  EXPECT_CALL(*test_assembler_, AssembleReport)
+      .WillOnce(
+          InvokeCallback(CreateExampleAggregatableReport(),
+                         AggregatableReportAssembler::AssemblyStatus::kOk));
+  EXPECT_CALL(*test_sender_, SendReport)
+      .WillOnce(base::test::RunOnceCallback<3>(
+          AggregatableReportSender::RequestStatus::kOk));
+  EXPECT_CALL(*test_scheduler_, NotifyInProgressRequestSucceeded(request_id));
+
+  EXPECT_THAT(requests_and_ids, SizeIs(1));
+  OnScheduledReportTimeReached(std::move(requests_and_ids));
+
+  VerifyScheduledHistograms(
+      /*statuses=*/{{AggregationServiceObserver::ReportStatus::kSent, 1}},
+      /*num_successful_sends=*/1,
+      /*num_assemblies=*/1,
+      /*num_attempted_sends=*/1,
+      /*scheduled_with_full_delay=*/false);
+  VerifyUnscheduledHistograms();
+
+  histogram_tester_.ExpectUniqueSample(
+      "PrivacySandbox.AggregationService.ScheduledRequests."
+      "NumRetriesBeforeSuccess",
+      /*sample=*/0, 1);
+  histogram_tester_.ExpectUniqueSample(
+      "PrivacySandbox.AggregationService.ScheduledWithReducedDelay."
       "NumRetriesBeforeSuccess",
       /*sample=*/0, 1);
 }
@@ -391,7 +453,6 @@ TEST_F(AggregationServiceImplTest, ScheduleReport_FailedAssembly) {
       });
 
   AggregatableReportRequest request = aggregation_service::CreateExampleRequest(
-      /*aggregation_mode=*/blink::mojom::AggregationServiceMode::kDefault,
       /*failed_send_attempts=*/AggregatableReportScheduler::kMaxRetries);
 
   service_impl_->ScheduleReport(std::move(request));
@@ -429,6 +490,61 @@ TEST_F(AggregationServiceImplTest, ScheduleReport_FailedAssembly) {
   VerifyUnscheduledHistograms();
 }
 
+TEST_F(AggregationServiceImplTest, ScheduleReport_Failure_ReducedDelay) {
+  std::vector<AggregationServiceStorage::RequestAndId> requests_and_ids;
+
+  // Request IDs begin at 1.
+  AggregationServiceStorage::RequestId request_id(1);
+
+  EXPECT_CALL(*test_scheduler_, ScheduleRequest)
+      .WillOnce([&](AggregatableReportRequest request) {
+        requests_and_ids.push_back(AggregationServiceStorage::RequestAndId{
+            .request = std::move(request),
+            .id = request_id,
+        });
+      });
+
+  AggregatableReportRequest request = aggregation_service::CreateExampleRequest(
+      /*failed_send_attempts=*/AggregatableReportScheduler::kMaxRetries,
+      /*aggregation_coordinator_origin=*/std::nullopt, /*delay_type=*/
+      AggregatableReportRequest::DelayType::ScheduledWithReducedDelay);
+
+  service_impl_->ScheduleReport(std::move(request));
+
+  EXPECT_CALL(*test_assembler_, AssembleReport)
+      .WillOnce(InvokeCallback(
+          /*report=*/std::nullopt,
+          AggregatableReportAssembler::AssemblyStatus::kAssemblyFailed));
+  EXPECT_CALL(*test_scheduler_,
+              NotifyInProgressRequestFailed(
+                  request_id, AggregatableReportScheduler::kMaxRetries))
+      .WillOnce(::testing::Return(false));
+
+  StrictMock<MockAggregationServiceObserver> observer;
+  base::ScopedObservation<AggregationService, AggregationServiceObserver>
+      observation(&observer);
+  observation.Observe(service_impl_.get());
+
+  EXPECT_CALL(observer, OnRequestStorageModified);
+  EXPECT_CALL(observer,
+              OnReportHandled(
+                  _, Optional(request_id), _, _,
+                  AggregationServiceObserver::ReportStatus::kFailedToAssemble));
+
+  EXPECT_THAT(requests_and_ids, SizeIs(1));
+  OnScheduledReportTimeReached(std::move(requests_and_ids));
+
+  VerifyScheduledHistograms(
+      /*statuses=*/{{AggregationServiceObserver::ReportStatus::
+                         kFailedToAssemble,
+                     1}},
+      /*num_successful_sends=*/0,
+      /*num_assemblies=*/1,
+      /*num_attempted_sends=*/0,
+      /*scheduled_with_full_delay=*/false);
+  VerifyUnscheduledHistograms();
+}
+
 TEST_F(AggregationServiceImplTest, ScheduleReport_FailedSending) {
   std::vector<AggregationServiceStorage::RequestAndId> requests_and_ids;
 
@@ -450,7 +566,7 @@ TEST_F(AggregationServiceImplTest, ScheduleReport_FailedSending) {
           InvokeCallback(CreateExampleAggregatableReport(),
                          AggregatableReportAssembler::AssemblyStatus::kOk));
   EXPECT_CALL(*test_sender_, SendReport)
-      .WillOnce(base::test::RunOnceCallback<2>(
+      .WillOnce(base::test::RunOnceCallback<3>(
           AggregatableReportSender::RequestStatus::kNetworkError));
   EXPECT_CALL(*test_scheduler_, NotifyInProgressRequestFailed(
                                     request_id, /*previous_failed_attempts=*/0))
@@ -503,7 +619,6 @@ TEST_F(AggregationServiceImplTest,
       aggregation_service::CreateExampleRequest();
   AggregatableReportRequest request_2 =
       aggregation_service::CreateExampleRequest(
-          /*aggregation_mode=*/blink::mojom::AggregationServiceMode::kDefault,
           /*failed_send_attempts=*/2);
 
   service_impl_->ScheduleReport(std::move(request_1));
@@ -514,7 +629,7 @@ TEST_F(AggregationServiceImplTest,
           InvokeCallback(CreateExampleAggregatableReport(),
                          AggregatableReportAssembler::AssemblyStatus::kOk));
   EXPECT_CALL(*test_sender_, SendReport)
-      .WillRepeatedly(base::test::RunOnceCallbackRepeatedly<2>(
+      .WillRepeatedly(base::test::RunOnceCallbackRepeatedly<3>(
           AggregatableReportSender::RequestStatus::kOk));
 
   EXPECT_CALL(*test_scheduler_, NotifyInProgressRequestSucceeded(request_id_1));
@@ -547,7 +662,7 @@ TEST_F(AggregationServiceImplTest, AssembleAndSendReport_Success) {
                          AggregatableReportAssembler::AssemblyStatus::kOk));
 
   EXPECT_CALL(*test_sender_, SendReport)
-      .WillOnce(base::test::RunOnceCallback<2>(
+      .WillOnce(base::test::RunOnceCallback<3>(
           AggregatableReportSender::RequestStatus::kOk));
 
   StrictMock<MockAggregationServiceObserver> observer;
@@ -563,8 +678,8 @@ TEST_F(AggregationServiceImplTest, AssembleAndSendReport_Success) {
   EXPECT_CALL(*test_scheduler_, NotifyInProgressRequestSucceeded).Times(0);
   EXPECT_CALL(*test_scheduler_, NotifyInProgressRequestFailed).Times(0);
 
-  service_impl_->AssembleAndSendReport(
-      aggregation_service::CreateExampleRequest());
+  service_impl_->AssembleAndSendReport(CreateExampleRequestWithDelayType(
+      AggregatableReportRequest::DelayType::Unscheduled));
 
   VerifyScheduledHistograms();
   VerifyUnscheduledHistograms(
@@ -594,8 +709,8 @@ TEST_F(AggregationServiceImplTest, AssembleAndSendReport_FailedAssembly) {
   EXPECT_CALL(*test_scheduler_, NotifyInProgressRequestSucceeded).Times(0);
   EXPECT_CALL(*test_scheduler_, NotifyInProgressRequestFailed).Times(0);
 
-  service_impl_->AssembleAndSendReport(
-      aggregation_service::CreateExampleRequest());
+  service_impl_->AssembleAndSendReport(CreateExampleRequestWithDelayType(
+      AggregatableReportRequest::DelayType::Unscheduled));
 
   VerifyScheduledHistograms();
   VerifyUnscheduledHistograms(
@@ -612,7 +727,7 @@ TEST_F(AggregationServiceImplTest, AssembleAndSendReport_FailedSender) {
                          AggregatableReportAssembler::AssemblyStatus::kOk));
 
   EXPECT_CALL(*test_sender_, SendReport)
-      .WillOnce(base::test::RunOnceCallback<2>(
+      .WillOnce(base::test::RunOnceCallback<3>(
           AggregatableReportSender::RequestStatus::kNetworkError));
 
   StrictMock<MockAggregationServiceObserver> observer;
@@ -629,8 +744,8 @@ TEST_F(AggregationServiceImplTest, AssembleAndSendReport_FailedSender) {
   EXPECT_CALL(*test_scheduler_, NotifyInProgressRequestSucceeded).Times(0);
   EXPECT_CALL(*test_scheduler_, NotifyInProgressRequestFailed).Times(0);
 
-  service_impl_->AssembleAndSendReport(
-      aggregation_service::CreateExampleRequest());
+  service_impl_->AssembleAndSendReport(CreateExampleRequestWithDelayType(
+      AggregatableReportRequest::DelayType::Unscheduled));
 
   VerifyScheduledHistograms();
   VerifyUnscheduledHistograms(
@@ -641,8 +756,10 @@ TEST_F(AggregationServiceImplTest, AssembleAndSendReport_FailedSender) {
 }
 
 TEST_F(AggregationServiceImplTest, GetPendingReportRequestsForWebUI) {
-  StoreReport(aggregation_service::CreateExampleRequest());
-  StoreReport(aggregation_service::CreateExampleRequest());
+  StoreReport(CreateExampleRequestWithDelayType(
+      AggregatableReportRequest::DelayType::ScheduledWithFullDelay));
+  StoreReport(CreateExampleRequestWithDelayType(
+      AggregatableReportRequest::DelayType::ScheduledWithFullDelay));
 
   base::RunLoop run_loop;
   service_impl_->GetPendingReportRequestsForWebUI(base::BindLambdaForTesting(
@@ -659,7 +776,8 @@ TEST_F(AggregationServiceImplTest, GetPendingReportRequestsForWebUI) {
 }
 
 TEST_F(AggregationServiceImplTest, SendReportsForWebUI) {
-  StoreReport(aggregation_service::CreateExampleRequest());
+  StoreReport(CreateExampleRequestWithDelayType(
+      AggregatableReportRequest::DelayType::ScheduledWithFullDelay));
 
   EXPECT_CALL(*test_assembler_, AssembleReport)
       .WillOnce(
@@ -670,7 +788,7 @@ TEST_F(AggregationServiceImplTest, SendReportsForWebUI) {
   EXPECT_CALL(*test_sender_, SendReport)
       .WillOnce(
           testing::DoAll(base::test::RunOnceClosure(run_loop.QuitClosure()),
-                         base::test::RunOnceCallback<2>(
+                         base::test::RunOnceCallback<3>(
                              AggregatableReportSender::RequestStatus::kOk)));
 
   // IDs autoincrement from 1.

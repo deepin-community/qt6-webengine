@@ -23,6 +23,7 @@
 #include "config.h"
 #include "videotoolbox.h"
 #include "libavutil/hwcontext_videotoolbox.h"
+#include "libavutil/mem.h"
 #include "vt_internal.h"
 #include "libavutil/avassert.h"
 #include "libavutil/avutil.h"
@@ -103,6 +104,7 @@ CFDataRef ff_videotoolbox_vpcc_extradata_create(AVCodecContext *avctx)
 }
 
 static int videotoolbox_vp9_start_frame(AVCodecContext *avctx,
+                                        const AVBufferRef *buffer_ref,
                                         const uint8_t *buffer,
                                         uint32_t size)
 {

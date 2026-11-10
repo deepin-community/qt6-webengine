@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-vsigmoid/neon-lut2048-p1.c.in
 //   Generator: tools/xngen
@@ -7,34 +8,44 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/vunary.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vunary.h"
 
 
-extern XNN_INTERNAL const float xnn_table_exp2minus_k_over_2048[2048];
+extern XNN_INTERNAL const uint32_t xnn_table_exp2minus_k_over_2048[2048];
 
 void xnn_f32_vsigmoid_ukernel__neonfma_rr1_lut2048_p1_nr2recps_u4(
     size_t batch,
     const float* input,
     float* output,
-    const union xnn_f32_sigmoid_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f32_default_params* restrict params) XNN_OOB_READS
 {
   assert(batch != 0);
   assert(batch % sizeof(float) == 0);
   assert(input != NULL);
   assert(output != NULL);
 
-  const float32x4_t vmagic_bias = vld1q_dup_f32(&params->neonfma_rr1_lut2048_p1.magic_bias);
-  const float32x4_t vminus_log2e = vld1q_dup_f32(&params->neonfma_rr1_lut2048_p1.minus_log2e);
+  const float32x4_t vmagic_bias = vmovq_n_f32(0x1.800000p12f);
+  const float32x4_t vminus_log2e = vmovq_n_f32(-0x1.715476p0f);
   const int32x4_t vindex_mask = vmovq_n_s32(INT32_C(0x7FF));
-  const float32x4_t vln2 = vld1q_dup_f32(&params->neonfma_rr1_lut2048_p1.ln2);
-  const float32x4_t vc1 = vld1q_dup_f32(&params->neonfma_rr1_lut2048_p1.c1);
+  const float32x4_t vc1 = vmovq_n_f32(-0x1.FFFFFEp-1f);
   const float32x4_t vone = vmovq_n_f32(1.0f);
-  const float32x4_t vdenorm_cutoff = vld1q_dup_f32(&params->neonfma_rr1_lut2048_p1.denorm_cutoff);
+  const float32x4_t vdenorm_cutoff = vmovq_n_f32(0x1.5D589Ep+6f);
+  XNN_FORCE_REALIZATION(vmagic_bias);
+  XNN_FORCE_REALIZATION(vminus_log2e);
+  // XNN_FORCE_REALIZATION(vindex_mask);
+  XNN_FORCE_REALIZATION(vc1);
+  // XNN_FORCE_REALIZATION(vone);
+  XNN_FORCE_REALIZATION(vdenorm_cutoff);
+
+  const float32x4_t vln2 = vmovq_n_f32(0x1.62E430p-1f);
+  XNN_FORCE_REALIZATION(vln2);
 
   for (; batch >= 4 * sizeof(float); batch -= 4 * sizeof(float)) {
     const float32x4_t vx = vld1q_f32(input); input += 4;
@@ -47,10 +58,10 @@ void xnn_f32_vsigmoid_ukernel__neonfma_rr1_lut2048_p1_nr2recps_u4(
     const uint64x2_t vidx = vreinterpretq_u64_s32(vandq_s32(vreinterpretq_s32_f32(vn), vindex_mask));
     const uint64_t vidx_lo = vgetq_lane_u64(vidx, 0);
     const uint64_t vidx_hi = vgetq_lane_u64(vidx, 1);
-    float32x2_t vl_lo = vld1_dup_f32(&xnn_table_exp2minus_k_over_2048[(uint32_t) vidx_lo]);
-    float32x2_t vl_hi = vld1_dup_f32(&xnn_table_exp2minus_k_over_2048[(uint32_t) vidx_hi]);
-    vl_lo = vld1_lane_f32(&xnn_table_exp2minus_k_over_2048[(uint32_t) (vidx_lo >> 32)], vl_lo, 1);
-    vl_hi = vld1_lane_f32(&xnn_table_exp2minus_k_over_2048[(uint32_t) (vidx_hi >> 32)], vl_hi, 1);
+    float32x2_t vl_lo = vld1_dup_f32((const float*) &xnn_table_exp2minus_k_over_2048[(uint32_t) vidx_lo]);
+    float32x2_t vl_hi = vld1_dup_f32((const float*) &xnn_table_exp2minus_k_over_2048[(uint32_t) vidx_hi]);
+    vl_lo = vld1_lane_f32((const float*) &xnn_table_exp2minus_k_over_2048[(uint32_t) (vidx_lo >> 32)], vl_lo, 1);
+    vl_hi = vld1_lane_f32((const float*) &xnn_table_exp2minus_k_over_2048[(uint32_t) (vidx_hi >> 32)], vl_hi, 1);
     const float32x4_t vl = vcombine_f32(vl_lo, vl_hi);
 
     const float32x4_t vs = vreinterpretq_f32_s32(vaddq_s32(vreinterpretq_s32_f32(vl), ve));
@@ -84,10 +95,10 @@ void xnn_f32_vsigmoid_ukernel__neonfma_rr1_lut2048_p1_nr2recps_u4(
     const uint64x2_t vidx = vreinterpretq_u64_s32(vandq_s32(vreinterpretq_s32_f32(vn), vindex_mask));
     const uint64_t vidx_lo = vgetq_lane_u64(vidx, 0);
     const uint64_t vidx_hi = vgetq_lane_u64(vidx, 1);
-    float32x2_t vl_lo = vld1_dup_f32(&xnn_table_exp2minus_k_over_2048[(uint32_t) vidx_lo]);
-    float32x2_t vl_hi = vld1_dup_f32(&xnn_table_exp2minus_k_over_2048[(uint32_t) vidx_hi]);
-    vl_lo = vld1_lane_f32(&xnn_table_exp2minus_k_over_2048[(uint32_t) (vidx_lo >> 32)], vl_lo, 1);
-    vl_hi = vld1_lane_f32(&xnn_table_exp2minus_k_over_2048[(uint32_t) (vidx_hi >> 32)], vl_hi, 1);
+    float32x2_t vl_lo = vld1_dup_f32((const float*) &xnn_table_exp2minus_k_over_2048[(uint32_t) vidx_lo]);
+    float32x2_t vl_hi = vld1_dup_f32((const float*) &xnn_table_exp2minus_k_over_2048[(uint32_t) vidx_hi]);
+    vl_lo = vld1_lane_f32((const float*) &xnn_table_exp2minus_k_over_2048[(uint32_t) (vidx_lo >> 32)], vl_lo, 1);
+    vl_hi = vld1_lane_f32((const float*) &xnn_table_exp2minus_k_over_2048[(uint32_t) (vidx_hi >> 32)], vl_hi, 1);
     const float32x4_t vl = vcombine_f32(vl_lo, vl_hi);
 
     const float32x4_t vs = vreinterpretq_f32_s32(vaddq_s32(vreinterpretq_s32_f32(vl), ve));

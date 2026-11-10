@@ -13,25 +13,30 @@
 #include "base/memory/ptr_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "chrome/common/google_url_loader_throttle.h"
+#include "chrome/common/request_header_integrity/buildflags.h"
 #include "chrome/renderer/chrome_content_renderer_client.h"
 #include "chrome/renderer/chrome_render_frame_observer.h"
 #include "chrome/renderer/chrome_render_thread_observer.h"
+#include "components/fingerprinting_protection_filter/common/fingerprinting_protection_filter_features.h"
+#include "components/fingerprinting_protection_filter/renderer/renderer_agent.h"
+#include "components/fingerprinting_protection_filter/renderer/renderer_url_loader_throttle.h"
+#include "components/fingerprinting_protection_filter/renderer/unverified_ruleset_dealer.h"
 #include "components/no_state_prefetch/renderer/no_state_prefetch_helper.h"
-#include "components/safe_browsing/content/renderer/renderer_url_loader_throttle.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/signin/public/base/signin_buildflags.h"
+#include "components/subresource_filter/core/common/first_party_origin.h"
+#include "components/subresource_filter/core/common/memory_mapped_ruleset.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/web_identity.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_thread.h"
 #include "extensions/renderer/extension_localization_throttle.h"
 #include "services/network/public/cpp/resource_request.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/common/loader/resource_type_util.h"
 #include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom-shared.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/web/modules/credentialmanagement/throttle_helper.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "url/gurl.h"
@@ -41,9 +46,17 @@
 #include "extensions/renderer/extension_throttle_manager.h"
 #endif
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(ENABLE_REQUEST_HEADER_INTEGRITY)
+#include "chrome/common/request_header_integrity/request_header_integrity_url_loader_throttle.h"  // nogncheck crbug.com/1125897
+#endif
+
+#if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/renderer/ash_merge_session_loader_throttle.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
+#include "components/safe_browsing/content/renderer/renderer_url_loader_throttle.h"
+#endif
 
 namespace {
 
@@ -137,11 +150,27 @@ URLLoaderThrottleProviderImpl::URLLoaderThrottleProviderImpl(
           std::move(pending_extension_web_request_reporter)),
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
       main_thread_task_runner_(std::move(main_thread_task_runner)) {
+  if (main_thread_task_runner_ &&
+      main_thread_task_runner_->RunsTasksInCurrentSequence()) {
+    // This provider is being created on the main thread.
+    fingerprinting_protection_ruleset_ =
+        chrome_content_renderer_client_->GetFingerprintingProtectionRuleset();
+  }
   DETACH_FROM_SEQUENCE(sequence_checker_);
 }
 
 URLLoaderThrottleProviderImpl::~URLLoaderThrottleProviderImpl() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  // TODO(https://crbug.com/437115067): Remove this once `MemoryMappedRuleset`
+  // lifetime guarantees are cleaned up.
+  if (main_thread_task_runner_ &&
+      !main_thread_task_runner_->RunsTasksInCurrentSequence()) {
+    // Ensure the ruleset is released on the correct sequence if it is not the
+    // current one.
+    main_thread_task_runner_->ReleaseSoon(
+        FROM_HERE, std::move(fingerprinting_protection_ruleset_));
+  }
 }
 
 std::unique_ptr<blink::URLLoaderThrottleProvider>
@@ -155,13 +184,13 @@ URLLoaderThrottleProviderImpl::Clone() {
       main_thread_task_runner_, base::PassKey<URLLoaderThrottleProviderImpl>());
 }
 
-blink::WebVector<std::unique_ptr<blink::URLLoaderThrottle>>
+std::vector<std::unique_ptr<blink::URLLoaderThrottle>>
 URLLoaderThrottleProviderImpl::CreateThrottles(
     base::optional_ref<const blink::LocalFrameToken> local_frame_token,
     const network::ResourceRequest& request) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  blink::WebVector<std::unique_ptr<blink::URLLoaderThrottle>> throttles;
+  std::vector<std::unique_ptr<blink::URLLoaderThrottle>> throttles;
 
   // Some throttles have already been added in the browser for frame resources.
   // Don't add them for frame requests.
@@ -171,38 +200,65 @@ URLLoaderThrottleProviderImpl::CreateThrottles(
   DCHECK(!is_frame_resource ||
          type_ == blink::URLLoaderThrottleProviderType::kFrame);
 
+#if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
   if (!is_frame_resource) {
     if (pending_safe_browsing_) {
       safe_browsing_.Bind(std::move(pending_safe_browsing_));
     }
-
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-    if (pending_extension_web_request_reporter_) {
-      extension_web_request_reporter_.Bind(
-          std::move(pending_extension_web_request_reporter_));
-    }
-
     auto throttle = std::make_unique<safe_browsing::RendererURLLoaderThrottle>(
         safe_browsing_.get(), local_frame_token,
-        extension_web_request_reporter_.get());
+        CloneExtensionWebRequestReporterPendingRemote());
 #else
     auto throttle = std::make_unique<safe_browsing::RendererURLLoaderThrottle>(
         safe_browsing_.get(), local_frame_token);
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
     throttles.emplace_back(std::move(throttle));
   }
+#endif
+
+  if (chrome_content_renderer_client_
+          ->IsContentBasedFingerprintingProtectionEnabled()) {
+    // Restrict the requests that we check as much as possible. This corresponds
+    // to a request where:
+    //   * The resource requested is not a frame.
+    //   * The resource request is made in the context of a frame.
+    //   * The request matches our URL filtering criteria.
+    //   * There is a valid frame token we can use to retrieve information
+    //     about the current `Document`.
+    //   * There is a valid ruleset we can use for filtering the request.
+    //   * The resource requested is not cross-origin. Uses
+    //   net::SchemefulSite::IsSameSite to reduce memory performance impact.
+    bool should_check_request =
+        !is_frame_resource &&
+        type_ == blink::URLLoaderThrottleProviderType::kFrame &&
+        !fingerprinting_protection_filter::RendererURLLoaderThrottle::
+            WillIgnoreRequest(request.url, request.destination) &&
+        local_frame_token.has_value() && fingerprinting_protection_ruleset_ &&
+        !net::SchemefulSite::IsSameSite(url::Origin::Create(request.url),
+                                        request.request_initiator.value());
+    if (should_check_request) {
+      throttles.emplace_back(
+          std::make_unique<
+              fingerprinting_protection_filter::RendererURLLoaderThrottle>(
+              main_thread_task_runner_, local_frame_token.value(),
+              fingerprinting_protection_ruleset_));
+    }
+  }
 
   if (type_ == blink::URLLoaderThrottleProviderType::kFrame &&
       !is_frame_resource && local_frame_token.has_value()) {
     auto throttle = prerender::NoStatePrefetchHelper::MaybeCreateThrottle(
         local_frame_token.value());
-    if (throttle)
+    if (throttle) {
       throttles.emplace_back(std::move(throttle));
+    }
   }
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-  if (!extension_throttle_manager_)
+  if (!extension_throttle_manager_) {
     extension_throttle_manager_ = CreateExtensionThrottleManager();
+  }
 
   if (extension_throttle_manager_) {
     if (base::CommandLine::ForCurrentProcess()->HasSwitch(
@@ -212,8 +268,9 @@ URLLoaderThrottleProviderImpl::CreateThrottles(
 
     std::unique_ptr<blink::URLLoaderThrottle> throttle =
         extension_throttle_manager_->MaybeCreateURLLoaderThrottle(request);
-    if (throttle)
+    if (throttle) {
       throttles.emplace_back(std::move(throttle));
+    }
   }
   std::unique_ptr<blink::URLLoaderThrottle> localization_throttle =
       extensions::ExtensionLocalizationThrottle::MaybeCreate(local_frame_token,
@@ -242,34 +299,44 @@ URLLoaderThrottleProviderImpl::CreateThrottles(
       chrome_content_renderer_client_->GetChromeObserver()
           ->GetDynamicParams()));
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   throttles.emplace_back(std::make_unique<AshMergeSessionLoaderThrottle>(
       chrome_content_renderer_client_->GetChromeObserver()
           ->chromeos_listener()));
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
+#endif  // BUILDFLAG(IS_CHROMEOS)
+
+#if BUILDFLAG(ENABLE_REQUEST_HEADER_INTEGRITY)
+  if (request_header_integrity::RequestHeaderIntegrityURLLoaderThrottle::
+          IsFeatureEnabled()) {
+    throttles.push_back(
+        std::make_unique<request_header_integrity::
+                             RequestHeaderIntegrityURLLoaderThrottle>());
+  }
+#endif
 
   if (local_frame_token.has_value()) {
     auto throttle =
         content::MaybeCreateIdentityUrlLoaderThrottle(base::BindRepeating(
-            [](const blink::LocalFrameToken& local_frame_token,
+            [](const blink::LocalFrameToken& token,
                const scoped_refptr<base::SequencedTaskRunner>
                    main_thread_task_runner,
-               const url::Origin& origin,
+               const std::optional<url::Origin>& initiator,
+               const url::Origin& idp_origin,
                blink::mojom::IdpSigninStatus status) {
               if (content::RenderThread::IsMainThread()) {
-                blink::SetIdpSigninStatus(local_frame_token, origin, status);
+                blink::SetIdpSigninStatus(token, idp_origin, status);
                 return;
               }
               if (main_thread_task_runner) {
                 main_thread_task_runner->PostTask(
-                    FROM_HERE,
-                    base::BindOnce(&blink::SetIdpSigninStatus,
-                                   local_frame_token, origin, status));
+                    FROM_HERE, base::BindOnce(&blink::SetIdpSigninStatus, token,
+                                              idp_origin, status));
               }
             },
             local_frame_token.value(), main_thread_task_runner_));
-    if (throttle)
+    if (throttle) {
       throttles.push_back(std::move(throttle));
+    }
   }
 
   return throttles;
@@ -277,8 +344,9 @@ URLLoaderThrottleProviderImpl::CreateThrottles(
 
 void URLLoaderThrottleProviderImpl::SetOnline(bool is_online) {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-  if (extension_throttle_manager_)
+  if (extension_throttle_manager_) {
     extension_throttle_manager_->SetOnline(is_online);
+  }
 #endif
 }
 

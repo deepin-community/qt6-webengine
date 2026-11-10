@@ -14,29 +14,45 @@
 
 import {indentWithTab} from '@codemirror/commands';
 import {Transaction} from '@codemirror/state';
-import {oneDarkTheme} from '@codemirror/theme-one-dark';
+import {oneDark} from '@codemirror/theme-one-dark';
 import {keymap} from '@codemirror/view';
 import {basicSetup, EditorView} from 'codemirror';
 import m from 'mithril';
+import {removeFalsyValues} from '../base/array_utils';
+import {assertUnreachable} from '../base/logging';
+import {perfettoSql} from '../base/perfetto_sql_lang/language';
+import {HTMLAttrs} from './common';
 
-export interface EditorAttrs {
-  // Initial state for the editor.
-  initialText?: string;
+export interface EditorAttrs extends HTMLAttrs {
+  // Content of the editor. If defined, the editor operates in controlled mode,
+  // otherwise it operates in uncontrolled mode.
+  // - In controlled mode, the content of the editor is managed by the caller
+  //   and should be used in conjunction with onUpdate to manage the state of
+  //   the editor.
+  // - In uncontrolled mode, the content of the editor is managed internally by
+  //   the editor itself.
+  readonly text?: string;
 
-  // Changing generation is used to force resetting of the editor state
-  // to the current value of initialText.
-  generation?: number;
+  // Which language use for syntax highlighting et al. Defaults to none.
+  readonly language?: 'perfetto-sql';
+
+  // Whether the editor should be focused on creation.
+  readonly autofocus?: boolean;
 
   // Callback for the Ctrl/Cmd + Enter key binding.
   onExecute?: (text: string) => void;
 
-  // Callback for every change to the text.
+  // Callback for every change to the editor's content.
   onUpdate?: (text: string) => void;
 }
 
 export class Editor implements m.ClassComponent<EditorAttrs> {
   private editorView?: EditorView;
-  private generation?: number;
+  private latestText?: string;
+
+  focus() {
+    this.editorView?.focus();
+  }
 
   oncreate({dom, attrs}: m.CVnodeDOM<EditorAttrs>) {
     const keymaps = [indentWithTab];
@@ -60,42 +76,70 @@ export class Editor implements m.ClassComponent<EditorAttrs> {
             text = selectedText;
           }
           onExecute(text);
+          m.redraw();
           return true;
         },
       });
     }
 
-    let dispatch;
-    if (onUpdate) {
-      dispatch = (tr: Transaction, view: EditorView) => {
-        view.update([tr]);
-        const text = view.state.doc.toString();
-        onUpdate(text);
-      };
-    }
+    const dispatch = (tr: Transaction, view: EditorView) => {
+      // Maybe don't bother doing this if onUpdate is not defined...?
+      view.update([tr]);
+      const text = view.state.doc.toString();
+      // Cache the latest text so that we don't immediately have to overwrite
+      // this every time we make an edit to the doc if the caller just passes in
+      // the exact same string again on the next redraw.
+      this.latestText = text;
 
-    this.generation = attrs.generation;
+      if (onUpdate) {
+        onUpdate(text);
+        m.redraw();
+      }
+    };
+
+    const lang = (() => {
+      switch (attrs.language) {
+        case undefined:
+          return undefined;
+        case 'perfetto-sql':
+          return perfettoSql();
+        default:
+          assertUnreachable(attrs.language);
+      }
+    })();
 
     this.editorView = new EditorView({
-      doc: attrs.initialText ?? '',
-      extensions: [
+      doc: attrs.text,
+      extensions: removeFalsyValues([
         keymap.of(keymaps),
-        oneDarkTheme,
+        oneDark,
         basicSetup,
-      ],
+        lang,
+      ]),
       parent: dom,
       dispatch,
     });
+
+    if (attrs.autofocus) {
+      this.focus();
+    }
   }
 
   onupdate({attrs}: m.CVnodeDOM<EditorAttrs>): void {
-    const {initialText, generation} = attrs;
+    // Uncontrolled mode: no need to do anything.
+    if (attrs.text === undefined) {
+      return;
+    }
+
     const editorView = this.editorView;
-    if (editorView && this.generation !== generation) {
+    if (editorView && attrs.text !== this.latestText) {
       const state = editorView.state;
-      editorView.dispatch(state.update(
-          {changes: {from: 0, to: state.doc.length, insert: initialText}}));
-      this.generation = generation;
+      editorView.dispatch(
+        state.update({
+          changes: {from: 0, to: state.doc.length, insert: attrs.text},
+        }),
+      );
+      this.latestText = attrs.text;
     }
   }
 
@@ -106,7 +150,10 @@ export class Editor implements m.ClassComponent<EditorAttrs> {
     }
   }
 
-  view({}: m.Vnode<EditorAttrs, this>): void|m.Children {
-    return m('.pf-editor');
+  view({attrs}: m.Vnode<EditorAttrs, this>): void | m.Children {
+    return m('.pf-editor', {
+      className: attrs.className,
+      ref: attrs.ref,
+    });
   }
 }

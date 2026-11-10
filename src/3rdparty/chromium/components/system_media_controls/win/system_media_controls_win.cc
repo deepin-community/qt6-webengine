@@ -14,8 +14,9 @@
 #include <utility>
 #include <vector>
 
+#include "base/check_is_test.h"
+#include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/core_winrt_util.h"
 #include "base/win/scoped_hstring.h"
@@ -25,6 +26,10 @@
 
 namespace system_media_controls {
 
+// For testing only.
+base::RepeatingCallback<void(bool)>*
+    g_on_visibility_changed_for_testing_callback = nullptr;
+
 // static
 std::unique_ptr<SystemMediaControls> SystemMediaControls::Create(
     const std::string& product_name,
@@ -33,6 +38,13 @@ std::unique_ptr<SystemMediaControls> SystemMediaControls::Create(
   if (service->Initialize())
     return std::move(service);
   return nullptr;
+}
+
+// static
+void SystemMediaControls::SetVisibilityChangedCallbackForTesting(
+    base::RepeatingCallback<void(bool)>* callback) {
+  CHECK_IS_TEST();
+  g_on_visibility_changed_for_testing_callback = callback;
 }
 
 namespace internal {
@@ -121,6 +133,8 @@ bool SystemMediaControlsWin::Initialize() {
   hr = system_media_controls_->put_IsEnabled(true);
   if (FAILED(hr))
     return false;
+
+  OnEnabledStatusChangedForTesting();
 
   hr = system_media_controls_->get_DisplayUpdater(&display_updater_);
   if (FAILED(hr))
@@ -277,9 +291,12 @@ void SystemMediaControlsWin::SetThumbnail(const SkBitmap& bitmap) {
                                              &icon_data_writer_);
   DCHECK(SUCCEEDED(hr));
 
-  std::vector<unsigned char> icon_png;
-  gfx::PNGCodec::EncodeBGRASkBitmap(bitmap, false, &icon_png);
-  hr = icon_data_writer_->WriteBytes(icon_png.size(), (BYTE*)icon_png.data());
+  std::optional<std::vector<uint8_t>> icon_png =
+      gfx::PNGCodec::EncodeBGRASkBitmap(bitmap, /*discard_transparency=*/false);
+  if (icon_png) {
+    hr = icon_data_writer_->WriteBytes(icon_png.value().size(),
+                                       (BYTE*)icon_png.value().data());
+  }
   DCHECK(SUCCEEDED(hr));
 
   // Store the written bytes in the stream, an async operation.
@@ -291,10 +308,16 @@ void SystemMediaControlsWin::SetThumbnail(const SkBitmap& bitmap) {
 
   // Make a callback that gives the icon to the SMTC once the bits make it into
   // |icon_stream_|
+  auto weak_ptr = weak_factory_.GetWeakPtr();
   auto store_async_callback = Microsoft::WRL::Callback<
       ABI::Windows::Foundation::IAsyncOperationCompletedHandler<unsigned int>>(
-      [this](ABI::Windows::Foundation::IAsyncOperation<unsigned int>* async_op,
-             ABI::Windows::Foundation::AsyncStatus status) mutable {
+      [weak_ptr](
+          ABI::Windows::Foundation::IAsyncOperation<unsigned int>* async_op,
+          ABI::Windows::Foundation::AsyncStatus status) mutable {
+        if (!weak_ptr) {
+          return S_OK;
+        }
+
         // Check the async operation completed successfully.
         ABI::Windows::Foundation::IAsyncInfo* async_info;
         HRESULT hr = async_op->QueryInterface(
@@ -311,15 +334,15 @@ void SystemMediaControlsWin::SetThumbnail(const SkBitmap& bitmap) {
               &reference_statics);
           DCHECK(SUCCEEDED(result));
 
-          result = reference_statics->CreateFromStream(icon_stream_.Get(),
-                                                       &icon_stream_reference_);
+          result = reference_statics->CreateFromStream(
+              weak_ptr->icon_stream_.Get(), &weak_ptr->icon_stream_reference_);
           DCHECK(SUCCEEDED(result));
 
-          result =
-              display_updater_->put_Thumbnail(icon_stream_reference_.Get());
+          result = weak_ptr->display_updater_->put_Thumbnail(
+              weak_ptr->icon_stream_reference_.Get());
           DCHECK(SUCCEEDED(result));
 
-          result = display_updater_->Update();
+          result = weak_ptr->display_updater_->Update();
           DCHECK(SUCCEEDED(result));
         }
         return hr;
@@ -395,6 +418,8 @@ void SystemMediaControlsWin::ClearMetadata() {
   // SMTC, we need to tell them that we are disabled.
   hr = system_media_controls_->put_IsEnabled(false);
   DCHECK(SUCCEEDED(hr));
+
+  OnEnabledStatusChangedForTesting();
 }
 
 void SystemMediaControlsWin::UpdateDisplay() {
@@ -404,6 +429,8 @@ void SystemMediaControlsWin::UpdateDisplay() {
   HRESULT hr = system_media_controls_->put_IsEnabled(true);
   DCHECK(SUCCEEDED(hr));
 
+  OnEnabledStatusChangedForTesting();
+
   // |ClearAll()| unsets the type, if we don't set it again then the artist
   // won't be displayed.
   hr = display_updater_->put_Type(
@@ -412,6 +439,14 @@ void SystemMediaControlsWin::UpdateDisplay() {
 
   hr = display_updater_->Update();
   DCHECK(SUCCEEDED(hr));
+}
+
+bool SystemMediaControlsWin::GetVisibilityForTesting() const {
+  DCHECK(initialized_);
+  boolean is_enabled;
+  HRESULT hr = system_media_controls_->get_IsEnabled(&is_enabled);
+  DCHECK(SUCCEEDED(hr));
+  return is_enabled;
 }
 
 void SystemMediaControlsWin::OnPlay() {
@@ -458,7 +493,6 @@ SystemMediaControlsWin::GetSmtcPlaybackStatus(PlaybackStatus status) {
           MediaPlaybackStatus_Stopped;
   }
   NOTREACHED();
-  return ABI::Windows::Media::MediaPlaybackStatus::MediaPlaybackStatus_Stopped;
 }
 
 HRESULT SystemMediaControlsWin::ButtonPressed(
@@ -517,6 +551,13 @@ HRESULT SystemMediaControlsWin::PlaybackPositionChangeRequested(
   OnSeekTo(base::TimeDelta::FromWinrtTimeSpan(position));
 
   return S_OK;
+}
+
+void SystemMediaControlsWin::OnEnabledStatusChangedForTesting() {
+  if (g_on_visibility_changed_for_testing_callback) {
+    g_on_visibility_changed_for_testing_callback->Run(
+        GetVisibilityForTesting());
+  }
 }
 
 }  // namespace internal

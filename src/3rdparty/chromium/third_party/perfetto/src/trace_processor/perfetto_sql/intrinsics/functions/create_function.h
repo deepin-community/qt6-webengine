@@ -18,21 +18,20 @@
 #define SRC_TRACE_PROCESSOR_PERFETTO_SQL_INTRINSICS_FUNCTIONS_CREATE_FUNCTION_H_
 
 #include <sqlite3.h>
-#include <unordered_map>
+#include <cstddef>
 
+#include "perfetto/base/status.h"
+#include "perfetto/trace_processor/basic_types.h"
 #include "src/trace_processor/perfetto_sql/intrinsics/functions/sql_function.h"
-#include "src/trace_processor/sqlite/scoped_db.h"
-#include "src/trace_processor/sqlite/sqlite_table.h"
 
-namespace perfetto {
-namespace trace_processor {
+namespace perfetto::trace_processor {
 
 class PerfettoSqlEngine;
 
 // Implementation of CREATE_FUNCTION SQL function.
 // See https://perfetto.dev/docs/analysis/metrics#metric-helper-functions for
 // usage of this function.
-struct CreateFunction : public SqlFunction {
+struct CreateFunction : public LegacySqlFunction {
   using Context = PerfettoSqlEngine;
 
   static constexpr bool kVoidReturn = true;
@@ -49,7 +48,7 @@ struct CreateFunction : public SqlFunction {
 // the calls to `my_func`. `my_func` must be a Perfetto SQL function created
 // through CREATE_FUNCTION that takes a single integer argument and returns a
 // int.
-struct ExperimentalMemoize : public SqlFunction {
+struct ExperimentalMemoize : public LegacySqlFunction {
   using Context = PerfettoSqlEngine;
 
   static constexpr bool kVoidReturn = true;
@@ -61,7 +60,6 @@ struct ExperimentalMemoize : public SqlFunction {
                           Destructors&);
 };
 
-}  // namespace trace_processor
-}  // namespace perfetto
+}  // namespace perfetto::trace_processor
 
 #endif  // SRC_TRACE_PROCESSOR_PERFETTO_SQL_INTRINSICS_FUNCTIONS_CREATE_FUNCTION_H_

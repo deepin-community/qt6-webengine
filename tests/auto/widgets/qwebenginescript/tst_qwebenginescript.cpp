@@ -69,6 +69,7 @@ private Q_SLOTS:
     void webChannelResettingAndUnsetting();
     void webChannelWithExistingQtObject();
     void navigation();
+    void navigation2();
     void webChannelWithBadString();
     void webChannelWithJavaScriptDisabled();
 #endif
@@ -299,7 +300,7 @@ void tst_QWebEngineScript::viewSource()
     page.scripts().insert(script);
     page.load(QUrl("view-source:about:blank"));
     QSignalSpy spy(&page, &QWebEnginePage::loadFinished);
-    QTRY_COMPARE(spy.size(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(spy.size(), 1, 10000);
     QCOMPARE(spy.takeFirst().value(0).toBool(), true);
     QCOMPARE(evaluateJavaScriptSync(&page, "foo"), QVariant(42));
 }
@@ -313,12 +314,12 @@ void tst_QWebEngineScript::scriptModifications()
     script.setWorldId(QWebEngineScript::MainWorld);
     script.setSourceCode("var foo = \"SUCCESS\";");
     page.scripts().insert(script);
+    QSignalSpy spyFinished(&page, &QWebEnginePage::loadFinished);
     page.setHtml(QStringLiteral("<html><head><script>document.addEventListener(\"DOMContentLoaded\", function() {\
                                  document.body.innerText = foo;});\
                                  </script></head><body></body></html>"));
     QVERIFY(page.scripts().count() == 1);
-    QSignalSpy spyFinished(&page, &QWebEnginePage::loadFinished);
-    QVERIFY(spyFinished.wait());
+    QTRY_VERIFY_WITH_TIMEOUT(spyFinished.size(), 10000);
     QCOMPARE(evaluateJavaScriptSync(&page, "document.body.innerText"), QVariant::fromValue(QStringLiteral("SUCCESS")));
     script.setSourceCode("var foo = \"FAILURE\"");
     page.triggerAction(QWebEnginePage::ReloadAndBypassCache);
@@ -358,7 +359,10 @@ private:
 static QString readFile(const QString &path)
 {
     QFile file(path);
-    file.open(QFile::ReadOnly);
+    if (!file.open(QFile::ReadOnly)) {
+        qWarning("Failed to read file %s: %s", qPrintable(path), qPrintable(file.errorString()));
+        return QString();
+    }
     QByteArray contents = file.readAll();
     file.close();
     return contents;
@@ -399,9 +403,9 @@ void tst_QWebEngineScript::webChannel()
     QWebEngineScript script = webChannelScript();
     script.setWorldId(worldId);
     page.scripts().insert(script);
-    page.setHtml(QStringLiteral("<html><body></body></html>"));
     QSignalSpy spyFinished(&page, &QWebEnginePage::loadFinished);
-    QVERIFY(spyFinished.wait());
+    page.setHtml(QStringLiteral("<html><body></body></html>"));
+    QTRY_VERIFY_WITH_TIMEOUT(spyFinished.size(), 10000);
     if (reloadFirst) {
         // Check that the transport is also reinstalled on navigation
         page.triggerAction(QWebEnginePage::Reload);
@@ -568,13 +572,88 @@ void tst_QWebEngineScript::navigation()
 
     QString url3 = QStringLiteral("qrc:/resources/test_iframe_main.html");
     page.setUrl(url3);
-    QTRY_COMPARE(spyTextChanged.size(), 3);
+    QTRY_COMPARE_WITH_TIMEOUT(spyTextChanged.size(), 3, 10000);
     QCOMPARE(testObject.text(), url3);
 
     page.setLifecycleState(QWebEnginePage::LifecycleState::Discarded);
     page.setUrl(url1);
     QTRY_COMPARE(spyTextChanged.size(), 4);
     QCOMPARE(testObject.text(), url1);
+}
+
+void tst_QWebEngineScript::navigation2()
+{
+    QWebEngineProfile profile("navigation2");
+    QWebEnginePage page(&profile, nullptr);
+    QWebChannel channel;
+    page.setWebChannel(&channel);
+    QWebEngineScript s1;
+    s1.setInjectionPoint(QWebEngineScript::DocumentCreation);
+    // Check webchannel is installed before DocumentCreation scripts are run
+    // onload shouldn't have run, and neither should wasready
+    s1.setWorldId(QWebEngineScript::MainWorld);
+    s1.setSourceCode("document.passCreation = 0;" \
+                     "if (typeof qt !== undefined) document.passCreation++;" \
+                     "if (document.onloadran) document.passCreation++;" \
+                     "if (document.wasready) document.passCreation++;");
+    page.scripts().insert(s1);
+    QWebEngineScript s2;
+    s2.setInjectionPoint(QWebEngineScript::DocumentReady);
+    // onload shouldn't have run
+    s2.setWorldId(QWebEngineScript::MainWorld);
+    s2.setSourceCode("document.passReady = 0;" \
+                     "if (typeof qt !== undefined) document.passReady++;" \
+                     "if (document.passCreation > 0) document.passReady++;" \
+                     "if (document.passDeferred > 0) document.passReady++;" \
+                     "if (document.onloadran) document.passReady++;" \
+                     "if (document.wasready) document.passReady++;");
+    page.scripts().insert(s2);
+    QWebEngineScript s3;
+    s3.setInjectionPoint(QWebEngineScript::Deferred);
+    // all should have run
+    s3.setWorldId(QWebEngineScript::MainWorld);
+    s3.setSourceCode("document.passDeferred = 0;" \
+                     "if (typeof qt !== undefined) document.passDeferred++;" \
+                     "if (document.passCreation > 0) document.passDeferred++;" \
+                     "if (document.passReady > 0) document.passDeferred++;" \
+                     "if (document.onloadran) document.passDeferred++;" \
+                     "if (document.wasready) document.passDeferred++;");
+    page.scripts().insert(s3);
+
+
+    QString html("<html><head><script>" \
+                 "  document.onloadran = false; document.wasready = false;"\
+                 "  document.addEventListener(\"readystatechange\", (x) => { "\
+                 "      if (x.target.readyState === \"interactive\") document.wasready= true;"\
+                 "  });"\
+                 "  function bodyload() { document.onloadran = true; };"\
+                 "</script></head>" \
+                 "<body onload='bodyload()'><p>hello world</p></body></html>");
+    page.setHtml(html, QUrl("about:blank"));
+    QTRY_COMPARE(evaluateJavaScriptSyncInWorld(&page, "document.passCreation", QWebEngineScript::MainWorld),
+                 QVariant(1));
+    QTRY_COMPARE(evaluateJavaScriptSyncInWorld(&page, "document.passReady", QWebEngineScript::MainWorld),
+                 QVariant(3));
+    QTRY_COMPARE(evaluateJavaScriptSyncInWorld(&page, "document.passDeferred", QWebEngineScript::MainWorld),
+                 QVariant(5));
+
+    QString url2 = QStringLiteral("chrome://gpu/");
+    page.setUrl(url2);
+    QTRY_COMPARE(evaluateJavaScriptSyncInWorld(&page, "document.passCreation", QWebEngineScript::MainWorld),
+                 QVariant(1));
+    QTRY_COMPARE(evaluateJavaScriptSyncInWorld(&page, "document.passReady", QWebEngineScript::MainWorld),
+                 QVariant(2));
+    QTRY_COMPARE(evaluateJavaScriptSyncInWorld(&page, "document.passDeferred", QWebEngineScript::MainWorld),
+                 QVariant(3));
+
+    QString url3 = QStringLiteral("qrc:/resources/test_iframe_main.html");
+    page.setUrl(url3);
+    QTRY_COMPARE(evaluateJavaScriptSyncInWorld(&page, "document.passCreation", QWebEngineScript::MainWorld),
+                 QVariant(1));
+    QTRY_COMPARE(evaluateJavaScriptSyncInWorld(&page, "document.passReady", QWebEngineScript::MainWorld),
+                 QVariant(2));
+    QTRY_COMPARE(evaluateJavaScriptSyncInWorld(&page, "document.passDeferred", QWebEngineScript::MainWorld),
+                 QVariant(3));
 }
 
 // Try to set TestObject::text to an invalid UTF-16 string.

@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f32-igemm/wasmsimd-splat.c.in
 //   Generator: tools/xngen
@@ -11,7 +12,7 @@
 
 #include <wasm_simd128.h>
 
-#include <xnnpack/igemm.h>
+#include "src/xnnpack/igemm.h"
 
 
 void xnn_f32_igemm_minmax_ukernel_6x8__wasmsimd_x86_splat(
@@ -26,7 +27,7 @@ void xnn_f32_igemm_minmax_ukernel_6x8__wasmsimd_x86_splat(
     size_t cn_stride,
     size_t a_offset,
     const float* zero,
-    const union xnn_f32_minmax_params params[restrict XNN_MIN_ELEMENTS(1)])
+    const struct xnn_f32_minmax_params* restrict params)
 {
   assert(mr != 0);
   assert(mr <= 6);
@@ -62,8 +63,10 @@ void xnn_f32_igemm_minmax_ukernel_6x8__wasmsimd_x86_splat(
     c5 = c4;
   }
 
-  const v128_t vmin = wasm_v128_load64_splat(params->wasmsimd.min);
-  const v128_t vmax = wasm_v128_load64_splat(params->wasmsimd.max);
+  const v128_t vmin = wasm_v128_load32_splat(&params->scalar.min);
+  const v128_t vmax = wasm_v128_load32_splat(&params->scalar.max);
+  XNN_FORCE_REALIZATION(vmin);
+  XNN_FORCE_REALIZATION(vmax);
   do {
     v128_t vacc0x0123 = wasm_v128_load(w);
     v128_t vacc0x4567 = wasm_v128_load(w + 4);

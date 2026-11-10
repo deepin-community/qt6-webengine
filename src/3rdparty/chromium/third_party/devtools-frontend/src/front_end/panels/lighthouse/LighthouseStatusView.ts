@@ -1,15 +1,16 @@
 // Copyright 2018 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import * as Common from '../../core/common/common.js';
 import * as i18n from '../../core/i18n/i18n.js';
+import type * as Buttons from '../../ui/components/buttons/buttons.js';
 import * as UI from '../../ui/legacy/legacy.js';
 
 import {RuntimeSettings} from './LighthouseController.js';
 import lighthouseDialogStyles from './lighthouseDialog.css.js';
-
-import {type LighthousePanel} from './LighthousePanel.js';
+import type {LighthousePanel} from './LighthousePanel.js';
 
 const UIStrings = {
   /**
@@ -144,19 +145,17 @@ const UIStrings = {
    */
   lighthouseOnlySimulatesMobile:
       '`Lighthouse` only simulates mobile performance; to measure performance on a real device, try WebPageTest.org [Source: `Lighthouse` team]',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/lighthouse/LighthouseStatusView.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 const i18nLazyString = i18n.i18n.getLazilyComputedLocalizedString.bind(undefined, str_);
 
 export class StatusView {
   private readonly panel: LighthousePanel;
-  private statusView: Element|null;
   private statusHeader: Element|null;
-  private progressWrapper: Element|null;
   private progressBar: Element|null;
   private statusText: Element|null;
-  private cancelButton: HTMLButtonElement|null;
+  private cancelButton: Buttons.Button.Button|null;
   private inspectedURL: string;
   private textChangedAt: number;
   private fastFactsQueued: Common.UIString.LocalizedString[];
@@ -167,9 +166,7 @@ export class StatusView {
   constructor(panel: LighthousePanel) {
     this.panel = panel;
 
-    this.statusView = null;
     this.statusHeader = null;
-    this.progressWrapper = null;
     this.progressBar = null;
     this.statusText = null;
     this.cancelButton = null;
@@ -188,31 +185,29 @@ export class StatusView {
   }
 
   private render(): void {
-    const dialogRoot = UI.Utils.createShadowRootWithCoreStyles(
-        this.dialog.contentElement, {cssFile: [lighthouseDialogStyles], delegatesFocus: undefined});
+    const dialogRoot =
+        UI.UIUtils.createShadowRootWithCoreStyles(this.dialog.contentElement, {cssFile: lighthouseDialogStyles});
     const lighthouseViewElement = dialogRoot.createChild('div', 'lighthouse-view vbox');
 
     const cancelButton = UI.UIUtils.createTextButton(i18nString(UIStrings.cancel), this.cancel.bind(this), {
       jslogContext: 'lighthouse.cancel',
     });
     const fragment = UI.Fragment.Fragment.build`
-  <div class="lighthouse-view vbox">
-  <h2 $="status-header">Auditing your web page…</h2>
+  <span $="status-header" class="header">Auditing your web page…</span>
   <div class="lighthouse-status vbox" $="status-view">
   <div class="lighthouse-progress-wrapper" $="progress-wrapper">
   <div class="lighthouse-progress-bar" $="progress-bar"></div>
   </div>
   <div class="lighthouse-status-text" $="status-text"></div>
   </div>
+  <div class="lighthouse-action-buttons">
   ${cancelButton}
   </div>
   `;
 
     lighthouseViewElement.appendChild(fragment.element());
 
-    this.statusView = fragment.$('status-view');
     this.statusHeader = fragment.$('status-header');
-    this.progressWrapper = fragment.$('progress-wrapper');
     this.progressBar = fragment.$('progress-bar');
     this.statusText = fragment.$('status-text');
     // Use StatusPhases array index as progress bar value
@@ -221,7 +216,7 @@ export class StatusView {
     UI.ARIAUtils.markAsStatus(this.statusText);
 
     this.dialog.setDefaultFocusedElement(cancelButton);
-    this.dialog.setSizeBehavior(UI.GlassPane.SizeBehavior.SetExactWidthMaxHeight);
+    this.dialog.setSizeBehavior(UI.GlassPane.SizeBehavior.SET_EXACT_WIDTH_MAX_HEIGHT);
     this.dialog.setMaxContentSize(new UI.Geometry.Size(500, 400));
   }
 
@@ -240,11 +235,10 @@ export class StatusView {
     this.updateStatus(i18nString(UIStrings.loading));
 
     const parsedURL = Common.ParsedURL.ParsedURL.fromString(this.inspectedURL);
-    const pageHost = parsedURL && parsedURL.host;
+    const pageHost = parsedURL?.host;
     const statusHeader =
         pageHost ? i18nString(UIStrings.auditingS, {PH1: pageHost}) : i18nString(UIStrings.auditingYourWebPage);
     this.renderStatusHeader(statusHeader);
-    // @ts-ignore TS expects Document, but gets Element (show takes Element|Document)
     this.dialog.show(dialogRenderElement);
   }
 
@@ -260,7 +254,7 @@ export class StatusView {
     }
   }
 
-  setInspectedURL(url: string = ''): void {
+  setInspectedURL(url = ''): void {
     this.inspectedURL = url;
   }
 
@@ -288,7 +282,6 @@ export class StatusView {
 
       if (this.progressBar) {
         this.progressBar.classList.add(nextPhase.progressBarClass);
-        // @ts-ignore indexOf null is valid.
         const nextPhaseIndex = StatusPhases.indexOf(nextPhase);
         UI.ARIAUtils.setProgressBarValue(this.progressBar, nextPhaseIndex, text);
       }
@@ -304,7 +297,7 @@ export class StatusView {
       return phase.message();
     }
 
-    const deviceTypeSetting = RuntimeSettings.find(item => item.setting.name === 'lighthouse.device_type');
+    const deviceTypeSetting = RuntimeSettings.find(item => item.setting.name === 'lighthouse.device-type');
     const throttleSetting = RuntimeSettings.find(item => item.setting.name === 'lighthouse.throttling');
     const deviceType = deviceTypeSetting ? deviceTypeSetting.setting.get() : '';
     const throttling = throttleSetting ? throttleSetting.setting.get() : '';
@@ -398,7 +391,7 @@ export class StatusView {
 
   private renderBugReportBody(err: Error, auditURL: string): void {
     const chromeVersion = navigator.userAgent.match(/Chrome\/(\S+)/) || ['', 'Unknown'];
-    // @ts-ignore Lighthouse sets `friendlyMessage` on certain
+    // @ts-expect-error Lighthouse sets `friendlyMessage` on certain
     // important errors such as PROTOCOL_TIMEOUT.
     const errorMessage = err.friendlyMessage || err.message;
     const issueBody = `

@@ -64,7 +64,7 @@
 **     22       1     Min embedded payload fraction (must be 32)
 **     23       1     Min leaf payload fraction (must be 32)
 **     24       4     File change counter
-**     28       4     Reserved for future use
+**     28       4     The size of the database in pages
 **     32       4     First freelist page
 **     36       4     Number of freelist pages in the file
 **     40      60     15 4-byte meta values passed to higher layers
@@ -497,6 +497,12 @@ struct CellInfo {
 #define BTCURSOR_MAX_DEPTH 20
 
 /*
+** Maximum amount of storage local to a database page, regardless of
+** page size.
+*/
+#define BT_MAX_LOCAL  65501  /* 65536 - 35 */
+
+/*
 ** A cursor is a pointer to a particular entry within a particular
 ** b-tree within a database file.
 **
@@ -707,6 +713,7 @@ struct IntegrityCk {
   StrAccum errMsg;  /* Accumulate the error message text here */
   u32 *heap;        /* Min-heap used for analyzing cell coverage */
   sqlite3 *db;      /* Database connection running the check */
+  i64 nRow;         /* Number of rows visited in current tree */
 };
 
 /*

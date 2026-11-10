@@ -10,14 +10,11 @@
 #include <string_view>
 #include <vector>
 
+#include "base/feature_list.h"
 #include "base/memory/raw_ptr.h"
 #include "components/autofill/core/browser/autofill_field.h"
 #include "components/autofill/core/browser/country_type.h"
 #include "components/autofill/core/browser/field_types.h"
-
-namespace base {
-struct Feature;
-}
 
 namespace autofill {
 class LogManager;
@@ -79,6 +76,9 @@ enum class FieldLocation {
   // This specifies a field that needs to succeed the trigger field in the
   // form.
   kSuccessor,
+  // This specifies a filed that is present anywhere in the form apart from the
+  // trigger field.
+  kAnywhere,
 };
 
 // Container class for conditions that all need to be true for a field to be
@@ -136,6 +136,10 @@ struct RationalizationRule {
   // the trigger field.
   std::vector<FieldCondition> other_field_conditions;
 
+  // This specifies conditions on the fields following or preceding the
+  // the trigger field that should not be met.
+  std::vector<FieldCondition> fields_with_conditions_do_not_exist;
+
   // What rationaliation to apply.
   std::vector<SetTypeAction> actions;
 };
@@ -163,6 +167,11 @@ class RationalizationRuleBuilder {
       std::vector<FieldCondition> other_field_conditions) &;
   RationalizationRuleBuilder&& SetOtherFieldConditions(
       std::vector<FieldCondition> other_field_conditions) &&;
+
+  RationalizationRuleBuilder& SetFieldsWithConditionsDoNotExist(
+      std::vector<FieldCondition> fields_with_conditions_do_not_exist) &;
+  RationalizationRuleBuilder&& SetFieldsWithConditionsDoNotExist(
+      std::vector<FieldCondition> fields_with_conditions_do_not_exist) &&;
 
   RationalizationRuleBuilder& SetActions(std::vector<SetTypeAction> actions) &;
   RationalizationRuleBuilder&& SetActions(

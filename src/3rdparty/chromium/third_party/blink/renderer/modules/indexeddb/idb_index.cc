@@ -31,8 +31,10 @@
 
 #include "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_binding_for_modules.h"
+#include "third_party/blink/renderer/bindings/modules/v8/v8_idb_get_all_options.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_database.h"
+#include "third_party/blink/renderer/modules/indexeddb/idb_get_all_options_helper.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_key.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_object_store.h"
 #include "third_party/blink/renderer/modules/indexeddb/idb_request.h"
@@ -115,7 +117,7 @@ void IDBIndex::RevertMetadata(scoped_refptr<IDBIndexMetadata> old_metadata) {
 
 IDBRequest* IDBIndex::openCursor(ScriptState* script_state,
                                  const ScriptValue& range,
-                                 const String& direction_string,
+                                 const V8IDBCursorDirection& v8_direction,
                                  ExceptionState& exception_state) {
   TRACE_EVENT1("IndexedDB", "IDBIndex::openCursorRequestSetup", "index_name",
                metadata_->name.Utf8());
@@ -133,7 +135,7 @@ IDBRequest* IDBIndex::openCursor(ScriptState* script_state,
     return nullptr;
   }
   mojom::blink::IDBCursorDirection direction =
-      IDBCursor::StringToDirection(direction_string);
+      IDBCursor::V8EnumToDirection(v8_direction.AsEnum());
   IDBKeyRange* key_range = IDBKeyRange::FromScriptValue(
       ExecutionContext::From(script_state), range, exception_state);
   if (exception_state.HadException())
@@ -198,7 +200,7 @@ IDBRequest* IDBIndex::count(ScriptState* script_state,
 
 IDBRequest* IDBIndex::openKeyCursor(ScriptState* script_state,
                                     const ScriptValue& range,
-                                    const String& direction_string,
+                                    const V8IDBCursorDirection& v8_direction,
                                     ExceptionState& exception_state) {
   TRACE_EVENT1("IndexedDB", "IDBIndex::openKeyCursorRequestSetup", "index_name",
                metadata_->name.Utf8());
@@ -216,7 +218,7 @@ IDBRequest* IDBIndex::openKeyCursor(ScriptState* script_state,
     return nullptr;
   }
   mojom::blink::IDBCursorDirection direction =
-      IDBCursor::StringToDirection(direction_string);
+      IDBCursor::V8EnumToDirection(v8_direction.AsEnum());
   IDBKeyRange* key_range = IDBKeyRange::FromScriptValue(
       ExecutionContext::From(script_state), range, exception_state);
   if (exception_state.HadException())
@@ -246,40 +248,64 @@ IDBRequest* IDBIndex::get(ScriptState* script_state,
 }
 
 IDBRequest* IDBIndex::getAll(ScriptState* script_state,
-                             const ScriptValue& range,
+                             const ScriptValue& range_or_options,
                              ExceptionState& exception_state) {
-  return getAll(script_state, range, std::numeric_limits<uint32_t>::max(),
-                exception_state);
+  return getAll(script_state, range_or_options,
+                std::numeric_limits<uint32_t>::max(), exception_state);
 }
 
 IDBRequest* IDBIndex::getAll(ScriptState* script_state,
-                             const ScriptValue& range,
+                             const ScriptValue& range_or_options,
                              uint32_t max_count,
                              ExceptionState& exception_state) {
   TRACE_EVENT1("IndexedDB", "IDBIndex::getAllRequestSetup", "index_name",
                metadata_->name.Utf8());
-  IDBRequest::AsyncTraceState metrics(IDBRequest::TypeForMetrics::kIndexGetAll);
-  return GetAllInternal(script_state, range, max_count, exception_state, false,
-                        std::move(metrics));
+
+  IDBGetAllOptions* options =
+      IDBGetAllOptionsHelper::CreateFromArgumentsOrDictionary(
+          script_state, range_or_options, max_count, exception_state);
+  if (exception_state.HadException()) {
+    return nullptr;
+  }
+  return CreateGetAllRequest(
+      IDBRequest::TypeForMetrics::kIndexGetAll, script_state, *options,
+      mojom::blink::IDBGetAllResultType::Values, exception_state);
 }
 
 IDBRequest* IDBIndex::getAllKeys(ScriptState* script_state,
-                                 const ScriptValue& range,
+                                 const ScriptValue& range_or_options,
                                  ExceptionState& exception_state) {
-  return getAllKeys(script_state, range, std::numeric_limits<uint32_t>::max(),
-                    exception_state);
+  return getAllKeys(script_state, range_or_options,
+                    std::numeric_limits<uint32_t>::max(), exception_state);
 }
 
 IDBRequest* IDBIndex::getAllKeys(ScriptState* script_state,
-                                 const ScriptValue& range,
+                                 const ScriptValue& range_or_options,
                                  uint32_t max_count,
                                  ExceptionState& exception_state) {
   TRACE_EVENT1("IndexedDB", "IDBIndex::getAllKeysRequestSetup", "index_name",
                metadata_->name.Utf8());
-  IDBRequest::AsyncTraceState metrics(
-      IDBRequest::TypeForMetrics::kIndexGetAllKeys);
-  return GetAllInternal(script_state, range, max_count, exception_state,
-                        /*key_only=*/true, std::move(metrics));
+
+  IDBGetAllOptions* options =
+      IDBGetAllOptionsHelper::CreateFromArgumentsOrDictionary(
+          script_state, range_or_options, max_count, exception_state);
+  if (exception_state.HadException()) {
+    return nullptr;
+  }
+  return CreateGetAllRequest(
+      IDBRequest::TypeForMetrics::kIndexGetAllKeys, script_state, *options,
+      mojom::blink::IDBGetAllResultType::Keys, exception_state);
+}
+
+IDBRequest* IDBIndex::getAllRecords(ScriptState* script_state,
+                                    const IDBGetAllOptions* options,
+                                    ExceptionState& exception_state) {
+  TRACE_EVENT1("IndexedDB", "IDBIndex::getAllRecords", "index_name",
+               metadata_->name.Utf8());
+
+  return CreateGetAllRequest(
+      IDBRequest::TypeForMetrics::kIndexGetAllRecords, script_state, *options,
+      mojom::blink::IDBGetAllResultType::Records, exception_state);
 }
 
 IDBRequest* IDBIndex::getKey(ScriptState* script_state,
@@ -331,14 +357,13 @@ IDBRequest* IDBIndex::GetInternal(ScriptState* script_state,
   return request;
 }
 
-IDBRequest* IDBIndex::GetAllInternal(ScriptState* script_state,
-                                     const ScriptValue& range,
-                                     uint32_t max_count,
-                                     ExceptionState& exception_state,
-                                     bool key_only,
-                                     IDBRequest::AsyncTraceState metrics) {
-  if (!max_count)
-    max_count = std::numeric_limits<uint32_t>::max();
+IDBRequest* IDBIndex::CreateGetAllRequest(
+    IDBRequest::TypeForMetrics type_for_metrics,
+    ScriptState* script_state,
+    const IDBGetAllOptions& options,
+    mojom::blink::IDBGetAllResultType result_type,
+    ExceptionState& exception_state) {
+  IDBRequest::AsyncTraceState metrics(type_for_metrics);
 
   if (IsDeleted()) {
     exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
@@ -353,7 +378,7 @@ IDBRequest* IDBIndex::GetAllInternal(ScriptState* script_state,
   }
 
   IDBKeyRange* key_range = IDBKeyRange::FromScriptValue(
-      ExecutionContext::From(script_state), range, exception_state);
+      ExecutionContext::From(script_state), options.query(), exception_state);
   if (exception_state.HadException())
     return nullptr;
   if (!db().IsConnectionOpen()) {
@@ -362,10 +387,14 @@ IDBRequest* IDBIndex::GetAllInternal(ScriptState* script_state,
     return nullptr;
   }
 
+  const uint32_t count = IDBGetAllOptionsHelper::GetCount(options);
+  const mojom::blink::IDBCursorDirection direction =
+      IDBCursor::V8EnumToDirection(options.direction().AsEnum());
+
   IDBRequest* request = IDBRequest::Create(
       script_state, this, transaction_.Get(), std::move(metrics));
   db().GetAll(transaction_->Id(), object_store_->Id(), Id(), key_range,
-              max_count, key_only, request);
+              result_type, count, direction, request);
   return request;
 }
 

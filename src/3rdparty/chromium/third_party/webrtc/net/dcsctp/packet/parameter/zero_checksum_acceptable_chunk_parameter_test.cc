@@ -9,13 +9,11 @@
  */
 #include "net/dcsctp/packet/parameter/zero_checksum_acceptable_chunk_parameter.h"
 
-#include <stdint.h>
-
-#include <type_traits>
+#include <cstdint>
 #include <vector>
 
+#include "net/dcsctp/public/types.h"
 #include "net/dcsctp/testing/testing_macros.h"
-#include "rtc_base/gunit.h"
 #include "test/gmock.h"
 #include "test/gtest.h"
 
@@ -24,16 +22,26 @@ namespace {
 using ::testing::ElementsAre;
 
 TEST(ZeroChecksumAcceptableChunkParameterTest, SerializeAndDeserialize) {
-  ZeroChecksumAcceptableChunkParameter parameter;
+  ZeroChecksumAcceptableChunkParameter parameter(
+      ZeroChecksumAlternateErrorDetectionMethod::LowerLayerDtls());
 
   std::vector<uint8_t> serialized;
   parameter.SerializeTo(serialized);
 
-  EXPECT_THAT(serialized, ElementsAre(0x80, 0x01, 0x00, 0x04));
+  EXPECT_THAT(serialized,
+              ElementsAre(0x80, 0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x01));
 
   ASSERT_HAS_VALUE_AND_ASSIGN(
       ZeroChecksumAcceptableChunkParameter deserialized,
       ZeroChecksumAcceptableChunkParameter::Parse(serialized));
+}
+
+TEST(ZeroChecksumAcceptableChunkParameterTest, FailToDeserializePrevVersion) {
+  // This is how the draft described the chunk as, in version 00.
+  std::vector<uint8_t> invalid = {0x80, 0x01, 0x00, 0x04};
+
+  EXPECT_FALSE(
+      ZeroChecksumAcceptableChunkParameter::Parse(invalid).has_value());
 }
 
 TEST(ZeroChecksumAcceptableChunkParameterTest, FailToDeserialize) {
@@ -44,9 +52,10 @@ TEST(ZeroChecksumAcceptableChunkParameterTest, FailToDeserialize) {
 }
 
 TEST(ZeroChecksumAcceptableChunkParameterTest, HasToString) {
-  ZeroChecksumAcceptableChunkParameter parameter;
+  ZeroChecksumAcceptableChunkParameter parameter(
+      ZeroChecksumAlternateErrorDetectionMethod::LowerLayerDtls());
 
-  EXPECT_EQ(parameter.ToString(), "Zero Checksum Acceptable");
+  EXPECT_EQ(parameter.ToString(), "Zero Checksum Acceptable (1)");
 }
 
 }  // namespace

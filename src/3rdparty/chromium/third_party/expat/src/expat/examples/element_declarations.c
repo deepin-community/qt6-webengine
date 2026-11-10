@@ -12,9 +12,11 @@
    Copyright (c) 2001-2003 Fred L. Drake, Jr. <fdrake@users.sourceforge.net>
    Copyright (c) 2004-2006 Karl Waclawek <karl@waclawek.net>
    Copyright (c) 2005-2007 Steven Solie <steven@solie.ca>
-   Copyright (c) 2016-2022 Sebastian Pipping <sebastian@pipping.org>
+   Copyright (c) 2016-2024 Sebastian Pipping <sebastian@pipping.org>
    Copyright (c) 2017      Rhodri James <rhodri@wildebeest.org.uk>
    Copyright (c) 2019      Zhongyuan Zhou <zhouzhongyuan@huawei.com>
+   Copyright (c) 2024      Hanno Böck <hanno@gentoo.org>
+   Copyright (c) 2026      Matthew Fernandez <matthew.fernandez@gmail.com>
    Licensed under the MIT license:
 
    Permission is  hereby granted,  free of charge,  to any  person obtaining
@@ -81,7 +83,7 @@ stackPopFree(Stack *stackTop) {
   return newStackTop;
 }
 
-static char *
+static const char *
 contentTypeName(enum XML_Content_Type contentType) {
   switch (contentType) {
   case XML_CTYPE_EMPTY:
@@ -101,7 +103,7 @@ contentTypeName(enum XML_Content_Type contentType) {
   }
 }
 
-static char *
+static const char *
 contentQuantName(enum XML_Content_Quant contentQuant) {
   switch (contentQuant) {
   case XML_CQUANT_NONE:
@@ -127,23 +129,22 @@ dumpContentModelElement(const XML_Content *model, unsigned level,
   }
 
   // Node
-  printf("[%u] type=%s(%d), quant=%s(%d)", (unsigned)(model - root),
-         contentTypeName(model->type), model->type,
-         contentQuantName(model->quant), model->quant);
+  printf("[%u] type=%s(%u), quant=%s(%u)", (unsigned)(model - root),
+         contentTypeName(model->type), (unsigned int)model->type,
+         contentQuantName(model->quant), (unsigned int)model->quant);
   if (model->name) {
     printf(", name=\"%" XML_FMT_STR "\"", model->name);
   } else {
     printf(", name=NULL");
   }
-  printf(", numchildren=%d", model->numchildren);
+  printf(", numchildren=%u", model->numchildren);
   printf("\n");
 }
 
 static bool
 dumpContentModel(const XML_Char *name, const XML_Content *root) {
   printf("Element \"%" XML_FMT_STR "\":\n", name);
-  Stack *stackTop = NULL;
-  stackTop = stackPushMalloc(stackTop, root, 1);
+  Stack *stackTop = stackPushMalloc(NULL, root, 1);
   if (! stackTop) {
     return false;
   }
@@ -157,11 +158,17 @@ dumpContentModel(const XML_Char *name, const XML_Content *root) {
     stackTop = stackPopFree(stackTop);
 
     for (size_t u = model->numchildren; u >= 1; u--) {
-      stackTop
+      Stack *const newStackTop
           = stackPushMalloc(stackTop, model->children + (u - 1), level + 1);
-      if (! stackTop) {
+      if (! newStackTop) {
+        // We ran out of memory, so let's free all memory allocated
+        // earlier in this function, to be leak-clean:
+        while (stackTop != NULL) {
+          stackTop = stackPopFree(stackTop);
+        }
         return false;
       }
+      stackTop = newStackTop;
     }
   }
 

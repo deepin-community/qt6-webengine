@@ -8,12 +8,12 @@
 #include <stdint.h>
 #include <vector>
 
+#include <optional>
+#include <string_view>
 #include <vector>
 
 #include "base/component_export.h"
 #include "base/dcheck_is_on.h"
-#include "base/strings/string_piece.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/base/resource/resource_scale_factor.h"
 
 namespace base {
@@ -39,10 +39,10 @@ class COMPONENT_EXPORT(UI_DATA_PACK) ResourceHandle {
   // Get resource by id |resource_id|, filling in |data|.
   // The data is owned by the DataPack object and should not be modified.
   // Returns false if the resource id isn't found.
-  virtual absl::optional<base::StringPiece> GetStringPiece(
+  virtual std::optional<std::string_view> GetStringView(
       uint16_t resource_id) const = 0;
 
-  // Like GetStringPiece(), but returns a reference to memory.
+  // Like GetStringView(), but returns a reference to memory.
   // Caller owns the returned object.
   virtual base::RefCountedStaticMemory* GetStaticMemory(
       uint16_t resource_id) const = 0;

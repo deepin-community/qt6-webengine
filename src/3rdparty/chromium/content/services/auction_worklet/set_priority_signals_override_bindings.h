@@ -5,15 +5,12 @@
 #ifndef CONTENT_SERVICES_AUCTION_WORKLET_SET_PRIORITY_SIGNALS_OVERRIDE_BINDINGS_H_
 #define CONTENT_SERVICES_AUCTION_WORKLET_SET_PRIORITY_SIGNALS_OVERRIDE_BINDINGS_H_
 
-#include <optional>
-
 #include "base/containers/flat_map.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "content/services/auction_worklet/auction_v8_helper.h"
 #include "content/services/auction_worklet/context_recycler.h"
 #include "content/services/auction_worklet/public/mojom/bidder_worklet.mojom.h"
-#include "url/gurl.h"
 #include "v8/include/v8-forward.h"
 
 namespace auction_worklet {
@@ -26,9 +23,10 @@ namespace auction_worklet {
 class SetPrioritySignalsOverrideBindings : public Bindings {
  public:
   explicit SetPrioritySignalsOverrideBindings(AuctionV8Helper* v8_helper);
-  SetPrioritySignalsOverrideBindings(const SetPriorityBindings&) = delete;
-  SetPrioritySignalsOverrideBindings& operator=(const SetPriorityBindings&) =
-      delete;
+  SetPrioritySignalsOverrideBindings(
+      const SetPrioritySignalsOverrideBindings&) = delete;
+  SetPrioritySignalsOverrideBindings& operator=(
+      const SetPrioritySignalsOverrideBindings&) = delete;
   ~SetPrioritySignalsOverrideBindings() override;
 
   // Add report method to global context. `this` must outlive the context.

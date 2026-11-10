@@ -18,19 +18,16 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libavutil/avstring.h"
 #include "libavutil/channel_layout.h"
 #include "libavutil/eval.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
-#include "libavutil/parseutils.h"
 #include "libavutil/xga_font_data.h"
 #include "avfilter.h"
 #include "filters.h"
 #include "formats.h"
-#include "audio.h"
 #include "video.h"
-#include "internal.h"
 
 static const char *const var_names[] = {   "VOLUME",   "CHANNEL",   "PEAK",        NULL };
 enum                                   { VAR_VOLUME, VAR_CHANNEL, VAR_PEAK, VAR_VARS_NB };
@@ -82,17 +79,17 @@ static const AVOption showvolume_options[] = {
     { "v", "display volume value", OFFSET(draw_volume), AV_OPT_TYPE_BOOL, {.i64=1}, 0, 1, FLAGS },
     { "dm", "duration for max value display", OFFSET(draw_persistent_duration), AV_OPT_TYPE_DOUBLE, {.dbl=0.}, 0, 9000, FLAGS},
     { "dmc","set color of the max value line", OFFSET(persistant_max_rgba), AV_OPT_TYPE_COLOR, {.str = "orange"}, 0, 0, FLAGS },
-    { "o", "set orientation", OFFSET(orientation), AV_OPT_TYPE_INT, {.i64=0}, 0, 1, FLAGS, "orientation" },
-    {   "h", "horizontal", 0, AV_OPT_TYPE_CONST, {.i64=0}, 0, 0, FLAGS, "orientation" },
-    {   "v", "vertical",   0, AV_OPT_TYPE_CONST, {.i64=1}, 0, 0, FLAGS, "orientation" },
+    { "o", "set orientation", OFFSET(orientation), AV_OPT_TYPE_INT, {.i64=0}, 0, 1, FLAGS, .unit = "orientation" },
+    {   "h", "horizontal", 0, AV_OPT_TYPE_CONST, {.i64=0}, 0, 0, FLAGS, .unit = "orientation" },
+    {   "v", "vertical",   0, AV_OPT_TYPE_CONST, {.i64=1}, 0, 0, FLAGS, .unit = "orientation" },
     { "s", "set step size", OFFSET(step), AV_OPT_TYPE_INT, {.i64=0}, 0, 5, FLAGS },
     { "p", "set background opacity", OFFSET(bgopacity), AV_OPT_TYPE_FLOAT, {.dbl=0}, 0, 1, FLAGS },
-    { "m", "set mode", OFFSET(mode), AV_OPT_TYPE_INT, {.i64=0}, 0, 1, FLAGS, "mode" },
-    {   "p", "peak", 0, AV_OPT_TYPE_CONST, {.i64=0}, 0, 0, FLAGS, "mode" },
-    {   "r", "rms",  0, AV_OPT_TYPE_CONST, {.i64=1}, 0, 0, FLAGS, "mode" },
-    { "ds", "set display scale", OFFSET(display_scale), AV_OPT_TYPE_INT, {.i64=LINEAR}, LINEAR, NB_DISPLAY_SCALE - 1, FLAGS, "display_scale" },
-    {   "lin", "linear", 0, AV_OPT_TYPE_CONST, {.i64=LINEAR}, 0, 0, FLAGS, "display_scale" },
-    {   "log", "log",  0, AV_OPT_TYPE_CONST, {.i64=LOG}, 0, 0, FLAGS, "display_scale" },
+    { "m", "set mode", OFFSET(mode), AV_OPT_TYPE_INT, {.i64=0}, 0, 1, FLAGS, .unit = "mode" },
+    {   "p", "peak", 0, AV_OPT_TYPE_CONST, {.i64=0}, 0, 0, FLAGS, .unit = "mode" },
+    {   "r", "rms",  0, AV_OPT_TYPE_CONST, {.i64=1}, 0, 0, FLAGS, .unit = "mode" },
+    { "ds", "set display scale", OFFSET(display_scale), AV_OPT_TYPE_INT, {.i64=LINEAR}, LINEAR, NB_DISPLAY_SCALE - 1, FLAGS, .unit = "display_scale" },
+    {   "lin", "linear", 0, AV_OPT_TYPE_CONST, {.i64=LINEAR}, 0, 0, FLAGS, .unit = "display_scale" },
+    {   "log", "log",  0, AV_OPT_TYPE_CONST, {.i64=LOG}, 0, 0, FLAGS, .unit = "display_scale" },
     { NULL }
 };
 
@@ -113,30 +110,21 @@ static av_cold int init(AVFilterContext *ctx)
     return 0;
 }
 
-static int query_formats(AVFilterContext *ctx)
+static int query_formats(const AVFilterContext *ctx,
+                         AVFilterFormatsConfig **cfg_in,
+                         AVFilterFormatsConfig **cfg_out)
 {
     AVFilterFormats *formats = NULL;
-    AVFilterChannelLayouts *layouts = NULL;
-    AVFilterLink *inlink = ctx->inputs[0];
-    AVFilterLink *outlink = ctx->outputs[0];
     static const enum AVSampleFormat sample_fmts[] = { AV_SAMPLE_FMT_FLTP, AV_SAMPLE_FMT_NONE };
     static const enum AVPixelFormat pix_fmts[] = { AV_PIX_FMT_RGBA, AV_PIX_FMT_NONE };
     int ret;
 
     formats = ff_make_format_list(sample_fmts);
-    if ((ret = ff_formats_ref(formats, &inlink->outcfg.formats)) < 0)
-        return ret;
-
-    layouts = ff_all_channel_counts();
-    if ((ret = ff_channel_layouts_ref(layouts, &inlink->outcfg.channel_layouts)) < 0)
-        return ret;
-
-    formats = ff_all_samplerates();
-    if ((ret = ff_formats_ref(formats, &inlink->outcfg.samplerates)) < 0)
+    if ((ret = ff_formats_ref(formats, &cfg_in[0]->formats)) < 0)
         return ret;
 
     formats = ff_make_format_list(pix_fmts);
-    if ((ret = ff_formats_ref(formats, &outlink->incfg.formats)) < 0)
+    if ((ret = ff_formats_ref(formats, &cfg_out[0]->formats)) < 0)
         return ret;
 
     return 0;
@@ -198,6 +186,7 @@ static int config_input(AVFilterLink *inlink)
 
 static int config_output(AVFilterLink *outlink)
 {
+    FilterLink        *l = ff_filter_link(outlink);
     ShowVolumeContext *s = outlink->src->priv;
     AVFilterLink *inlink = outlink->src->inputs[0];
     int ch;
@@ -211,8 +200,8 @@ static int config_output(AVFilterLink *outlink)
     }
 
     outlink->sample_aspect_ratio = (AVRational){1,1};
-    outlink->frame_rate = s->frame_rate;
-    outlink->time_base = av_inv_q(outlink->frame_rate);
+    l->frame_rate = s->frame_rate;
+    outlink->time_base = av_inv_q(l->frame_rate);
 
     for (ch = 0; ch < inlink->ch_layout.nb_channels; ch++) {
         int i;
@@ -513,15 +502,15 @@ static const AVFilterPad showvolume_outputs[] = {
     },
 };
 
-const AVFilter ff_avf_showvolume = {
-    .name          = "showvolume",
-    .description   = NULL_IF_CONFIG_SMALL("Convert input audio volume to video output."),
+const FFFilter ff_avf_showvolume = {
+    .p.name        = "showvolume",
+    .p.description = NULL_IF_CONFIG_SMALL("Convert input audio volume to video output."),
+    .p.priv_class  = &showvolume_class,
     .init          = init,
     .activate      = activate,
     .uninit        = uninit,
     .priv_size     = sizeof(ShowVolumeContext),
     FILTER_INPUTS(showvolume_inputs),
     FILTER_OUTPUTS(showvolume_outputs),
-    FILTER_QUERY_FUNC(query_formats),
-    .priv_class    = &showvolume_class,
+    FILTER_QUERY_FUNC2(query_formats),
 };

@@ -12,8 +12,6 @@
 #include <string_view>
 
 #include "base/i18n/base_i18n_export.h"
-#include "base/memory/raw_ptr.h"
-#include "base/strings/string_piece.h"
 
 // The BreakIterator class iterates through the words, word breaks, and
 // line breaks in a UTF-16 string.
@@ -110,12 +108,12 @@ class BASE_I18N_EXPORT BreakIterator {
   static constexpr size_t npos = static_cast<size_t>(-1);
 
   // Requires |str| to live as long as the BreakIterator does.
-  BreakIterator(StringPiece16 str, BreakType break_type);
+  BreakIterator(std::u16string_view str, BreakType break_type);
   // Make a rule-based iterator. BreakType == RULE_BASED is implied.
   // TODO(andrewhayden): This signature could easily be misinterpreted as
   // "(const std::u16string& str, const std::u16string& locale)". We should do
   // something better.
-  BreakIterator(StringPiece16 str, const std::u16string& rules);
+  BreakIterator(std::u16string_view str, const std::u16string& rules);
 
   BreakIterator(const BreakIterator&) = delete;
   BreakIterator& operator=(const BreakIterator&) = delete;
@@ -175,9 +173,7 @@ class BASE_I18N_EXPORT BreakIterator {
   // Returns the string between prev() and pos().
   // Advance() must have been called successfully at least once for pos() to
   // have advanced to somewhere useful.
-  std::u16string GetString() const;
-
-  StringPiece16 GetStringPiece() const;
+  std::u16string_view GetString() const;
 
   // Returns the value of pos() returned before Advance() was last called.
   size_t prev() const { return prev_; }

@@ -1,66 +1,23 @@
-/* Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)
- * All rights reserved.
- *
- * This package is an SSL implementation written
- * by Eric Young (eay@cryptsoft.com).
- * The implementation was written so as to conform with Netscapes SSL.
- *
- * This library is free for commercial and non-commercial use as long as
- * the following conditions are aheared to.  The following conditions
- * apply to all code found in this distribution, be it the RC4, RSA,
- * lhash, DES, etc., code; not just the SSL code.  The SSL documentation
- * included with this distribution is covered by the same copyright terms
- * except that the holder is Tim Hudson (tjh@cryptsoft.com).
- *
- * Copyright remains Eric Young's, and as such any Copyright notices in
- * the code are not to be removed.
- * If this package is used in a product, Eric Young should be given attribution
- * as the author of the parts of the library used.
- * This can be in the form of a textual message at program startup or
- * in documentation (online or textual) provided with the package.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- * 3. All advertising materials mentioning features or use of this software
- *    must display the following acknowledgement:
- *    "This product includes cryptographic software written by
- *     Eric Young (eay@cryptsoft.com)"
- *    The word 'cryptographic' can be left out if the rouines from the library
- *    being used are not cryptographic related :-).
- * 4. If you include any Windows specific code (or a derivative thereof) from
- *    the apps directory (application code) you must include an acknowledgement:
- *    "This product includes software written by Tim Hudson (tjh@cryptsoft.com)"
- *
- * THIS SOFTWARE IS PROVIDED BY ERIC YOUNG ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
- *
- * The licence and distribution terms for any publically available version or
- * derivative of this code cannot be changed.  i.e. this code cannot simply be
- * copied and put under another distribution licence
- * [including the GNU Public Licence.] */
+// Copyright 1995-2016 The OpenSSL Project Authors. All Rights Reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #ifndef OPENSSL_HEADER_EVP_H
 #define OPENSSL_HEADER_EVP_H
 
-#include <openssl/base.h>
+#include <openssl/base.h>   // IWYU pragma: export
 
 #include <openssl/evp_errors.h>  // IWYU pragma: export
-#include <openssl/thread.h>
 
 // OpenSSL included digest and cipher functions in this header so we include
 // them for users that still expect that.
@@ -136,10 +93,6 @@ OPENSSL_EXPORT int EVP_PKEY_bits(const EVP_PKEY *pkey);
 // values.
 OPENSSL_EXPORT int EVP_PKEY_id(const EVP_PKEY *pkey);
 
-// EVP_PKEY_type returns |nid| if |nid| is a known key type and |NID_undef|
-// otherwise.
-OPENSSL_EXPORT int EVP_PKEY_type(int nid);
-
 
 // Getting and setting concrete public key types.
 //
@@ -171,6 +124,11 @@ OPENSSL_EXPORT int EVP_PKEY_assign_EC_KEY(EVP_PKEY *pkey, EC_KEY *key);
 OPENSSL_EXPORT EC_KEY *EVP_PKEY_get0_EC_KEY(const EVP_PKEY *pkey);
 OPENSSL_EXPORT EC_KEY *EVP_PKEY_get1_EC_KEY(const EVP_PKEY *pkey);
 
+OPENSSL_EXPORT int EVP_PKEY_set1_DH(EVP_PKEY *pkey, DH *key);
+OPENSSL_EXPORT int EVP_PKEY_assign_DH(EVP_PKEY *pkey, DH *key);
+OPENSSL_EXPORT DH *EVP_PKEY_get0_DH(const EVP_PKEY *pkey);
+OPENSSL_EXPORT DH *EVP_PKEY_get1_DH(const EVP_PKEY *pkey);
+
 #define EVP_PKEY_NONE NID_undef
 #define EVP_PKEY_RSA NID_rsaEncryption
 #define EVP_PKEY_RSA_PSS NID_rsassaPss
@@ -179,6 +137,7 @@ OPENSSL_EXPORT EC_KEY *EVP_PKEY_get1_EC_KEY(const EVP_PKEY *pkey);
 #define EVP_PKEY_ED25519 NID_ED25519
 #define EVP_PKEY_X25519 NID_X25519
 #define EVP_PKEY_HKDF NID_hkdf
+#define EVP_PKEY_DH NID_dhKeyAgreement
 
 // EVP_PKEY_set_type sets the type of |pkey| to |type|. It returns one if
 // successful or zero if the |type| argument is not one of the |EVP_PKEY_*|
@@ -353,8 +312,8 @@ OPENSSL_EXPORT int EVP_DigestVerifyInit(EVP_MD_CTX *ctx, EVP_PKEY_CTX **pctx,
 // will be verified by |EVP_DigestVerifyFinal|. It returns one.
 //
 // This function performs streaming signature verification and will fail for
-// signature algorithms which do not support this. Use |EVP_PKEY_verify_message|
-// for a single-shot verification.
+// signature algorithms which do not support this. Use |EVP_DigestVerify| for a
+// single-shot verification.
 OPENSSL_EXPORT int EVP_DigestVerifyUpdate(EVP_MD_CTX *ctx, const void *data,
                                           size_t len);
 
@@ -363,8 +322,8 @@ OPENSSL_EXPORT int EVP_DigestVerifyUpdate(EVP_MD_CTX *ctx, const void *data,
 // |EVP_DigestVerifyUpdate|. It returns one on success and zero otherwise.
 //
 // This function performs streaming signature verification and will fail for
-// signature algorithms which do not support this. Use |EVP_PKEY_verify_message|
-// for a single-shot verification.
+// signature algorithms which do not support this. Use |EVP_DigestVerify| for a
+// single-shot verification.
 OPENSSL_EXPORT int EVP_DigestVerifyFinal(EVP_MD_CTX *ctx, const uint8_t *sig,
                                          size_t sig_len);
 
@@ -493,7 +452,7 @@ OPENSSL_EXPORT int PKCS5_PBKDF2_HMAC_SHA1(const char *password,
 // as described below.
 //
 // |N|, |r|, and |p| are as described in RFC 7914 section 6. They determine the
-// cost of the operation. If |max_mem| is zero, a defult limit of 32MiB will be
+// cost of the operation. If |max_mem| is zero, a default limit of 32MiB will be
 // used.
 //
 // The parameters are considered invalid under any of the following conditions:
@@ -727,16 +686,16 @@ OPENSSL_EXPORT int EVP_PKEY_CTX_get_rsa_padding(EVP_PKEY_CTX *ctx,
                                                 int *out_padding);
 
 // EVP_PKEY_CTX_set_rsa_pss_saltlen sets the length of the salt in a PSS-padded
-// signature. A value of -1 cause the salt to be the same length as the digest
-// in the signature. A value of -2 causes the salt to be the maximum length
-// that will fit when signing and recovered from the signature when verifying.
-// Otherwise the value gives the size of the salt in bytes.
+// signature. A value of |RSA_PSS_SALTLEN_DIGEST| causes the salt to be the same
+// length as the digest in the signature. A value of |RSA_PSS_SALTLEN_AUTO|
+// causes the salt to be the maximum length that will fit when signing and
+// recovered from the signature when verifying. Otherwise the value gives the
+// size of the salt in bytes.
 //
-// If unsure, use -1.
+// If unsure, use |RSA_PSS_SALTLEN_DIGEST|, which is the default. Note this
+// differs from OpenSSL, which defaults to |RSA_PSS_SALTLEN_AUTO|.
 //
 // Returns one on success or zero on error.
-//
-// TODO(davidben): The default is currently -2. Switch it to -1.
 OPENSSL_EXPORT int EVP_PKEY_CTX_set_rsa_pss_saltlen(EVP_PKEY_CTX *ctx,
                                                     int salt_len);
 
@@ -756,7 +715,9 @@ OPENSSL_EXPORT int EVP_PKEY_CTX_set_rsa_keygen_bits(EVP_PKEY_CTX *ctx,
                                                     int bits);
 
 // EVP_PKEY_CTX_set_rsa_keygen_pubexp sets |e| as the public exponent for key
-// generation. Returns one on success or zero on error.
+// generation. Returns one on success or zero on error. On success, |ctx| takes
+// ownership of |e|. The library will then call |BN_free| on |e| when |ctx| is
+// destroyed.
 OPENSSL_EXPORT int EVP_PKEY_CTX_set_rsa_keygen_pubexp(EVP_PKEY_CTX *ctx,
                                                       BIGNUM *e);
 
@@ -807,6 +768,14 @@ OPENSSL_EXPORT int EVP_PKEY_CTX_get0_rsa_oaep_label(EVP_PKEY_CTX *ctx,
 
 // EC specific control functions.
 
+// EVP_PKEY_get_ec_curve_nid returns |pkey|'s curve as a NID constant, such as
+// |NID_X9_62_prime256v1|, or |NID_undef| if |pkey| is not an EC key.
+OPENSSL_EXPORT int EVP_PKEY_get_ec_curve_nid(const EVP_PKEY *pkey);
+
+// EVP_PKEY_get_ec_point_conv_form returns |pkey|'s point conversion form as a
+// |POINT_CONVERSION_*| constant, or zero if |pkey| is not an EC key.
+OPENSSL_EXPORT int EVP_PKEY_get_ec_point_conv_form(const EVP_PKEY *pkey);
+
 // EVP_PKEY_CTX_set_ec_paramgen_curve_nid sets the curve used for
 // |EVP_PKEY_keygen| or |EVP_PKEY_paramgen| operations to |nid|. It returns one
 // on success and zero on error.
@@ -814,11 +783,23 @@ OPENSSL_EXPORT int EVP_PKEY_CTX_set_ec_paramgen_curve_nid(EVP_PKEY_CTX *ctx,
                                                           int nid);
 
 
-// Deprecated functions.
+// Diffie-Hellman-specific control functions.
 
-// EVP_PKEY_DH is defined for compatibility, but it is impossible to create an
-// |EVP_PKEY| of that type.
-#define EVP_PKEY_DH NID_dhKeyAgreement
+// EVP_PKEY_CTX_set_dh_pad configures configures whether |ctx|, which must be an
+// |EVP_PKEY_derive| operation, configures the handling of leading zeros in the
+// Diffie-Hellman shared secret. If |pad| is zero, leading zeros are removed
+// from the secret. If |pad| is non-zero, the fixed-width shared secret is used
+// unmodified, as in PKCS #3. If this function is not called, the default is to
+// remove leading zeros.
+//
+// WARNING: The behavior when |pad| is zero leaks information about the shared
+// secret. This may result in side channel attacks such as
+// https://raccoon-attack.com/, particularly when the same private key is used
+// for multiple operations.
+OPENSSL_EXPORT int EVP_PKEY_CTX_set_dh_pad(EVP_PKEY_CTX *ctx, int pad);
+
+
+// Deprecated functions.
 
 // EVP_PKEY_RSA2 was historically an alternate form for RSA public keys (OID
 // 2.5.8.1.1), but is no longer accepted.
@@ -916,12 +897,6 @@ OPENSSL_EXPORT EVP_PKEY *d2i_AutoPrivateKey(EVP_PKEY **out, const uint8_t **inp,
 // Use |RSA_parse_public_key| instead.
 OPENSSL_EXPORT EVP_PKEY *d2i_PublicKey(int type, EVP_PKEY **out,
                                        const uint8_t **inp, long len);
-
-// EVP_PKEY_get0_DH returns NULL.
-OPENSSL_EXPORT DH *EVP_PKEY_get0_DH(const EVP_PKEY *pkey);
-
-// EVP_PKEY_get1_DH returns NULL.
-OPENSSL_EXPORT DH *EVP_PKEY_get1_DH(const EVP_PKEY *pkey);
 
 // EVP_PKEY_CTX_set_ec_param_enc returns one if |encoding| is
 // |OPENSSL_EC_NAMED_CURVE| or zero with an error otherwise.
@@ -1035,6 +1010,9 @@ OPENSSL_EXPORT int EVP_PKEY_CTX_set_dsa_paramgen_q_bits(EVP_PKEY_CTX *ctx,
 //
 // Use the |EVP_PKEY_assign_*| functions instead.
 OPENSSL_EXPORT int EVP_PKEY_assign(EVP_PKEY *pkey, int type, void *key);
+
+// EVP_PKEY_type returns |nid|.
+OPENSSL_EXPORT int EVP_PKEY_type(int nid);
 
 
 // Preprocessor compatibility section (hidden).

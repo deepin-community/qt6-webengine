@@ -1,5 +1,6 @@
 // Copyright (C) 2018 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 // Copyright 2014 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
@@ -48,7 +49,7 @@ void ExtensionWebContentsObserverQt::RenderFrameCreated(content::RenderFrameHost
     if (!extension)
         return;
 
-    int process_id = render_frame_host->GetProcess()->GetID();
+    const int process_id = render_frame_host->GetProcess()->GetDeprecatedID();
     auto *policy = content::ChildProcessSecurityPolicy::GetInstance();
 
     if (extension->is_extension() && Manifest::IsComponentLocation(extension->location()))

@@ -177,7 +177,6 @@ PushMessagingAppIdentifier PushMessagingAppIdentifier::FindByAppId(
                             &service_worker_registration_id,
                             &expiration_time)) {
     NOTREACHED();
-    return PushMessagingAppIdentifier();
   }
 
   PushMessagingAppIdentifier app_identifier(
@@ -237,7 +236,7 @@ PushMessagingAppIdentifier::PushMessagingAppIdentifier(
     const PushMessagingAppIdentifier& other) = default;
 
 PushMessagingAppIdentifier::PushMessagingAppIdentifier()
-    : origin_(GURL::EmptyGURL()), service_worker_registration_id_(-1) {}
+    : origin_(GURL()), service_worker_registration_id_(-1) {}
 
 PushMessagingAppIdentifier::PushMessagingAppIdentifier(
     const std::string& app_id,
@@ -249,7 +248,7 @@ PushMessagingAppIdentifier::PushMessagingAppIdentifier(
       service_worker_registration_id_(service_worker_registration_id),
       expiration_time_(expiration_time) {}
 
-PushMessagingAppIdentifier::~PushMessagingAppIdentifier() {}
+PushMessagingAppIdentifier::~PushMessagingAppIdentifier() = default;
 
 bool PushMessagingAppIdentifier::IsExpired() const {
   return (expiration_time_) ? *expiration_time_ < base::Time::Now() : false;

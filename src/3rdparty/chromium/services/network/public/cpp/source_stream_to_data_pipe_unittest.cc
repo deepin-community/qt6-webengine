@@ -4,14 +4,19 @@
 
 #include "services/network/public/cpp/source_stream_to_data_pipe.h"
 
+#include <stdint.h>
+
+#include <optional>
+
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/test/bind.h"
 #include "base/test/task_environment.h"
 #include "net/base/net_errors.h"
 #include "net/filter/mock_source_stream.h"
+#include "net/filter/source_stream_type.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace network {
 
@@ -46,7 +51,8 @@ struct SourceStreamToDataPipeTestParam {
 
 class DummyPendingSourceStream : public net::SourceStream {
  public:
-  DummyPendingSourceStream() : net::SourceStream(SourceStream::TYPE_NONE) {}
+  DummyPendingSourceStream()
+      : net::SourceStream(net::SourceStreamType::kNone) {}
   ~DummyPendingSourceStream() override = default;
 
   DummyPendingSourceStream(const DummyPendingSourceStream&) = delete;
@@ -112,10 +118,11 @@ class SourceStreamToDataPipeTest
   int ReadPipe(std::string* output) {
     MojoResult result = MOJO_RESULT_OK;
     while (result == MOJO_RESULT_OK || result == MOJO_RESULT_SHOULD_WAIT) {
-      char buffer[16];
-      uint32_t read_size = sizeof(buffer);
-      result =
-          consumer_end().ReadData(buffer, &read_size, MOJO_READ_DATA_FLAG_NONE);
+      std::string buffer(16, '\0');
+      size_t read_size = 0;
+      result = consumer_end().ReadData(MOJO_READ_DATA_FLAG_NONE,
+                                       base::as_writable_byte_span(buffer),
+                                       read_size);
       if (result == MOJO_RESULT_FAILED_PRECONDITION)
         break;
       if (result == MOJO_RESULT_SHOULD_WAIT) {
@@ -123,7 +130,7 @@ class SourceStreamToDataPipeTest
         CompleteReadsIfAsync();
       } else {
         EXPECT_EQ(result, MOJO_RESULT_OK);
-        output->append(buffer, read_size);
+        output->append(std::string_view(buffer).substr(0, read_size));
       }
     }
     EXPECT_TRUE(CallbackResult().has_value());
@@ -136,16 +143,22 @@ class SourceStreamToDataPipeTest
 
   void CloseConsumerHandle() { consumer_end_.reset(); }
   void RunUntilIdle() { task_environment_.RunUntilIdle(); }
-  absl::optional<int> CallbackResult() { return callback_result_; }
+  std::optional<int> CallbackResult() { return callback_result_; }
+
+  void DestroyAdapter() {
+    source_ = nullptr;
+    adapter_.reset();
+  }
 
  private:
   void FinishedReading(int result) { callback_result_ = result; }
 
   base::test::TaskEnvironment task_environment_;
-  std::unique_ptr<SourceStreamToDataPipe> adapter_;  // owned by `adapter_`.
+  std::unique_ptr<SourceStreamToDataPipe> adapter_;
+  // owned by `adapter_`.
   raw_ptr<net::MockSourceStream> source_;
   mojo::ScopedDataPipeConsumerHandle consumer_end_;
-  absl::optional<int> callback_result_;
+  std::optional<int> callback_result_;
 };
 
 INSTANTIATE_TEST_SUITE_P(
@@ -173,7 +186,7 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST_P(SourceStreamToDataPipeTest, EmptyStream) {
   Init();
-  source()->AddReadResult(nullptr, 0, net::OK, GetParam().mode);
+  source()->AddReadResult(base::span<uint8_t>(), net::OK, GetParam().mode);
   adapter()->Start(callback());
 
   std::string output;
@@ -182,12 +195,12 @@ TEST_P(SourceStreamToDataPipeTest, EmptyStream) {
 }
 
 TEST_P(SourceStreamToDataPipeTest, Simple) {
-  const char message[] = "Hello, world!";
+  const std::string_view message = "Hello, world!";
 
   Init();
-  source()->AddReadResult(message, sizeof(message) - 1, net::OK,
+  source()->AddReadResult(base::as_byte_span(message), net::OK,
                           GetParam().mode);
-  source()->AddReadResult(nullptr, 0, net::OK, GetParam().mode);
+  source()->AddReadResult(base::span<uint8_t>(), net::OK, GetParam().mode);
   adapter()->Start(callback());
 
   std::string output;
@@ -196,12 +209,13 @@ TEST_P(SourceStreamToDataPipeTest, Simple) {
 }
 
 TEST_P(SourceStreamToDataPipeTest, Error) {
-  const char message[] = "Hello, world!";
+  const std::string_view message = "Hello, world!";
 
   Init();
-  source()->AddReadResult(message, sizeof(message) - 1, net::OK,
+  source()->AddReadResult(base::as_byte_span(message), net::OK,
                           GetParam().mode);
-  source()->AddReadResult(nullptr, 0, net::ERR_FAILED, GetParam().mode);
+  source()->AddReadResult(base::span<uint8_t>(), net::ERR_FAILED,
+                          GetParam().mode);
   adapter()->Start(callback());
 
   std::string output;
@@ -210,10 +224,11 @@ TEST_P(SourceStreamToDataPipeTest, Error) {
 }
 
 TEST_P(SourceStreamToDataPipeTest, ConsumerClosed) {
-  const char message[] = "a";
+  const std::string message(GetParam().pipe_capacity, 'a');
 
   Init();
-  source()->AddReadResult(message, sizeof(message) - 1, net::OK,
+  source()->set_expect_all_input_consumed(false);
+  source()->AddReadResult(base::as_byte_span(message), net::OK,
                           GetParam().mode);
   adapter()->Start(callback());
 
@@ -223,17 +238,20 @@ TEST_P(SourceStreamToDataPipeTest, ConsumerClosed) {
 
   ASSERT_TRUE(CallbackResult().has_value());
   EXPECT_EQ(*CallbackResult(), net::ERR_ABORTED);
+  // Need to destroy `adapter_` before `message` falls out of scope, since
+  // `adapter_` owns `source_`, which has a reference to `message`.
+  DestroyAdapter();
 }
 
 TEST_P(SourceStreamToDataPipeTest, MayHaveMoreBytes) {
-  const char message[] = "Hello, world!";
+  const std::string_view message = "Hello, world!";
 
   // Test that having the SourceStream properly report when !MayHaveMoreBytes
   // shortcuts extra work and still reports things properly.
   Init();
   source()->set_always_report_has_more_bytes(false);
   // Unlike other test reads (see "Simple" test), there is only one result here.
-  source()->AddReadResult(message, sizeof(message) - 1, net::OK,
+  source()->AddReadResult(base::as_byte_span(message), net::OK,
                           GetParam().mode);
   adapter()->Start(callback());
 

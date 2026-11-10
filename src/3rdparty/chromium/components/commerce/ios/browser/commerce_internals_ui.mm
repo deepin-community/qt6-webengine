@@ -27,17 +27,14 @@ CommerceInternalsUI::CommerceInternalsUI(web::WebUIIOS* web_ui,
       web::WebUIIOSDataSource::Create(kChromeUICommerceInternalsHost);
   source->SetDefaultResource(IDR_COMMERCE_INTERNALS_COMMERCE_INTERNALS_HTML);
   source->UseStringsJs();
-  const base::span<const webui::ResourcePath> resources = base::make_span(
-      kCommerceInternalsResources, kCommerceInternalsResourcesSize);
-
-  for (const auto& resource : resources) {
+  for (const auto& resource : kCommerceInternalsResources) {
     source->AddResourcePath(resource.path, resource.id);
   }
 
   web::WebUIIOSDataSource::Add(browser_state, source);
   web_ui->GetWebState()->GetInterfaceBinderForMainFrame()->AddInterface(
       base::BindRepeating(&CommerceInternalsUI::BindInterface,
-                          base::Unretained(this)));
+                          weak_factory_.GetWeakPtr()));
 }
 
 CommerceInternalsUI::~CommerceInternalsUI() {

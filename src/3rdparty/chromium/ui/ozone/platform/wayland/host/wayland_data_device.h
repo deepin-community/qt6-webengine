@@ -46,8 +46,6 @@ class WaylandDataDevice : public WaylandDataDeviceBase {
     virtual void OnDragLeave(base::TimeTicks timestamp) = 0;
     virtual void OnDragDrop(base::TimeTicks timestamp) = 0;
 
-    virtual const WaylandWindow* GetDragTarget() const = 0;
-
    protected:
     virtual ~DragDelegate() = default;
   };
@@ -69,7 +67,7 @@ class WaylandDataDevice : public WaylandDataDeviceBase {
   void ResetDragDelegate();
   // Resets the drag delegate, only under certain conditions, eg: if it is set
   // and running an incoming dnd session.
-  // TODO(crbug.com/1401598): Drop once drag delegate improvements are done.
+  // TODO(crbug.com/40884328): Drop once drag delegate improvements are done.
   void ResetDragDelegateIfNotDragSource();
 
   // Returns the underlying wl_data_device singleton object.
@@ -81,11 +79,21 @@ class WaylandDataDevice : public WaylandDataDeviceBase {
   // transfer of data happens asynchronously, on-demand-only.
   void SetSelectionSource(WaylandDataSource* source, uint32_t serial);
 
+  // Returns true if there is an active wayland drag session.
+  bool IsDragInProgress() const;
+
+  void set_drag_delegate_for_testing(DragDelegate* drag_delegate) {
+    drag_delegate_ = drag_delegate;
+  }
+
  private:
   FRIEND_TEST_ALL_PREFIXES(WaylandDataDragControllerTest, StartDrag);
   FRIEND_TEST_ALL_PREFIXES(WaylandDataDragControllerTest, ReceiveDrag);
+  FRIEND_TEST_ALL_PREFIXES(WaylandDataDragControllerTest, CancelIncomingDrag);
   FRIEND_TEST_ALL_PREFIXES(WaylandDataDragControllerTest,
                            DestroyWindowWhileFetchingForeignData);
+  FRIEND_TEST_ALL_PREFIXES(WaylandDataDragControllerTest,
+                           LeaveWindowWhileFetchingData);
 
   // wl_data_device_listener callbacks:
   static void OnDataOffer(void* data,
@@ -113,7 +121,7 @@ class WaylandDataDevice : public WaylandDataDeviceBase {
   // The wl_data_device wrapped by this WaylandDataDevice.
   wl::Object<wl_data_device> data_device_;
 
-  raw_ptr<DragDelegate, DanglingUntriaged> drag_delegate_ = nullptr;
+  raw_ptr<DragDelegate> drag_delegate_ = nullptr;
 
   // There are two separate data offers at a time, the drag offer and the
   // selection offer, each with independent lifetimes. When we receive a new

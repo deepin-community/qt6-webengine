@@ -24,7 +24,7 @@ CREATE PERFETTO VIEW GestureLegacyEvents AS
 SELECT
   ts,
   EXTRACT_ARG(arg_set_id, 'legacy_event.phase') AS phase
-FROM raw
+FROM __intrinsic_chrome_raw
 WHERE EXTRACT_ARG(arg_set_id, 'legacy_event.name') = 'SyntheticGestureController::running';
 
 -- Convert pairs of 'S' and 'F' events into slices with ts and dur.
@@ -52,20 +52,26 @@ USING SPAN_LEFT_JOIN(InteractionEvents, GestureEvents);
 
 DROP VIEW IF EXISTS InterestingSegments;
 CREATE PERFETTO VIEW InterestingSegments AS
-SELECT  -- 1) Gestures overlapping interactions.
-  ts_ge AS ts,
-  dur_ge AS dur
-FROM InteractionEventsJoinGestureEvents
-WHERE ts_ge IS NOT NULL
-GROUP BY ts_ge
-UNION ALL
-SELECT  -- 2) Interactions without gestures.
-  ts_ir AS ts,
-  dur_ir AS dur
-FROM InteractionEventsJoinGestureEvents
-WHERE ts_ge IS NULL
-GROUP BY ts_ir
-HAVING COUNT(*) = 1;
+WITH pre_cast AS (
+  SELECT  -- 1) Gestures overlapping interactions.
+    ts_ge AS ts,
+    dur_ge AS dur
+  FROM InteractionEventsJoinGestureEvents
+  WHERE ts_ge IS NOT NULL
+  GROUP BY ts_ge
+  UNION ALL
+  SELECT  -- 2) Interactions without gestures.
+    ts_ir AS ts,
+    dur_ir AS dur
+  FROM InteractionEventsJoinGestureEvents
+  WHERE ts_ge IS NULL
+  GROUP BY ts_ir
+  HAVING COUNT(*) = 1
+)
+SELECT
+  CAST(ts AS BIGINT) AS ts,
+  CAST(dur AS BIGINT) AS dur
+FROM pre_cast;
 
 --------------------------------------------------------------------------------
 -- On ChromeOS, DRM events, if they exist, are the source of truth. Otherwise,

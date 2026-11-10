@@ -9,6 +9,7 @@
 #include "third_party/blink/renderer/modules/webaudio/base_audio_context.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
 
@@ -20,7 +21,7 @@ constexpr unsigned kDefaultNumberOfOutputChannels2 = 1;
 }  // namespace
 
 AnalyserHandler::AnalyserHandler(AudioNode& node, float sample_rate)
-    : AudioHandler(kNodeTypeAnalyser, node, sample_rate),
+    : AudioHandler(NodeType::kNodeTypeAnalyser, node, sample_rate),
       analyser_(
           node.context()->GetDeferredTaskHandler().RenderQuantumFrames()) {
   AddInput();
@@ -91,8 +92,8 @@ void AnalyserHandler::SetFftSize(unsigned size,
                   ExceptionMessages::kInclusiveBound,
                   RealtimeAnalyser::kMaxFFTSize,
                   ExceptionMessages::kInclusiveBound)
-            : ("The value provided (" + String::Number(size) +
-               ") is not a power of two."));
+            : StrCat({"The value provided (", String::Number(size),
+                      ") is not a power of two."}));
   }
 }
 
@@ -126,9 +127,9 @@ void AnalyserHandler::SetMinMaxDecibels(double min_decibels,
   if (min_decibels >= max_decibels) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kIndexSizeError,
-        "maxDecibels (" + String::Number(max_decibels) +
-            ") must be greater than or equal to minDecibels " + "( " +
-            String::Number(min_decibels) + ").");
+        StrCat({"maxDecibels (", String::Number(max_decibels),
+                ") must be greater than or equal to minDecibels ( ",
+                String::Number(min_decibels), ")."}));
     return;
   }
   analyser_.SetMinDecibels(min_decibels);

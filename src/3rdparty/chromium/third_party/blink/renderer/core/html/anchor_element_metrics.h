@@ -10,19 +10,16 @@
 
 namespace blink {
 
-class Document;
-class HTMLAnchorElement;
+class HTMLAnchorElementBase;
 
-// Returns the document of the main frame of the frame tree containing `anchor`.
-// This could be null if `anchor` is in an out-of-process iframe.
-Document* GetTopDocument(const HTMLAnchorElement& anchor);
+// Exported for testing only.
+CORE_EXPORT uint32_t AnchorElementId(const HTMLAnchorElementBase& element);
 
-uint32_t AnchorElementId(const HTMLAnchorElement& element);
-
+// Returns null if the given element should not be evaluated.
 // Exported for testing only.
 CORE_EXPORT
 mojom::blink::AnchorElementMetricsPtr CreateAnchorElementMetrics(
-    const HTMLAnchorElement&);
+    const HTMLAnchorElementBase&);
 
 }  // namespace blink
 

@@ -7,7 +7,11 @@
 #include <utility>
 
 #include "base/memory/ptr_util.h"
+#include "base/memory/raw_ptr.h"
+#include "base/synchronization/lock.h"
 #include "base/task/single_thread_task_runner.h"
+#include "gpu/command_buffer/client/shared_image_interface.h"
+#include "gpu/ipc/client/gpu_channel_host.h"
 #include "media/capture/video/chromeos/camera_app_device_bridge_impl.h"
 #include "media/capture/video/chromeos/camera_hal_dispatcher_impl.h"
 
@@ -15,7 +19,51 @@ namespace media {
 
 namespace {
 
-gpu::GpuMemoryBufferManager* g_gpu_buffer_manager = nullptr;
+// This class is designed as a singleton because it holds resources that needs
+// to be accessed globally. This ensures consistent state and minimizes memory
+// usage by sharing resources across components.
+class GpuResources {
+ public:
+  GpuResources() = default;
+
+  scoped_refptr<gpu::SharedImageInterface> GetSharedImageInterface() const {
+    base::AutoLock lock(lock_);
+    return shared_image_interface_;
+  }
+
+  void SetSharedImageInterface(
+      scoped_refptr<gpu::SharedImageInterface> interface) {
+    base::AutoLock lock(lock_);
+    //  Ensure only one instance is set
+    if (interface && shared_image_interface_) {
+      CHECK_EQ(interface, shared_image_interface_);
+      return;
+    }
+    shared_image_interface_ = std::move(interface);
+  }
+
+  scoped_refptr<gpu::GpuChannelHost> GetGpuChannelHost() const {
+    base::AutoLock lock(lock_);
+    return gpu_channel_host_;
+  }
+
+  void SetGpuChannelHost(scoped_refptr<gpu::GpuChannelHost> gpu_channel_host) {
+    base::AutoLock lock(lock_);
+    gpu_channel_host_ = std::move(gpu_channel_host);
+  }
+
+ private:
+  mutable base::Lock lock_;
+  scoped_refptr<gpu::SharedImageInterface> shared_image_interface_
+      GUARDED_BY(lock_);
+  scoped_refptr<gpu::GpuChannelHost> gpu_channel_host_ GUARDED_BY(lock_);
+};
+
+// Singleton accessor for GpuResources.
+static GpuResources& GetGpuResources() {
+  static base::NoDestructor<GpuResources> instance;
+  return *instance;
+}
 
 }  // namespace
 
@@ -70,23 +118,30 @@ void VideoCaptureDeviceFactoryChromeOS::GetDevicesInfo(
 }
 
 // static
-gpu::GpuMemoryBufferManager*
-VideoCaptureDeviceFactoryChromeOS::GetBufferManager() {
-  return g_gpu_buffer_manager;
+void VideoCaptureDeviceFactoryChromeOS::SetGpuChannelHost(
+    scoped_refptr<gpu::GpuChannelHost> gpu_channel_host) {
+  GetGpuResources().SetGpuChannelHost(std::move(gpu_channel_host));
 }
 
 // static
-void VideoCaptureDeviceFactoryChromeOS::SetGpuBufferManager(
-    gpu::GpuMemoryBufferManager* buffer_manager) {
-  g_gpu_buffer_manager = buffer_manager;
+scoped_refptr<gpu::GpuChannelHost>
+VideoCaptureDeviceFactoryChromeOS::GetGpuChannelHost() {
+  return GetGpuResources().GetGpuChannelHost();
+}
+
+// static
+scoped_refptr<gpu::SharedImageInterface>
+VideoCaptureDeviceFactoryChromeOS::GetSharedImageInterface() {
+  return GetGpuResources().GetSharedImageInterface().get();
+}
+
+// static
+void VideoCaptureDeviceFactoryChromeOS::SetSharedImageInterface(
+    scoped_refptr<gpu::SharedImageInterface> shared_image_interface) {
+  GetGpuResources().SetSharedImageInterface(std::move(shared_image_interface));
 }
 
 bool VideoCaptureDeviceFactoryChromeOS::Init() {
-  if (!CameraHalDispatcherImpl::GetInstance()->IsStarted()) {
-    LOG(ERROR) << "CameraHalDispatcherImpl is not started";
-    return false;
-  }
-
   camera_hal_delegate_ = std::make_unique<CameraHalDelegate>(ui_task_runner_);
 
   if (!camera_hal_delegate_->Init()) {
@@ -95,10 +150,7 @@ bool VideoCaptureDeviceFactoryChromeOS::Init() {
     return false;
   }
 
-  if (!camera_hal_delegate_->RegisterCameraClient()) {
-    LOG(ERROR) << "Failed to register camera client";
-    return false;
-  }
+  camera_hal_delegate_->BootStrapCameraServiceConnection();
 
   // Since we will unset camera info getter and virtual device controller before
   // invalidate |camera_hal_delegate_| in the destructor, it should be safe to
@@ -111,6 +163,13 @@ bool VideoCaptureDeviceFactoryChromeOS::Init() {
       base::BindRepeating(&CameraHalDelegate::EnableVirtualDevice,
                           base::Unretained(camera_hal_delegate_.get())));
   return true;
+}
+
+bool VideoCaptureDeviceFactoryChromeOS::WaitForCameraServiceReadyForTesting() {
+  if (!camera_hal_delegate_) {
+    return false;
+  }
+  return camera_hal_delegate_->WaitForCameraModuleReadyForTesting();  // IN-TEST
 }
 
 }  // namespace media

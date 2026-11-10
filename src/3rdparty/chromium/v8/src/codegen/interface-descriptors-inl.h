@@ -5,10 +5,12 @@
 #ifndef V8_CODEGEN_INTERFACE_DESCRIPTORS_INL_H_
 #define V8_CODEGEN_INTERFACE_DESCRIPTORS_INL_H_
 
+#include "src/codegen/interface-descriptors.h"
+// Include the non-inl header before the rest of the headers.
+
 #include <utility>
 
 #include "src/base/logging.h"
-#include "src/codegen/interface-descriptors.h"
 #include "src/codegen/register.h"
 #if V8_ENABLE_WEBASSEMBLY
 #include "src/wasm/wasm-linkage.h"
@@ -22,9 +24,9 @@
 #include "src/codegen/ia32/interface-descriptors-ia32-inl.h"
 #elif V8_TARGET_ARCH_ARM
 #include "src/codegen/arm/interface-descriptors-arm-inl.h"
-#elif V8_TARGET_ARCH_PPC || V8_TARGET_ARCH_PPC64
+#elif V8_TARGET_ARCH_PPC64
 #include "src/codegen/ppc/interface-descriptors-ppc-inl.h"
-#elif V8_TARGET_ARCH_S390
+#elif V8_TARGET_ARCH_S390X
 #include "src/codegen/s390/interface-descriptors-s390-inl.h"
 #elif V8_TARGET_ARCH_MIPS64
 #include "src/codegen/mips64/interface-descriptors-mips64-inl.h"
@@ -81,6 +83,13 @@ constexpr auto StaticJSCallInterfaceDescriptor<DerivedDescriptor>::registers() {
 }
 
 // static
+constexpr auto JSTrampolineDescriptor::registers() {
+  return RegisterArray(
+      kJavaScriptCallTargetRegister, kJavaScriptCallNewTargetRegister,
+      kJavaScriptCallArgCountRegister, kJavaScriptCallDispatchHandleRegister);
+}
+
+// static
 constexpr auto CompareNoContextDescriptor::registers() {
   return CompareDescriptor::registers();
 }
@@ -115,7 +124,8 @@ void StaticCallInterfaceDescriptor<DerivedDescriptor>::Initialize(
   DCHECK_GE(return_registers.size(), DerivedDescriptor::kReturnCount);
   DCHECK_GE(return_double_registers.size(), DerivedDescriptor::kReturnCount);
   data->InitializeRegisters(
-      DerivedDescriptor::flags(), DerivedDescriptor::kReturnCount,
+      DerivedDescriptor::flags(), DerivedDescriptor::kEntrypointTag,
+      DerivedDescriptor::kSandboxingMode, DerivedDescriptor::kReturnCount,
       DerivedDescriptor::GetParameterCount(),
       DerivedDescriptor::kStackArgumentOrder,
       DerivedDescriptor::GetRegisterParameterCount(), registers.data(),
@@ -138,7 +148,7 @@ StaticCallInterfaceDescriptor<DerivedDescriptor>::GetReturnCount() {
   static_assert(
       DerivedDescriptor::kReturnCount >= 0,
       "DerivedDescriptor subclass should override return count with a value "
-      "that is greater than 0");
+      "that is greater than or equal to 0");
 
   return DerivedDescriptor::kReturnCount;
 }
@@ -150,7 +160,7 @@ StaticCallInterfaceDescriptor<DerivedDescriptor>::GetParameterCount() {
   static_assert(
       DerivedDescriptor::kParameterCount >= 0,
       "DerivedDescriptor subclass should override parameter count with a "
-      "value that is greater than 0");
+      "value that is greater than or equal to 0");
 
   return DerivedDescriptor::kParameterCount;
 }
@@ -265,7 +275,8 @@ constexpr DoubleRegister
 StaticCallInterfaceDescriptor<DerivedDescriptor>::GetDoubleRegisterParameter(
     int i) {
   DCHECK(IsFloatingPoint(GetParameterType(i).representation()));
-  return DoubleRegister::from_code(DerivedDescriptor::registers()[i].code());
+  return DoubleRegister::from_code(
+      DerivedDescriptor::double_registers()[i].code());
 }
 
 // static
@@ -455,10 +466,9 @@ constexpr auto LoadWithReceiverBaselineDescriptor::registers() {
 // static
 constexpr auto BaselineOutOfLinePrologueDescriptor::registers() {
   // TODO(v8:11421): Implement on other platforms.
-#if V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_ARM ||  \
-    V8_TARGET_ARCH_PPC || V8_TARGET_ARCH_PPC64 || V8_TARGET_ARCH_S390 || \
-    V8_TARGET_ARCH_RISCV64 || V8_TARGET_ARCH_MIPS64 ||                   \
-    V8_TARGET_ARCH_LOONG64 || V8_TARGET_ARCH_RISCV32
+#if V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_ARM64 || V8_TARGET_ARCH_ARM ||       \
+    V8_TARGET_ARCH_PPC64 || V8_TARGET_ARCH_S390X || V8_TARGET_ARCH_RISCV64 || \
+    V8_TARGET_ARCH_MIPS64 || V8_TARGET_ARCH_LOONG64 || V8_TARGET_ARCH_RISCV32
   return RegisterArray(
       kContextRegister, kJSFunctionRegister, kJavaScriptCallArgCountRegister,
       kJavaScriptCallExtraArg1Register, kJavaScriptCallNewTargetRegister,
@@ -476,9 +486,9 @@ constexpr auto BaselineOutOfLinePrologueDescriptor::registers() {
 // static
 constexpr auto BaselineLeaveFrameDescriptor::registers() {
   // TODO(v8:11421): Implement on other platforms.
-#if V8_TARGET_ARCH_IA32 || V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_ARM64 ||      \
-    V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_PPC || V8_TARGET_ARCH_PPC64 ||       \
-    V8_TARGET_ARCH_S390 || V8_TARGET_ARCH_RISCV64 || V8_TARGET_ARCH_MIPS64 || \
+#if V8_TARGET_ARCH_IA32 || V8_TARGET_ARCH_X64 || V8_TARGET_ARCH_ARM64 ||  \
+    V8_TARGET_ARCH_ARM || V8_TARGET_ARCH_PPC64 || V8_TARGET_ARCH_S390X || \
+    V8_TARGET_ARCH_RISCV64 || V8_TARGET_ARCH_MIPS64 ||                    \
     V8_TARGET_ARCH_LOONG64 || V8_TARGET_ARCH_RISCV32
   return RegisterArray(ParamsSizeRegister(), WeightRegister());
 #else
@@ -502,7 +512,8 @@ constexpr auto OnStackReplacementDescriptor::registers() {
 constexpr auto
 MaglevOptimizeCodeOrTailCallOptimizedCodeSlotDescriptor::registers() {
 #ifdef V8_ENABLE_MAGLEV
-  return RegisterArray(FlagsRegister(), FeedbackVectorRegister());
+  return RegisterArray(FlagsRegister(), FeedbackVectorRegister(),
+                       TemporaryRegister());
 #else
   return DefaultRegisterArray();
 #endif
@@ -516,7 +527,16 @@ constexpr Register OnStackReplacementDescriptor::MaybeTargetCodeRegister() {
 }
 
 // static
+constexpr Register
+OnStackReplacementDescriptor::ExpectedParameterCountRegister() {
+  return registers()[1];
+}
+
+// static
 constexpr auto VoidDescriptor::registers() { return RegisterArray(); }
+
+// static
+constexpr auto JSEntryDescriptor::registers() { return RegisterArray(); }
 
 // static
 constexpr auto AllocateDescriptor::registers() {
@@ -626,6 +646,25 @@ constexpr auto KeyedLoadBaselineDescriptor::registers() {
 }
 
 // static
+constexpr auto EnumeratedKeyedLoadBaselineDescriptor::registers() {
+  return RegisterArray(KeyedLoadBaselineDescriptor::ReceiverRegister(),
+                       KeyedLoadBaselineDescriptor::NameRegister(),
+                       EnumIndexRegister(), CacheTypeRegister(),
+                       SlotRegister());
+}
+
+// static
+constexpr auto EnumeratedKeyedLoadDescriptor::registers() {
+  return RegisterArray(
+      KeyedLoadBaselineDescriptor::ReceiverRegister(),
+      KeyedLoadBaselineDescriptor::NameRegister(),
+      EnumeratedKeyedLoadBaselineDescriptor::EnumIndexRegister(),
+      EnumeratedKeyedLoadBaselineDescriptor::CacheTypeRegister(),
+      EnumeratedKeyedLoadBaselineDescriptor::SlotRegister(),
+      KeyedLoadWithVectorDescriptor::VectorRegister());
+}
+
+// static
 constexpr auto KeyedLoadDescriptor::registers() {
   return KeyedLoadBaselineDescriptor::registers();
 }
@@ -671,15 +710,15 @@ constexpr auto DefineKeyedOwnWithVectorDescriptor::registers() {
 // static
 constexpr auto CallApiCallbackOptimizedDescriptor::registers() {
   return RegisterArray(ApiFunctionAddressRegister(),
-                       ActualArgumentsCountRegister(), CallDataRegister(),
-                       HolderRegister());
+                       ActualArgumentsCountRegister(),
+                       FunctionTemplateInfoRegister());
 }
 
 // static
 constexpr auto CallApiCallbackGenericDescriptor::registers() {
   return RegisterArray(ActualArgumentsCountRegister(),
                        TopmostScriptHavingContextRegister(),
-                       CallHandlerInfoRegister(), HolderRegister());
+                       FunctionTemplateInfoRegister());
 }
 
 // static
@@ -734,6 +773,16 @@ WasmJSToWasmWrapperDescriptor::WrapperBufferRegister() {
   return std::get<kWrapperBuffer>(registers());
 }
 
+// static
+constexpr inline Register
+WasmHandleStackOverflowDescriptor::FrameBaseRegister() {
+  return std::get<kFrameBase>(registers());
+}
+
+constexpr inline Register WasmHandleStackOverflowDescriptor::GapRegister() {
+  return std::get<kGap>(registers());
+}
+
 constexpr auto WasmToJSWrapperDescriptor::registers() {
 #if V8_ENABLE_WEBASSEMBLY
   return RegisterArray(wasm::kGpParamRegisters[0]);
@@ -767,9 +816,11 @@ constexpr auto WasmToJSWrapperDescriptor::return_double_registers() {
   struct CallInterfaceDescriptorFor<Builtin::k##Name> {               \
     using type = DescriptorName##Descriptor;                          \
   };
-BUILTIN_LIST(IGNORE_BUILTIN, IGNORE_BUILTIN,
+BUILTIN_LIST(IGNORE_BUILTIN, IGNORE_BUILTIN, IGNORE_BUILTIN,
+             /*TFC_TSA*/ DEFINE_STATIC_BUILTIN_DESCRIPTOR_GETTER,
              /*TFC*/ DEFINE_STATIC_BUILTIN_DESCRIPTOR_GETTER, IGNORE_BUILTIN,
              /*TFH*/ DEFINE_STATIC_BUILTIN_DESCRIPTOR_GETTER, IGNORE_BUILTIN,
+             IGNORE_BUILTIN,
              /*ASM*/ DEFINE_STATIC_BUILTIN_DESCRIPTOR_GETTER)
 #undef DEFINE_STATIC_BUILTIN_DESCRIPTOR_GETTER
 #define DEFINE_STATIC_BUILTIN_DESCRIPTOR_GETTER(Name, ...) \

@@ -259,9 +259,9 @@ void vp8_setup_key_frame(VP8_COMP *cpi) {
   /* Make sure we initialize separate contexts for altref,gold, and normal.
    * TODO shouldn't need 3 different copies of structure to do this!
    */
-  memcpy(&cpi->lfc_a, &cpi->common.fc, sizeof(cpi->common.fc));
-  memcpy(&cpi->lfc_g, &cpi->common.fc, sizeof(cpi->common.fc));
-  memcpy(&cpi->lfc_n, &cpi->common.fc, sizeof(cpi->common.fc));
+  cpi->lfc_a = cpi->common.fc;
+  cpi->lfc_g = cpi->common.fc;
+  cpi->lfc_n = cpi->common.fc;
 
   cpi->common.filter_level = cpi->common.base_qindex * 3 / 8;
 
@@ -329,6 +329,11 @@ static void calc_iframe_target_size(VP8_COMP *cpi) {
     if (cpi->oxcf.number_of_layers == 1) {
       kf_boost =
           VPXMAX(initial_boost, (int)round(2 * cpi->output_framerate - 16));
+      // cpi->output_framerate may be as large as 10M. Keep kf_boost small
+      // enough to allow for integer math when multiplying by values in
+      // kf_boost_qadjustment[].
+      const int kMaxKfBoost = 2000;
+      if (kf_boost > kMaxKfBoost) kf_boost = kMaxKfBoost;
     } else {
       /* Initial factor: set target size to: |3.0 * per_frame_bandwidth|. */
       kf_boost = initial_boost;
@@ -638,11 +643,10 @@ static void calc_pframe_target_size(VP8_COMP *cpi) {
         /* % Adjustment limited to the range 1% to 10% */
         Adjustment = (cpi->last_boost - 100) >> 5;
 
-        if (Adjustment < 1) {
-          Adjustment = 1;
-        } else if (Adjustment > 10) {
+        if (Adjustment > 10) {
           Adjustment = 10;
         }
+        assert(Adjustment >= 1);
 
         /* Convert to bits */
         Adjustment = (cpi->this_frame_target * Adjustment) / 100;
@@ -980,7 +984,9 @@ static void calc_pframe_target_size(VP8_COMP *cpi) {
               int Boost = cpi->last_boost;
               int frames_in_section = cpi->frames_till_gf_update_due + 1;
               int allocation_chunks = (frames_in_section * 100) + (Boost - 100);
-              int bits_in_section = cpi->inter_frame_target * frames_in_section;
+              int bits_in_section =
+                  (int)VPXMIN(INT_MAX, (int64_t)cpi->inter_frame_target *
+                                           frames_in_section);
 
               /* Normalize Altboost and allocations chunck down to
                * prevent overflow

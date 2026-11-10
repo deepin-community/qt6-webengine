@@ -36,6 +36,7 @@
 #include "perfetto/trace_processor/trace_processor.h"
 #include "src/trace_processor/perfetto_sql/engine/perfetto_sql_engine.h"
 #include "src/trace_processor/perfetto_sql/intrinsics/functions/sql_function.h"
+#include "src/trace_processor/sqlite/bindings/sqlite_aggregate_function.h"
 #include "src/trace_processor/util/descriptors.h"
 
 #include "protos/perfetto/trace_processor/metrics_impl.pbzero.h"
@@ -148,7 +149,7 @@ int TemplateReplace(
     std::string* out);
 
 // Implements the NULL_IF_EMPTY SQL function.
-struct NullIfEmpty : public SqlFunction {
+struct NullIfEmpty : public LegacySqlFunction {
   static base::Status Run(void* ctx,
                           size_t argc,
                           sqlite3_value** argv,
@@ -157,7 +158,7 @@ struct NullIfEmpty : public SqlFunction {
 };
 
 // Implements all the proto creation functions.
-struct BuildProto : public SqlFunction {
+struct BuildProto : public LegacySqlFunction {
   struct Context {
     TraceProcessor* tp;
     const DescriptorPool* pool;
@@ -171,7 +172,7 @@ struct BuildProto : public SqlFunction {
 };
 
 // Implements the RUN_METRIC SQL function.
-struct RunMetric : public SqlFunction {
+struct RunMetric : public LegacySqlFunction {
   struct Context {
     PerfettoSqlEngine* engine;
     std::vector<SqlMetricFile>* metrics;
@@ -185,7 +186,7 @@ struct RunMetric : public SqlFunction {
 };
 
 // Implements the UNWRAP_METRIC_PROTO SQL function.
-struct UnwrapMetricProto : public SqlFunction {
+struct UnwrapMetricProto : public LegacySqlFunction {
   static base::Status Run(Context* ctx,
                           size_t argc,
                           sqlite3_value** argv,
@@ -194,8 +195,13 @@ struct UnwrapMetricProto : public SqlFunction {
 };
 
 // These functions implement the RepeatedField SQL aggregate functions.
-void RepeatedFieldStep(sqlite3_context* ctx, int argc, sqlite3_value** argv);
-void RepeatedFieldFinal(sqlite3_context* ctx);
+struct RepeatedField : public sqlite::AggregateFunction<RepeatedField> {
+  static constexpr char kName[] = "RepeatedField";
+  static constexpr int kArgCount = 1;
+
+  static void Step(sqlite3_context* ctx, int argc, sqlite3_value** argv);
+  static void Final(sqlite3_context* ctx);
+};
 
 base::Status ComputeMetrics(PerfettoSqlEngine*,
                             const std::vector<std::string>& metrics_to_compute,

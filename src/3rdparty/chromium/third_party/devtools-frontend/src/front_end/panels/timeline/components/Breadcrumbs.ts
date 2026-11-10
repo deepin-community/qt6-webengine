@@ -2,16 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import type * as TraceEngine from '../../../models/trace/trace.js';
+import type * as Trace from '../../../models/trace/trace.js';
+import * as TraceBounds from '../../../services/trace_bounds/trace_bounds.js';
 
-export interface Breadcrumb {
-  window: TraceEngine.Types.Timing.TraceWindowMicroSeconds;
-  child: Breadcrumb|null;
-}
-
-export function flattenBreadcrumbs(initialBreadcrumb: Breadcrumb): Breadcrumb[] {
-  const allBreadcrumbs: Breadcrumb[] = [initialBreadcrumb];
-  let breadcrumbsIter: Breadcrumb = initialBreadcrumb;
+export function flattenBreadcrumbs(initialBreadcrumb: Trace.Types.File.Breadcrumb): Trace.Types.File.Breadcrumb[] {
+  const allBreadcrumbs: Trace.Types.File.Breadcrumb[] = [initialBreadcrumb];
+  let breadcrumbsIter: Trace.Types.File.Breadcrumb = initialBreadcrumb;
 
   while (breadcrumbsIter.child !== null) {
     const iterChild = breadcrumbsIter.child;
@@ -24,44 +20,90 @@ export function flattenBreadcrumbs(initialBreadcrumb: Breadcrumb): Breadcrumb[] 
   return allBreadcrumbs;
 }
 
-export class Breadcrumbs {
-  readonly initialBreadcrumb: Breadcrumb;
-  lastBreadcrumb: Breadcrumb;
+export interface SetActiveBreadcrumbOptions {
+  removeChildBreadcrumbs: boolean;
+  updateVisibleWindow: boolean;
+}
 
-  constructor(initialTraceWindow: TraceEngine.Types.Timing.TraceWindowMicroSeconds) {
+export class Breadcrumbs {
+  initialBreadcrumb: Trace.Types.File.Breadcrumb;
+  activeBreadcrumb: Trace.Types.File.Breadcrumb;
+
+  constructor(initialTraceWindow: Trace.Types.Timing.TraceWindowMicro) {
     this.initialBreadcrumb = {
       window: initialTraceWindow,
       child: null,
     };
-    this.lastBreadcrumb = this.initialBreadcrumb;
+    let lastBreadcrumb = this.initialBreadcrumb;
+    while (lastBreadcrumb.child !== null) {
+      lastBreadcrumb = lastBreadcrumb.child;
+    }
+    this.activeBreadcrumb = lastBreadcrumb;
   }
 
-  add(newBreadcrumbTraceWindow: TraceEngine.Types.Timing.TraceWindowMicroSeconds): void {
-    if (this.isTraceWindowWithinTraceWindow(newBreadcrumbTraceWindow, this.lastBreadcrumb.window)) {
-      const newBreadcrumb = {
-        window: newBreadcrumbTraceWindow,
-        child: null,
-      };
-      // To add a new Breadcrumb to the Breadcrumbs Linked List, set the child of last breadcrumb
-      // to the new breadcrumb and update the last Breadcrumb
-      this.lastBreadcrumb.child = newBreadcrumb;
-      this.lastBreadcrumb = this.lastBreadcrumb.child;
-    } else {
+  add(newBreadcrumbTraceWindow: Trace.Types.Timing.TraceWindowMicro): Trace.Types.File.Breadcrumb {
+    if (!this.isTraceWindowWithinTraceWindow(newBreadcrumbTraceWindow, this.activeBreadcrumb.window)) {
       throw new Error('Can not add a breadcrumb that is equal to or is outside of the parent breadcrumb TimeWindow');
     }
+
+    const newBreadcrumb = {
+      window: newBreadcrumbTraceWindow,
+      child: null,
+    };
+    // To add a new Breadcrumb to the Breadcrumbs Linked List, set the child of active breadcrumb
+    // to the new breadcrumb and update the active Breadcrumb to the newly added one
+    this.activeBreadcrumb.child = newBreadcrumb;
+    this.setActiveBreadcrumb(newBreadcrumb, {removeChildBreadcrumbs: false, updateVisibleWindow: true});
+    return newBreadcrumb;
   }
 
   // Breadcumb should be within the bounds of the parent and can not have both start and end be equal to the parent
   isTraceWindowWithinTraceWindow(
-      child: TraceEngine.Types.Timing.TraceWindowMicroSeconds,
-      parent: TraceEngine.Types.Timing.TraceWindowMicroSeconds): boolean {
+      child: Trace.Types.Timing.TraceWindowMicro, parent: Trace.Types.Timing.TraceWindowMicro): boolean {
     return (child.min >= parent.min && child.max <= parent.max) &&
         !(child.min === parent.min && child.max === parent.max);
   }
 
-  // Make breadcrumb active by removing all of its children and making it the last breadcrumb
-  makeBreadcrumbActive(newLastBreadcrumb: Breadcrumb): void {
-    this.lastBreadcrumb = newLastBreadcrumb;
-    this.lastBreadcrumb.child = null;
+  // Used to set an initial breadcrumbs from modifications loaded from a file
+  setInitialBreadcrumbFromLoadedModifications(initialBreadcrumb: Trace.Types.File.Breadcrumb): void {
+    this.initialBreadcrumb = initialBreadcrumb;
+    // Make last breadcrumb active
+    let lastBreadcrumb = initialBreadcrumb;
+    while (lastBreadcrumb.child !== null) {
+      lastBreadcrumb = lastBreadcrumb.child;
+    }
+    this.setActiveBreadcrumb(lastBreadcrumb, {removeChildBreadcrumbs: false, updateVisibleWindow: true});
+  }
+
+  /**
+   * Sets a breadcrumb to be active.
+   * Doing this will update the minimap bounds and optionally based on the
+   * `updateVisibleWindow` parameter, it will also update the active window.
+   * The reason `updateVisibleWindow` is configurable is because if we are
+   * changing which breadcrumb is active because we want to reveal something to
+   * the user, we may have already updated the visible timeline window, but we
+   * are activating the breadcrumb to show the user that they are now within
+   * this breadcrumb. This is used when revealing insights and annotations.
+   */
+  setActiveBreadcrumb(activeBreadcrumb: Trace.Types.File.Breadcrumb, options: SetActiveBreadcrumbOptions): void {
+    // If the children of the activated breadcrumb need to be removed, set the child on the
+    // activated breadcrumb to null. Since breadcrumbs are a linked list, this will remove all
+    // of the following children.
+    if (options.removeChildBreadcrumbs) {
+      activeBreadcrumb.child = null;
+    }
+
+    // When we assign a new active breadcrumb, both the minimap bounds and the visible
+    // window get set to that breadcrumb's window.
+    this.activeBreadcrumb = activeBreadcrumb;
+    TraceBounds.TraceBounds.BoundsManager.instance().setMiniMapBounds(
+        activeBreadcrumb.window,
+    );
+
+    if (options.updateVisibleWindow) {
+      TraceBounds.TraceBounds.BoundsManager.instance().setTimelineVisibleWindow(
+          activeBreadcrumb.window,
+      );
+    }
   }
 }

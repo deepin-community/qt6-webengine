@@ -16,7 +16,6 @@
 #include "base/task/task_traits.h"
 #include "base/timer/timer.h"
 #include "base/values.h"
-#include "build/chromeos_buildflags.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/tracing_controller.h"
 #include "mojo/public/cpp/bindings/receiver.h"
@@ -32,10 +31,6 @@ class TracePacket;
 namespace base::trace_event {
 class TraceConfig;
 }  // namespace base::trace_event
-
-namespace tracing {
-class BaseAgent;
-}  // namespace tracing
 
 namespace content {
 
@@ -61,6 +56,9 @@ class TracingControllerImpl : public TracingController,
   TracingControllerImpl(const TracingControllerImpl&) = delete;
   TracingControllerImpl& operator=(const TracingControllerImpl&) = delete;
 
+  // Returns the embedder's tracing delegate.
+  TracingDelegate* tracing_delegate() { return delegate_.get(); }
+
   // TracingController implementation.
   bool GetCategories(GetCategoriesDoneCallback callback) override;
   bool StartTracing(const base::trace_event::TraceConfig& trace_config,
@@ -78,25 +76,24 @@ class TracingControllerImpl : public TracingController,
 
   void OnTracingFailed();
 
-  // For unittests.
-  CONTENT_EXPORT void SetTracingDelegateForTesting(
-      std::unique_ptr<TracingDelegate> delegate);
-
  private:
   friend std::default_delete<TracingControllerImpl>;
 
   ~TracingControllerImpl() override;
-  void AddAgents();
+  void InitializeDataSources();
   void ConnectToServiceIfNeeded();
   std::optional<base::Value::Dict> GenerateMetadataDict();
-  void GenerateMetadataPacket(perfetto::protos::pbzero::TracePacket* packet,
-                              bool privacy_filtering_enabled);
+  static void RecorderMetadataToBundle(
+      perfetto::protos::pbzero::ChromeEventBundle* bundle);
+  static void GenerateMetadataPacket(
+      perfetto::protos::pbzero::TracePacket* packet,
+      bool privacy_filtering_enabled);
   void GenerateMetadataPacketFieldTrials(
       perfetto::protos::pbzero::ChromeMetadataPacket* metadata_proto,
       bool privacy_filtering_enabled);
 
   // mojo::DataPipeDrainer::Client
-  void OnDataAvailable(const void* data, size_t num_bytes) override;
+  void OnDataAvailable(base::span<const uint8_t> data) override;
   void OnDataComplete() override;
 
   void OnReadBuffersComplete();
@@ -105,7 +102,7 @@ class TracingControllerImpl : public TracingController,
 
   void InitStartupTracingForDuration();
   void EndStartupTracing();
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
   void OnMachineStatisticsLoaded();
 #endif
 
@@ -114,15 +111,15 @@ class TracingControllerImpl : public TracingController,
   mojo::Receiver<tracing::mojom::TracingSessionClient> receiver_{this};
   StartTracingDoneCallback start_tracing_callback_;
 
-  std::vector<std::unique_ptr<tracing::BaseAgent>> agents_;
-  std::unique_ptr<TracingDelegate> delegate_;
   std::unique_ptr<base::trace_event::TraceConfig> trace_config_;
   std::unique_ptr<mojo::DataPipeDrainer> drainer_;
   scoped_refptr<TraceDataEndpoint> trace_data_endpoint_;
   bool is_data_complete_ = false;
   bool read_buffers_complete_ = false;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+  std::unique_ptr<TracingDelegate> delegate_;
+
+#if BUILDFLAG(IS_CHROMEOS)
   bool are_statistics_loaded_ = false;
   std::string hardware_class_;
   base::WeakPtrFactory<TracingControllerImpl> weak_ptr_factory_{this};

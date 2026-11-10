@@ -46,7 +46,6 @@ v8::Local<v8::Object> BindingGeneratingNativeHandler::NewInstance() {
   v8::Local<v8::String> v8_api_name;
   if (!v8_helpers::ToV8String(isolate, api_name_, &v8_api_name)) {
     NOTREACHED();
-    return v8::Local<v8::Object>();
   }
 
   v8::Local<v8::Context> v8_context = context_->v8_context();
@@ -55,7 +54,6 @@ v8::Local<v8::Object> BindingGeneratingNativeHandler::NewInstance() {
   v8::Local<v8::Object> binding_module;
   if (!context_->module_system()->Require("binding").ToLocal(&binding_module)) {
     NOTREACHED();
-    return v8::Local<v8::Object>();
   }
 
   // require('binding').Binding;
@@ -64,7 +62,6 @@ v8::Local<v8::Object> BindingGeneratingNativeHandler::NewInstance() {
   if (!GetProperty(v8_context, binding_module, "Binding", &binding_value) ||
       !binding_value->ToObject(v8_context).ToLocal(&binding)) {
     NOTREACHED();
-    return v8::Local<v8::Object>();
   }
 
   // require('binding').Binding.create;
@@ -72,7 +69,6 @@ v8::Local<v8::Object> BindingGeneratingNativeHandler::NewInstance() {
   if (!GetProperty(v8_context, binding, "create", &create_binding_value) ||
       !create_binding_value->IsFunction()) {
     NOTREACHED();
-    return v8::Local<v8::Object>();
   }
   v8::Local<v8::Function> create_binding =
       create_binding_value.As<v8::Function>();
@@ -91,7 +87,6 @@ v8::Local<v8::Object> BindingGeneratingNativeHandler::NewInstance() {
         !binding_instance_value->ToObject(v8_context)
              .ToLocal(&binding_instance)) {
       NOTREACHED();
-      return v8::Local<v8::Object>();
     }
   }
 
@@ -100,7 +95,6 @@ v8::Local<v8::Object> BindingGeneratingNativeHandler::NewInstance() {
   if (!GetProperty(v8_context, binding_instance, "generate", &generate_value) ||
       !generate_value->IsFunction()) {
     NOTREACHED();
-    return v8::Local<v8::Object>();
   }
   v8::Local<v8::Function> generate = generate_value.As<v8::Function>();
 
@@ -114,7 +108,6 @@ v8::Local<v8::Object> BindingGeneratingNativeHandler::NewInstance() {
     if (!generate->Call(v8_context, binding_instance, 0, nullptr)
              .ToLocal(&compiled_schema)) {
       NOTREACHED();
-      return v8::Local<v8::Object>();
     }
   }
 

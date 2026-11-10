@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-dwconv/unipass-sse-mul32.c.in
 //   Generator: tools/xngen
@@ -8,12 +9,16 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <immintrin.h>
 
-#include <xnnpack/dwconv.h>
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/unaligned.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/dwconv.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/unaligned.h"
 
 
 void xnn_qs8_qc8w_dwconv_minmax_fp32_ukernel_9p8c__avx_mul32(
@@ -25,11 +30,20 @@ void xnn_qs8_qc8w_dwconv_minmax_fp32_ukernel_9p8c__avx_mul32(
     intptr_t input_stride,
     size_t output_increment,
     size_t input_offset,
+    size_t input_pixel_stride,
     const int8_t* zero,
-    const union xnn_qs8_qc8w_conv_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const union xnn_qs8_qc8w_conv_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(channels != 0);
   assert(output_width != 0);
+
+
+  const __m128 voutput_max_less_zero_point = _mm_set1_ps((int32_t) params->fp32_scalar.output_max - (int32_t) params->fp32_scalar.output_zero_point);
+  const __m128i voutput_zero_point = _mm_set1_epi16(params->fp32_scalar.output_zero_point);
+  const __m128i voutput_min = _mm_set1_epi8(params->fp32_scalar.output_min);
+  XNN_FORCE_REALIZATION(voutput_max_less_zero_point);
+  XNN_FORCE_REALIZATION(voutput_zero_point);
+  XNN_FORCE_REALIZATION(voutput_min);
 
   do {
     const int8_t* i0 = input[0];
@@ -178,17 +192,14 @@ void xnn_qs8_qc8w_dwconv_minmax_fp32_ukernel_9p8c__avx_mul32(
       vscaled0123 = _mm_mul_ps(vscaled0123, vscale0123);
       vscaled4567 = _mm_mul_ps(vscaled4567, vscale4567);
 
-      const __m128 voutput_max_less_zero_point = _mm_load_ps(params->fp32_sse4.output_max_less_zero_point);
       vscaled0123 = _mm_min_ps(vscaled0123, voutput_max_less_zero_point);
       vscaled4567 = _mm_min_ps(vscaled4567, voutput_max_less_zero_point);
 
       vacc0123 = _mm_cvtps_epi32(vscaled0123);
       vacc4567 = _mm_cvtps_epi32(vscaled4567);
 
-      const __m128i voutput_zero_point = _mm_load_si128((const __m128i*) params->fp32_sse4.output_zero_point);
       __m128i vout01234567 = _mm_adds_epi16(_mm_packs_epi32(vacc0123, vacc4567), voutput_zero_point);
 
-      const __m128i voutput_min = _mm_load_si128((const __m128i*) params->fp32_sse4.output_min);
       __m128i vout0123456701234567 = _mm_packs_epi16(vout01234567, vout01234567);
       vout0123456701234567 = _mm_max_epi8(vout0123456701234567, voutput_min);
 
@@ -251,16 +262,15 @@ void xnn_qs8_qc8w_dwconv_minmax_fp32_ukernel_9p8c__avx_mul32(
         __m128 vscaled0123 = _mm_cvtepi32_ps(vacc0123);
         const __m128 vscale0123 = _mm_loadu_ps((const float*) ((uintptr_t) w + 8 * sizeof(int32_t) + 72 * sizeof(int8_t)));
         vscaled0123 = _mm_mul_ps(vscaled0123, vscale0123);
-        vscaled0123 = _mm_min_ps(vscaled0123, _mm_load_ps(params->fp32_sse4.output_max_less_zero_point));
+        vscaled0123 = _mm_min_ps(vscaled0123, voutput_max_less_zero_point);
         vacc0123 = _mm_cvtps_epi32(vscaled0123);
 
         w = (const void*) ((const int32_t*) w + 4);
 
-        const __m128i voutput_zero_point = _mm_load_si128((const __m128i*) params->fp32_sse4.output_zero_point);
         __m128i vout0123 = _mm_adds_epi16(_mm_packs_epi32(vacc0123, vacc0123), voutput_zero_point);
 
         vout0123 = _mm_packs_epi16(vout0123, vout0123);
-        vout0123 = _mm_max_epi8(vout0123, _mm_load_si128((const __m128i*) params->fp32_sse4.output_min));
+        vout0123 = _mm_max_epi8(vout0123, voutput_min);
 
         if XNN_LIKELY(c >= 4) {
           _mm_storeu_si32(output, vout0123);
@@ -281,6 +291,7 @@ void xnn_qs8_qc8w_dwconv_minmax_fp32_ukernel_9p8c__avx_mul32(
       } while (c != 0);
     }
 
+    input_offset += input_pixel_stride;
     output = (int8_t*) ((uintptr_t) output + output_increment);
   } while (--output_width != 0);
 }

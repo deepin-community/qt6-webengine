@@ -6,6 +6,9 @@
 #define COMPONENTS_SEGMENTATION_PLATFORM_INTERNAL_SELECTION_REQUEST_DISPATCHER_H_
 
 #include <map>
+#include <memory>
+#include <optional>
+#include <set>
 #include <string>
 #include <utility>
 
@@ -16,7 +19,6 @@
 #include "components/segmentation_platform/public/input_context.h"
 #include "components/segmentation_platform/public/proto/segmentation_platform.pb.h"
 #include "components/segmentation_platform/public/result.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace segmentation_platform {
 struct PredictionOptions;
@@ -57,6 +59,10 @@ class RequestDispatcher {
                                  const PredictionOptions& options,
                                  scoped_refptr<InputContext> input_context,
                                  AnnotatedNumericResultCallback callback);
+
+  // Client API. See `SegmentationPlatformService::GetInputKeysForModel`.
+  void GetInputKeysForModel(const std::string& segmentation_key,
+                            InputContextKeysCallback callback);
 
   // For testing only.
   int GetPendingActionCountForTesting();
@@ -118,7 +124,7 @@ class RequestDispatcher {
   const raw_ptr<StorageService> storage_service_;
 
   // Storage initialization status.
-  absl::optional<bool> storage_init_status_;
+  std::optional<bool> storage_init_status_;
 
   // For caching any method calls that were received before initialization.
   // Key is a segmentation key, value is a queue of actions that use that model.

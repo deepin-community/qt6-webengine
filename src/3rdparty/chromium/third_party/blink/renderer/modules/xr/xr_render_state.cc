@@ -12,6 +12,10 @@
 #include "third_party/blink/renderer/bindings/modules/v8/v8_xr_render_state_init.h"
 #include "third_party/blink/renderer/modules/xr/xr_webgl_layer.h"
 
+#ifndef M_PI
+#define M_PI           3.14159265358979323846  /* pi */
+#endif
+
 namespace blink {
 
 namespace {
@@ -30,10 +34,10 @@ XRRenderState::XRRenderState(bool immersive) : immersive_(immersive) {
 
 void XRRenderState::Update(const XRRenderStateInit* init) {
   if (init->hasDepthNear()) {
-    depth_near_ = init->depthNear();
+    depth_near_ = std::max(0.0, init->depthNear());
   }
   if (init->hasDepthFar()) {
-    depth_far_ = init->depthFar();
+    depth_far_ = std::max(0.0, init->depthFar());
   }
   if (init->hasBaseLayer()) {
     base_layer_ = init->baseLayer();
@@ -41,9 +45,9 @@ void XRRenderState::Update(const XRRenderStateInit* init) {
   }
   if (init->hasLayers()) {
     base_layer_ = nullptr;
-    layers_ = init->layers()
-                  ? MakeGarbageCollected<FrozenArray<XRLayer>>(*init->layers())
-                  : MakeGarbageCollected<FrozenArray<XRLayer>>();
+    layers_ = init->layers() ? MakeGarbageCollected<FrozenArray<XRLayer>>(
+                                   HeapVector<Member<XRLayer>>(*init->layers()))
+                             : MakeGarbageCollected<FrozenArray<XRLayer>>();
   }
   if (init->hasInlineVerticalFieldOfView()) {
     double fov = init->inlineVerticalFieldOfView();
@@ -55,6 +59,16 @@ void XRRenderState::Update(const XRRenderStateInit* init) {
   }
 }
 
+XRLayer* XRRenderState::GetFirstLayer() const {
+  if (base_layer_) {
+    return base_layer_.Get();
+  }
+  if (layers_->size()) {
+    return layers_->at(0);
+  }
+  return nullptr;
+}
+
 HTMLCanvasElement* XRRenderState::output_canvas() const {
   if (base_layer_) {
     return base_layer_->output_canvas();
@@ -62,9 +76,9 @@ HTMLCanvasElement* XRRenderState::output_canvas() const {
   return nullptr;
 }
 
-absl::optional<double> XRRenderState::inlineVerticalFieldOfView() const {
+std::optional<double> XRRenderState::inlineVerticalFieldOfView() const {
   if (immersive_)
-    return absl::nullopt;
+    return std::nullopt;
   return inline_vertical_fov_;
 }
 

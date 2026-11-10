@@ -5,7 +5,6 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_MIXED_CONTENT_CHECKER_H_
 #define CONTENT_BROWSER_RENDERER_HOST_MIXED_CONTENT_CHECKER_H_
 
-#include <optional>
 #include <set>
 
 #include "base/gtest_prod_util.h"
@@ -43,6 +42,9 @@ class CONTENT_EXPORT MixedContentChecker {
   // Based off of `blink::MixedContentChecker::ShouldBlockFetch()`.
   bool ShouldBlockNavigation(NavigationHandle& navigation_handle,
                              bool for_redirect);
+
+  // Returns whether `url` is mixed content with respect to `origin`.
+  static bool IsMixedContent(const url::Origin& origin, const GURL& url);
 
   // Checks if a fetch keepalive request that loads `url` should be blocked or
   // not due to mixed content, without reporting back to renderer.

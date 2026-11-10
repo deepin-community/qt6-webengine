@@ -132,6 +132,15 @@ class BitSetT final
     constexpr bool none() const;
     constexpr std::size_t count() const;
 
+    // Returns true iff there are unset bits prior
+    // to the most significant bit set. For example:
+    // 0b0000 - false
+    // 0b0001 - false
+    // 0b0011 - false
+    // 0b0010 - true
+    // 0b0101 - true
+    constexpr bool hasGaps() const;
+
     constexpr static std::size_t size() { return N; }
 
     constexpr BitSetT &operator&=(const BitSetT &other);
@@ -157,7 +166,6 @@ class BitSetT final
     constexpr BitSetT &flip();
     constexpr BitSetT &flip(ParamT pos);
 
-    constexpr unsigned long to_ulong() const { return static_cast<unsigned long>(mBits); }
     constexpr BitsT bits() const { return mBits; }
 
     Iterator begin() const { return Iterator(*this); }
@@ -250,6 +258,13 @@ template <size_t N, typename BitsT, typename ParamT>
 constexpr std::size_t BitSetT<N, BitsT, ParamT>::count() const
 {
     return gl::BitCount(mBits);
+}
+
+template <size_t N, typename BitsT, typename ParamT>
+constexpr bool BitSetT<N, BitsT, ParamT>::hasGaps() const
+{
+    ASSERT(mBits == (mBits & Mask(N).bits()));
+    return (mBits != Mask(N).bits()) && ((mBits & (mBits + 1)) != 0);
 }
 
 template <size_t N, typename BitsT, typename ParamT>
@@ -558,8 +573,17 @@ class BitSetArray final
             updateIteratorBit(pos, true);
         }
 
+        void resetLaterBits(const BitSetArray &bits)
+        {
+            ASSERT(bits.first() > (mIndex * priv::kDefaultBitSetSize) + *mCurrentIterator);
+            prepareCopy();
+            mParentCopy &= ~bits;
+            updateIteratorBits(bits);
+        }
+
         void setLaterBits(const BitSetArray &bits)
         {
+            ASSERT(bits.first() > (mIndex * priv::kDefaultBitSetSize) + *mCurrentIterator);
             prepareCopy();
             mParentCopy |= bits;
             updateIteratorBits(bits);
@@ -634,15 +658,6 @@ class BitSetArray final
     constexpr static std::size_t size() { return N; }
     Iterator begin() const { return Iterator(*this, 0); }
     Iterator end() const { return Iterator(*this, kArraySize); }
-    constexpr unsigned long to_ulong() const
-    {
-        // TODO(anglebug.com/5628): Handle serializing more than kDefaultBitSetSize
-        for (std::size_t index = 1; index < kArraySize; index++)
-        {
-            ASSERT(mBaseBitSetArray[index].none());
-        }
-        return static_cast<unsigned long>(mBaseBitSetArray[0].to_ulong());
-    }
 
     // Assignment operators
     constexpr BitSetArray &operator&=(const BitSetArray &other);
@@ -683,6 +698,17 @@ class BitSetArray final
     constexpr param_type last() const;
 
     constexpr value_type bits(size_t index) const;
+    constexpr static size_t ArraySize() { return kArraySize; }
+
+#if !defined(ANGLE_IS_64_BIT_CPU)
+    constexpr uint64_t bits() const
+    {
+        static_assert(N < 64);
+        static_assert(priv::kDefaultBitSetSize == 32);
+        uint64_t result = mBaseBitSetArray[1].bits();
+        return (result << 32) | mBaseBitSetArray[0].bits();
+    }
+#endif
 
     // Produces a mask of ones up to the "x"th bit.
     constexpr static BitSetArray Mask(std::size_t x);

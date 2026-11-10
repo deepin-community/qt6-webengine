@@ -25,15 +25,28 @@ class WasmBuiltinsAssembler : public CodeStubAssembler {
   TNode<NativeContext> LoadContextFromInstanceData(
       TNode<WasmTrustedInstanceData>);
 
+  TNode<WasmTrustedInstanceData> LoadSharedPartFromInstanceData(
+      TNode<WasmTrustedInstanceData>);
+
   TNode<FixedArray> LoadTablesFromInstanceData(TNode<WasmTrustedInstanceData>);
 
-  TNode<FixedArray> LoadInternalFunctionsFromInstanceData(
+  TNode<FixedArray> LoadFuncRefsFromInstanceData(
       TNode<WasmTrustedInstanceData>);
 
   TNode<FixedArray> LoadManagedObjectMapsFromInstanceData(
       TNode<WasmTrustedInstanceData>);
 
   TNode<Float64T> StringToFloat64(TNode<String>);
+
+  TNode<Uint32T> ToUint(wasm::StandardType kind) {
+    return Uint32Constant(static_cast<uint32_t>(kind));
+  }
+
+  TNode<Uint32T> ToUint(wasm::RefTypeKind kind) {
+    return Uint32Constant(static_cast<uint32_t>(kind));
+  }
+
+  TNode<BoolT> InSharedSpace(TNode<HeapObject>);
 };
 
 }  // namespace internal

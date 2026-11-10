@@ -15,6 +15,9 @@
 #include "v8/include/cppgc/member.h"
 
 class CFGAS_GEFont;
+
+namespace pdfium {
+
 class CFWL_ThemeBackground;
 class CFWL_ThemePart;
 class CFWL_ThemeText;
@@ -50,17 +53,22 @@ class IFWL_ThemeProvider : public cppgc::GarbageCollectedMixin {
   CFWL_WidgetTP* GetTheme(const CFWL_Widget* pWidget) const;
 
  private:
-  cppgc::Member<CFWL_WidgetTP> m_pCheckBoxTP;
-  cppgc::Member<CFWL_WidgetTP> m_pListBoxTP;
-  cppgc::Member<CFWL_WidgetTP> m_pPictureBoxTP;
-  cppgc::Member<CFWL_WidgetTP> m_pSrollBarTP;
-  cppgc::Member<CFWL_WidgetTP> m_pEditTP;
-  cppgc::Member<CFWL_WidgetTP> m_pComboBoxTP;
-  cppgc::Member<CFWL_WidgetTP> m_pMonthCalendarTP;
-  cppgc::Member<CFWL_WidgetTP> m_pDateTimePickerTP;
-  cppgc::Member<CFWL_WidgetTP> m_pPushButtonTP;
-  cppgc::Member<CFWL_WidgetTP> m_pCaretTP;
-  cppgc::Member<CFWL_WidgetTP> m_pBarcodeTP;
+  cppgc::Member<CFWL_WidgetTP> check_box_tp_;
+  cppgc::Member<CFWL_WidgetTP> list_box_tp_;
+  cppgc::Member<CFWL_WidgetTP> picture_box_tp_;
+  cppgc::Member<CFWL_WidgetTP> sroll_bar_tp_;
+  cppgc::Member<CFWL_WidgetTP> edit_tp_;
+  cppgc::Member<CFWL_WidgetTP> combo_box_tp_;
+  cppgc::Member<CFWL_WidgetTP> month_calendar_tp_;
+  cppgc::Member<CFWL_WidgetTP> date_time_picker_tp_;
+  cppgc::Member<CFWL_WidgetTP> push_button_tp_;
+  cppgc::Member<CFWL_WidgetTP> caret_tp_;
+  cppgc::Member<CFWL_WidgetTP> barcode_tp_;
 };
+
+}  // namespace pdfium
+
+// TODO(crbug.com/42271761): Remove.
+using pdfium::IFWL_ThemeProvider;
 
 #endif  // XFA_FWL_IFWL_THEMEPROVIDER_H_

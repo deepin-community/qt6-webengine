@@ -5,6 +5,7 @@
 #include "net/dns/host_resolver_nat64_task.h"
 
 #include <algorithm>
+#include <string_view>
 #include <utility>
 
 #include "base/check_op.h"
@@ -25,7 +26,7 @@
 namespace net {
 
 HostResolverNat64Task::HostResolverNat64Task(
-    base::StringPiece hostname,
+    std::string_view hostname,
     NetworkAnonymizationKey network_anonymization_key,
     NetLogWithSource net_log,
     ResolveContext* resolve_context,
@@ -80,8 +81,6 @@ int HostResolverNat64Task::DoLoop(int result) {
         break;
       default:
         NOTREACHED();
-        rv = ERR_FAILED;
-        break;
     }
   } while (rv != ERR_IO_PENDING && next_state_ != State::kStateNone);
   return rv;
@@ -107,7 +106,7 @@ int HostResolverNat64Task::DoResolve() {
 int HostResolverNat64Task::DoResolveComplete(int result) {
   // If not under DNS64 and resolving ipv4only.arpa fails, return the original
   // IPv4 address.
-  if (result != OK || request_ipv4onlyarpa_->GetEndpointResults()->empty()) {
+  if (result != OK || request_ipv4onlyarpa_->GetEndpointResults().empty()) {
     IPAddress ipv4_address;
     bool is_ip = ipv4_address.AssignFromIPLiteral(hostname_);
     DCHECK(is_ip);
@@ -131,7 +130,7 @@ int HostResolverNat64Task::DoSynthesizeToIpv6() {
 
   std::vector<IPEndPoint> converted_addresses;
 
-  for (const auto& endpoints : *request_ipv4onlyarpa_->GetEndpointResults()) {
+  for (const auto& endpoints : request_ipv4onlyarpa_->GetEndpointResults()) {
     for (const auto& ip_endpoint : endpoints.ip_endpoints) {
       ipv4onlyarpa_AAAA_address = ip_endpoint.address();
 
@@ -154,8 +153,9 @@ int HostResolverNat64Task::DoSynthesizeToIpv6() {
     converted_addresses = {IPEndPoint(ipv4_address, 0)};
   }
 
-  results_ = HostCache::Entry(OK, converted_addresses, std::move(aliases),
-                              HostCache::Entry::SOURCE_UNKNOWN);
+  results_ =
+      HostCache::Entry(OK, std::move(converted_addresses), std::move(aliases),
+                       HostCache::Entry::SOURCE_UNKNOWN);
   return OK;
 }
 

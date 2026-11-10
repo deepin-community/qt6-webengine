@@ -12,6 +12,7 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/test/protobuf_matchers.h"
 #include "components/media_router/common/providers/cast/channel/cast_channel_enum.h"
 #include "components/media_router/common/providers/cast/channel/cast_message_handler.h"
 #include "components/media_router/common/providers/cast/channel/cast_message_util.h"
@@ -26,6 +27,8 @@
 #include "third_party/openscreen/src/cast/common/channel/proto/cast_channel.pb.h"
 
 namespace cast_channel {
+
+using base::test::EqualsProto;
 
 class MockCastTransport : public CastTransport {
  public:
@@ -101,7 +104,7 @@ class MockCastSocketService : public CastSocketServiceImpl {
       const scoped_refptr<base::SingleThreadTaskRunner>& task_runner);
   ~MockCastSocketService() override;
 
-  void OpenSocket(NetworkContextGetter network_context_getter,
+  void OpenSocket(network::NetworkContextGetter network_context_getter,
                   const CastSocketOpenParams& open_params,
                   CastSocket::OnOpenCallback open_cb) override {
     OpenSocket_(open_params.ip_endpoint, open_cb);
@@ -225,14 +228,14 @@ class MockCastMessageHandler : public CastMessageHandler {
                const std::string&,
                base::TimeDelta,
                const std::vector<std::string>&,
-               const absl::optional<base::Value>&,
+               const std::optional<base::Value>&,
                LaunchSessionCallback callback),
               (override));
   MOCK_METHOD(void,
               StopSession,
               (int channel_id,
                const std::string& session_id,
-               const absl::optional<std::string>& client_id,
+               const std::optional<std::string>& client_id,
                ResultCallback callback),
               (override));
   MOCK_METHOD(Result,
@@ -243,7 +246,7 @@ class MockCastMessageHandler : public CastMessageHandler {
               SendCastMessage,
               (int channel_id, const CastMessage& message),
               (override));
-  MOCK_METHOD(absl::optional<int>,
+  MOCK_METHOD(std::optional<int>,
               SendMediaRequest,
               (int channel_id,
                const base::Value::Dict& body,
@@ -261,17 +264,6 @@ class MockCastMessageHandler : public CastMessageHandler {
 
 // Creates the IPEndpoint 192.168.1.1.
 net::IPEndPoint CreateIPEndPointForTest();
-
-// Checks if two proto messages are the same.
-// From
-// third_party/cacheinvalidation/overrides/google/cacheinvalidation/deps/gmock.h
-// TODO(kmarshall): promote to a shared testing library.
-MATCHER_P(EqualsProto, message, "") {
-  std::string expected_serialized, actual_serialized;
-  message.SerializeToString(&expected_serialized);
-  arg.SerializeToString(&actual_serialized);
-  return expected_serialized == actual_serialized;
-}
 
 ACTION_TEMPLATE(PostCompletionCallbackTask,
                 HAS_1_TEMPLATE_PARAMS(int, cb_idx),

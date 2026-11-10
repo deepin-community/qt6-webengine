@@ -4,16 +4,20 @@
 
 #include "cc/animation/filter_animation_curve.h"
 
+#include "base/check_op.h"
 #include "base/memory/ptr_util.h"
 #include "ui/gfx/animation/keyframe/keyframed_animation_curve-inl.h"
 
 namespace cc {
 
-void FilterAnimationCurve::Tick(base::TimeDelta t,
-                                int property_id,
-                                gfx::KeyframeModel* keyframe_model) const {
+void FilterAnimationCurve::Tick(
+    base::TimeDelta t,
+    int property_id,
+    gfx::KeyframeModel* keyframe_model,
+    gfx::TimingFunction::LimitDirection limit_direction) const {
   if (target_) {
-    target_->OnFilterAnimated(GetValue(t), property_id, keyframe_model);
+    target_->OnFilterAnimated(GetTransformedValue(t, limit_direction),
+                              property_id, keyframe_model);
   }
 }
 
@@ -27,13 +31,13 @@ const char* FilterAnimationCurve::TypeName() const {
 
 const FilterAnimationCurve* FilterAnimationCurve::ToFilterAnimationCurve(
     const gfx::AnimationCurve* c) {
-  DCHECK_EQ(gfx::AnimationCurve::FILTER, c->Type());
+  CHECK_EQ(gfx::AnimationCurve::FILTER, c->Type());
   return static_cast<const FilterAnimationCurve*>(c);
 }
 
 FilterAnimationCurve* FilterAnimationCurve::ToFilterAnimationCurve(
     gfx::AnimationCurve* c) {
-  DCHECK_EQ(AnimationCurve::FILTER, c->Type());
+  CHECK_EQ(AnimationCurve::FILTER, c->Type());
   return static_cast<FilterAnimationCurve*>(c);
 }
 
@@ -93,21 +97,20 @@ std::unique_ptr<gfx::AnimationCurve> KeyframedFilterAnimationCurve::Clone()
   return std::move(to_return);
 }
 
+// Use GetTransformedValue instead. This method is for animation curves that
+// do not use timing functions.
 FilterOperations KeyframedFilterAnimationCurve::GetValue(
     base::TimeDelta t) const {
-  if (t <= (keyframes_.front()->Time() * scaled_duration()))
-    return keyframes_.front()->Value();
+  NOTREACHED();
+}
 
-  if (t >= (keyframes_.back()->Time() * scaled_duration()))
-    return keyframes_.back()->Value();
-
-  t = TransformedAnimationTime(keyframes_, timing_function_, scaled_duration(),
-                               t);
-  size_t i = GetActiveKeyframe(keyframes_, scaled_duration(), t);
-  double progress =
-      TransformedKeyframeProgress(keyframes_, scaled_duration(), t, i);
-
-  return keyframes_[i + 1]->Value().Blend(keyframes_[i]->Value(), progress);
+FilterOperations KeyframedFilterAnimationCurve::GetTransformedValue(
+    base::TimeDelta t,
+    gfx::TimingFunction::LimitDirection limit_direction) const {
+  KeyframesAndProgress values = GetKeyframesAndProgress(
+      keyframes_, timing_function_, scaled_duration(), t, limit_direction);
+  return keyframes_[values.to]->Value().Blend(keyframes_[values.from]->Value(),
+                                              values.progress);
 }
 
 std::unique_ptr<KeyframedFilterAnimationCurve>

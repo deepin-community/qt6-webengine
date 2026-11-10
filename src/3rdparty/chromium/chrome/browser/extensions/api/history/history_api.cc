@@ -134,8 +134,7 @@ HistoryEventRouter::HistoryEventRouter(Profile* profile,
   history_service_observation_.Observe(history_service);
 }
 
-HistoryEventRouter::~HistoryEventRouter() {
-}
+HistoryEventRouter::~HistoryEventRouter() = default;
 
 void HistoryEventRouter::OnURLVisited(history::HistoryService* history_service,
                                       const history::URLRow& url_row,
@@ -145,7 +144,7 @@ void HistoryEventRouter::OnURLVisited(history::HistoryService* history_service,
                 api::history::OnVisited::kEventName, std::move(args));
 }
 
-void HistoryEventRouter::OnURLsDeleted(
+void HistoryEventRouter::OnHistoryDeletions(
     history::HistoryService* history_service,
     const history::DeletionInfo& deletion_info) {
   OnVisitRemoved::Removed removed;
@@ -179,8 +178,7 @@ HistoryAPI::HistoryAPI(content::BrowserContext* context)
                                  api::history::OnVisitRemoved::kEventName);
 }
 
-HistoryAPI::~HistoryAPI() {
-}
+HistoryAPI::~HistoryAPI() = default;
 
 void HistoryAPI::Shutdown() {
   history_event_router_.reset();
@@ -239,9 +237,9 @@ Profile* HistoryFunction::GetProfile() const {
   return Profile::FromBrowserContext(browser_context());
 }
 
-HistoryFunctionWithCallback::HistoryFunctionWithCallback() {}
+HistoryFunctionWithCallback::HistoryFunctionWithCallback() = default;
 
-HistoryFunctionWithCallback::~HistoryFunctionWithCallback() {}
+HistoryFunctionWithCallback::~HistoryFunctionWithCallback() = default;
 
 ExtensionFunction::ResponseAction HistoryGetVisitsFunction::Run() {
   std::optional<GetVisits::Params> params = GetVisits::Params::Create(args());
@@ -376,7 +374,7 @@ ExtensionFunction::ResponseAction HistoryDeleteRangeFunction::Run() {
   history::WebHistoryService* web_history =
       WebHistoryServiceFactory::GetForProfile(GetProfile());
   hs->DeleteLocalAndRemoteHistoryBetween(
-      web_history, start_time, end_time,
+      web_history, start_time, end_time, history::kNoAppIdFilter,
       base::BindOnce(&HistoryDeleteRangeFunction::DeleteComplete,
                      base::Unretained(this)),
       &task_tracker_);
@@ -411,7 +409,7 @@ ExtensionFunction::ResponseAction HistoryDeleteAllFunction::Run() {
   hs->DeleteLocalAndRemoteHistoryBetween(
       web_history,
       /*begin_time*/ base::Time(),
-      /*end_time*/ base::Time::Max(),
+      /*end_time*/ base::Time::Max(), history::kNoAppIdFilter,
       base::BindOnce(&HistoryDeleteAllFunction::DeleteComplete,
                      base::Unretained(this)),
       &task_tracker_);

@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "qwebenginecertificateerror.h"
 
@@ -25,6 +26,10 @@ QWebEngineCertificateError::QWebEngineCertificateError(
 {
 }
 
+QWebEngineCertificateError::QWebEngineCertificateError()
+    = default;
+
+
 QWebEngineCertificateError::QWebEngineCertificateError(const QWebEngineCertificateError &) = default;
 
 QWebEngineCertificateError& QWebEngineCertificateError::operator=(const QWebEngineCertificateError &) = default;
@@ -42,6 +47,7 @@ QWebEngineCertificateError::~QWebEngineCertificateError() = default;
     QSslError::SslError values are not used directly, because the Qt error
     categories cannot be mapped to the Chromium error categories.
 
+    \value Ok There was no actual certificate error.
     \value SslPinnedKeyNotInCertificateChain The certificate did not match the built-in public keys
             pinned for the host name.
     \value CertificateCommonNameInvalid The certificate's common name did not match the host name.
@@ -56,14 +62,13 @@ QWebEngineCertificateError::~QWebEngineCertificateError() = default;
     \value CertificateNonUniqueName The host name specified in the certificate is not unique.
     \value CertificateWeakKey The certificate contains a weak key.
     \value CertificateNameConstraintViolation The certificate claimed DNS names that are in violation of name constraints.
-    \value CertificateValidityTooLong The certificate has a validity period that is too long. (Added in Qt 5.7)
-    \value CertificateTransparencyRequired Certificate Transparency was required for this connection, but the server
-            did not provide CT information that complied with the policy. (Added in Qt 5.8)
-    \value CertificateKnownInterceptionBlocked The certificate is known to be
-            used for interception by an entity other the device owner. (Added in
-            5.15)
-    \value SslObsoleteVersion The connection uses an obsolete version of SSL/TLS. (Added in Qt 6.2, deprecated in Qt 6.4)
-    \value CertificateSymantecLegacy The certificate is a legacy Symantec one that's no longer valid. (Added in Qt 6.2)
+    \value [since 5.7] CertificateValidityTooLong The certificate has a validity period that is too long.
+    \value [since 5.8] CertificateTransparencyRequired Certificate Transparency was required for this connection, but the server
+            did not provide CT information that complied with the policy.
+    \value [since 5.15] CertificateKnownInterceptionBlocked The certificate is known to be
+            used for interception by an entity other the device owner.
+    \value [since 6.2, deprecated in Qt 6.4] SslObsoleteVersion The connection uses an obsolete version of SSL/TLS.
+    \value [since 6.2, deprecated in Qt 6.11] CertificateSymantecLegacy The certificate is a legacy Symantec one that's no longer valid.
 */
 
 /*!
@@ -74,17 +79,22 @@ QWebEngineCertificateError::~QWebEngineCertificateError() = default;
 */
 bool QWebEngineCertificateError::isOverridable() const
 {
-    return d->overridable();
+    if (Q_LIKELY(d))
+        return d->overridable();
+    return false;
 }
 
 /*!
-    Returns the URL that triggered the error.
+    \property QWebEngineCertificateError::url
+    \brief The URL that triggered the error.
 
     \sa description()
 */
 QUrl QWebEngineCertificateError::url() const
 {
-    return d->url();
+    if (Q_LIKELY(d))
+        return d->url();
+    return QUrl();
 }
 
 /*!
@@ -97,27 +107,35 @@ QUrl QWebEngineCertificateError::url() const
 */
 bool QWebEngineCertificateError::isMainFrame() const
 {
-    return d->isMainFrame();
+    if (Q_LIKELY(d))
+        return d->isMainFrame();
+    return false;
 }
 
 /*!
-    Returns the type of the error.
+    \property QWebEngineCertificateError::type
+    \brief The type of the error.
 
     \sa description(), isOverridable()
 */
 QWebEngineCertificateError::Type QWebEngineCertificateError::type() const
 {
-    return d->error();
+    if (Q_LIKELY(d))
+        return d->error();
+    return Ok;
 }
 
 /*!
-    Returns a short localized human-readable description of the error.
+    \property QWebEngineCertificateError::description
+    \brief A short localized human-readable description of the error.
 
     \sa url(), isOverridable()
 */
 QString QWebEngineCertificateError::description() const
 {
-    return d->errorString();
+    if (Q_LIKELY(d))
+        return d->errorString();
+    return QString();
 }
 
 /*!
@@ -135,7 +153,8 @@ QString QWebEngineCertificateError::description() const
 */
 void QWebEngineCertificateError::defer()
 {
-    d->defer();
+    if (Q_LIKELY(d))
+        d->defer();
 }
 
 /*!
@@ -145,7 +164,8 @@ void QWebEngineCertificateError::defer()
 */
 void QWebEngineCertificateError::acceptCertificate()
 {
-    d->ignoreCertificateError();
+    if (Q_LIKELY(d))
+        d->ignoreCertificateError();
 }
 
 /*!
@@ -155,7 +175,8 @@ void QWebEngineCertificateError::acceptCertificate()
 */
 void QWebEngineCertificateError::rejectCertificate()
 {
-    d->rejectCertificate();
+    if (Q_LIKELY(d))
+        d->rejectCertificate();
 }
 
 /*!
@@ -167,7 +188,9 @@ void QWebEngineCertificateError::rejectCertificate()
 */
 QList<QSslCertificate> QWebEngineCertificateError::certificateChain() const
 {
-    return d->certificateChain();
+    if (Q_LIKELY(d))
+        return d->certificateChain();
+    return QList<QSslCertificate>();
 }
 
 QT_END_NAMESPACE

@@ -8,20 +8,35 @@
 #ifndef LIBANGLE_RENDERER_VULKAN_CLCONTEXTVK_H_
 #define LIBANGLE_RENDERER_VULKAN_CLCONTEXTVK_H_
 
+#include "common/PackedEnums.h"
+#include "common/SimpleMutex.h"
+#include "libANGLE/renderer/vulkan/CLPlatformVk.h"
 #include "libANGLE/renderer/vulkan/cl_types.h"
+#include "libANGLE/renderer/vulkan/vk_cache_utils.h"
+#include "libANGLE/renderer/vulkan/vk_helpers.h"
+#include "libANGLE/renderer/vulkan/vk_utils.h"
 
 #include "libANGLE/renderer/CLContextImpl.h"
 
+#include <libANGLE/CLContext.h>
 #include "libANGLE/CLDevice.h"
 
 namespace rx
 {
 
-class CLContextVk : public CLContextImpl
+class CLKernelVk;
+
+class CLContextVk : public CLContextImpl, public vk::Context
 {
   public:
-    CLContextVk(const cl::Context &context);
+    CLContextVk(const cl::Context &context, const cl::DevicePtrs devicePtrs);
+
     ~CLContextVk() override;
+
+    void handleError(VkResult errorCode,
+                     const char *file,
+                     const char *function,
+                     unsigned int line) override;
 
     bool hasMemory(cl_mem memory) const;
 
@@ -31,14 +46,10 @@ class CLContextVk : public CLContextImpl
                                      CLCommandQueueImpl::Ptr *commandQueueOut) override;
 
     angle::Result createBuffer(const cl::Buffer &buffer,
-                               size_t size,
                                void *hostPtr,
                                CLMemoryImpl::Ptr *bufferOut) override;
 
     angle::Result createImage(const cl::Image &image,
-                              cl::MemFlags flags,
-                              const cl_image_format &format,
-                              const cl::ImageDescriptor &desc,
                               void *hostPtr,
                               CLMemoryImpl::Ptr *imageOut) override;
 
@@ -80,7 +91,68 @@ class CLContextVk : public CLContextImpl
     angle::Result createUserEvent(const cl::Event &event, CLEventImpl::Ptr *eventOut) override;
 
     angle::Result waitForEvents(const cl::EventPtrs &events) override;
+
+    CLPlatformVk *getPlatform() { return &mContext.getPlatform().getImpl<CLPlatformVk>(); }
+
+    cl::Context &getFrontendObject() { return const_cast<cl::Context &>(mContext); }
+
+    DescriptorSetLayoutCache *getDescriptorSetLayoutCache() { return &mDescriptorSetLayoutCache; }
+    PipelineLayoutCache *getPipelineLayoutCache() { return &mPipelineLayoutCache; }
+
+    vk::MetaDescriptorPool &getMetaDescriptorPool() { return mMetaDescriptorPool; }
+
+    angle::Result allocateDescriptorSet(
+        CLKernelVk *kernelVk,
+        DescriptorSetIndex index,
+        angle::EnumIterator<DescriptorSetIndex> layoutIndex,
+        vk::OutsideRenderPassCommandBufferHelper *computePassCommands);
+
+  private:
+    void handleDeviceLost() const;
+    VkFormat getVkFormatFromCL(cl_image_format format);
+
+    // mutex to synchronize the descriptor set allocations
+    angle::SimpleMutex mDescriptorSetMutex;
+
+    // Caches for DescriptorSetLayout and PipelineLayout
+    DescriptorSetLayoutCache mDescriptorSetLayoutCache;
+    PipelineLayoutCache mPipelineLayoutCache;
+
+    vk::MetaDescriptorPool mMetaDescriptorPool;
+
+    // Have the CL Context keep tabs on associated CL objects
+    struct Mutable
+    {
+        std::unordered_set<const _cl_mem *> mMemories;
+    };
+    using MutableData = angle::SynchronizedValue<Mutable>;
+    MutableData mAssociatedObjects;
+
+    const cl::DevicePtrs mAssociatedDevices;
+
+    // Table of minimum required image formats for OpenCL
+    static constexpr cl_image_format kMinSupportedFormatsReadOrWrite[11] = {
+        {CL_RGBA, CL_UNORM_INT8},  {CL_RGBA, CL_UNSIGNED_INT8},  {CL_RGBA, CL_SIGNED_INT8},
+        {CL_RGBA, CL_UNORM_INT16}, {CL_RGBA, CL_UNSIGNED_INT16}, {CL_RGBA, CL_SIGNED_INT16},
+        {CL_RGBA, CL_HALF_FLOAT},  {CL_RGBA, CL_UNSIGNED_INT32}, {CL_RGBA, CL_SIGNED_INT32},
+        {CL_RGBA, CL_FLOAT},       {CL_BGRA, CL_UNORM_INT8}};
+
+    static constexpr cl_image_format kMinSupportedFormatsReadAndWrite[18] = {
+        {CL_R, CL_UNORM_INT8},        {CL_R, CL_UNSIGNED_INT8},    {CL_R, CL_SIGNED_INT8},
+        {CL_R, CL_UNSIGNED_INT16},    {CL_R, CL_SIGNED_INT16},     {CL_R, CL_HALF_FLOAT},
+        {CL_R, CL_UNSIGNED_INT32},    {CL_R, CL_SIGNED_INT32},     {CL_R, CL_FLOAT},
+        {CL_RGBA, CL_UNORM_INT8},     {CL_RGBA, CL_UNSIGNED_INT8}, {CL_RGBA, CL_SIGNED_INT8},
+        {CL_RGBA, CL_UNSIGNED_INT16}, {CL_RGBA, CL_SIGNED_INT16},  {CL_RGBA, CL_HALF_FLOAT},
+        {CL_RGBA, CL_UNSIGNED_INT32}, {CL_RGBA, CL_SIGNED_INT32},  {CL_RGBA, CL_FLOAT}};
+
+    friend class CLMemoryVk;
 };
+
+inline bool CLContextVk::hasMemory(cl_mem memory) const
+{
+    const auto data = mAssociatedObjects.synchronize();
+    return data->mMemories.find(memory) != data->mMemories.cend();
+}
 
 }  // namespace rx
 

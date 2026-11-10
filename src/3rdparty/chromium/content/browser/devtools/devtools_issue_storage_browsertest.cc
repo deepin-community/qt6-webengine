@@ -64,8 +64,8 @@ void ReportDummyIssue(RenderFrameHostImpl* rfh) {
           .SetCode(protocol::Audits::InspectorIssueCodeEnum::CookieIssue)
           .SetDetails(issueDetails.Build())
           .Build();
-  devtools_instrumentation::ReportBrowserInitiatedIssue(rfh,
-                                                        inspector_issue.get());
+  devtools_instrumentation::ReportBrowserInitiatedIssue(
+      rfh, std::move(inspector_issue));
 }
 
 }  // namespace
@@ -223,7 +223,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsIssueStorageWithPrerenderBrowserTest,
   EXPECT_TRUE(NavigateToURL(shell(), main_url));
 
   // 2) Prerender |prerender_url|.
-  int host_id = prerender_test_helper().AddPrerender(prerender_url);
+  FrameTreeNodeId host_id = prerender_test_helper().AddPrerender(prerender_url);
   RenderFrameHostImpl* prerender_rfh = static_cast<RenderFrameHostImpl*>(
       prerender_test_helper().GetPrerenderedMainFrameHost(host_id));
 

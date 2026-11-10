@@ -31,9 +31,6 @@ class TestPasswordsPrivateDelegate : public PasswordsPrivateDelegate {
   // not empty.
   std::optional<api::passwords_private::UrlCollection> GetUrlCollection(
       const std::string& url) override;
-  // Fake implementation. This returns the value set by
-  // `SetIsAccountStoreDefault`.
-  bool IsAccountStoreDefault(content::WebContents* web_contents) override;
   // Fake implementation of AddPassword. This returns true if `url` and
   // `password` aren't empty.
   bool AddPassword(const std::string& url,
@@ -47,6 +44,7 @@ class TestPasswordsPrivateDelegate : public PasswordsPrivateDelegate {
   void RemoveCredential(
       int id,
       api::passwords_private::PasswordStoreSet from_store) override;
+  void RemoveBackupPassword(int id) override;
   void RemovePasswordException(int id) override;
   // Simplified version of undo logic, only use for testing.
   void UndoRemoveSavedPasswordOrException() override;
@@ -57,6 +55,10 @@ class TestPasswordsPrivateDelegate : public PasswordsPrivateDelegate {
   void RequestCredentialsDetails(const std::vector<int>& ids,
                                  UiEntriesCallback callback,
                                  content::WebContents* web_contents) override;
+  void CopyPlaintextBackupPassword(
+      int id,
+      content::WebContents* web_contents,
+      base::OnceCallback<void(bool)> callback) override;
   void MovePasswordsToAccount(const std::vector<int>& ids,
                               content::WebContents* web_contents) override;
   void FetchFamilyMembers(FetchFamilyResultsCallback callback) override;
@@ -72,9 +74,10 @@ class TestPasswordsPrivateDelegate : public PasswordsPrivateDelegate {
                        content::WebContents* web_contents) override;
   api::passwords_private::ExportProgressStatus GetExportProgressStatus()
       override;
-  bool IsOptedInForAccountStorage() override;
-  void SetAccountStorageOptIn(bool opt_in,
-                              content::WebContents* web_contents) override;
+  bool IsAccountStorageEnabled() override;
+  void SetAccountStorageEnabled(bool enabled,
+                                content::WebContents* web_contents) override;
+  bool ShouldShowAccountStorageSettingToggle() override;
   std::vector<api::passwords_private::PasswordUiEntry> GetInsecureCredentials()
       override;
   std::vector<api::passwords_private::PasswordUiEntryList>
@@ -93,15 +96,30 @@ class TestPasswordsPrivateDelegate : public PasswordsPrivateDelegate {
       override;
   void RestartAuthTimer() override;
   void SwitchBiometricAuthBeforeFillingState(
-      content::WebContents* web_contents) override;
+      content::WebContents* web_contents,
+      AuthenticationCallback callback) override;
   void ShowAddShortcutDialog(content::WebContents* web_contents) override;
   void ShowExportedFileInShell(content::WebContents* web_contents,
                                std::string file_path) override;
+  void ChangePasswordManagerPin(
+      content::WebContents* web_contents,
+      base::OnceCallback<void(bool)> success_callback) override;
+  void IsPasswordManagerPinAvailable(
+      content::WebContents* web_contents,
+      base::OnceCallback<void(bool)> pin_available_callback) override;
+  void DisconnectCloudAuthenticator(
+      content::WebContents* web_contents,
+      base::OnceCallback<void(bool)> success_callback) override;
+  bool IsConnectedToCloudAuthenticator(
+      content::WebContents* web_contents) override;
+  void DeleteAllPasswordManagerData(
+      content::WebContents* web_contents,
+      base::OnceCallback<void(bool)> success_callback) override;
+
   base::WeakPtr<PasswordsPrivateDelegate> AsWeakPtr() override;
 
   void SetProfile(Profile* profile);
-  void SetOptedInForAccountStorage(bool opted_in);
-  void SetIsAccountStoreDefault(bool is_default);
+  void SetAccountStorageEnabled(bool enabled);
   void AddCompromisedCredential(int id);
 
   void ClearSavedPasswordsList() { current_entries_.clear(); }
@@ -138,6 +156,24 @@ class TestPasswordsPrivateDelegate : public PasswordsPrivateDelegate {
     return exported_file_shown_in_shell_;
   }
 
+  bool get_change_password_manager_pin_called() const {
+    return change_password_manager_pin_called_;
+  }
+
+  bool get_disconnect_cloud_authenticator_called() const {
+    return disconnect_cloud_authenticator_called_;
+  }
+
+  bool get_delete_all_password_manager_data_called() const {
+    return delete_all_password_manager_data_called_;
+  }
+
+  bool copy_plaintext_backup_password() const {
+    return copy_plaintext_backup_password_;
+  }
+
+  bool remove_backup_password() const { return remove_backup_password_; }
+
  protected:
   ~TestPasswordsPrivateDelegate() override;
 
@@ -168,8 +204,9 @@ class TestPasswordsPrivateDelegate : public PasswordsPrivateDelegate {
   std::vector<api::passwords_private::PasswordUiEntry> insecure_credentials_;
   raw_ptr<Profile, DanglingUntriaged> profile_ = nullptr;
 
-  bool is_opted_in_for_account_storage_ = false;
-  bool is_account_store_default_ = false;
+  bool is_account_storage_enabled_ = false;
+
+  bool should_show_account_storage_setting_toggle_ = false;
 
   // Flags for detecting whether password sharing operations have been invoked.
   bool fetch_family_members_triggered_ = false;
@@ -195,8 +232,23 @@ class TestPasswordsPrivateDelegate : public PasswordsPrivateDelegate {
   // Used to track whether shortcut creation dialog was shown.
   bool add_shortcut_dialog_shown_ = false;
 
-  // used to track whether the exported file was shown in shell.
+  // Used to track whether the exported file was shown in shell.
   bool exported_file_shown_in_shell_ = false;
+
+  // Used for checking whether `ChangePasswordManagerPin` is called.
+  bool change_password_manager_pin_called_ = false;
+
+  // Used to track whether `DisconnectCloudAuthenticator` was called.
+  bool disconnect_cloud_authenticator_called_ = false;
+
+  // Used to track whether `DeleteAllPasswordManagerData` was called.
+  bool delete_all_password_manager_data_called_ = false;
+
+  // Used to track whether `CopyPlaintextBackupPassword` was called.
+  bool copy_plaintext_backup_password_ = false;
+
+  // Used to track whether `RemoveBackupPassword` was called.
+  bool remove_backup_password_ = false;
 
   base::WeakPtrFactory<TestPasswordsPrivateDelegate> weak_ptr_factory_{this};
 };

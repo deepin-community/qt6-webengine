@@ -6,6 +6,9 @@
 
 #include <math.h>
 
+#include <array>
+
+#include "base/containers/span.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace gfx {
@@ -57,7 +60,7 @@ class HalfFloatTest : public testing::Test {
 
   HalfFloat Convert(float f) {
     HalfFloat ret;
-    FloatToHalfFloat(&f, &ret, 1);
+    FloatToHalfFloat(base::span_from_ref(f), base::span_from_ref(ret), 1);
     return ret;
   }
 };
@@ -71,10 +74,17 @@ TEST_F(HalfFloatTest, NoCrashTest) {
 }
 
 TEST_F(HalfFloatTest, SimpleTest) {
-  static float test[] = {
-      0.0f,    1.0f,    10.0f,    1000.0f,  65503.0f,
-      1.0E-3f, 1.0E-6f, 1.0E-20f, 1.0E-44f,
-  };
+  static auto test = std::to_array<float>({
+      0.0f,
+      1.0f,
+      10.0f,
+      1000.0f,
+      65503.0f,
+      1.0E-3f,
+      1.0E-6f,
+      1.0E-20f,
+      1.0E-44f,
+  });
   for (size_t i = 0; i < std::size(test); i++) {
     EXPECT_EQ(ConvertTruth(test[i]), Convert(test[i])) << " float = "
                                                        << test[i];

@@ -15,7 +15,10 @@
 #include "base/containers/flat_set.h"
 #include "base/time/time.h"
 #include "base/uuid.h"
-#include "components/attribution_reporting/aggregatable_values.h"
+#include "components/attribution_reporting/aggregatable_debug_reporting_config.h"
+#include "components/attribution_reporting/aggregatable_filtering_id_max_bytes.h"
+#include "components/attribution_reporting/aggregatable_named_budget_defs.h"
+#include "components/attribution_reporting/constants.h"
 #include "components/attribution_reporting/filters.h"
 #include "components/attribution_reporting/source_registration.h"
 #include "components/attribution_reporting/source_registration_time_config.mojom.h"
@@ -23,7 +26,6 @@
 #include "components/attribution_reporting/suitable_origin.h"
 #include "components/attribution_reporting/test_utils.h"
 #include "components/attribution_reporting/trigger_data_matching.mojom-forward.h"
-#include "content/browser/attribution_reporting/aggregatable_histogram_contribution.h"
 #include "content/browser/attribution_reporting/attribution_info.h"
 #include "content/browser/attribution_reporting/attribution_report.h"
 #include "content/browser/attribution_reporting/create_report_result.h"
@@ -32,27 +34,24 @@
 #include "content/browser/attribution_reporting/stored_source.h"
 #include "content/public/browser/attribution_data_model.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "third_party/blink/public/mojom/aggregation_service/aggregatable_report.mojom-forward.h"
 
 namespace attribution_reporting {
+class AggregatableNamedBudgetCandidate;
+class AggregatableValues;
 class AggregationKeys;
-class EventReportWindows;
+class AttributionScopesData;
+class TriggerDataSet;
 }  // namespace attribution_reporting
 
 namespace net {
 class SchemefulSite;
 }  // namespace net
 
-namespace network {
-class TriggerVerification;
-}  // namespace network
-
 namespace content {
 
 class AttributionTrigger;
 class CommonSourceInfo;
-class RandomizedResponseData;
-
-struct FakeEventLevelReport;
 
 enum class RateLimitResult : int;
 
@@ -104,8 +103,11 @@ class SourceBuilder {
   SourceBuilder& SetAggregationKeys(
       attribution_reporting::AggregationKeys aggregation_keys);
 
-  SourceBuilder& SetAggregatableBudgetConsumed(
-      int64_t aggregatable_budget_consumed);
+  SourceBuilder& SetRemainingAggregatableAttributionBudget(
+      int remaining_aggregatable_attribution_budget);
+
+  SourceBuilder& SetRemainingAggregatableDebugBudget(
+      int remaining_aggregatable_debug_budget);
 
   SourceBuilder& SetRandomizedResponseRate(double randomized_response_rate);
 
@@ -116,6 +118,8 @@ class SourceBuilder {
 
   SourceBuilder& SetDebugReporting(bool debug_reporting);
 
+  SourceBuilder& SetTriggerData(attribution_reporting::TriggerDataSet);
+
   SourceBuilder& SetEventReportWindows(
       attribution_reporting::EventReportWindows);
 
@@ -124,7 +128,18 @@ class SourceBuilder {
   SourceBuilder& SetTriggerDataMatching(
       attribution_reporting::mojom::TriggerDataMatching);
 
-  SourceBuilder& SetDebugCookieSet(bool debug_cookie_set);
+  SourceBuilder& SetCookieBasedDebugAllowed(bool cookie_based_debug_allowed);
+
+  SourceBuilder& SetAggregatableDebugReportingConfig(
+      attribution_reporting::SourceAggregatableDebugReportingConfig);
+
+  SourceBuilder& SetDestinationLimitPriority(int64_t priority);
+
+  SourceBuilder& SetAttributionScopesData(
+      attribution_reporting::AttributionScopesData);
+
+  SourceBuilder& SetAggregatableNamedBudgetDefs(
+      attribution_reporting::AggregatableNamedBudgetDefs);
 
   StorableSource Build() const;
 
@@ -143,12 +158,15 @@ class SourceBuilder {
   // `base::StrongAlias` does not automatically initialize the value here.
   // Ensure that we don't use uninitialized memory.
   StoredSource::Id source_id_{0};
+  StoredSource::AggregatableNamedBudgets aggregatable_named_budgets_;
   std::vector<uint64_t> dedup_keys_;
-  int64_t aggregatable_budget_consumed_ = 0;
+  int remaining_aggregatable_attribution_budget_ =
+      attribution_reporting::kMaxAggregatableValue;
   double randomized_response_rate_ = 0;
   std::vector<uint64_t> aggregatable_dedup_keys_;
   bool is_within_fenced_frame_ = false;
-  bool debug_cookie_set_ = false;
+  bool cookie_based_debug_allowed_ = false;
+  int remaining_aggregatable_debug_budget_ = 0;
 };
 
 // Returns a AttributionTrigger with default data which matches the default
@@ -185,7 +203,7 @@ class TriggerBuilder {
       std::vector<attribution_reporting::AggregatableTriggerData>);
 
   TriggerBuilder& SetAggregatableValues(
-      attribution_reporting::AggregatableValues);
+      std::vector<attribution_reporting::AggregatableValues>);
 
   TriggerBuilder& SetAggregatableDedupKey(
       std::optional<uint64_t> aggregatable_dedup_key);
@@ -203,12 +221,21 @@ class TriggerBuilder {
   TriggerBuilder& SetSourceRegistrationTimeConfig(
       attribution_reporting::mojom::SourceRegistrationTimeConfig);
 
-  TriggerBuilder& SetVerifications(
-      std::vector<network::TriggerVerification> verifications);
-
   TriggerBuilder& SetFilterPair(attribution_reporting::FilterPair filter_pair);
 
   TriggerBuilder& SetTriggerContextId(std::string trigger_context_id);
+
+  TriggerBuilder& SetAggregatableDebugReportingConfig(
+      attribution_reporting::AggregatableDebugReportingConfig);
+
+  TriggerBuilder& SetAttributionScopes(
+      attribution_reporting::AttributionScopesSet);
+
+  TriggerBuilder& SetAggregatableFilteringIdMaxBytes(
+      attribution_reporting::AggregatableFilteringIdsMaxBytes);
+
+  TriggerBuilder& SetAggregatableNamedBudgetCandidates(
+      std::vector<attribution_reporting::AggregatableNamedBudgetCandidate>);
 
   AttributionTrigger Build(bool generate_event_trigger_data = true) const;
 
@@ -222,18 +249,24 @@ class TriggerBuilder {
   std::optional<uint64_t> debug_key_;
   std::vector<attribution_reporting::AggregatableTriggerData>
       aggregatable_trigger_data_;
-  attribution_reporting::AggregatableValues aggregatable_values_;
+  std::vector<attribution_reporting::AggregatableValues> aggregatable_values_;
   std::optional<uint64_t> aggregatable_dedup_key_;
   attribution_reporting::FilterPair aggregatable_dedup_key_filter_pair_;
   bool is_within_fenced_frame_ = false;
   bool debug_reporting_ = false;
   std::optional<attribution_reporting::SuitableOrigin>
       aggregation_coordinator_origin_;
-  std::vector<network::TriggerVerification> verifications_;
   attribution_reporting::mojom::SourceRegistrationTimeConfig
       source_registration_time_config_ =
           attribution_reporting::mojom::SourceRegistrationTimeConfig::kInclude;
   std::optional<std::string> trigger_context_id_;
+  attribution_reporting::AggregatableFilteringIdsMaxBytes
+      aggregatable_filtering_id_max_bytes_;
+  attribution_reporting::AggregatableDebugReportingConfig
+      aggregatable_debug_reporting_config_;
+  attribution_reporting::AttributionScopesSet attribution_scopes_;
+  std::vector<attribution_reporting::AggregatableNamedBudgetCandidate>
+      aggregatable_named_budget_candidates_;
 };
 
 // Helper class to construct an `AttributionInfo` for tests using default data.
@@ -276,7 +309,8 @@ class ReportBuilder {
   ReportBuilder& SetReportId(AttributionReport::Id id);
 
   ReportBuilder& SetAggregatableHistogramContributions(
-      std::vector<AggregatableHistogramContribution> contributions);
+      std::vector<blink::mojom::AggregatableReportHistogramContribution>
+          contributions);
 
   ReportBuilder& SetAggregationCoordinatorOrigin(
       attribution_reporting::SuitableOrigin);
@@ -284,8 +318,8 @@ class ReportBuilder {
   ReportBuilder& SetSourceRegistrationTimeConfig(
       attribution_reporting::mojom::SourceRegistrationTimeConfig);
 
-  ReportBuilder& SetVerificationToken(
-      std::optional<std::string> verification_token);
+  ReportBuilder& SetAggregatableFilteringIdsMaxBytes(
+      attribution_reporting::AggregatableFilteringIdsMaxBytes);
 
   ReportBuilder& SetTriggerContextId(std::string trigger_context_id);
 
@@ -303,11 +337,13 @@ class ReportBuilder {
   int64_t priority_ = 0;
   base::Uuid external_report_id_;
   AttributionReport::Id report_id_{0};
-  std::vector<AggregatableHistogramContribution> contributions_;
+  attribution_reporting::AggregatableFilteringIdsMaxBytes
+      aggregatable_filtering_ids_max_bytes_;
+  std::vector<blink::mojom::AggregatableReportHistogramContribution>
+      contributions_;
   std::optional<attribution_reporting::SuitableOrigin>
       aggregation_coordinator_origin_;
 
-  std::optional<std::string> verification_token_;
   attribution_reporting::mojom::SourceRegistrationTimeConfig
       source_registration_time_config_ =
           attribution_reporting::mojom::SourceRegistrationTimeConfig::kInclude;
@@ -316,17 +352,8 @@ class ReportBuilder {
 
 bool operator==(const StoredSource&, const StoredSource&);
 
-bool operator==(const AttributionReport::EventLevelData&,
-                const AttributionReport::EventLevelData&);
-
-bool operator==(const AttributionReport::CommonAggregatableData&,
-                const AttributionReport::CommonAggregatableData&);
-
-bool operator==(const AttributionReport::AggregatableAttributionData&,
-                const AttributionReport::AggregatableAttributionData&);
-
-bool operator==(const AttributionReport::NullAggregatableData&,
-                const AttributionReport::NullAggregatableData&);
+bool operator==(const AttributionReport::AggregatableData&,
+                const AttributionReport::AggregatableData&);
 
 bool operator==(const AttributionReport&, const AttributionReport&);
 
@@ -340,35 +367,27 @@ std::ostream& operator<<(std::ostream& out, const CommonSourceInfo& source);
 std::ostream& operator<<(std::ostream& out,
                          const AttributionInfo& attribution_info);
 
-std::ostream& operator<<(std::ostream& out, const FakeEventLevelReport&);
-
-std::ostream& operator<<(std::ostream& out, const RandomizedResponseData&);
-
 std::ostream& operator<<(std::ostream& out, const StorableSource& source);
 
 std::ostream& operator<<(std::ostream& out, const StoredSource& source);
 
-std::ostream& operator<<(std::ostream& out,
-                         const AggregatableHistogramContribution& contribution);
+std::ostream& operator<<(
+    std::ostream& out,
+    const blink::mojom::AggregatableReportHistogramContribution& contribution);
 
 std::ostream& operator<<(std::ostream& out,
                          const AttributionReport::EventLevelData& data);
 
 std::ostream& operator<<(std::ostream& out,
-                         const AttributionReport::CommonAggregatableData&);
-
-std::ostream& operator<<(
-    std::ostream& out,
-    const AttributionReport::AggregatableAttributionData& data);
-
-std::ostream& operator<<(std::ostream& out,
-                         const AttributionReport::NullAggregatableData&);
+                         const AttributionReport::AggregatableData& data);
 
 std::ostream& operator<<(std::ostream& out, const AttributionReport& report);
 
 std::ostream& operator<<(std::ostream& out, SendResult::Status status);
 
 std::ostream& operator<<(std::ostream& out, const SendResult& info);
+
+std::ostream& operator<<(std::ostream& out, SendResult::Sent);
 
 std::ostream& operator<<(std::ostream& out,
                          StoredSource::AttributionLogic attribution_logic);
@@ -385,6 +404,16 @@ std::ostream& operator<<(std::ostream& out,
 
 MATCHER_P(SourceRegistrationIs, matcher, "") {
   return ExplainMatchResult(matcher, arg.registration(), result_listener);
+}
+
+MATCHER_P(RegistrationAttributionScopesDataIs, matcher, "") {
+  return ExplainMatchResult(matcher, arg.registration().attribution_scopes_data,
+                            result_listener);
+}
+
+MATCHER_P(RegistrationSourceEventIdIs, matcher, "") {
+  return ExplainMatchResult(matcher, arg.registration().source_event_id,
+                            result_listener);
 }
 
 MATCHER_P(SourceEventIdIs, matcher, "") {
@@ -410,8 +439,9 @@ MATCHER_P(SourceDebugKeyIs, matcher, "") {
   return ExplainMatchResult(matcher, arg.debug_key(), result_listener);
 }
 
-MATCHER_P(SourceDebugCookieSetIs, matcher, "") {
-  return ExplainMatchResult(matcher, arg.debug_cookie_set(), result_listener);
+MATCHER_P(SourceCookieBasedDebugAllowedIs, matcher, "") {
+  return ExplainMatchResult(
+      matcher, arg.common_info().cookie_based_debug_allowed(), result_listener);
 }
 
 MATCHER_P(SourceFilterDataIs, matcher, "") {
@@ -431,8 +461,24 @@ MATCHER_P(AggregationKeysAre, matcher, "") {
   return ExplainMatchResult(matcher, arg.aggregation_keys(), result_listener);
 }
 
-MATCHER_P(AggregatableBudgetConsumedIs, matcher, "") {
-  return ExplainMatchResult(matcher, arg.aggregatable_budget_consumed(),
+MATCHER_P(RemainingAggregatableAttributionBudgetIs, matcher, "") {
+  return ExplainMatchResult(matcher,
+                            arg.remaining_aggregatable_attribution_budget(),
+                            result_listener);
+}
+
+MATCHER_P(AttributionScopesDataIs, matcher, "") {
+  return ExplainMatchResult(matcher, arg.attribution_scopes_data(),
+                            result_listener);
+}
+
+MATCHER_P(AttributionScopesSetIs, matcher, "") {
+  return ExplainMatchResult(matcher, arg->attribution_scopes_set(),
+                            result_listener);
+}
+
+MATCHER_P(AggregatableNamedBudgetsIs, matcher, "") {
+  return ExplainMatchResult(matcher, arg.aggregatable_named_budgets(),
                             result_listener);
 }
 
@@ -453,10 +499,6 @@ MATCHER_P(TriggerDestinationOriginIs, matcher, "") {
 
 // Report matchers
 
-MATCHER_P(ReportSourceIs, matcher, "") {
-  return ExplainMatchResult(matcher, *arg.GetStoredSource(), result_listener);
-}
-
 MATCHER_P(ReportTimeIs, matcher, "") {
   return ExplainMatchResult(matcher, arg.report_time(), result_listener);
 }
@@ -474,6 +516,10 @@ MATCHER_P(FailedSendAttemptsIs, matcher, "") {
 MATCHER_P(TriggerDebugKeyIs, matcher, "") {
   return ExplainMatchResult(matcher, arg.attribution_info().debug_key,
                             result_listener);
+}
+
+MATCHER_P(ReportSourceDebugKeyIs, matcher, "") {
+  return ExplainMatchResult(matcher, arg.source_debug_key(), result_listener);
 }
 
 MATCHER_P(EventLevelDataIs, matcher, "") {
@@ -495,7 +541,7 @@ MATCHER_P(ReportURLIs, matcher, "") {
 }
 
 MATCHER_P(ReportOriginIs, matcher, "") {
-  return ExplainMatchResult(matcher, arg.GetReportingOrigin(), result_listener);
+  return ExplainMatchResult(matcher, arg.reporting_origin(), result_listener);
 }
 
 MATCHER_P(ReportTypeIs, matcher, "") {
@@ -504,36 +550,35 @@ MATCHER_P(ReportTypeIs, matcher, "") {
 
 MATCHER_P(AggregatableAttributionDataIs, matcher, "") {
   return ExplainMatchResult(
-      ::testing::VariantWith<AttributionReport::AggregatableAttributionData>(
-          matcher),
+      ::testing::VariantWith<AttributionReport::AggregatableData>(matcher),
       arg.data(), result_listener);
 }
 
 MATCHER_P(NullAggregatableDataIs, matcher, "") {
   return ExplainMatchResult(
-      ::testing::VariantWith<AttributionReport::NullAggregatableData>(matcher),
+      ::testing::VariantWith<AttributionReport::AggregatableData>(matcher),
       arg.data(), result_listener);
 }
 
 MATCHER_P(AggregatableHistogramContributionsAre, matcher, "") {
-  return ExplainMatchResult(matcher, arg.contributions, result_listener);
+  return ExplainMatchResult(matcher, arg.contributions(), result_listener);
 }
 
 MATCHER_P(AggregationCoordinatorOriginIs, matcher, "") {
-  return ExplainMatchResult(
-      matcher, arg.common_data.aggregation_coordinator_origin, result_listener);
+  return ExplainMatchResult(matcher, arg.aggregation_coordinator_origin(),
+                            result_listener);
 }
 
 MATCHER_P(SourceRegistrationTimeConfigIs, matcher, "") {
-  return ExplainMatchResult(matcher,
-                            arg.common_data.aggregatable_trigger_config
-                                .source_registration_time_config(),
-                            result_listener);
+  return ExplainMatchResult(
+      matcher,
+      arg.aggregatable_trigger_config().source_registration_time_config(),
+      result_listener);
 }
 
 MATCHER_P(TriggerContextIdIs, matcher, "") {
   return ExplainMatchResult(
-      matcher, arg.common_data.aggregatable_trigger_config.trigger_context_id(),
+      matcher, arg.aggregatable_trigger_config().trigger_context_id(),
       result_listener);
 }
 
@@ -587,9 +632,9 @@ class TestAggregatableSourceProvider {
 TriggerBuilder DefaultAggregatableTriggerBuilder(
     const std::vector<uint32_t>& histogram_values = {1});
 
-std::vector<AggregatableHistogramContribution>
+std::vector<blink::mojom::AggregatableReportHistogramContribution>
 DefaultAggregatableHistogramContributions(
-    const std::vector<uint32_t>& histogram_values = {1});
+    const std::vector<int32_t>& histogram_values = {1});
 
 struct OsRegistration;
 
@@ -603,6 +648,7 @@ void ExpectValidAttributionReportingEligibleHeaderForImg(
     const std::string& header);
 void ExpectValidAttributionReportingEligibleHeaderForNavigation(
     const std::string& header);
+void ExpectEmptyAttributionReportingEligibleHeader(const std::string& header);
 
 void ExpectValidAttributionReportingSupportHeader(const std::string& header,
                                                   bool web_expected,

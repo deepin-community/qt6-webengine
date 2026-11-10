@@ -54,24 +54,6 @@ chromium-metrics-reviews@google.com.
   </int>
 </enum>
 
-<enum name="IDBContextForcedCloseReason">
-  <int value="0" label="DeleteOrigin">
-    A request was made to delete the data for an origin.
-  </int>
-  <int value="1" label="BackingStoreFailure">
-    An unrecoverable error occurred accessing the backing store.
-  </int>
-  <int value="2" label="InternalsPage">
-    A forced close was requested from the indexeddb-internals page.
-  </int>
-  <int value="3" label="CopyOrigin">
-    The database is force closed so that it can be copied.
-  </int>
-  <int value="4" label="ForceSchemaDowngradeInternalsPage">
-    A forced schema downgrade was requested from the indexeddb-internals page.
-  </int>
-</enum>
-
 <enum name="IDBException">
   <int value="0" label="Unknown error"/>
   <int value="1" label="Constraint error"/>
@@ -80,50 +62,6 @@ chromium-metrics-reviews@google.com.
   <int value="4" label="Abort error"/>
   <int value="5" label="Quota error"/>
   <int value="6" label="Timeout error"/>
-</enum>
-
-<enum name="IDBLevelDBBackingStoreInternalErrorType">
-  <int value="0" label="IDBLevelDBBackingStoreReadError">
-    IndexedDB encountered an error attempting to read or decode a value from the
-    leveldb backing store, indicative of corruption or I/O error. Unused as of
-    M26.
-  </int>
-  <int value="1" label="IDBLevelDBBackingStoreWriteError">
-    IndexeDB encountered an error attempting to write or commit a value to the
-    leveldb backing store, indicative of I/O error. Unused as of M26.
-  </int>
-  <int value="2" label="IDBLevelDBBackingStoreConsistencyError">
-    IndexedDB encountered a consistency error in the leveldb backing store,
-    indicative of corruption or an coding error. Unused as of M26.
-  </int>
-  <int value="3" label="FindKeyInIndex"/>
-  <int value="4" label="GetIDBDatabaseMetaData"/>
-  <int value="5" label="GetIndexes"/>
-  <int value="6" label="GetKeyGeneratorCurrentNumber"/>
-  <int value="7" label="GetObjectStores"/>
-  <int value="8" label="GetRecord"/>
-  <int value="9" label="KeyExistsInObjectStore"/>
-  <int value="10" label="LoadCurrentRow"/>
-  <int value="11" label="SetupMetadata"/>
-  <int value="12" label="GetPrimaryKeyViaIndex"/>
-  <int value="13" label="KeyExistsInIndex"/>
-  <int value="14" label="VersionExists"/>
-  <int value="15" label="DeleteObjectStore"/>
-  <int value="16" label="SetMaxObjectStoreId"/>
-  <int value="17" label="SetMaxIndexId"/>
-  <int value="18" label="GetNewDatabaseId"/>
-  <int value="19" label="GetNewVersionNumber"/>
-  <int value="20" label="CreateIDBDatabaseMetaData"/>
-  <int value="21" label="DeleteDatabase"/>
-  <int value="22" label="TransactionCommit"/>
-  <int value="23" label="GetDatabaseNames"/>
-  <int value="24" label="DeleteIndex"/>
-  <int value="25" label="ClearObjectStore"/>
-  <int value="26" label="ReadBlobJournal"/>
-  <int value="27" label="DecodeBlobJournal"/>
-  <int value="28" label="GetBlobKeyGeneratorCurrentNumber"/>
-  <int value="29" label="GetBlobInfoForRecord"/>
-  <int value="30" label="UpgradingSchemaWithCorruptedBlobs"/>
 </enum>
 
 <enum name="IDBLevelDBBackingStoreOpenResult">
@@ -400,11 +338,45 @@ chromium-metrics-reviews@google.com.
   <int value="15" label="Second use of a script resource"/>
   <int value="16" label="Worker script"/>
   <int value="17" label="Module script"/>
+  <int value="18" label="No data pipe"/>
+  <int value="19" label="Loading cancelled"/>
+  <int value="20" label="Non JavaScript module"/>
+  <int value="21" label="Disabled by feature list"/>
+  <int value="22" label="Script type missmatch"/>
+  <int value="23" label="BackgroundResponseProcessor will be used"/>
+  <int value="24" label="Non JavaScript module (background)"/>
+  <int value="25" label="Code-cache available for script (background)"/>
+  <int value="26" label="Script too small (background)"/>
+  <int value="27" label="An error had occurred (background)"/>
+  <int value="28" label="Encoding not supported (background)"/>
 </enum>
 
 <enum name="ResourceHasClient">
   <int value="0" label="No client"/>
   <int value="1" label="Has client"/>
+</enum>
+
+<enum name="SchedulingLifecycleState">
+  <int value="0" label="Not throttled"/>
+  <int value="1" label="Hidden"/>
+  <int value="2" label="Throttled"/>
+  <int value="3" label="Stopped"/>
+</enum>
+
+<enum name="V8CodeCacheGetMetadataType">
+  <int value="0" label="None"/>
+  <int value="1" label="Hot timestamp"/>
+  <int value="2" label="Cold timestamp"/>
+  <int value="3" label="Local compile hints with hot timestamp"/>
+  <int value="4" label="Local compile hints with cold timestamp"/>
+  <int value="5" label="Code cache"/>
+</enum>
+
+<enum name="V8CodeCacheSetMetadataType">
+  <int value="0" label="Timestamp"/>
+  <int value="1" label="Local compile hints at FMP"/>
+  <int value="2" label="Local compile hints at interactive"/>
+  <int value="3" label="Code cache"/>
 </enum>
 
 <enum name="V8CompileHintsModelQuality">
@@ -428,6 +400,26 @@ chromium-metrics-reviews@google.com.
   <int value="8" label="Consume local compile hints, streaming"/>
   <int value="9" label="Consume crowdsourced compile hints streaming"/>
   <int value="10" label="Produce compile hints, streaming"/>
+  <int value="11" label="No compile hints, classic script, no streaming"/>
+  <int value="12" label="No compile hints, module, no streaming"/>
+  <int value="13" label="No compile hints, streaming"/>
+</enum>
+
+<enum name="V8LocalCompileHintsGenerated">
+  <int value="0" label="Non-final"/>
+  <int value="1" label="Final"/>
+</enum>
+
+<enum name="WebsiteStateAtFullscreenRequest">
+  <int value="0" label="Not allowlisted, not visited"/>
+  <int value="1" label="Not allowlisted, visited"/>
+  <int value="2" label="Not allowlisted, visit state unknown"/>
+  <int value="3" label="Allowlisted, not visited"/>
+  <int value="4" label="Allowlisted, visited"/>
+  <int value="5" label="Allowlisted, visit state unknown"/>
+  <int value="6" label="Allowlist state unknown, not visited"/>
+  <int value="7" label="Allowlist state unknown, visited"/>
+  <int value="8" label="Allowlist state unknown, visit state unknown"/>
 </enum>
 
 </enums>

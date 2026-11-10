@@ -7,7 +7,7 @@ syntax = "proto2";
 option optimize_for = LITE_RUNTIME;
 
 package arc;
-option go_package = "chromiumos/system_api/arc_proto";
+option go_package = "go.chromium.org/chromiumos/system_api/arc_proto";
 
 // ARC start options sent from Chrome to session manager. This message is used
 // in the SessionManagerInterface.StartArcMiniContainer method for ARC
@@ -43,13 +43,12 @@ message StartArcMiniInstanceRequest {
     MODE_DISABLED = 2;
   }
 
+  // Override with ndk_translation. Useful for ARC++ only, for ARCVM see
+  // native_bridge_experiment in StartArcVmRequest.
   optional bool native_bridge_experiment = 1 [default = false];
 
   // The density value passed to "ro.sf.lcd_density" property.
   optional int32 lcd_density = 2 [default = -1];
-
-  // Experiment flag for go/arc-file-picker.
-  optional bool arc_file_picker_experiment = 3 [default = false];
 
   // Optional mode for play store auto-update.
   optional PlayStoreAutoUpdate play_store_auto_update = 4
@@ -57,20 +56,6 @@ message StartArcMiniInstanceRequest {
 
   // Experiment flag for ARC Custom Tabs.
   optional bool arc_custom_tabs_experiment = 5 [default = false];
-
-  // Experiment flag for ARC Print Spooler.
-  optional bool arc_print_spooler_experiment = 6
-      [default = false, deprecated = true];
-
-  // Option to disable ureadahead, Used in specialized tests.
-  // TODO(b/264585671): Refactor this and host_ureadahead_generation to
-  // mode enum.
-  optional bool disable_ureadahead = 7 [default = false];
-
-  // Option to disable by hiding default apps shipped on the system image.
-  // To be used locally in development that involves overriding these apps.
-  optional bool disable_system_default_app = 8
-      [default = false, deprecated = true];
 
   // Optional mode for dalvik memory profile.
   optional DalvikMemoryProfile dalvik_memory_profile = 9
@@ -89,18 +74,11 @@ message StartArcMiniInstanceRequest {
   // rosters.
   optional bool arc_generate_pai = 11 [default = false];
 
-  // Enables use of new notifications ui.
-  optional bool enable_notifications_refresh = 13 [default = false];
-
   // Option to enable TTS caching
   optional bool enable_tts_caching = 14 [default = false];
 
   // Option to enable disable consumer auto update toggle.
   optional bool enable_consumer_auto_update_toggle = 15 [default = false];
-
-  // Flag to indicate mode with active host ureadahead generation.
-  // TODO(b/264585671): Refactor this and disable_ureadahead to mode enum.
-  optional bool host_ureadahead_generation = 16 [default = false];
 
   // Option to enable privacy hub for chrome in android settings.
   optional bool enable_privacy_hub_for_chrome = 17 [default = false];
@@ -123,7 +101,13 @@ message StartArcMiniInstanceRequest {
   // Flag that indicates whether user is already signed into ARC.
   optional bool arc_signed_in = 22 [default = false];
 
-  // Next ID to use: 23
+  // Flag that would enable ARC Attestation, and would make ARC
+  // RemotelyProvisionedComponentDevice visible to Keystore.
+  optional bool enable_arc_attestation = 23 [default = false];
+
+  reserved 6, 7, 8, 13, 16;
+
+  // Next ID to use: 24
 }
 
 // ARC upgrade options sent from Chrome to session manager. This message is used
@@ -165,8 +149,6 @@ message UpgradeArcContainerRequest {
   // managed.
   optional bool is_managed_adb_sideloading_allowed = 16;
 
-  reserved 15;
-
   // Option to disable ACTION_BOOT_COMPLETED broadcast for 3rd party apps.
   optional bool skip_boot_completed_broadcast = 2 [default = false];
 
@@ -175,10 +157,6 @@ message UpgradeArcContainerRequest {
 
   // Option to disable GMS CORE cache.
   optional bool skip_gms_core_cache = 13 [default = false];
-
-  // Option to notify ARC if the account is a child, allowing us to provide
-  // special behavior for child account on ARC.
-  optional bool OBSOLETE_is_child = 9 [deprecated = true];
 
   // Whether the container is being upgraded for a Chrome OS demo session.
   optional bool is_demo_session = 10;
@@ -205,5 +183,46 @@ message UpgradeArcContainerRequest {
   // Option to skip pregenerated TTS cache setup.
   optional bool skip_tts_cache = 18 [default = false];
 
+  reserved 9, 15;
+
   // Next ID to use: 19
+}
+
+// It requests to execute a command on ARC shell.
+// Available requests are managed by ArcCroshService in ARC.
+// ArcCroshServiceProvider in Chrome proxies and translates the message for
+// ArcCroshService.
+message ArcShellExecutionRequest {
+  // Supported shell commands to execute on ARC shell.
+  enum ArcShellCommand {
+    TOP = 0;
+    CPUINFO = 1;
+    MEMINFO = 2;
+  }
+
+  // The requested command is executed on ARC shell.
+  optional ArcShellCommand command = 1;
+
+  // User id of the requesting user.
+  // Only request from the primary user is received in ArcCroshServiceProvider
+  // since ARC is tied to the primary user.
+  optional string user_id = 2;
+
+  // Next ID to use: 3
+}
+
+// It contains the execution result of ArcShellExecutionRequest.
+// ArcCroshService in ARC creates the original mojo message,
+// then ArcCroshServiceProvider in Chrome translates it into
+// ArcShellExecutionResult and proxies to crosh.
+message ArcShellExecutionResult {
+  oneof payload {
+    // Acquired output if the execution successes.
+    string stdout = 1;
+
+    // Error message if the execution fails.
+    string error = 2;
+  }
+
+  // Next ID to use: 3
 }

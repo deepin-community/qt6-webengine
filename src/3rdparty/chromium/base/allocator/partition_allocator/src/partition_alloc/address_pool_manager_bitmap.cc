@@ -2,12 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "partition_alloc/address_pool_manager_bitmap.h"
 
-#include "partition_alloc/partition_alloc_buildflags.h"
+#include "partition_alloc/buildflags.h"
 #include "partition_alloc/partition_alloc_constants.h"
 
-#if !BUILDFLAG(HAS_64_BIT_POINTERS)
+#if !PA_BUILDFLAG(HAS_64_BIT_POINTERS)
 
 namespace partition_alloc::internal {
 
@@ -25,13 +30,13 @@ std::bitset<AddressPoolManagerBitmap::kRegularPoolBits>
     AddressPoolManagerBitmap::regular_pool_bits_;  // GUARDED_BY(GetLock())
 std::bitset<AddressPoolManagerBitmap::kBRPPoolBits>
     AddressPoolManagerBitmap::brp_pool_bits_;  // GUARDED_BY(GetLock())
-#if BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
+#if PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
 std::array<std::atomic_bool,
            AddressPoolManagerBitmap::kAddressSpaceSize / kSuperPageSize>
     AddressPoolManagerBitmap::brp_forbidden_super_page_map_;
 std::atomic_size_t AddressPoolManagerBitmap::blocklist_hit_count_;
-#endif  // BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
+#endif  // PA_BUILDFLAG(ENABLE_BACKUP_REF_PTR_SUPPORT)
 
 }  // namespace partition_alloc::internal
 
-#endif  // !BUILDFLAG(HAS_64_BIT_POINTERS)
+#endif  // !PA_BUILDFLAG(HAS_64_BIT_POINTERS)

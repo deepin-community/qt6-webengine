@@ -6,10 +6,14 @@
 
 #include "public/fpdf_edit.h"
 
+#include <math.h>
+#include <algorithm>
 #include <memory>
 #include <utility>
 
 #include "core/fpdfapi/page/cpdf_dib.h"
+#include "core/fpdfapi/page/cpdf_docpagedata.h"
+#include "core/fpdfapi/page/cpdf_iccprofile.h"
 #include "core/fpdfapi/page/cpdf_image.h"
 #include "core/fpdfapi/page/cpdf_imageobject.h"
 #include "core/fpdfapi/page/cpdf_page.h"
@@ -22,12 +26,13 @@
 #include "core/fpdfapi/render/cpdf_imagerenderer.h"
 #include "core/fpdfapi/render/cpdf_rendercontext.h"
 #include "core/fpdfapi/render/cpdf_renderstatus.h"
+#include "core/fxcrt/compiler_specific.h"
+#include "core/fxcrt/notreached.h"
 #include "core/fxcrt/stl_util.h"
 #include "core/fxge/cfx_defaultrenderdevice.h"
 #include "core/fxge/dib/cfx_dibitmap.h"
 #include "fpdfsdk/cpdfsdk_customaccess.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
-#include "third_party/base/notreached.h"
 
 namespace {
 
@@ -84,25 +89,29 @@ bool LoadJpegHelper(FPDF_PAGE* pages,
                     FPDF_FILEACCESS* file_access,
                     bool inline_jpeg) {
   CPDF_ImageObject* pImgObj = CPDFImageObjectFromFPDFPageObject(image_object);
-  if (!pImgObj)
+  if (!pImgObj) {
     return false;
+  }
 
-  if (!file_access)
+  if (!file_access) {
     return false;
+  }
 
   if (pages) {
     for (int index = 0; index < count; index++) {
-      CPDF_Page* pPage = CPDFPageFromFPDFPage(pages[index]);
-      if (pPage)
+      CPDF_Page* pPage = CPDFPageFromFPDFPage(UNSAFE_TODO(pages[index]));
+      if (pPage) {
         pImgObj->GetImage()->ResetCache(pPage);
+      }
     }
   }
 
   RetainPtr<IFX_SeekableReadStream> pFile = MakeSeekableReadStream(file_access);
-  if (inline_jpeg)
+  if (inline_jpeg) {
     pImgObj->GetImage()->SetJpegImageInline(std::move(pFile));
-  else
+  } else {
     pImgObj->GetImage()->SetJpegImage(std::move(pFile));
+  }
 
   pImgObj->SetDirty(true);
   return true;
@@ -112,12 +121,13 @@ bool LoadJpegHelper(FPDF_PAGE* pages,
 
 FPDF_EXPORT FPDF_PAGEOBJECT FPDF_CALLCONV
 FPDFPageObj_NewImageObj(FPDF_DOCUMENT document) {
-  CPDF_Document* pDoc = CPDFDocumentFromFPDFDocument(document);
-  if (!pDoc)
+  CPDF_Document* doc = CPDFDocumentFromFPDFDocument(document);
+  if (!doc) {
     return nullptr;
+  }
 
   auto pImageObj = std::make_unique<CPDF_ImageObject>();
-  pImageObj->SetImage(pdfium::MakeRetain<CPDF_Image>(pDoc));
+  pImageObj->SetImage(pdfium::MakeRetain<CPDF_Image>(doc));
 
   // Caller takes ownership.
   return FPDFPageObjectFromCPDFPageObject(pImageObj.release());
@@ -148,8 +158,9 @@ FPDFImageObj_SetMatrix(FPDF_PAGEOBJECT image_object,
                        double e,
                        double f) {
   CPDF_ImageObject* pImgObj = CPDFImageObjectFromFPDFPageObject(image_object);
-  if (!pImgObj)
+  if (!pImgObj) {
     return false;
+  }
 
   pImgObj->SetImageMatrix(CFX_Matrix(
       static_cast<float>(a), static_cast<float>(b), static_cast<float>(c),
@@ -164,21 +175,25 @@ FPDFImageObj_SetBitmap(FPDF_PAGE* pages,
                        FPDF_PAGEOBJECT image_object,
                        FPDF_BITMAP bitmap) {
   CPDF_ImageObject* pImgObj = CPDFImageObjectFromFPDFPageObject(image_object);
-  if (!pImgObj)
+  if (!pImgObj) {
     return false;
-
-  if (!bitmap)
-    return false;
-
-  if (pages) {
-    for (int index = 0; index < count; index++) {
-      CPDF_Page* pPage = CPDFPageFromFPDFPage(pages[index]);
-      if (pPage)
-        pImgObj->GetImage()->ResetCache(pPage);
-    }
   }
 
   RetainPtr<CFX_DIBitmap> holder(CFXDIBitmapFromFPDFBitmap(bitmap));
+  if (!holder) {
+    return false;
+  }
+  ValidateBitmapPremultiplyState(holder);
+
+  if (pages) {
+    for (int index = 0; index < count; index++) {
+      CPDF_Page* pPage = CPDFPageFromFPDFPage(UNSAFE_TODO(pages[index]));
+      if (pPage) {
+        pImgObj->GetImage()->ResetCache(pPage);
+      }
+    }
+  }
+
   pImgObj->GetImage()->SetImage(holder);
   pImgObj->CalcBoundingBox();
   pImgObj->SetDirty(true);
@@ -188,16 +203,19 @@ FPDFImageObj_SetBitmap(FPDF_PAGE* pages,
 FPDF_EXPORT FPDF_BITMAP FPDF_CALLCONV
 FPDFImageObj_GetBitmap(FPDF_PAGEOBJECT image_object) {
   CPDF_ImageObject* pImgObj = CPDFImageObjectFromFPDFPageObject(image_object);
-  if (!pImgObj)
+  if (!pImgObj) {
     return nullptr;
+  }
 
   RetainPtr<CPDF_Image> pImg = pImgObj->GetImage();
-  if (!pImg)
+  if (!pImg) {
     return nullptr;
+  }
 
   RetainPtr<CFX_DIBBase> pSource = pImg->LoadDIBBase();
-  if (!pSource)
+  if (!pSource) {
     return nullptr;
+  }
 
   // If the source image has a representation of 1 bit per pixel, or if the
   // source image has a color palette, convert it to a representation that does
@@ -217,35 +235,40 @@ FPDFImageObj_GetBitmap(FPDF_PAGEOBJECT image_object) {
   ConversionOp op;
   switch (pSource->GetFormat()) {
     case FXDIB_Format::k1bppMask:
-    case FXDIB_Format::k8bppMask:
+    case FXDIB_Format::k8bppMask: {
       // Masks do not have palettes, so they can be safely converted to
       // `FXDIB_Format::k8bppRgb`.
       CHECK(!pSource->HasPalette());
       op = ConversionOp::kConvertTo8bppRgb;
       break;
-    case FXDIB_Format::k1bppRgb:
-      // If there is a palette, then convert to `FXDIB_Format::kRgb` to avoid
+    }
+    case FXDIB_Format::k1bppRgb: {
+      // If there is a palette, then convert to `FXDIB_Format::kBgr` to avoid
       // creating a bitmap with a palette.
       op = pSource->HasPalette() ? ConversionOp::kConvertToRgb
                                  : ConversionOp::kConvertTo8bppRgb;
       break;
+    }
     case FXDIB_Format::k8bppRgb:
-      // If there is a palette, then convert to `FXDIB_Format::kRgb` to avoid
+    case FXDIB_Format::kBgra:
+    case FXDIB_Format::kBgr:
+    case FXDIB_Format::kBgrx: {
+      // If there is a palette, then convert to `FXDIB_Format::kBgr` to avoid
       // creating a bitmap with a palette.
       op = pSource->HasPalette() ? ConversionOp::kConvertToRgb
                                  : ConversionOp::kRealize;
       break;
-
-    case FXDIB_Format::kArgb:
-    case FXDIB_Format::kRgb:
-    case FXDIB_Format::kRgb32:
-      CHECK(!pSource->HasPalette());
-      op = ConversionOp::kRealize;
-      break;
-
-    case FXDIB_Format::kInvalid: {
-      NOTREACHED_NORETURN();
     }
+    case FXDIB_Format::kInvalid: {
+      NOTREACHED();
+    }
+#if defined(PDF_USE_SKIA)
+    case FXDIB_Format::kBgraPremul: {
+      // TODO(crbug.com/355676038): Consider adding support for
+      // `FXDIB_Format::kBgraPremul`
+      NOTREACHED();
+    }
+#endif
   }
 
   RetainPtr<CFX_DIBitmap> pBitmap;
@@ -257,13 +280,17 @@ FPDFImageObj_GetBitmap(FPDF_PAGEOBJECT image_object) {
       pBitmap = pSource->ConvertTo(FXDIB_Format::k8bppRgb);
       break;
     case ConversionOp::kConvertToRgb:
-      pBitmap = pSource->ConvertTo(FXDIB_Format::kRgb);
+      pBitmap = pSource->ConvertTo(FXDIB_Format::kBgr);
       break;
   }
-  if (pBitmap) {
-    CHECK(!pBitmap->HasPalette());
+  if (!pBitmap) {
+    return nullptr;
   }
 
+  CHECK(!pBitmap->HasPalette());
+  ValidateBitmapPremultiplyState(pBitmap);
+
+  // Caller takes ownership.
   return FPDFBitmapFromCFXDIBitmap(pBitmap.Leak());
 }
 
@@ -272,24 +299,30 @@ FPDFImageObj_GetRenderedBitmap(FPDF_DOCUMENT document,
                                FPDF_PAGE page,
                                FPDF_PAGEOBJECT image_object) {
   CPDF_Document* doc = CPDFDocumentFromFPDFDocument(document);
-  if (!doc)
+  if (!doc) {
     return nullptr;
+  }
 
   CPDF_Page* optional_page = CPDFPageFromFPDFPage(page);
-  if (optional_page && optional_page->GetDocument() != doc)
+  if (optional_page && optional_page->GetDocument() != doc) {
     return nullptr;
+  }
 
   CPDF_ImageObject* image = CPDFImageObjectFromFPDFPageObject(image_object);
-  if (!image)
+  if (!image) {
     return nullptr;
+  }
 
   // Create |result_bitmap|.
   const CFX_Matrix& image_matrix = image->matrix();
-  int output_width = image_matrix.a;
-  int output_height = image_matrix.d;
+  float output_width = std::ceil(hypotf(image_matrix.a, image_matrix.c));
+  float output_height = std::ceil(hypotf(image_matrix.b, image_matrix.d));
   auto result_bitmap = pdfium::MakeRetain<CFX_DIBitmap>();
-  if (!result_bitmap->Create(output_width, output_height, FXDIB_Format::kArgb))
+  if (!result_bitmap->Create(static_cast<int>(output_width),
+                             static_cast<int>(output_height),
+                             FXDIB_Format::kBgra)) {
     return nullptr;
+  }
 
   // Set up all the rendering code.
   RetainPtr<CPDF_Dictionary> page_resources =
@@ -302,25 +335,37 @@ FPDFImageObj_GetRenderedBitmap(FPDF_DOCUMENT document,
   CPDF_ImageRenderer renderer(&status);
 
   // Need to first flip the image, as expected by |renderer|.
-  CFX_Matrix render_matrix(1, 0, 0, -1, 0, output_height);
+  const CFX_Matrix render_matrix(1, 0, 0, -1, 0, output_height);
 
   // Then take |image_matrix|'s offset into account.
-  render_matrix.Translate(-image_matrix.e, image_matrix.f);
+  float min_x = image_matrix.e + std::min(image_matrix.a, image_matrix.c);
+  float min_y = image_matrix.f + std::min(image_matrix.b, image_matrix.d);
+  CFX_Matrix image_render_matrix = render_matrix;
+  image_render_matrix.Translate(-min_x, min_y);
+
+  // Apply the clip path if there is one.
+  if (image->clip_path().HasRef()) {
+    CFX_FloatRect output_rect(0, 0, output_width, output_height);
+    CFX_FloatRect original_image_rect =
+        image->original_matrix().TransformRect(CFX_FloatRect(0, 0, 1, 1));
+    CFX_Matrix clip_render_matrix;
+    clip_render_matrix.MatchRect(output_rect, original_image_rect);
+    clip_render_matrix.Concat(render_matrix);
+    status.ProcessClipPath(image->clip_path(), clip_render_matrix);
+  }
 
   // Do the actual rendering.
-  bool should_continue = renderer.Start(image, render_matrix,
-                                        /*bStdCS=*/false, BlendMode::kNormal);
-  while (should_continue)
+  bool should_continue =
+      renderer.Start(image, image_render_matrix, /*bStdCS=*/false);
+  while (should_continue) {
     should_continue = renderer.Continue(/*pPause=*/nullptr);
-
-  if (!renderer.GetResult())
-    return nullptr;
-
-#if defined(PDF_USE_SKIA)
-  if (CFX_DefaultRenderDevice::UseSkiaRenderer()) {
-    result_bitmap->UnPreMultiply();
   }
-#endif
+
+  if (!renderer.GetResult()) {
+    return nullptr;
+  }
+
+  ValidateBitmapPremultiplyState(result_bitmap);
 
   // Caller takes ownership.
   return FPDFBitmapFromCFXDIBitmap(result_bitmap.Leak());
@@ -331,20 +376,25 @@ FPDFImageObj_GetImageDataDecoded(FPDF_PAGEOBJECT image_object,
                                  void* buffer,
                                  unsigned long buflen) {
   CPDF_ImageObject* pImgObj = CPDFImageObjectFromFPDFPageObject(image_object);
-  if (!pImgObj)
+  if (!pImgObj) {
     return 0;
+  }
 
   RetainPtr<CPDF_Image> pImg = pImgObj->GetImage();
-  if (!pImg)
+  if (!pImg) {
     return 0;
+  }
 
   RetainPtr<const CPDF_Stream> pImgStream = pImg->GetStream();
-  if (!pImgStream)
+  if (!pImgStream) {
     return 0;
+  }
 
+  // SAFETY: caller ensures `buffer` points to at least `buflen` bytes.
   return DecodeStreamMaybeCopyAndReturnLength(
       std::move(pImgStream),
-      {static_cast<uint8_t*>(buffer), static_cast<size_t>(buflen)});
+      UNSAFE_BUFFERS(pdfium::span(static_cast<uint8_t*>(buffer),
+                                  static_cast<size_t>(buflen))));
 }
 
 FPDF_EXPORT unsigned long FPDF_CALLCONV
@@ -352,45 +402,56 @@ FPDFImageObj_GetImageDataRaw(FPDF_PAGEOBJECT image_object,
                              void* buffer,
                              unsigned long buflen) {
   CPDF_ImageObject* pImgObj = CPDFImageObjectFromFPDFPageObject(image_object);
-  if (!pImgObj)
+  if (!pImgObj) {
     return 0;
+  }
 
   RetainPtr<CPDF_Image> pImg = pImgObj->GetImage();
-  if (!pImg)
+  if (!pImg) {
     return 0;
+  }
 
   RetainPtr<const CPDF_Stream> pImgStream = pImg->GetStream();
-  if (!pImgStream)
+  if (!pImgStream) {
     return 0;
+  }
 
+  // SAFETY: caller ensures `buffer` points to at least `buflen` bytes.
   return GetRawStreamMaybeCopyAndReturnLength(
       std::move(pImgStream),
-      {static_cast<uint8_t*>(buffer), static_cast<size_t>(buflen)});
+      UNSAFE_BUFFERS(pdfium::span(static_cast<uint8_t*>(buffer),
+                                  static_cast<size_t>(buflen))));
 }
 
 FPDF_EXPORT int FPDF_CALLCONV
 FPDFImageObj_GetImageFilterCount(FPDF_PAGEOBJECT image_object) {
   CPDF_ImageObject* pImgObj = CPDFImageObjectFromFPDFPageObject(image_object);
-  if (!pImgObj)
+  if (!pImgObj) {
     return 0;
+  }
 
   RetainPtr<CPDF_Image> pImg = pImgObj->GetImage();
-  if (!pImg)
+  if (!pImg) {
     return 0;
+  }
 
-  RetainPtr<const CPDF_Dictionary> pDict = pImg->GetDict();
-  if (!pDict)
+  RetainPtr<const CPDF_Dictionary> dict = pImg->GetDict();
+  if (!dict) {
     return 0;
+  }
 
-  RetainPtr<const CPDF_Object> pFilter = pDict->GetDirectObjectFor("Filter");
-  if (!pFilter)
+  RetainPtr<const CPDF_Object> pFilter = dict->GetDirectObjectFor("Filter");
+  if (!pFilter) {
     return 0;
+  }
 
-  if (pFilter->IsArray())
+  if (pFilter->IsArray()) {
     return fxcrt::CollectionSize<int>(*pFilter->AsArray());
+  }
 
-  if (pFilter->IsName())
+  if (pFilter->IsName()) {
     return 1;
+  }
 
   return 0;
 }
@@ -400,18 +461,21 @@ FPDFImageObj_GetImageFilter(FPDF_PAGEOBJECT image_object,
                             int index,
                             void* buffer,
                             unsigned long buflen) {
-  if (index < 0 || index >= FPDFImageObj_GetImageFilterCount(image_object))
+  if (index < 0 || index >= FPDFImageObj_GetImageFilterCount(image_object)) {
     return 0;
+  }
 
   CPDF_PageObject* pObj = CPDFPageObjectFromFPDFPageObject(image_object);
-  RetainPtr<const CPDF_Dictionary> pDict =
+  RetainPtr<const CPDF_Dictionary> dict =
       pObj->AsImage()->GetImage()->GetDict();
-  RetainPtr<const CPDF_Object> pFilter = pDict->GetDirectObjectFor("Filter");
+  RetainPtr<const CPDF_Object> pFilter = dict->GetDirectObjectFor("Filter");
   ByteString bsFilter = pFilter->IsName()
                             ? pFilter->AsName()->GetString()
                             : pFilter->AsArray()->GetByteStringAt(index);
 
-  return NulTerminateMaybeCopyAndReturnLength(bsFilter, buffer, buflen);
+  // SAFETY: required from caller.
+  return NulTerminateMaybeCopyAndReturnLength(
+      bsFilter, UNSAFE_BUFFERS(SpanFromFPDFApiArgs(buffer, buflen)));
 }
 
 FPDF_EXPORT FPDF_BOOL FPDF_CALLCONV
@@ -419,12 +483,14 @@ FPDFImageObj_GetImageMetadata(FPDF_PAGEOBJECT image_object,
                               FPDF_PAGE page,
                               FPDF_IMAGEOBJ_METADATA* metadata) {
   CPDF_ImageObject* pImgObj = CPDFImageObjectFromFPDFPageObject(image_object);
-  if (!pImgObj || !metadata)
+  if (!pImgObj || !metadata) {
     return false;
+  }
 
   RetainPtr<CPDF_Image> pImg = pImgObj->GetImage();
-  if (!pImg)
+  if (!pImg) {
     return false;
+  }
 
   metadata->marked_content_id =
       pImgObj->GetContentMarks()->GetMarkedContentID();
@@ -436,7 +502,7 @@ FPDFImageObj_GetImageMetadata(FPDF_PAGEOBJECT image_object,
 
   const float nWidth = pImgObj->GetRect().Width();
   const float nHeight = pImgObj->GetRect().Height();
-  constexpr int nPointsPerInch = 72;
+  static constexpr int nPointsPerInch = 72;
   if (nWidth != 0 && nHeight != 0) {
     metadata->horizontal_dpi = nPixelWidth / nWidth * nPointsPerInch;
     metadata->vertical_dpi = nPixelHeight / nHeight * nPointsPerInch;
@@ -446,19 +512,22 @@ FPDFImageObj_GetImageMetadata(FPDF_PAGEOBJECT image_object,
   metadata->colorspace = FPDF_COLORSPACE_UNKNOWN;
 
   CPDF_Page* pPage = CPDFPageFromFPDFPage(page);
-  if (!pPage || !pPage->GetDocument() || !pImg->GetStream())
+  if (!pPage || !pPage->GetDocument() || !pImg->GetStream()) {
     return true;
+  }
 
   // A cross-document image may have come from the embedder.
-  if (pPage->GetDocument() != pImg->GetDocument())
+  if (pPage->GetDocument() != pImg->GetDocument()) {
     return false;
+  }
 
   RetainPtr<CPDF_DIB> pSource = pImg->CreateNewDIB();
   CPDF_DIB::LoadState ret = pSource->StartLoadDIBBase(
       false, nullptr, pPage->GetPageResources().Get(), false,
       CPDF_ColorSpace::Family::kUnknown, false, {0, 0});
-  if (ret == CPDF_DIB::LoadState::kFail)
+  if (ret == CPDF_DIB::LoadState::kFail) {
     return true;
+  }
 
   metadata->bits_per_pixel = pSource->GetBPP();
   if (pSource->GetColorSpace()) {
@@ -484,5 +553,75 @@ FPDFImageObj_GetImagePixelSize(FPDF_PAGEOBJECT image_object,
 
   *width = pImg->GetPixelWidth();
   *height = pImg->GetPixelHeight();
+  return true;
+}
+
+FPDF_BOOL FPDF_CALLCONV
+FPDFImageObj_GetIccProfileDataDecoded(FPDF_PAGEOBJECT image_object,
+                                      FPDF_PAGE page,
+                                      uint8_t* buffer,
+                                      size_t buflen,
+                                      size_t* out_buflen) {
+  CPDF_ImageObject* image_obj = CPDFImageObjectFromFPDFPageObject(image_object);
+  CPDF_Page* pdf_page = CPDFPageFromFPDFPage(page);
+  if (!image_obj || !pdf_page || !out_buflen) {
+    return false;
+  }
+
+  RetainPtr<CPDF_Image> image = image_obj->GetImage();
+  if (!image) {
+    return false;
+  }
+
+  const CPDF_Stream* stream = image->GetStream();
+  if (!stream) {
+    return false;
+  }
+
+  RetainPtr<const CPDF_Dictionary> stream_dict = stream->GetDict();
+  if (!stream_dict) {
+    return false;
+  }
+
+  RetainPtr<const CPDF_Object> color_space_obj =
+      stream_dict->GetDirectObjectFor("ColorSpace");
+  RetainPtr<const CPDF_Dictionary> page_resources =
+      pdf_page->GetPageResources();
+  if (!page_resources) {
+    return false;
+  }
+
+  CPDF_Document* document = pdf_page->GetDocument();
+  if (!document) {
+    return false;
+  }
+
+  auto* doc_data = CPDF_DocPageData::FromDocument(document);
+  if (!doc_data) {
+    return true;
+  }
+
+  RetainPtr<CPDF_ColorSpace> color_space =
+      doc_data->GetColorSpace(color_space_obj.Get(), page_resources);
+  if (!color_space) {
+    return false;
+  }
+
+  RetainPtr<CPDF_IccProfile> icc_profile = color_space->GetIccProfile();
+  if (!icc_profile || !icc_profile->IsValid()) {
+    return false;
+  }
+
+  RetainPtr<const CPDF_StreamAcc> stream_acc = icc_profile->GetStreamAcc();
+
+  pdfium::span<const uint8_t> data = stream_acc->GetSpan();
+  *out_buflen = data.size();
+  if (!buffer || buflen < *out_buflen) {
+    return true;
+  }
+
+  // SAFETY: required from caller.
+  auto result_span = UNSAFE_BUFFERS(SpanFromFPDFApiArgs(buffer, buflen));
+  fxcrt::spancpy(result_span, data);
   return true;
 }

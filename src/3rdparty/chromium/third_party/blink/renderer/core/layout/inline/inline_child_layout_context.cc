@@ -16,8 +16,8 @@ struct SameSizeAsInlineChildLayoutContext {
 
  public:
   FragmentItemsBuilder items_builder_;
-  absl::optional<InlineLayoutStateStack> box_states_;
-  absl::optional<LayoutUnit> optional_layout_unit;
+  std::optional<InlineLayoutStateStack> box_states_;
+  std::optional<LayoutUnit> optional_layout_unit;
   void* pointers[5];
   unsigned number;
   HeapVector<Member<const BlockBreakToken>> tokens_;
@@ -72,7 +72,7 @@ InlineChildLayoutContext::~InlineChildLayoutContext() {
 }
 
 InlineLayoutStateStack* InlineChildLayoutContext::BoxStatesIfValidForItemIndex(
-    const HeapVector<InlineItem>& items,
+    const InlineItems& items,
     unsigned item_index) {
   if (box_states_.has_value() && items_ == &items && item_index_ == item_index)
     return &*box_states_;

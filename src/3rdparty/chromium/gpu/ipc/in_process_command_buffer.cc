@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "gpu/ipc/in_process_command_buffer.h"
 
 #include <stddef.h>
@@ -11,6 +16,7 @@
 #include <utility>
 
 #include "base/atomic_sequence_num.h"
+#include "base/auto_reset.h"
 #include "base/command_line.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -36,11 +42,9 @@
 #include "gpu/command_buffer/service/context_group.h"
 #include "gpu/command_buffer/service/gl_context_virtual.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
-#include "gpu/command_buffer/service/gpu_command_buffer_memory_tracker.h"
 #include "gpu/command_buffer/service/gpu_fence_manager.h"
 #include "gpu/command_buffer/service/gpu_tracer.h"
 #include "gpu/command_buffer/service/gr_shader_cache.h"
-#include "gpu/command_buffer/service/mailbox_manager_factory.h"
 #include "gpu/command_buffer/service/memory_program_cache.h"
 #include "gpu/command_buffer/service/memory_tracking.h"
 #include "gpu/command_buffer/service/query_manager.h"
@@ -50,7 +54,7 @@
 #include "gpu/command_buffer/service/shared_context_state.h"
 #include "gpu/command_buffer/service/shared_image_interface_in_process.h"
 #include "gpu/command_buffer/service/single_task_sequence.h"
-#include "gpu/command_buffer/service/sync_point_manager.h"
+#include "gpu/command_buffer/service/task_graph.h"
 #include "gpu/command_buffer/service/webgpu_decoder.h"
 #include "gpu/config/gpu_feature_info.h"
 #include "gpu/config/gpu_preferences.h"
@@ -201,19 +205,19 @@ gpu::ContextResult InProcessCommandBuffer::Initialize(
       base::WaitableEvent::InitialState::NOT_SIGNALED);
   gpu::ContextResult result = gpu::ContextResult::kSuccess;
   task_sequence_->ScheduleTask(
-      WrapTaskWithResult(std::move(init_task), &result, &completion), {});
+      WrapTaskWithResult(std::move(init_task), &result, &completion),
+      /*sync_token_fences=*/{}, SyncToken());
   completion.Wait();
 
   if (result == gpu::ContextResult::kSuccess) {
     capabilities_ = capabilities;
     gl_capabilities_ = gl_capabilities;
-    shared_image_interface_ = std::make_unique<SharedImageInterfaceInProcess>(
-        task_sequence_, task_executor_->sync_point_manager(),
-        task_executor_->gpu_preferences(),
+    shared_image_interface_ = SharedImageInterfaceInProcess::Create(
+        task_sequence_, task_executor_->gpu_preferences(),
         context_group_->feature_info()->workarounds(),
         task_executor_->gpu_feature_info(), context_state_.get(),
         task_executor_->shared_image_manager(),
-        /*is_for_display_compositor=*/false);
+        /*is_for_display_compositor=*/false, task_executor_->GetTaskRunner());
   }
 
   return result;
@@ -228,27 +232,25 @@ gpu::ContextResult InProcessCommandBuffer::InitializeOnGpuThread(
   GpuDriverBugWorkarounds workarounds(
       task_executor_->gpu_feature_info().enabled_gpu_driver_bug_workarounds);
 
-  std::unique_ptr<MemoryTracker> memory_tracker;
+  scoped_refptr<MemoryTracker> memory_tracker;
   // Android WebView won't have a memory tracker.
   if (task_executor_->ShouldCreateMemoryTracker()) {
     const uint64_t client_tracing_id =
         base::trace_event::MemoryDumpManager::GetInstance()
             ->GetTracingProcessId();
-    memory_tracker = std::make_unique<GpuCommandBufferMemoryTracker>(
+    memory_tracker = base::MakeRefCounted<MemoryTracker>(
         GetCommandBufferID(), client_tracing_id,
-        base::SingleThreadTaskRunner::GetCurrentDefault(),
-        /* obserer=*/nullptr);
+        /*peak_memory_monitor=*/nullptr,
+        GpuPeakMemoryAllocationSource::COMMAND_BUFFER);
   }
 
   auto feature_info = base::MakeRefCounted<gles2::FeatureInfo>(
       workarounds, task_executor_->gpu_feature_info());
   context_group_ = base::MakeRefCounted<gles2::ContextGroup>(
-      task_executor_->gpu_preferences(),
-      gles2::PassthroughCommandDecoderSupported(),
-      task_executor_->mailbox_manager(), std::move(memory_tracker),
+      task_executor_->gpu_preferences(), std::move(memory_tracker),
       task_executor_->shader_translator_cache(),
       task_executor_->framebuffer_completeness_cache(), feature_info,
-      params.attribs->bind_generates_resource, nullptr /* progress_reporter */,
+      /*bind_generates_resource=*/false, nullptr /* progress_reporter */,
       task_executor_->gpu_feature_info(), task_executor_->discardable_manager(),
       task_executor_->passthrough_discardable_manager(),
       task_executor_->shared_image_manager());
@@ -280,7 +282,7 @@ gpu::ContextResult InProcessCommandBuffer::InitializeOnGpuThread(
   if (context_state_) {
     surface = context_state_->surface();
   } else {
-    // TODO(crbug.com/1247756): Is creating an offscreen GL surface needed
+    // TODO(crbug.com/40196979): Is creating an offscreen GL surface needed
     // still?
     surface = gl::init::CreateOffscreenGLSurface(gl::GetDefaultDisplay(),
                                                  gfx::Size());
@@ -291,10 +293,8 @@ gpu::ContextResult InProcessCommandBuffer::InitializeOnGpuThread(
     }
   }
 
-  sync_point_client_state_ =
-      task_executor_->sync_point_manager()->CreateSyncPointClientState(
-          GetNamespaceID(), GetCommandBufferID(),
-          task_sequence_->GetSequenceId());
+  sync_point_client_state_ = task_sequence_->CreateSyncPointClientState(
+      GetNamespaceID(), GetCommandBufferID());
 
   if (context_group_->use_passthrough_cmd_decoder()) {
     // When using the passthrough command decoder, never share with other
@@ -480,7 +480,8 @@ void InProcessCommandBuffer::Destroy() {
   base::OnceCallback<bool(void)> destroy_task = base::BindOnce(
       &InProcessCommandBuffer::DestroyOnGpuThread, base::Unretained(this));
   task_sequence_->ScheduleTask(
-      WrapTaskWithResult(std::move(destroy_task), &result, &completion), {});
+      WrapTaskWithResult(std::move(destroy_task), &result, &completion),
+      /*sync_token_fences=*/{}, SyncToken());
 
   completion.Wait();
   task_sequence_ = nullptr;
@@ -505,10 +506,7 @@ bool InProcessCommandBuffer::DestroyOnGpuThread() {
   command_buffer_.reset();
 
   context_ = nullptr;
-  if (sync_point_client_state_) {
-    sync_point_client_state_->Destroy();
-    sync_point_client_state_ = nullptr;
-  }
+  sync_point_client_state_.Reset();
   gl_share_group_ = nullptr;
   context_group_ = nullptr;
   if (context_state_)
@@ -549,28 +547,45 @@ void InProcessCommandBuffer::OnContextLost() {
     gpu_control_client_->OnGpuControlLostContext();
 }
 
-void InProcessCommandBuffer::RunTaskOnGpuThread(base::OnceClosure task) {
+void InProcessCommandBuffer::RunTaskCallbackOnGpuThread(
+    TaskCallback task,
+    FenceSyncReleaseDelegate* release_delegate) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(gpu_sequence_checker_);
+  UpdateActiveUrl();
+  std::move(task).Run(release_delegate);
+}
+
+void InProcessCommandBuffer::RunTaskClosureOnGpuThread(base::OnceClosure task) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(gpu_sequence_checker_);
   UpdateActiveUrl();
   std::move(task).Run();
 }
 
 void InProcessCommandBuffer::ScheduleGpuTask(
-    base::OnceClosure task,
+    TaskCallback task,
     std::vector<SyncToken> sync_token_fences,
-    SingleTaskSequence::ReportingCallback report_callback) {
-  base::OnceClosure gpu_task = base::BindOnce(
-      &InProcessCommandBuffer::RunTaskOnGpuThread,
+    const SyncToken& release) {
+  TaskCallback gpu_task = base::BindOnce(
+      &InProcessCommandBuffer::RunTaskCallbackOnGpuThread,
       gpu_thread_weak_ptr_factory_.GetWeakPtr(), std::move(task));
   task_sequence_->ScheduleTask(std::move(gpu_task),
-                               std::move(sync_token_fences),
-                               std::move(report_callback));
+                               std::move(sync_token_fences), release);
+}
+void InProcessCommandBuffer::ScheduleGpuTask(
+    base::OnceClosure task,
+    std::vector<SyncToken> sync_token_fences,
+    const SyncToken& release) {
+  base::OnceClosure gpu_task = base::BindOnce(
+      &InProcessCommandBuffer::RunTaskClosureOnGpuThread,
+      gpu_thread_weak_ptr_factory_.GetWeakPtr(), std::move(task));
+  task_sequence_->ScheduleTask(std::move(gpu_task),
+                               std::move(sync_token_fences), release);
 }
 
-void InProcessCommandBuffer::ContinueGpuTask(base::OnceClosure task) {
+void InProcessCommandBuffer::ContinueGpuTask(TaskCallback task) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(gpu_sequence_checker_);
-  base::OnceClosure gpu_task = base::BindOnce(
-      &InProcessCommandBuffer::RunTaskOnGpuThread,
+  TaskCallback gpu_task = base::BindOnce(
+      &InProcessCommandBuffer::RunTaskCallbackOnGpuThread,
       gpu_thread_weak_ptr_factory_.GetWeakPtr(), std::move(task));
   task_sequence_->ContinueTask(std::move(gpu_task));
 }
@@ -601,17 +616,17 @@ bool InProcessCommandBuffer::HasUnprocessedCommandsOnGpuThread() {
 
 void InProcessCommandBuffer::FlushOnGpuThread(
     int32_t put_offset,
-    const std::vector<SyncToken>& sync_token_fences) {
+    FenceSyncReleaseDelegate* release_delegate) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(gpu_sequence_checker_);
   TRACE_EVENT1("gpu", "InProcessCommandBuffer::FlushOnGpuThread", "put_offset",
                put_offset);
 
+  // Reentrant call is not supported.
+  CHECK(!release_delegate_);
+  base::AutoReset<raw_ptr<FenceSyncReleaseDelegate>> auto_reset(
+      &release_delegate_, release_delegate);
+
   ScopedEvent handle_flush(&flush_event_);
-  // Check if sync token waits are invalid or already complete. Do not use
-  // SyncPointManager::IsSyncTokenReleased() as it can't say if the wait is
-  // invalid.
-  for (const auto& sync_token : sync_token_fences)
-    DCHECK(!sync_point_client_state_->Wait(sync_token, base::DoNothing()));
 
   if (!MakeCurrent())
     return;
@@ -632,7 +647,7 @@ void InProcessCommandBuffer::FlushOnGpuThread(
   if (!command_buffer_->scheduled() || has_unprocessed_commands) {
     ContinueGpuTask(base::BindOnce(&InProcessCommandBuffer::FlushOnGpuThread,
                                    gpu_thread_weak_ptr_factory_.GetWeakPtr(),
-                                   put_offset, sync_token_fences));
+                                   put_offset));
   }
 
   // If we've processed all pending commands but still have pending queries,
@@ -683,12 +698,12 @@ void InProcessCommandBuffer::Flush(int32_t put_offset) {
   std::vector<SyncToken> sync_token_fences;
   next_flush_sync_token_fences_.swap(sync_token_fences);
 
-  // Don't use std::move() for |sync_token_fences| because evaluation order for
-  // arguments is not defined.
-  ScheduleGpuTask(base::BindOnce(&InProcessCommandBuffer::FlushOnGpuThread,
-                                 gpu_thread_weak_ptr_factory_.GetWeakPtr(),
-                                 put_offset, sync_token_fences),
-                  sync_token_fences);
+  SyncToken release(GetNamespaceID(), GetCommandBufferID(),
+                    next_fence_sync_release_ - 1);
+  ScheduleGpuTask(
+      base::BindOnce(&InProcessCommandBuffer::FlushOnGpuThread,
+                     gpu_thread_weak_ptr_factory_.GetWeakPtr(), put_offset),
+      std::move(sync_token_fences), release);
 }
 
 void InProcessCommandBuffer::OrderingBarrier(int32_t put_offset) {
@@ -824,11 +839,10 @@ void InProcessCommandBuffer::CacheBlob(gpu::GpuDiskCacheType type,
 
 void InProcessCommandBuffer::OnFenceSyncRelease(uint64_t release) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(gpu_sequence_checker_);
-
-  SyncToken sync_token(GetNamespaceID(), GetCommandBufferID(), release);
-
   command_buffer_->SetReleaseCount(release);
-  sync_point_client_state_->ReleaseFenceSync(release);
+
+  CHECK(release_delegate_);
+  release_delegate_->Release(release);
 }
 
 void InProcessCommandBuffer::OnDescheduleUntilFinished() {
@@ -836,10 +850,6 @@ void InProcessCommandBuffer::OnDescheduleUntilFinished() {
 }
 
 void InProcessCommandBuffer::OnRescheduleAfterFinished() {
-  NOTREACHED();
-}
-
-void InProcessCommandBuffer::OnSwapBuffers(uint64_t swap_id, uint32_t flags) {
   NOTREACHED();
 }
 
@@ -854,6 +864,10 @@ void InProcessCommandBuffer::HandleReturnData(base::span<const uint8_t> data) {
   PostOrRunClientCallback(
       base::BindOnce(&InProcessCommandBuffer::HandleReturnDataOnOriginThread,
                      client_thread_weak_ptr_, std::move(vec)));
+}
+
+bool InProcessCommandBuffer::ShouldYield() {
+  return task_sequence_->ShouldYield();
 }
 
 void InProcessCommandBuffer::PostOrRunClientCallback(
@@ -876,21 +890,8 @@ base::OnceClosure InProcessCommandBuffer::WrapClientCallback(
 void InProcessCommandBuffer::SignalSyncToken(const SyncToken& sync_token,
                                              base::OnceClosure callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(client_sequence_checker_);
-  ScheduleGpuTask(
-      base::BindOnce(&InProcessCommandBuffer::SignalSyncTokenOnGpuThread,
-                     gpu_thread_weak_ptr_factory_.GetWeakPtr(), sync_token,
-                     std::move(callback)));
-}
-
-void InProcessCommandBuffer::SignalSyncTokenOnGpuThread(
-    const SyncToken& sync_token,
-    base::OnceClosure callback) {
-  auto callback_pair =
-      base::SplitOnceCallback(WrapClientCallback(std::move(callback)));
-  if (!sync_point_client_state_->Wait(sync_token,
-                                      std::move(callback_pair.first))) {
-    std::move(callback_pair.second).Run();
-  }
+  ScheduleGpuTask(WrapClientCallback(std::move(callback)),
+                  /*sync_token_fences=*/{sync_token});
 }
 
 void InProcessCommandBuffer::SignalQuery(unsigned query_id,

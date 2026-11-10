@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "third_party/blink/renderer/platform/video_capture/video_capture_impl.h"
+
 #include <stddef.h>
+
 #include <memory>
 #include <utility>
 
@@ -24,10 +27,9 @@
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/blink/public/common/browser_interface_broker_proxy.h"
+#include "third_party/blink/public/platform/browser_interface_broker_proxy.h"
 #include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
 #include "third_party/blink/renderer/platform/video_capture/gpu_memory_buffer_test_support.h"
-#include "third_party/blink/renderer/platform/video_capture/video_capture_impl.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
@@ -162,7 +164,7 @@ class VideoCaptureImplTest : public ::testing::Test {
       : video_capture_impl_(new VideoCaptureImpl(
             session_id_,
             scheduler::GetSingleThreadTaskRunnerForTesting(),
-            &GetEmptyBrowserInterfaceBroker())) {
+            GetEmptyBrowserInterfaceBroker())) {
     params_small_.requested_format = media::VideoCaptureFormat(
         gfx::Size(176, 144), 30, media::PIXEL_FORMAT_I420);
     params_large_.requested_format = media::VideoCaptureFormat(
@@ -179,10 +181,12 @@ class VideoCaptureImplTest : public ::testing::Test {
         }));
 
     platform_->SetGpuCapabilities(&fake_capabilities_);
-
-    video_capture_impl_->SetGpuMemoryBufferSupportForTesting(
-        std::make_unique<FakeGpuMemoryBufferSupport>());
   }
+
+#if DCHECK_IS_ON()
+  ~VideoCaptureImplTest() override { SetIsBeforeThreadCreatedForTest(); }
+#endif
+
   VideoCaptureImplTest(const VideoCaptureImplTest&) = delete;
   VideoCaptureImplTest& operator=(const VideoCaptureImplTest&) = delete;
 
@@ -205,10 +209,14 @@ class VideoCaptureImplTest : public ::testing::Test {
     const auto frame_dropped_callback = WTF::BindRepeating(
         &VideoCaptureImplTest::OnFrameDropped, base::Unretained(this));
 
-    video_capture_impl_->StartCapture(
-        client_id, params, state_update_callback, frame_ready_callback,
-        /*sub_capture_target_version_cb=*/base::DoNothing(),
-        frame_dropped_callback);
+    VideoCaptureCallbacks video_capture_callbacks;
+    video_capture_callbacks.state_update_cb = state_update_callback;
+    video_capture_callbacks.deliver_frame_cb = frame_ready_callback;
+    video_capture_callbacks.frame_dropped_cb = frame_dropped_callback;
+    video_capture_callbacks.sub_capture_target_version_cb = base::DoNothing();
+
+    video_capture_impl_->StartCapture(client_id, params,
+                                      std::move(video_capture_callbacks));
   }
 
   void StopCapture(int client_id) {
@@ -454,8 +462,7 @@ TEST_F(VideoCaptureImplTest, BufferReceived_GpuMemoryBufferHandle) {
   //   3. invoke OnFrameReady callback on |testing_io_thread|
   auto create_and_queue_buffer = [&]() {
     gfx::GpuMemoryBufferHandle gmb_handle;
-    gmb_handle.type = gfx::NATIVE_PIXMAP;
-    gmb_handle.id = gfx::GpuMemoryBufferId(kArbitraryBufferId);
+    gmb_handle.type = gfx::SHARED_MEMORY_BUFFER;
 
     StartCapture(0, params_small_);
     SimulateGpuMemoryBufferCreated(kArbitraryBufferId, std::move(gmb_handle));
@@ -559,8 +566,7 @@ TEST_F(VideoCaptureImplTest, BufferReceivedAfterStop_GpuMemoryBufferHandle) {
   const int kArbitraryBufferId = 12;
 
   gfx::GpuMemoryBufferHandle gmb_handle;
-  gmb_handle.type = gfx::NATIVE_PIXMAP;
-  gmb_handle.id = gfx::GpuMemoryBufferId(kArbitraryBufferId);
+  gmb_handle.type = gfx::SHARED_MEMORY_BUFFER;
 
   SetSharedImageCapabilities(/* shared_image_d3d = */ true);
   EXPECT_CALL(*this, OnStateUpdate(blink::VIDEO_CAPTURE_STATE_STARTED));
@@ -748,8 +754,7 @@ TEST_F(VideoCaptureImplTest,
   const int kArbitraryBufferId = 16;
 
   gfx::GpuMemoryBufferHandle gmb_handle;
-  gmb_handle.type = gfx::NATIVE_PIXMAP;
-  gmb_handle.id = gfx::GpuMemoryBufferId(kArbitraryBufferId);
+  gmb_handle.type = gfx::SHARED_MEMORY_BUFFER;
 
   InSequence s;
   EXPECT_CALL(mock_video_capture_host_, DoStart(_, session_id_, params_small_))
@@ -787,7 +792,8 @@ TEST_F(VideoCaptureImplTest,
 TEST_F(VideoCaptureImplTest, StartTimeout) {
   base::HistogramTester histogram_tester;
 
-  EXPECT_CALL(*this, OnStateUpdate(blink::VIDEO_CAPTURE_STATE_ERROR));
+  EXPECT_CALL(*this,
+              OnStateUpdate(blink::VIDEO_CAPTURE_STATE_ERROR_START_TIMEOUT));
   EXPECT_CALL(mock_video_capture_host_, DoStart(_, session_id_, params_small_));
 
   ON_CALL(mock_video_capture_host_, DoStart(_, _, _))
@@ -804,37 +810,6 @@ TEST_F(VideoCaptureImplTest, StartTimeout) {
   histogram_tester.ExpectUniqueSample(
       "Media.VideoCapture.StartErrorCode",
       media::VideoCaptureError::kVideoCaptureImplTimedOutOnStart, 1);
-}
-
-TEST_F(VideoCaptureImplTest, StartTimeout_FeatureDisabled) {
-  base::HistogramTester histogram_tester;
-  feature_list_.InitAndDisableFeature(kTimeoutHangingVideoCaptureStarts);
-
-  EXPECT_CALL(mock_video_capture_host_, DoStart(_, session_id_, params_small_));
-  ON_CALL(mock_video_capture_host_, DoStart(_, _, _))
-      .WillByDefault(InvokeWithoutArgs([]() {
-        // Do nothing.
-      }));
-
-  StartCapture(0, params_small_);
-  // Wait past the deadline, nothing should happen.
-  task_environment_.FastForwardBy(2 * VideoCaptureImpl::kCaptureStartTimeout);
-
-  // Finally callback that the capture has started, should respond.
-  EXPECT_CALL(*this, OnStateUpdate(blink::VIDEO_CAPTURE_STATE_STARTED));
-  video_capture_impl_->OnStateChanged(
-      media::mojom::blink::VideoCaptureResult::NewState(
-          media::mojom::VideoCaptureState::STARTED));
-
-  EXPECT_CALL(*this, OnStateUpdate(blink::VIDEO_CAPTURE_STATE_STOPPED));
-  EXPECT_CALL(mock_video_capture_host_, Stop(_));
-  StopCapture(0);
-
-  histogram_tester.ExpectTotalCount("Media.VideoCapture.Start", 1);
-  histogram_tester.ExpectUniqueSample("Media.VideoCapture.StartOutcome",
-                                      VideoCaptureStartOutcome::kStarted, 1);
-  histogram_tester.ExpectUniqueSample("Media.VideoCapture.StartErrorCode",
-                                      media::VideoCaptureError::kNone, 1);
 }
 
 TEST_F(VideoCaptureImplTest, ErrorBeforeStart) {
@@ -896,8 +871,7 @@ TEST_F(VideoCaptureImplTest, FallbacksToPremappedGmbsWhenNotSupported) {
   //   3. invoke OnFrameReady callback on |testing_io_thread|
   auto create_and_queue_buffer = [&]() {
     gfx::GpuMemoryBufferHandle gmb_handle;
-    gmb_handle.type = gfx::NATIVE_PIXMAP;
-    gmb_handle.id = gfx::GpuMemoryBufferId(kArbitraryBufferId);
+    gmb_handle.type = gfx::SHARED_MEMORY_BUFFER;
 
     StartCapture(0, params_small_);
     SimulateGpuMemoryBufferCreated(kArbitraryBufferId, std::move(gmb_handle));

@@ -42,7 +42,7 @@ class V8_EXPORT_PRIVATE ObjectStartBitmap {
 
   inline ObjectStartBitmap();
 
-  // Finds an object header based on a
+  // Finds an object header based on an
   // address_maybe_pointing_to_the_middle_of_object. Will search for an object
   // start in decreasing address order.
   template <AccessMode = AccessMode::kNonAtomic>
@@ -129,6 +129,8 @@ HeapObjectHeader* ObjectStartBitmap::FindHeader(
     DCHECK_LT(0u, cell_index);
     byte = load<mode>(--cell_index);
   }
+  // Crash safely instead of returning page_base - 8.
+  CHECK_NE(0, byte);
   const int leading_zeroes = v8::base::bits::CountLeadingZeros(byte);
   object_start_number =
       (cell_index * kBitsPerCell) + (kBitsPerCell - 1) - leading_zeroes;
@@ -166,8 +168,12 @@ void ObjectStartBitmap::store(size_t cell_index, uint8_t value) {
     object_start_bit_map_[cell_index] = value;
     return;
   }
+  // Use acq rel rmw here to avoid a situation when a pointer write may be
+  // reordered before the setting of the mark bit, which may lead to the
+  // concurrent marker missing the right object (because the bit is not yet
+  // propagated).
   v8::base::AsAtomicPtr(&object_start_bit_map_[cell_index])
-      ->store(value, std::memory_order_release);
+      ->exchange(value, std::memory_order_acq_rel);
 }
 
 template <AccessMode mode>
@@ -240,12 +246,12 @@ class V8_EXPORT_PRIVATE PlatformAwareObjectStartBitmap
 // static
 template <AccessMode mode>
 bool PlatformAwareObjectStartBitmap::ShouldForceNonAtomic() {
-#if defined(V8_TARGET_ARCH_ARM)
+#if defined(V8_HOST_ARCH_ARM)
   // Use non-atomic accesses on ARMv7 when marking is not active.
   if (mode == AccessMode::kAtomic) {
     if (V8_LIKELY(!WriteBarrier::IsEnabled())) return true;
   }
-#endif  // defined(V8_TARGET_ARCH_ARM)
+#endif  // defined(V8_HOST_ARCH_ARM)
   return false;
 }
 

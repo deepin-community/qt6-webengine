@@ -10,9 +10,11 @@
 #include <string_view>
 #include <utility>
 
+#include "base/containers/span.h"
 #include "base/debug/alias.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
+#include "base/pickle.h"
 #include "base/strings/strcat.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/renderer/render_frame.h"
@@ -94,10 +96,17 @@ bool UserScriptSet::UpdateUserScripts(
   bool only_inject_incognito =
       ExtensionsRendererClient::Get()->IsIncognitoProcess();
 
+  // Clear out the references in `scripts_` and `script_sources_`. These
+  // internally depend on the contents of `shared_memory_mapping_`, so we
+  // ensure these references are removed before releasing the memory.
+  scripts_.clear();
+  script_sources_.clear();
+
   // Create the shared memory mapping.
   shared_memory_mapping_ = shared_memory.Map();
-  if (!shared_memory.IsValid())
+  if (!shared_memory_mapping_.IsValid()) {
     return false;
+  }
 
   // First get the size of the memory block.
   const base::Pickle::Header* pickle_header =
@@ -111,11 +120,11 @@ bool UserScriptSet::UpdateUserScripts(
 
   // Unpickle scripts.
   uint32_t num_scripts = 0;
-  auto memory = shared_memory_mapping_.GetMemoryAsSpan<char>(pickle_size);
+  auto memory = shared_memory_mapping_.GetMemoryAsSpan<uint8_t>(pickle_size);
   if (!memory.size())
     return false;
 
-  base::Pickle pickle(memory.data(), pickle_size);
+  base::Pickle pickle = base::Pickle::WithUnownedBuffer(memory);
   base::PickleIterator iter(pickle);
   base::debug::Alias(&pickle_size);
   CHECK(iter.ReadUInt32(&num_scripts));
@@ -125,8 +134,6 @@ bool UserScriptSet::UpdateUserScripts(
   // scripts so that we don't add OOM noise to crash reports.
   CHECK_LT(num_scripts, kNumScriptsArbitraryMax);
 
-  scripts_.clear();
-  script_sources_.clear();
   scripts_.reserve(num_scripts);
   for (uint32_t i = 0; i < num_scripts; ++i) {
     std::unique_ptr<UserScript> script(new UserScript());

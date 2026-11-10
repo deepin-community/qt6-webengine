@@ -147,9 +147,19 @@ xsltParseContentError(xsltStylesheetPtr style,
  * in case of error
  */
 static int
-exclPrefixPush(xsltStylesheetPtr style, xmlChar * value)
+exclPrefixPush(xsltStylesheetPtr style, xmlChar * orig)
 {
+    xmlChar *value;
     int i;
+
+    /*
+     * orig can come from a namespace definition on a node which
+     * could be deleted later, for example in xsltParseTemplateContent.
+     * Store the string in stylesheet's dict to avoid use after free.
+     */
+    value = (xmlChar *) xmlDictLookup(style->dict, orig, -1);
+    if (value == NULL)
+        return(-1);
 
     /* do not push duplicates */
     for (i = 0;i < style->exclPrefixNr;i++) {
@@ -4460,6 +4470,8 @@ xsltParseSequenceConstructor(xsltCompilerCtxtPtr cctxt, xmlNodePtr cur)
     * NOTE that this content model does *not* allow xsl:param.
     */
     while (cur != NULL) {
+        cctxt->style->principal->opCount += 1;
+
 	if (deleteNode != NULL)	{
 #ifdef WITH_XSLT_DEBUG_BLANKS
 	    xsltGenericDebug(xsltGenericDebugContext,
@@ -4500,7 +4512,11 @@ xsltParseSequenceConstructor(xsltCompilerCtxtPtr cctxt, xmlNodePtr cur)
 			* Leave the contained text-node in the tree.
 			*/
 			xmlUnlinkNode(tmp);
-			xmlAddPrevSibling(cur, tmp);
+			if (xmlAddPrevSibling(cur, tmp) == NULL) {
+                            xsltTransformError(ctxt, NULL, NULL,
+                                    "out of memory\n");
+                            xmlFreeNode(tmp);
+                        }
 		    } else {
 			tmp = NULL;
 			xsltTransformError(NULL, cctxt->style, cur,
@@ -4854,6 +4870,8 @@ xsltParseTemplateContent(xsltStylesheetPtr style, xmlNodePtr templ) {
 	* user-defined extension instruction if needed).
 	*/
 	do {
+            style->principal->opCount += 1;
+
 	    if ((child->type == XML_ELEMENT_NODE) &&
 		IS_XSLT_ELEM_FAST(child) &&
 		IS_XSLT_NAME(child, "param"))
@@ -4897,6 +4915,8 @@ xsltParseTemplateContent(xsltStylesheetPtr style, xmlNodePtr templ) {
     cur = templ->children;
     delete = NULL;
     while (cur != NULL) {
+        style->principal->opCount += 1;
+
 	if (delete != NULL) {
 #ifdef WITH_XSLT_DEBUG_BLANKS
 	    xsltGenericDebug(xsltGenericDebugContext,
@@ -4986,7 +5006,11 @@ xsltParseTemplateContent(xsltStylesheetPtr style, xmlNodePtr templ) {
 
 			    next = text->next;
 			    xmlUnlinkNode(text);
-			    xmlAddPrevSibling(cur, text);
+                            if (xmlAddPrevSibling(cur, text) == NULL) {
+                                xsltTransformError(NULL, style, NULL,
+                                        "out of memory\n");
+                                xmlFreeNode(text);
+                            }
 			    text = next;
 			}
 		    }
@@ -4995,7 +5019,8 @@ xsltParseTemplateContent(xsltStylesheetPtr style, xmlNodePtr templ) {
 		goto skip_children;
 	    }
 	}
-	else if ((cur->ns != NULL) && (style->nsDefs != NULL) &&
+	else if ((cur->type == XML_ELEMENT_NODE) && (cur->ns != NULL) &&
+	    (style->nsDefs != NULL) &&
 	    (xsltCheckExtPrefix(style, cur->ns->prefix)))
 	{
 	    /*
@@ -5023,10 +5048,16 @@ xsltParseTemplateContent(xsltStylesheetPtr style, xmlNodePtr templ) {
 	    }
 	}
 	/*
-	 * Skip to next node
+	 * Skip to next node. DTD-related nodes are explicitly skipped because
+	 * they lack the `ns` field found in `xmlNode` and `xmlAttr`. While
+	 * they share a common header with `xmlNode`, accessing their fields
+	 * as if they were elements can lead to type confusion.
 	 */
 	if (cur->children != NULL) {
-	    if (cur->children->type != XML_ENTITY_DECL) {
+	    if ((cur->type != XML_ENTITY_DECL) &&
+		(cur->type != XML_DTD_NODE) &&
+		(cur->type != XML_ELEMENT_DECL) &&
+		(cur->type != XML_ATTRIBUTE_DECL)) {
 		cur = cur->children;
 		continue;
 	    }
@@ -5365,6 +5396,15 @@ xsltParseStylesheetTemplate(xsltStylesheetPtr style, xmlNodePtr template) {
     if ((style == NULL) || (template == NULL) ||
         (template->type != XML_ELEMENT_NODE))
 	return;
+
+    if (style->principal->opLimit > 0) {
+        if (style->principal->opCount > style->principal->opLimit) {
+            xsltTransformError(NULL, style, NULL,
+                "XSLT parser operation limit exceeded\n");
+	    style->errors++;
+            return;
+        }
+    }
 
     /*
      * Create and link the structure
@@ -6090,6 +6130,15 @@ xsltParseStylesheetTop(xsltStylesheetPtr style, xmlNodePtr top) {
     if ((top == NULL) || (top->type != XML_ELEMENT_NODE))
 	return;
 
+    if (style->principal->opLimit > 0) {
+        if (style->principal->opCount > style->principal->opLimit) {
+            xsltTransformError(NULL, style, NULL,
+                "XSLT parser operation limit exceeded\n");
+	    style->errors++;
+            return;
+        }
+    }
+
     prop = xmlGetNsProp(top, (const xmlChar *)"version", NULL);
     if (prop == NULL) {
 	xsltTransformError(NULL, style, top,
@@ -6113,6 +6162,8 @@ xsltParseStylesheetTop(xsltStylesheetPtr style, xmlNodePtr top) {
      */
     cur = top->children;
     while (cur != NULL) {
+            style->principal->opCount += 1;
+
 	    if (IS_BLANK_NODE(cur)) {
 		    cur = cur->next;
 		    continue;
@@ -6129,6 +6180,8 @@ xsltParseStylesheetTop(xsltStylesheetPtr style, xmlNodePtr top) {
      * process other top-level elements
      */
     while (cur != NULL) {
+        style->principal->opCount += 1;
+
 	if (IS_BLANK_NODE(cur)) {
 	    cur = cur->next;
 	    continue;

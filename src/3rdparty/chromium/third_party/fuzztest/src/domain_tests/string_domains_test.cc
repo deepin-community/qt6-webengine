@@ -15,6 +15,7 @@
 // Tests of character and string domains.
 
 #include <cctype>
+#include <cstdint>
 #include <deque>
 #include <optional>
 #include <string>
@@ -25,8 +26,9 @@
 #include "gtest/gtest.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/random/random.h"
-#include "./fuzztest/domain.h"
+#include "./fuzztest/domain_core.h"
 #include "./domain_tests/domain_testing.h"
+#include "./fuzztest/internal/table_of_recent_compares.h"
 
 namespace fuzztest {
 namespace {
@@ -37,6 +39,7 @@ using ::testing::Each;
 using ::testing::Eq;
 using ::testing::Ge;
 using ::testing::Gt;
+using ::testing::HasSubstr;
 using ::testing::IsTrue;
 using ::testing::Lt;
 using ::testing::Matches;
@@ -49,7 +52,7 @@ class HandleTypeTest : public testing::Test {};
 using HandleTypeTypes =
     testing::Types<std::string_view, std::vector<std::string_view>>;
 
-TYPED_TEST_SUITE(HandleTypeTest, HandleTypeTypes);
+TYPED_TEST_SUITE(HandleTypeTest, HandleTypeTypes, );
 
 TYPED_TEST(HandleTypeTest, Arbitrary) {
   absl::BitGen bitgen;
@@ -96,7 +99,7 @@ TEST(Domain, Forwarding) {
   elems.clear();
   Value c(domain, bitgen);
   while (elems.size() < 'z' - 'a' + 1) {
-    c.Mutate(domain, bitgen, false);
+    c.Mutate(domain, bitgen, {}, false);
     elems.insert(c.user_value);
   }
 }
@@ -157,5 +160,70 @@ TEST(Domain, PrintableAsciiString) {
     }
   }
 }
+
+TEST(Domain, Utf8StringWorksWithSeeds) {
+  auto domain = Utf8String().WithSeeds({"\u0414\u0430!\n"});
+  EXPECT_THAT(GenerateValues(domain),
+              Contains(Value(domain, "\u0414\u0430!\n")));
+}
+
+TEST(Domain, Utf8StringIgnoresInvalideSeeds) {
+  const std::string invalid_utf8 = "abc\x80";
+  EXPECT_THAT(Utf8String().FromValue(invalid_utf8), Eq(std::nullopt));
+}
+
+TEST(Domain, Utf8StringUsesDictionary) {
+  auto domain = Utf8String();
+  internal::TablesOfRecentCompares cmp_tables;
+  // Fill the table with the same entry.
+  for (int i = 0; i < cmp_tables.GetMutable<0>().kTableSize; ++i) {
+    cmp_tables.GetMutable<0>().Insert(reinterpret_cast<const uint8_t*>("abcd"),
+                                      reinterpret_cast<const uint8_t*>("1234"),
+                                      4);
+  }
+
+  absl::BitGen bitgen;
+  std::vector<std::string> mutants;
+  const double hit_probability =  //
+      1.0 / 2                     // to pick String() within OverlapOf(...)
+      * 1.0 / 4                   // to use dictionaries
+      * 1.0 / 4                   // to use cmp tables
+      * 1.0 / 2;                  // to pick the memcmp table
+  for (int i = 0; i < IterationsToHitAll(/*num_cases=*/1, hit_probability);
+       ++i) {
+    auto mutant = domain.FromValue("abcd");
+    ASSERT_TRUE(mutant.has_value());
+    domain.Mutate(*mutant, bitgen, {/*cmp_tables=*/&cmp_tables}, false);
+    mutants.push_back(domain.GetValue(*mutant));
+  }
+  EXPECT_THAT(mutants, Contains(HasSubstr("1234")));
+}
+
+TEST(Domain, AsciiStringUsesDictionary) {
+  auto domain = AsciiString();
+  internal::TablesOfRecentCompares cmp_tables;
+  // Fill the table with the same entry.
+  for (int i = 0; i < cmp_tables.GetMutable<0>().kTableSize; ++i) {
+    cmp_tables.GetMutable<0>().Insert(reinterpret_cast<const uint8_t*>("abcd"),
+                                      reinterpret_cast<const uint8_t*>("1234"),
+                                      4);
+  }
+
+  absl::BitGen bitgen;
+  std::vector<std::string> mutants;
+  const double hit_probability =  //
+      1.0 / 4                     // to use dictionaries
+      * 1.0 / 4                   // to use cmp tables
+      * 1.0 / 2;                  // to pick the memcmp table
+  for (int i = 0; i < IterationsToHitAll(/*num_cases=*/1, hit_probability);
+       ++i) {
+    auto mutant = domain.FromValue("abcd");
+    ASSERT_TRUE(mutant.has_value());
+    domain.Mutate(*mutant, bitgen, {/*cmp_tables=*/&cmp_tables}, false);
+    mutants.push_back(domain.GetValue(*mutant));
+  }
+  EXPECT_THAT(mutants, Contains(HasSubstr("1234")));
+}
+
 }  // namespace
 }  // namespace fuzztest

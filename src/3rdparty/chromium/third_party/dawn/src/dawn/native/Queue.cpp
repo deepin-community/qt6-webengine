@@ -27,14 +27,20 @@
 
 #include "dawn/native/Queue.h"
 
+#include <webgpu/webgpu.h>
+
 #include <algorithm>
 #include <cstring>
+#include <set>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "dawn/common/Constants.h"
 #include "dawn/common/FutureUtils.h"
+#include "dawn/common/StringViewUtils.h"
 #include "dawn/common/ityp_span.h"
+#include "dawn/native/BlitBufferToDepthStencil.h"
 #include "dawn/native/Buffer.h"
 #include "dawn/native/CommandBuffer.h"
 #include "dawn/native/CommandEncoder.h"
@@ -50,11 +56,10 @@
 #include "dawn/native/QuerySet.h"
 #include "dawn/native/RenderPassEncoder.h"
 #include "dawn/native/RenderPipeline.h"
-#include "dawn/native/SystemEvent.h"
 #include "dawn/native/Texture.h"
 #include "dawn/platform/DawnPlatform.h"
 #include "dawn/platform/tracing/TraceEvent.h"
-#include "dawn/webgpu.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 namespace dawn::native {
 
@@ -63,17 +68,18 @@ namespace {
 void CopyTextureData(uint8_t* dstPointer,
                      const uint8_t* srcPointer,
                      uint32_t depth,
-                     uint32_t rowsPerImage,
-                     uint64_t imageAdditionalStride,
+                     uint32_t dstRowsPerImage,
+                     uint64_t srcRowsPerImage,
                      uint32_t actualBytesPerRow,
                      uint32_t dstBytesPerRow,
                      uint32_t srcBytesPerRow) {
+    uint64_t imageAdditionalStride = srcBytesPerRow * (srcRowsPerImage - dstRowsPerImage);
     bool copyWholeLayer = actualBytesPerRow == dstBytesPerRow && dstBytesPerRow == srcBytesPerRow;
     bool copyWholeData = copyWholeLayer && imageAdditionalStride == 0;
 
     if (!copyWholeLayer) {  // copy row by row
         for (uint32_t d = 0; d < depth; ++d) {
-            for (uint32_t h = 0; h < rowsPerImage; ++h) {
+            for (uint32_t h = 0; h < dstRowsPerImage; ++h) {
                 memcpy(dstPointer, srcPointer, actualBytesPerRow);
                 dstPointer += dstBytesPerRow;
                 srcPointer += srcBytesPerRow;
@@ -81,7 +87,7 @@ void CopyTextureData(uint8_t* dstPointer,
             srcPointer += imageAdditionalStride;
         }
     } else {
-        uint64_t layerSize = uint64_t(rowsPerImage) * actualBytesPerRow;
+        uint64_t layerSize = uint64_t(dstRowsPerImage) * actualBytesPerRow;
         if (!copyWholeData) {  // copy layer by layer
             for (uint32_t d = 0; d < depth; ++d) {
                 memcpy(dstPointer, srcPointer, layerSize);
@@ -94,92 +100,9 @@ void CopyTextureData(uint8_t* dstPointer,
     }
 }
 
-ResultOrError<UploadHandle> UploadTextureDataAligningBytesPerRowAndOffset(
-    DeviceBase* device,
-    const void* data,
-    uint32_t alignedBytesPerRow,
-    uint32_t optimallyAlignedBytesPerRow,
-    uint32_t alignedRowsPerImage,
-    const TextureDataLayout& dataLayout,
-    bool hasDepthOrStencil,
-    const TexelBlockInfo& blockInfo,
-    const Extent3D& writeSizePixel) {
-    uint64_t newDataSizeBytes;
-    DAWN_TRY_ASSIGN(newDataSizeBytes,
-                    ComputeRequiredBytesInCopy(blockInfo, writeSizePixel,
-                                               optimallyAlignedBytesPerRow, alignedRowsPerImage));
-
-    uint64_t optimalOffsetAlignment = device->GetOptimalBufferToTextureCopyOffsetAlignment();
-    DAWN_ASSERT(IsPowerOfTwo(optimalOffsetAlignment));
-    DAWN_ASSERT(IsPowerOfTwo(blockInfo.byteSize));
-    // We need the offset to be aligned to both optimalOffsetAlignment and blockByteSize,
-    // since both of them are powers of two, we only need to align to the max value.
-    uint64_t offsetAlignment = std::max(optimalOffsetAlignment, uint64_t(blockInfo.byteSize));
-
-    // Buffer offset alignments must follow additional restrictions when we copy with depth stencil
-    // formats.
-    if (hasDepthOrStencil) {
-        offsetAlignment =
-            std::max(offsetAlignment, device->GetBufferCopyOffsetAlignmentForDepthStencil());
-    }
-
-    UploadHandle uploadHandle;
-    DAWN_TRY_ASSIGN(
-        uploadHandle,
-        device->GetDynamicUploader()->Allocate(
-            newDataSizeBytes, device->GetQueue()->GetPendingCommandSerial(), offsetAlignment));
-    DAWN_ASSERT(uploadHandle.mappedBuffer != nullptr);
-
-    uint8_t* dstPointer = static_cast<uint8_t*>(uploadHandle.mappedBuffer);
-    const uint8_t* srcPointer = static_cast<const uint8_t*>(data);
-    srcPointer += dataLayout.offset;
-
-    uint32_t dataRowsPerImage = dataLayout.rowsPerImage;
-    if (dataRowsPerImage == 0) {
-        dataRowsPerImage = writeSizePixel.height / blockInfo.height;
-    }
-
-    DAWN_ASSERT(dataRowsPerImage >= alignedRowsPerImage);
-    uint64_t imageAdditionalStride =
-        dataLayout.bytesPerRow * (dataRowsPerImage - alignedRowsPerImage);
-
-    CopyTextureData(dstPointer, srcPointer, writeSizePixel.depthOrArrayLayers, alignedRowsPerImage,
-                    imageAdditionalStride, alignedBytesPerRow, optimallyAlignedBytesPerRow,
-                    dataLayout.bytesPerRow);
-
-    return uploadHandle;
-}
-
-struct SubmittedWorkDone : TrackTaskCallback {
-    SubmittedWorkDone(dawn::platform::Platform* platform,
-                      WGPUQueueWorkDoneCallback callback,
-                      void* userdata)
-        : TrackTaskCallback(platform), mCallback(callback), mUserdata(userdata) {}
-    ~SubmittedWorkDone() override = default;
-
-  private:
-    void FinishImpl() override {
-        DAWN_ASSERT(mCallback != nullptr);
-        DAWN_ASSERT(mSerial != kMaxExecutionSerial);
-        TRACE_EVENT1(mPlatform, General, "Queue::SubmittedWorkDone::Finished", "serial",
-                     uint64_t(mSerial));
-        mCallback(WGPUQueueWorkDoneStatus_Success, mUserdata);
-        mCallback = nullptr;
-    }
-    void HandleDeviceLossImpl() override {
-        DAWN_ASSERT(mCallback != nullptr);
-        mCallback(WGPUQueueWorkDoneStatus_DeviceLost, mUserdata);
-        mCallback = nullptr;
-    }
-    void HandleShutDownImpl() override { HandleDeviceLossImpl(); }
-
-    WGPUQueueWorkDoneCallback mCallback = nullptr;
-    void* mUserdata;
-};
-
 class ErrorQueue : public QueueBase {
   public:
-    explicit ErrorQueue(DeviceBase* device, const char* label)
+    explicit ErrorQueue(DeviceBase* device, StringView label)
         : QueueBase(device, ObjectBase::kError, label) {}
 
   private:
@@ -187,51 +110,14 @@ class ErrorQueue : public QueueBase {
         DAWN_UNREACHABLE();
     }
     bool HasPendingCommands() const override { DAWN_UNREACHABLE(); }
+    MaybeError SubmitPendingCommandsImpl() override { DAWN_UNREACHABLE(); }
     ResultOrError<ExecutionSerial> CheckAndUpdateCompletedSerials() override { DAWN_UNREACHABLE(); }
     void ForceEventualFlushOfCommands() override { DAWN_UNREACHABLE(); }
-    ResultOrError<bool> WaitForQueueSerial(ExecutionSerial serial, Nanoseconds timeout) override {
+    ResultOrError<bool> WaitForQueueSerialImpl(ExecutionSerial serial,
+                                               Nanoseconds timeout) override {
         DAWN_UNREACHABLE();
     }
     MaybeError WaitForIdleForDestruction() override { DAWN_UNREACHABLE(); }
-};
-
-struct WorkDoneEvent final : public EventManager::TrackedEvent {
-    std::optional<wgpu::QueueWorkDoneStatus> mEarlyStatus;
-    WGPUQueueWorkDoneCallback mCallback;
-    void* mUserdata;
-
-    // Create an event backed by the given queue execution serial.
-    WorkDoneEvent(const QueueWorkDoneCallbackInfo& callbackInfo,
-                  QueueBase* queue,
-                  ExecutionSerial serial)
-        : TrackedEvent(callbackInfo.mode, queue, serial),
-          mCallback(callbackInfo.callback),
-          mUserdata(callbackInfo.userdata) {}
-
-    // Create an event that's ready at creation (for errors, etc.)
-    WorkDoneEvent(const QueueWorkDoneCallbackInfo& callbackInfo,
-                  QueueBase* queue,
-                  wgpu::QueueWorkDoneStatus earlyStatus)
-        : TrackedEvent(callbackInfo.mode, queue, kBeginningOfGPUTime),
-          mEarlyStatus(earlyStatus),
-          mCallback(callbackInfo.callback),
-          mUserdata(callbackInfo.userdata) {
-        CompleteIfSpontaneous();
-    }
-
-    ~WorkDoneEvent() override { EnsureComplete(EventCompletionType::Shutdown); }
-
-    void Complete(EventCompletionType completionType) override {
-        // WorkDoneEvent has no error cases other than the mEarlyStatus ones.
-        wgpu::QueueWorkDoneStatus status = wgpu::QueueWorkDoneStatus::Success;
-        if (completionType == EventCompletionType::Shutdown) {
-            status = wgpu::QueueWorkDoneStatus::Unknown;
-        } else if (mEarlyStatus) {
-            status = mEarlyStatus.value();
-        }
-
-        mCallback(ToAPI(status), mUserdata);
-    }
 };
 
 }  // namespace
@@ -249,7 +135,7 @@ QueueBase::QueueBase(DeviceBase* device, const QueueDescriptor* descriptor)
     GetObjectTrackingList()->Track(this);
 }
 
-QueueBase::QueueBase(DeviceBase* device, ObjectBase::ErrorTag tag, const char* label)
+QueueBase::QueueBase(DeviceBase* device, ObjectBase::ErrorTag tag, StringView label)
     : ApiObjectBase(device, tag, label) {}
 
 QueueBase::~QueueBase() {
@@ -259,12 +145,22 @@ QueueBase::~QueueBase() {
 void QueueBase::DestroyImpl() {}
 
 // static
-Ref<QueueBase> QueueBase::MakeError(DeviceBase* device, const char* label) {
+Ref<QueueBase> QueueBase::MakeError(DeviceBase* device, StringView label) {
     return AcquireRef(new ErrorQueue(device, label));
 }
 
 ObjectType QueueBase::GetType() const {
     return ObjectType::Queue;
+}
+
+// It doesn't make much sense right now to mark the default queue as "unlabeled", so this override
+// prevents that. Consider removing when multiqueue is implemented.
+void QueueBase::FormatLabel(absl::FormatSink* s) const {
+    s->Append(ObjectTypeAsString(GetType()));
+    const std::string& label = GetLabel();
+    if (!label.empty()) {
+        s->Append(absl::StrFormat(" \"%s\"", label));
+    }
 }
 
 void QueueBase::APISubmit(uint32_t commandCount, CommandBufferBase* const* commands) {
@@ -275,57 +171,78 @@ void QueueBase::APISubmit(uint32_t commandCount, CommandBufferBase* const* comma
         commands[i]->Destroy();
     }
 
-    DAWN_UNUSED(GetDevice()->ConsumedError(
+    [[maybe_unused]] bool hadError = GetDevice()->ConsumedError(
         std::move(result), "calling %s.Submit(%s)", this,
-        ityp::span<uint32_t, CommandBufferBase* const>(commands, commandCount)));
+        ityp::span<uint32_t, CommandBufferBase* const>(commands, commandCount));
 }
 
-void QueueBase::APIOnSubmittedWorkDone(WGPUQueueWorkDoneCallback callback, void* userdata) {
-    // The error status depends on the type of error so we let the validation function choose it
-    wgpu::QueueWorkDoneStatus status;
-    if (GetDevice()->ConsumedError(ValidateOnSubmittedWorkDone(&status))) {
-        GetDevice()->GetCallbackTaskManager()->AddCallbackTask(
-            [callback, status, userdata] { callback(ToAPI(status), userdata); });
-        return;
-    }
+Future QueueBase::APIOnSubmittedWorkDone(const WGPUQueueWorkDoneCallbackInfo& callbackInfo) {
+    struct WorkDoneEvent final : public EventManager::TrackedEvent {
+        std::optional<WGPUQueueWorkDoneStatus> mEarlyStatus;
+        WGPUQueueWorkDoneCallback mCallback;
+        std::string mMessage;
+        raw_ptr<void> mUserdata1;
+        raw_ptr<void> mUserdata2;
 
-    std::unique_ptr<SubmittedWorkDone> task =
-        std::make_unique<SubmittedWorkDone>(GetDevice()->GetPlatform(), callback, userdata);
+        // Create an event backed by the given queue execution serial.
+        WorkDoneEvent(const WGPUQueueWorkDoneCallbackInfo& callbackInfo,
+                      QueueBase* queue,
+                      ExecutionSerial serial)
+            : TrackedEvent(static_cast<wgpu::CallbackMode>(callbackInfo.mode), queue, serial),
+              mCallback(callbackInfo.callback),
+              mUserdata1(callbackInfo.userdata1),
+              mUserdata2(callbackInfo.userdata2) {}
 
-    // Technically we only need to wait for previously submitted work but OnSubmittedWorkDone is
-    // also used to make sure ALL queue work is finished in tests, so we also wait for pending
-    // commands (this is non-observable outside of tests so it's ok to do deviate a bit from the
-    // spec).
-    TrackTaskAfterEventualFlush(std::move(task));
+        // Create an event that's ready at creation (for errors, etc.)
+        WorkDoneEvent(const WGPUQueueWorkDoneCallbackInfo& callbackInfo,
+                      QueueBase* queue,
+                      wgpu::QueueWorkDoneStatus earlyStatus)
+            : TrackedEvent(static_cast<wgpu::CallbackMode>(callbackInfo.mode),
+                           queue,
+                           queue->GetCompletedCommandSerial()),
+              mEarlyStatus(ToAPI(earlyStatus)),
+              mCallback(callbackInfo.callback),
+              mUserdata1(callbackInfo.userdata1),
+              mUserdata2(callbackInfo.userdata2) {}
 
-    TRACE_EVENT1(GetDevice()->GetPlatform(), General, "Queue::APIOnSubmittedWorkDone", "serial",
-                 uint64_t(GetPendingCommandSerial()));
-}
+        ~WorkDoneEvent() override { EnsureComplete(EventCompletionType::Shutdown); }
 
-Future QueueBase::APIOnSubmittedWorkDoneF(const QueueWorkDoneCallbackInfo& callbackInfo) {
+        void Complete(EventCompletionType completionType) override {
+            // WorkDoneEvent has no error cases other than the mEarlyStatus ones.
+            WGPUQueueWorkDoneStatus status = WGPUQueueWorkDoneStatus_Success;
+            if (completionType == EventCompletionType::Shutdown) {
+                status = WGPUQueueWorkDoneStatus_CallbackCancelled;
+            } else if (mEarlyStatus) {
+                status = mEarlyStatus.value();
+            }
+
+            mCallback(status, ToOutputStringView(mMessage), mUserdata1.ExtractAsDangling(),
+                      mUserdata2.ExtractAsDangling());
+        }
+    };
+
     // TODO(crbug.com/dawn/2052): Once we always return a future, change this to log to the instance
     // (note, not raise a validation error to the device) and return the null future.
     DAWN_ASSERT(callbackInfo.nextInChain == nullptr);
 
     Ref<EventManager::TrackedEvent> event;
-
-    wgpu::QueueWorkDoneStatus validationEarlyStatus;
-    if (GetDevice()->ConsumedError(ValidateOnSubmittedWorkDone(&validationEarlyStatus))) {
-        // TODO(crbug.com/dawn/2021): This is here to pretend that things succeed when the device is
-        // lost. When the old OnSubmittedWorkDone is removed then we can update
-        // ValidateOnSubmittedWorkDone to just return the correct thing here.
-        if (validationEarlyStatus == wgpu::QueueWorkDoneStatus::DeviceLost) {
-            validationEarlyStatus = wgpu::QueueWorkDoneStatus::Success;
+    {
+        // TODO(crbug.com/dawn/831) Manually acquire device lock instead of relying on code-gen for
+        // re-entrancy.
+        auto deviceGuard = GetDevice()->GetGuard();
+        if (GetDevice()->ConsumedError(GetDevice()->ValidateIsAlive())) {
+            event = AcquireRef(
+                new WorkDoneEvent(callbackInfo, this, wgpu::QueueWorkDoneStatus::Success));
+        } else if (GetDevice()->ConsumedError(ValidateOnSubmittedWorkDone())) {
+            event =
+                AcquireRef(new WorkDoneEvent(callbackInfo, this, wgpu::QueueWorkDoneStatus::Error));
+        } else {
+            event = AcquireRef(new WorkDoneEvent(callbackInfo, this, GetScheduledWorkDoneSerial()));
         }
-
-        // Note: if the callback is spontaneous, it'll get called in here.
-        event = AcquireRef(new WorkDoneEvent(callbackInfo, this, validationEarlyStatus));
-    } else {
-        event = AcquireRef(new WorkDoneEvent(callbackInfo, this, GetScheduledWorkDoneSerial()));
     }
 
-    FutureID futureID =
-        GetInstance()->GetEventManager()->TrackEvent(callbackInfo.mode, std::move(event));
+    // Note: if the callback is spontaneous, it may get called in here.
+    FutureID futureID = GetInstance()->GetEventManager()->TrackEvent(std::move(event));
 
     return {futureID};
 }
@@ -395,10 +312,10 @@ void QueueBase::APIWriteBuffer(BufferBase* buffer,
                                uint64_t bufferOffset,
                                const void* data,
                                size_t size) {
-    DAWN_UNUSED(
+    [[maybe_unused]] bool hadError =
         GetDevice()->ConsumedError(WriteBuffer(buffer, bufferOffset, data, size),
                                    "calling %s.WriteBuffer(%s, (%d bytes), data, (%d bytes))", this,
-                                   buffer, bufferOffset, size));
+                                   buffer, bufferOffset, size);
 }
 
 MaybeError QueueBase::WriteBuffer(BufferBase* buffer,
@@ -416,41 +333,26 @@ MaybeError QueueBase::WriteBufferImpl(BufferBase* buffer,
                                       uint64_t bufferOffset,
                                       const void* data,
                                       size_t size) {
-    if (size == 0) {
-        return {};
-    }
-
-    DeviceBase* device = GetDevice();
-
-    UploadHandle uploadHandle;
-    DAWN_TRY_ASSIGN(uploadHandle,
-                    device->GetDynamicUploader()->Allocate(size, GetPendingCommandSerial(),
-                                                           kCopyBufferToBufferOffsetAlignment));
-    DAWN_ASSERT(uploadHandle.mappedBuffer != nullptr);
-
-    memcpy(uploadHandle.mappedBuffer, data, size);
-
-    return device->CopyFromStagingToBuffer(uploadHandle.stagingBuffer, uploadHandle.startOffset,
-                                           buffer, bufferOffset, size);
+    return buffer->UploadData(bufferOffset, data, size);
 }
 
-void QueueBase::APIWriteTexture(const ImageCopyTexture* destination,
+void QueueBase::APIWriteTexture(const TexelCopyTextureInfo* destination,
                                 const void* data,
                                 size_t dataSize,
-                                const TextureDataLayout* dataLayout,
+                                const TexelCopyBufferLayout* dataLayout,
                                 const Extent3D* writeSize) {
-    DAWN_UNUSED(GetDevice()->ConsumedError(
+    [[maybe_unused]] bool hadError = GetDevice()->ConsumedError(
         WriteTextureInternal(destination, data, dataSize, *dataLayout, writeSize),
         "calling %s.WriteTexture(%s, (%u bytes), %s, %s)", this, destination, dataSize, dataLayout,
-        writeSize));
+        writeSize);
 }
 
-MaybeError QueueBase::WriteTextureInternal(const ImageCopyTexture* destinationOrig,
+MaybeError QueueBase::WriteTextureInternal(const TexelCopyTextureInfo* destinationOrig,
                                            const void* data,
                                            size_t dataSize,
-                                           const TextureDataLayout& dataLayout,
+                                           const TexelCopyBufferLayout& dataLayout,
                                            const Extent3D* writeSize) {
-    ImageCopyTexture destination = destinationOrig->WithTrivialFrontendDefaults();
+    TexelCopyTextureInfo destination = destinationOrig->WithTrivialFrontendDefaults();
 
     DAWN_TRY(ValidateWriteTexture(&destination, dataSize, dataLayout, writeSize));
 
@@ -460,14 +362,15 @@ MaybeError QueueBase::WriteTextureInternal(const ImageCopyTexture* destinationOr
 
     const TexelBlockInfo& blockInfo =
         destination.texture->GetFormat().GetAspectInfo(destination.aspect).block;
-    TextureDataLayout layout = dataLayout;
-    ApplyDefaultTextureDataLayoutOptions(&layout, blockInfo, *writeSize);
-    return WriteTextureImpl(destination, data, layout, *writeSize);
+    TexelCopyBufferLayout layout = dataLayout;
+    ApplyDefaultTexelCopyBufferLayoutOptions(&layout, blockInfo, *writeSize);
+    return WriteTextureImpl(destination, data, dataSize, layout, *writeSize);
 }
 
-MaybeError QueueBase::WriteTextureImpl(const ImageCopyTexture& destination,
+MaybeError QueueBase::WriteTextureImpl(const TexelCopyTextureInfo& destination,
                                        const void* data,
-                                       const TextureDataLayout& dataLayout,
+                                       size_t dataSize,
+                                       const TexelCopyBufferLayout& dataLayout,
                                        const Extent3D& writeSizePixel) {
     const Format& format = destination.texture->GetFormat();
     const TexelBlockInfo& blockInfo = format.GetAspectInfo(destination.aspect).block;
@@ -477,57 +380,73 @@ MaybeError QueueBase::WriteTextureImpl(const ImageCopyTexture& destination,
     // writeSizePixel->height are multiples of blockWidth and blockHeight respectively.
     DAWN_ASSERT(writeSizePixel.width % blockInfo.width == 0);
     DAWN_ASSERT(writeSizePixel.height % blockInfo.height == 0);
-    uint32_t alignedBytesPerRow = writeSizePixel.width / blockInfo.width * blockInfo.byteSize;
-    uint32_t alignedRowsPerImage = writeSizePixel.height / blockInfo.height;
+    uint32_t rowsPerImage = writeSizePixel.height / blockInfo.height;
+    uint32_t bytesPerRow = writeSizePixel.width / blockInfo.width * blockInfo.byteSize;
+    uint32_t alignedBytesPerRow = Align(bytesPerRow, GetDevice()->GetOptimalBytesPerRowAlignment());
 
-    uint32_t optimalBytesPerRowAlignment = GetDevice()->GetOptimalBytesPerRowAlignment();
-    uint32_t optimallyAlignedBytesPerRow = Align(alignedBytesPerRow, optimalBytesPerRowAlignment);
+    uint64_t packedDataSize;
+    DAWN_TRY_ASSIGN(packedDataSize, ComputeRequiredBytesInCopy(blockInfo, writeSizePixel,
+                                                               alignedBytesPerRow, rowsPerImage));
 
-    UploadHandle uploadHandle;
-    DAWN_TRY_ASSIGN(uploadHandle, UploadTextureDataAligningBytesPerRowAndOffset(
-                                      GetDevice(), data, alignedBytesPerRow,
-                                      optimallyAlignedBytesPerRow, alignedRowsPerImage, dataLayout,
-                                      format.HasDepthOrStencil(), blockInfo, writeSizePixel));
+    // We need the offset to be aligned to both the optimal offset for that device and
+    // blockByteSize, since both of them are powers of two, we only need to align to the max value.
+    DAWN_ASSERT(IsPowerOfTwo(GetDevice()->GetOptimalBufferToTextureCopyOffsetAlignment()));
+    DAWN_ASSERT(IsPowerOfTwo(blockInfo.byteSize));
+    uint64_t offsetAlignment = std::max(
+        uint64_t(blockInfo.byteSize), GetDevice()->GetOptimalBufferToTextureCopyOffsetAlignment());
 
-    TextureDataLayout passDataLayout = dataLayout;
-    passDataLayout.offset = uploadHandle.startOffset;
-    passDataLayout.bytesPerRow = optimallyAlignedBytesPerRow;
-    passDataLayout.rowsPerImage = alignedRowsPerImage;
+    // Buffer offset alignments must follow additional restrictions for depth stencil formats.
+    if (format.HasDepthOrStencil()) {
+        offsetAlignment =
+            std::max(offsetAlignment, GetDevice()->GetBufferCopyOffsetAlignmentForDepthStencil());
+    }
 
-    TextureCopy textureCopy;
-    textureCopy.texture = destination.texture;
-    textureCopy.mipLevel = destination.mipLevel;
-    textureCopy.origin = destination.origin;
-    textureCopy.aspect = ConvertAspect(format, destination.aspect);
+    return GetDevice()->GetDynamicUploader()->WithUploadReservation(
+        packedDataSize, offsetAlignment, [&](UploadReservation reservation) -> MaybeError {
+            const uint8_t* srcPointer = reinterpret_cast<const uint8_t*>(data) + dataLayout.offset;
+            uint8_t* dstPointer = reinterpret_cast<uint8_t*>(reservation.mappedPointer);
+            CopyTextureData(dstPointer, srcPointer, writeSizePixel.depthOrArrayLayers, rowsPerImage,
+                            dataLayout.rowsPerImage, bytesPerRow, alignedBytesPerRow,
+                            dataLayout.bytesPerRow);
 
-    DeviceBase* device = GetDevice();
+            TexelCopyBufferLayout passDataLayout = dataLayout;
+            passDataLayout.offset = reservation.offsetInBuffer;
+            passDataLayout.bytesPerRow = alignedBytesPerRow;
+            passDataLayout.rowsPerImage = rowsPerImage;
 
-    return device->CopyFromStagingToTexture(uploadHandle.stagingBuffer, passDataLayout, textureCopy,
-                                            writeSizePixel);
+            TextureCopy textureCopy;
+            textureCopy.texture = destination.texture;
+            textureCopy.mipLevel = destination.mipLevel;
+            textureCopy.origin = destination.origin;
+            textureCopy.aspect = ConvertAspect(format, destination.aspect);
+
+            return GetDevice()->CopyFromStagingToTexture(reservation.buffer.Get(), passDataLayout,
+                                                         textureCopy, writeSizePixel);
+        });
 }
 
-void QueueBase::APICopyTextureForBrowser(const ImageCopyTexture* source,
-                                         const ImageCopyTexture* destination,
+void QueueBase::APICopyTextureForBrowser(const TexelCopyTextureInfo* source,
+                                         const TexelCopyTextureInfo* destination,
                                          const Extent3D* copySize,
                                          const CopyTextureForBrowserOptions* options) {
-    DAWN_UNUSED(GetDevice()->ConsumedError(
-        CopyTextureForBrowserInternal(source, destination, copySize, options)));
+    [[maybe_unused]] bool hadError = GetDevice()->ConsumedError(
+        CopyTextureForBrowserInternal(source, destination, copySize, options));
 }
 
 void QueueBase::APICopyExternalTextureForBrowser(const ImageCopyExternalTexture* source,
-                                                 const ImageCopyTexture* destination,
+                                                 const TexelCopyTextureInfo* destination,
                                                  const Extent3D* copySize,
                                                  const CopyTextureForBrowserOptions* options) {
-    DAWN_UNUSED(GetDevice()->ConsumedError(
-        CopyExternalTextureForBrowserInternal(source, destination, copySize, options)));
+    [[maybe_unused]] bool hadError = GetDevice()->ConsumedError(
+        CopyExternalTextureForBrowserInternal(source, destination, copySize, options));
 }
 
-MaybeError QueueBase::CopyTextureForBrowserInternal(const ImageCopyTexture* sourceOrig,
-                                                    const ImageCopyTexture* destinationOrig,
+MaybeError QueueBase::CopyTextureForBrowserInternal(const TexelCopyTextureInfo* sourceOrig,
+                                                    const TexelCopyTextureInfo* destinationOrig,
                                                     const Extent3D* copySize,
                                                     const CopyTextureForBrowserOptions* options) {
-    ImageCopyTexture source = sourceOrig->WithTrivialFrontendDefaults();
-    ImageCopyTexture destination = destinationOrig->WithTrivialFrontendDefaults();
+    TexelCopyTextureInfo source = sourceOrig->WithTrivialFrontendDefaults();
+    TexelCopyTextureInfo destination = destinationOrig->WithTrivialFrontendDefaults();
 
     if (GetDevice()->IsValidationEnabled()) {
         DAWN_TRY_CONTEXT(
@@ -540,10 +459,10 @@ MaybeError QueueBase::CopyTextureForBrowserInternal(const ImageCopyTexture* sour
 
 MaybeError QueueBase::CopyExternalTextureForBrowserInternal(
     const ImageCopyExternalTexture* source,
-    const ImageCopyTexture* destinationOrig,
+    const TexelCopyTextureInfo* destinationOrig,
     const Extent3D* copySize,
     const CopyTextureForBrowserOptions* options) {
-    ImageCopyTexture destination = destinationOrig->WithTrivialFrontendDefaults();
+    TexelCopyTextureInfo destination = destinationOrig->WithTrivialFrontendDefaults();
 
     if (GetDevice()->IsValidationEnabled()) {
         DAWN_TRY_CONTEXT(ValidateCopyExternalTextureForBrowser(GetDevice(), source, &destination,
@@ -560,9 +479,15 @@ MaybeError QueueBase::ValidateSubmit(uint32_t commandCount,
     TRACE_EVENT0(GetDevice()->GetPlatform(), Validation, "Queue::ValidateSubmit");
     DAWN_TRY(GetDevice()->ValidateObject(this));
 
+    std::set<CommandBufferBase*> uniqueCommandBuffers;
+
     for (uint32_t i = 0; i < commandCount; ++i) {
         DAWN_TRY(GetDevice()->ValidateObject(commands[i]));
         DAWN_TRY(commands[i]->ValidateCanUseInSubmitNow());
+
+        auto insertResult = uniqueCommandBuffers.insert(commands[i]);
+        DAWN_INVALID_IF(!insertResult.second, "Submit contains duplicates of %s.", commands[i]);
+
         const CommandBufferResourceUsage& usages = commands[i]->GetResourceUsages();
 
         for (const BufferBase* buffer : usages.topLevelBuffers) {
@@ -607,25 +532,20 @@ MaybeError QueueBase::ValidateSubmit(uint32_t commandCount,
     return {};
 }
 
-MaybeError QueueBase::ValidateOnSubmittedWorkDone(wgpu::QueueWorkDoneStatus* status) const {
-    *status = wgpu::QueueWorkDoneStatus::DeviceLost;
-    DAWN_TRY(GetDevice()->ValidateIsAlive());
-
-    *status = wgpu::QueueWorkDoneStatus::Error;
+MaybeError QueueBase::ValidateOnSubmittedWorkDone() const {
     DAWN_TRY(GetDevice()->ValidateObject(this));
-
     return {};
 }
 
-MaybeError QueueBase::ValidateWriteTexture(const ImageCopyTexture* destination,
+MaybeError QueueBase::ValidateWriteTexture(const TexelCopyTextureInfo* destination,
                                            size_t dataSize,
-                                           const TextureDataLayout& dataLayout,
+                                           const TexelCopyBufferLayout& dataLayout,
                                            const Extent3D* writeSize) const {
     DAWN_TRY(GetDevice()->ValidateIsAlive());
     DAWN_TRY(GetDevice()->ValidateObject(this));
     DAWN_TRY(GetDevice()->ValidateObject(destination->texture));
 
-    DAWN_TRY(ValidateImageCopyTexture(GetDevice(), *destination, *writeSize));
+    DAWN_TRY(ValidateTexelCopyTextureInfo(GetDevice(), *destination, *writeSize));
 
     DAWN_INVALID_IF(dataLayout.offset > dataSize,
                     "Data offset (%u) is greater than the data size (%u).", dataLayout.offset,
@@ -667,7 +587,9 @@ MaybeError QueueBase::SubmitInternal(uint32_t commandCount, CommandBufferBase* c
     }
     DAWN_ASSERT(!IsError());
 
+    mInSubmit = true;
     DAWN_TRY(SubmitImpl(commandCount, commands));
+    mInSubmit = false;
 
     // Call Tick() to flush pending work.
     DAWN_TRY(device->Tick());

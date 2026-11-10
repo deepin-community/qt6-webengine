@@ -6,8 +6,10 @@
 $assert PIXEL_TILE >= 1
 $ABC = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/ibilinear.h>
+#include "src/xnnpack/ibilinear.h"
 
 
 void xnn_f32_ibilinear_chw_ukernel__scalar_p${PIXEL_TILE}(

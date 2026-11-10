@@ -5,12 +5,9 @@
 # LICENSE file in the root directory of this source tree.
 
 import argparse
-import codecs
 import math
 import os
-import re
 import sys
-import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import xngen
@@ -18,272 +15,265 @@ import xnncommon
 
 
 parser = argparse.ArgumentParser(
-  description='Vector unary operation microkernel test generator')
-parser.add_argument("-s", "--spec", metavar="FILE", required=True,
-                    help="Specification (YAML) file")
-parser.add_argument("-o", "--output", metavar="FILE", required=True,
-                    help='Output (C++ source) file')
+    description="Vector unary operation microkernel test generator"
+)
+parser.add_argument(
+    "-k",
+    "--ukernel",
+    required=True,
+    help="Microkernel to generate",
+)
+parser.add_argument(
+    "-o",
+    "--output",
+    metavar="FILE",
+    required=True,
+    help="Output (C++ source) file",
+)
 parser.set_defaults(defines=list())
 
+OP_TYPES = {
+    "vabs": "Abs",
+    "vapproxgelu": "ApproxGELU",
+    "vclamp": "Clamp",
+    "vcos": "Cosine",
+    "velu": "ELU",
+    "vexp": "Exp",
+    "vgelu": "GELU",
+    "vhswish": "HardSwish",
+    "vlog": "Log",
+    "vlrelu": "LeakyReLU",
+    "vneg": "Negate",
+    "vrndd": "RoundDown",
+    "vrndne": "RoundToNearestEven",
+    "vrndu": "RoundUp",
+    "vrndz": "RoundTowardsZero",
+    "vrsqrt": "ReciprocalSquareRoot",
+    "vsigmoid": "Sigmoid",
+    "vsin": "Sine",
+    "vsqr": "Square",
+    "vsqrt": "SquareRoot",
+    "vtanh": "TanH",
+}
 
-def split_ukernel_name(name):
-  match = re.fullmatch(r"(?:xnn_|xnn_generate_)(s8|u8|f16|f32|u32|u64)(_(s8|u8|f16|f32|u32|u64))*_v(abs|clamp|elu|hswish|lrelu|neg|relu|rndd|rndne|rndu|rndz|sigmoid|sqr|sqrt|sqrtshift|tanh)_(fact_)?ukernel__(.+)_u(\d+)(v)?", name)
-  if match is None:
-    raise ValueError("Unexpected microkernel name: " + name)
-  op_type = {
-    "abs": "Abs",
-    "clamp": "Clamp",
-    "elu": "ELU",
-    "hswish": "HardSwish",
-    "lrelu": "LeakyReLU",
-    "neg": "Negate",
-    "relu": "ReLU",
-    "rndd": "RoundDown",
-    "rndne": "RoundToNearestEven",
-    "rndz": "RoundTowardsZero",
-    "rndu": "RoundUp",
-    "sigmoid": "Sigmoid",
-    "sqr": "Square",
-    "sqrt": "SquareRoot",
-    "sqrtshift": "SquareRootShift",
-    "tanh": "TanH",
-  }[match.group(4)]
-  batch_tile = int(match.group(7))
-  vector_tile = bool(match.group(8))
+PARAMS_TYPES = ["Clamp", "ELU", "LeakyReLU"]
 
-  arch, isa, assembly = xnncommon.parse_target_name(target_name=match.group(6))
-  return op_type, batch_tile, vector_tile, arch, isa
-
+SPECIAL_VALUES_F32 = {
+    "SquareRoot": (
+        4,  # Number of elements.
+        "{0.0f, -0.0f, 1.0f, -1.0f}",  # Inputs.
+        "{0.0f, -0.0f, 1.0f, NAN}",  # Expected outputs.
+        1,  # Error margin in ULP.
+    ),
+    "ReciprocalSquareRoot": (
+        3,  # Number of elements.
+        "{INFINITY, -INFINITY, NAN}",  # Inputs.
+        "{0, NAN, NAN}",  # Expected outputs.
+        1,  # Error margin in ULP.
+    ),
+    "TanH": (
+        7,  # Number of elements.
+        "{0.0f, -0.0f, 10.0f, -10.0f, INFINITY, -INFINITY, NAN}",
+        "{0.0f, -0.0f, 1.0f, -1.0f, 1.0f, -1.0f, NAN}",
+        # TODO: b/338934971 - This should be `1` ulp, but this fails on
+        # `cmake-linux-riscv64-rvv` (but not on `cmake-linux-riscv64`).
+        3,
+    ),
+    "Log": (
+        4,  # Number of elements.
+        "{1.0f, -1.0f, 0.0f, -0.0f}",  # Inputs.
+        "{0.0f, NAN, -INFINITY, -INFINITY}",  # Expected outputs.
+        1,  # Error margin in ULP.
+    ),
+    "GELU": (
+        3,  # Number of elements.
+        "{-6.0f, 6.0f, 0.0f}",  # Inputs.
+        "{0.0f, 6.0f, 0.0f}",  # Expected outputs.
+        1,  # Error margin in ULP.
+    ),
+    "ApproxGELU": (
+        3,  # Number of elements.
+        "{-6.0f, 6.0f, 0.0f}",  # Inputs.
+        "{0.0f, 6.0f, 0.0f}",  # Expected outputs.
+        1,  # Error margin in ULP.
+    ),
+    "Exp": (
+        3,  # Number of elements.
+        "{0.0f, -1e3f, 1e3f}",  # Inputs.
+        "{1.0f, 0.0f, INFINITY}",  # Expected outputs.
+        1,  # Error margin in ULP.
+    ),
+    "Sine": (
+        3,  # Number of elements
+        f"{{0.0f, {-math.pi/2:.8e},  {math.pi/2:.8e}}}",  # Inputs.
+        "{0.0f, -1.0f, 1.0f}",  # Expected outputs.
+        1,  # Error margin in ULP.
+    ),
+    "Cosine": (
+        3,  # Number of elements
+        f"{{0.0f, {math.pi/2:.8e},  {-math.pi/2:.8e}}}",  # Inputs.
+        "{1.0f, 0.0f, 0.0f}",  # Expected outputs.
+        1,  # Error margin in ULP.
+    ),
+}
 
 TEST_TEMPLATE = """\
-TEST(${TEST_NAME}, batch_eq_${BATCH_TILE}${BATCH_SUFFIX}) {
-  $if ISA_CHECK:
-    ${ISA_CHECK};
-  VUnaryMicrokernelTester()
-    .batch_size(${BATCH_TILE}${BATCH_SCALE})
-    .Test(${", ".join(TEST_ARGS)});
-}
-
-$if BATCH_TILE > 1:
-  TEST(${TEST_NAME}, batch_div_${BATCH_TILE}${BATCH_SUFFIX}) {
-    $if ISA_CHECK:
-      ${ISA_CHECK};
-    for (size_t batch_size = ${BATCH_TILE*2}${BATCH_SCALE}; batch_size < ${BATCH_TILE*10}${BATCH_SCALE}; batch_size += ${BATCH_TILE}${BATCH_SCALE}) {
-      VUnaryMicrokernelTester()
-        .batch_size(batch_size)
-        .Test(${", ".join(TEST_ARGS)});
-    }
-  }
-
-  TEST(${TEST_NAME}, batch_lt_${BATCH_TILE}${BATCH_SUFFIX}) {
-    $if ISA_CHECK:
-      ${ISA_CHECK};
-    for (size_t batch_size = 1; batch_size < ${BATCH_TILE}${BATCH_SCALE}; batch_size++) {
-      VUnaryMicrokernelTester()
-        .batch_size(batch_size)
-        .Test(${", ".join(TEST_ARGS)});
-    }
-  }
-
-TEST(${TEST_NAME}, batch_gt_${BATCH_TILE}${BATCH_SUFFIX}) {
-  $if ISA_CHECK:
-    ${ISA_CHECK};
-  for (size_t batch_size = ${BATCH_TILE}${BATCH_SCALE} + 1; batch_size < ${10 if BATCH_TILE == 1 else BATCH_TILE*2}${BATCH_SCALE}; batch_size++) {
-    VUnaryMicrokernelTester()
-      .batch_size(batch_size)
-      .Test(${", ".join(TEST_ARGS)});
-  }
-}
-
-$if OP_TYPE != "SquareRootShift":
-  TEST(${TEST_NAME}, inplace) {
-    $if ISA_CHECK:
-      ${ISA_CHECK};
-    for (size_t batch_size = 1; batch_size <= ${BATCH_TILE*5}${BATCH_SCALE}; batch_size += ${max(1, BATCH_TILE-1)}) {
-      VUnaryMicrokernelTester()
-        .batch_size(batch_size)
-        .inplace(true)
-        .Test(${", ".join(TEST_ARGS)});
-    }
-  }
-
+#define XNN_UKERNEL(arch_flags, ukernel, batch_tile, vector_tile, datatype, params_type, init_params)
+  TEST(ukernel, batch_eq) { TestBatchEq<TestInfo, datatype, datatype>(arch_flags, batch_tile, ukernel, init_params); }
+  TEST(ukernel, batch_div) { TestBatchDiv<TestInfo, datatype, datatype>(arch_flags, batch_tile, ukernel, init_params); }
+  TEST(ukernel, batch_lt) { TestBatchLT<TestInfo, datatype, datatype>(arch_flags, batch_tile, ukernel, init_params); }
+  TEST(ukernel, batch_gt) { TestBatchGT<TestInfo, datatype, datatype>(arch_flags, batch_tile, ukernel, init_params); }
+  TEST(ukernel, inplace) { TestInPlace<TestInfo, datatype, datatype>(arch_flags, batch_tile, ukernel, init_params); }
 $if OP_TYPE == "Clamp":
-  TEST(${TEST_NAME}, qmin) {
-    $if ISA_CHECK:
-      ${ISA_CHECK};
-    for (uint8_t qmin = 1; qmin < 255; qmin++) {
-      for (size_t batch_size = 1; batch_size <= ${BATCH_TILE*5}${BATCH_SCALE}; batch_size += ${max(1, BATCH_TILE-1 if BATCH_SCALE == "" else (BATCH_TILE * 10 - 1))}) {
-        VUnaryMicrokernelTester()
+  TEST(ukernel, clamp_min) {
+    TEST_REQUIRES_ARCH_FLAGS(arch_flags);
+    const size_t batch_scale = get_batch_scale<datatype>();
+    const size_t batch_size = batch_tile * batch_scale;
+    for (int16_t min : {-128, -20, -1, 0, 1, 30, 127, 255}) {
+      xnn_unary_params params;
+      params.clamp.min = min;
+      params.clamp.max = 255;
+      VUnaryMicrokernelTester()
           .batch_size(batch_size)
-          .qmin(qmin)
-          .Test(${", ".join(TEST_ARGS)});
-      }
+          .Test<TestInfo, datatype, datatype>(ukernel, init_params, params);
     }
   }
 
-  TEST(${TEST_NAME}, qmax) {
-    $if ISA_CHECK:
-      ${ISA_CHECK};
-    for (uint8_t qmax = 1; qmax < 255; qmax++) {
-      for (size_t batch_size = 1; batch_size <= ${BATCH_TILE*5}${BATCH_SCALE}; batch_size += ${max(1, BATCH_TILE-1 if BATCH_SCALE == "" else (BATCH_TILE * 10 - 1))}) {
-        VUnaryMicrokernelTester()
+  TEST(ukernel, clamp_max) {
+    TEST_REQUIRES_ARCH_FLAGS(arch_flags);
+    const size_t batch_scale = get_batch_scale<datatype>();
+    const size_t batch_size = batch_tile * batch_scale;
+    for (int16_t max : {-127, -11, 0, 40, 127, 255}) {
+      xnn_unary_params params;
+      params.clamp.min = -128;
+      params.clamp.max = max;
+      VUnaryMicrokernelTester()
           .batch_size(batch_size)
-          .qmax(qmax)
-          .Test(${", ".join(TEST_ARGS)});
-      }
+          .Test<TestInfo, datatype, datatype>(ukernel, init_params, params);
     }
   }
-
 $if OP_TYPE == "ELU":
-  TEST(${TEST_NAME}, prescale) {
-    $if ISA_CHECK:
-      ${ISA_CHECK};
-    for (float prescale : std::vector<float>({0.1f, 10.0f})) {
-      for (size_t batch_size = 1; batch_size <= ${BATCH_TILE*5}${BATCH_SCALE}; batch_size += ${max(1, BATCH_TILE-1)}) {
-        VUnaryMicrokernelTester()
-          .batch_size(batch_size)
-          .prescale(prescale)
-          .Test(${", ".join(TEST_ARGS)});
-      }
+  TEST(ukernel, alpha) {
+    TEST_REQUIRES_ARCH_FLAGS(arch_flags);
+    const size_t batch_scale = get_batch_scale<datatype>();
+    const size_t batch_size = batch_tile * batch_scale;
+    for (float alpha : std::array<float, 2>({0.3f, 3.0f})) {
+      xnn_unary_params params;
+      params.elu.alpha = alpha;
+      ${TESTER}()
+        .batch_size(batch_size)
+        .Test<TestInfo, datatype, datatype>(ukernel, init_params, params);
     }
   }
-
-  TEST(${TEST_NAME}, alpha) {
-    $if ISA_CHECK:
-      ${ISA_CHECK};
-    for (float alpha : std::vector<float>({0.3f, 3.0f})) {
-      for (size_t batch_size = 1; batch_size <= ${BATCH_TILE*5}${BATCH_SCALE}; batch_size += ${max(1, BATCH_TILE-1)}) {
-        VUnaryMicrokernelTester()
-          .batch_size(batch_size)
-          .alpha(alpha)
-          .Test(${", ".join(TEST_ARGS)});
-      }
-    }
-  }
-
-  TEST(${TEST_NAME}, beta) {
-    $if ISA_CHECK:
-      ${ISA_CHECK};
-    for (float beta : std::vector<float>({0.3f, 3.0f})) {
-      for (size_t batch_size = 1; batch_size <= ${BATCH_TILE*5}${BATCH_SCALE}; batch_size += ${max(1, BATCH_TILE-1)}) {
-        VUnaryMicrokernelTester()
-          .batch_size(batch_size)
-          .beta(beta)
-          .Test(${", ".join(TEST_ARGS)});
-      }
-    }
-  }
-
 $if OP_TYPE == "LeakyReLU":
-  TEST(${TEST_NAME}, slope) {
-    $if ISA_CHECK:
-      ${ISA_CHECK};
-    for (float slope : std::vector<float>({-0.7f, 0.3f, 1.3f})) {
-      for (size_t batch_size = 1; batch_size <= ${BATCH_TILE*5}${BATCH_SCALE}; batch_size += ${max(1, BATCH_TILE-1)}) {
-        VUnaryMicrokernelTester()
-          .batch_size(batch_size)
-          .slope(slope)
-          .Test(${", ".join(TEST_ARGS)});
-      }
+  TEST(ukernel, negative_slope) {
+    TEST_REQUIRES_ARCH_FLAGS(arch_flags);
+    const size_t batch_scale = get_batch_scale<datatype>();
+    const size_t batch_size = batch_tile * batch_scale;
+    for (float negative_slope : {0.01f, 0.3f, 1.3f}) {
+      xnn_unary_params params;
+      params.leaky_relu.negative_slope = negative_slope;
+      ${TESTER}()
+        .batch_size(batch_size)
+        .Test<TestInfo, datatype, datatype>(ukernel, init_params, params);
     }
   }
-
-$if OP_TYPE == "SquareRootShift":
-  TEST(${TEST_NAME}, shift) {
-    $if ISA_CHECK:
-      ${ISA_CHECK};
-    for (uint32_t shift = 0; shift < 32; shift++) {
-      for (size_t batch_size = 1; batch_size <= ${BATCH_TILE*5}${BATCH_SCALE}; batch_size += ${max(1, BATCH_TILE-1)}) {
-        VUnaryMicrokernelTester()
-          .batch_size(batch_size)
-          .shift(shift)
-          .Test(${", ".join(TEST_ARGS)});
-      }
-    }
+$if "q" in DATATYPE:
+  TEST(ukernel, input_scale) { TestInputScale<TestInfo, datatype, datatype>(arch_flags, batch_tile, ukernel, init_params); }
+  TEST(ukernel, output_scale) { TestOutputScale<TestInfo, datatype, datatype>(arch_flags, batch_tile, ukernel, init_params); }
+  TEST(ukernel, input_zero_point) { TestInputZeroPoint<TestInfo, datatype, datatype>(arch_flags, batch_tile, ukernel, init_params); }
+  TEST(ukernel, output_zero_point) { TestOutputZeroPoint<TestInfo, datatype, datatype>(arch_flags, batch_tile, ukernel, init_params); }
+$if DATATYPE == "f32" and OP_TYPE in SPECIAL_VALUES_F32:
+  TEST(ukernel, special_values) {
+    TEST_REQUIRES_ARCH_FLAGS(arch_flags);
+    VUnaryMicrokernelTester().Test<TestInfo, datatype, datatype>(ukernel, init_params,
+      /*inputs=*/${SPECIAL_VALUES_F32[OP_TYPE][1]},
+      /*outputs=*/${SPECIAL_VALUES_F32[OP_TYPE][2]},
+      /*tolerance_ulp=*/${SPECIAL_VALUES_F32[OP_TYPE][3]});
   }
 """
-
-
-def generate_test_cases(ukernel, op_type, init_fn, batch_tile, vector_tile, isa):
-  """Generates all tests cases for a Vector Unary Operation micro-kernel.
-
-  Args:
-    ukernel: C name of the micro-kernel function.
-    op_type: Operation type.
-    init_fn: C name of the function to initialize microkernel parameters.
-    batch_tile: Number of batch elements processed per one iteration of the
-                inner loop of the micro-kernel.
-    vector_tile: Indicates if batch tile is specified in vectors rather than
-                 elements.
-    isa: instruction set required to run the micro-kernel. Generated unit test
-         will skip execution if the host processor doesn't support this ISA.
-
-  Returns:
-    Code for the test case.
-  """
-  _, test_name = ukernel.split("_", 1)
-  _, datatype, _ = ukernel.split("_", 2)
-  test_args = [ukernel]
-  if op_type.startswith("Round"):
-    test_args.append("VUnaryMicrokernelTester::OpType::" + op_type)
-  if init_fn is not None:
-    test_args.append(init_fn)
-  batch_scale = ""
-  if vector_tile:
-    ctype = {"f16": "uint16_t", "f32": "float"}[datatype]
-    batch_scale = {"rvv": " * xnn_init_hardware_config()->vlenb / sizeof(%s)" % ctype}[isa]
-  return xngen.preprocess(TEST_TEMPLATE, {
-      "TEST_NAME": test_name.upper().replace("UKERNEL_", ""),
-      "TEST_ARGS": test_args,
-      "DATATYPE": datatype,
-      "BATCH_TILE": batch_tile,
-      "BATCH_SCALE": batch_scale,
-      "BATCH_SUFFIX": "v" if vector_tile else "",
-      "OP_TYPE": op_type,
-      "ISA_CHECK": xnncommon.generate_isa_check_macro(isa),
-    })
 
 
 def main(args):
   options = parser.parse_args(args)
 
-  with codecs.open(options.spec, "r", encoding="utf-8") as spec_file:
-    spec_yaml = yaml.safe_load(spec_file)
-    if not isinstance(spec_yaml, list):
-      raise ValueError("expected a list of micro-kernels in the spec")
+  parts = options.ukernel.split("-")
+  datatype = parts[-2]
+  op = parts[-1]
+  op_type = OP_TYPES[op]
 
-    tests = """\
+  tester = "VUnaryMicrokernelTester"
+  tester_header = "vunary-microkernel-tester.h"
+  op_header = "vunary.h"
+  tests = """\
+// clang-format off
 // Copyright 2019 Google LLC
 //
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 //
 // Auto-generated file. Do not edit!
-//   Specification: {specification}
+//   Microkernel: {microkernel}
 //   Generator: {generator}
 
 
-#include <vector>
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <cstddef>
+#include <limits>
 
 #include <gtest/gtest.h>
+#include "include/xnnpack.h"
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/isa-checks.h"
+#include "src/xnnpack/microparams-init.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/{op_header}"
+#include "test/next_prime.h"
+#include "test/unary-ops.h"
+#include "test/{tester_header}"
 
-#include <xnnpack/common.h>
-#include <xnnpack/isa-checks.h>
-#include <xnnpack/vunary.h>
+""".format(
+      microkernel=options.ukernel,
+      generator=sys.argv[0],
+      op_header=op_header,
+      tester_header=tester_header,
+  )
 
-#include "vunary-microkernel-tester.h"
-""".format(specification=options.spec, generator=sys.argv[0])
+  test_args = ["ukernel", "init_params"]
 
-    for ukernel_spec in spec_yaml:
-      name = ukernel_spec["name"]
-      init_fn = ukernel_spec.get("init")
-      op_type, batch_tile, vector_tile, arch, isa = split_ukernel_name(name)
+  tests += """\
+using TestInfo = {op_type};
 
-      test_case = generate_test_cases(
-        name, op_type, init_fn, batch_tile, vector_tile, isa)
-      tests += "\n\n" + xnncommon.postprocess_test_case(test_case, arch, isa)
+""".format(op_type=op_type)
 
-    xnncommon.overwrite_if_changed(options.output, tests)
+  tests += "#define XNN_QUANTIZED(T) xnnpack::quantized<T>\n"
+  tests += xnncommon.make_multiline_macro(
+      xngen.preprocess(
+          TEST_TEMPLATE,
+          {
+              "TESTER": tester,
+              "TEST_ARGS": test_args,
+              "DATATYPE": datatype,
+              "OP_TYPE": op_type,
+              "OP_NAME": op,
+              "SPECIAL_VALUES_F32": SPECIAL_VALUES_F32,
+          },
+      )
+  )
+
+  folder = options.ukernel
+  if "rnd" in folder:
+    folder = folder[0:8]
+
+  tests += (
+      f'#include "src/{folder}/{options.ukernel}.inc"\n'
+  )
+  tests += "#undef XNN_UKERNEL\n"
+  tests += "#undef XNN_QUANTIZED\n"
+
+  xnncommon.overwrite_if_changed(options.output, tests)
 
 
 if __name__ == "__main__":

@@ -27,7 +27,6 @@ std::unique_ptr<SyntheticPointerDriver> SyntheticPointerDriver::Create(
       return nullptr;
   }
   NOTREACHED();
-  return nullptr;
 }
 
 // static

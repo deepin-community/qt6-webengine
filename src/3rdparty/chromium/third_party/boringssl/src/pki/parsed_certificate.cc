@@ -1,10 +1,22 @@
 // Copyright 2016 The Chromium Authors
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include "parsed_certificate.h"
 
+#include <openssl/bytestring.h>
 #include <openssl/pool.h>
+
 #include "cert_errors.h"
 #include "certificate_policies.h"
 #include "extended_key_usage.h"
@@ -13,7 +25,7 @@
 #include "signature_algorithm.h"
 #include "verify_name_match.h"
 
-namespace bssl {
+BSSL_NAMESPACE_BEGIN
 
 namespace {
 
@@ -49,14 +61,14 @@ DEFINE_CERT_ERROR_ID(kFailedParsingAuthorityKeyIdentifier,
 DEFINE_CERT_ERROR_ID(kFailedParsingSubjectKeyIdentifier,
                      "Failed parsing subject key identifier");
 
-[[nodiscard]] bool GetSequenceValue(const der::Input &tlv, der::Input *value) {
+[[nodiscard]] bool GetSequenceValue(der::Input tlv, der::Input *value) {
   der::Parser parser(tlv);
-  return parser.ReadTag(der::kSequence, value) && !parser.HasMore();
+  return parser.ReadTag(CBS_ASN1_SEQUENCE, value) && !parser.HasMore();
 }
 
 }  // namespace
 
-bool ParsedCertificate::GetExtension(const der::Input &extension_oid,
+bool ParsedCertificate::GetExtension(der::Input extension_oid,
                                      ParsedExtension *parsed_extension) const {
   if (!tbs_.extensions_tlv) {
     return false;
@@ -183,7 +195,7 @@ std::shared_ptr<const ParsedCertificate> ParsedCertificate::Create(
       // extension (e.g., a key bound only to an email address or URI), then the
       // subject name MUST be an empty sequence and the subjectAltName extension
       // MUST be critical.
-      if (subject_value.Length() == 0 &&
+      if (subject_value.empty() &&
           !result->subject_alt_names_extension_.critical) {
         errors->AddError(kSubjectAltNameNotCritical);
         return nullptr;
@@ -293,4 +305,4 @@ bool ParsedCertificate::CreateAndAddToVector(
   return true;
 }
 
-}  // namespace bssl
+BSSL_NAMESPACE_END

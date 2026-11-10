@@ -39,8 +39,7 @@ namespace {
 ResultOrError<id<MTLCounterSampleBuffer>> CreateCounterSampleBuffer(Device* device,
                                                                     NSString* label,
                                                                     MTLCommonCounterSet counterSet,
-                                                                    uint32_t count)
-    API_AVAILABLE(macos(10.15), ios(14.0)) {
+                                                                    QueryIndex count) {
     NSRef<MTLCounterSampleBufferDescriptor> descriptorRef =
         AcquireNSRef([MTLCounterSampleBufferDescriptor new]);
     MTLCounterSampleBufferDescriptor* descriptor = descriptorRef.Get();
@@ -58,7 +57,7 @@ ResultOrError<id<MTLCounterSampleBuffer>> CreateCounterSampleBuffer(Device* devi
     }
     DAWN_ASSERT(descriptor.counterSet != nullptr);
 
-    descriptor.sampleCount = static_cast<NSUInteger>(std::max(count, uint32_t(1u)));
+    descriptor.sampleCount = NSUInteger{std::max(count, QueryIndex(1))};
     descriptor.storageMode = MTLStorageModePrivate;
     if (device->IsToggleEnabled(Toggle::MetalUseSharedModeForCounterSampleBuffer)) {
         descriptor.storageMode = MTLStorageModeShared;
@@ -92,8 +91,7 @@ MaybeError QuerySet::Initialize() {
     switch (GetQueryType()) {
         case wgpu::QueryType::Occlusion: {
             // Create buffer for writing 64-bit results.
-            NSUInteger bufferSize =
-                static_cast<NSUInteger>(std::max(GetQueryCount() * sizeof(uint64_t), size_t(4u)));
+            NSUInteger bufferSize = std::max(ToQueryStorageSize(GetQueryCount()), 4u);
             mVisibilityBuffer = AcquireNSPRef([device->GetMTLDevice()
                 newBufferWithLength:bufferSize
                             options:MTLResourceStorageModePrivate]);
@@ -105,18 +103,14 @@ MaybeError QuerySet::Initialize() {
             }
             break;
         }
-        case wgpu::QueryType::Timestamp:
-            if (@available(macOS 10.15, iOS 14.0, *)) {
-                NSRef<NSString> label = MakeDebugName(
-                    GetDevice(), "Dawn_QuerySet_TimestampCounterSampleBuffer", GetLabel());
-                DAWN_TRY_ASSIGN(
-                    mCounterSampleBuffer,
-                    CreateCounterSampleBuffer(device, label.Get(), MTLCommonCounterSetTimestamp,
-                                              GetQueryCount()));
-            } else {
-                DAWN_UNREACHABLE();
-            }
-            break;
+        case wgpu::QueryType::Timestamp: {
+            NSRef<NSString> label = MakeDebugName(
+                GetDevice(), "Dawn_QuerySet_TimestampCounterSampleBuffer", GetLabel());
+            DAWN_TRY_ASSIGN(
+                mCounterSampleBuffer,
+                CreateCounterSampleBuffer(device, label.Get(), MTLCommonCounterSetTimestamp,
+                                          GetQueryCount()));
+        } break;
         default:
             DAWN_UNREACHABLE();
             break;
@@ -129,8 +123,7 @@ id<MTLBuffer> QuerySet::GetVisibilityBuffer() const {
     return mVisibilityBuffer.Get();
 }
 
-id<MTLCounterSampleBuffer> QuerySet::GetCounterSampleBuffer() const
-    API_AVAILABLE(macos(10.15), ios(14.0)) {
+id<MTLCounterSampleBuffer> QuerySet::GetCounterSampleBuffer() const {
     return mCounterSampleBuffer;
 }
 
@@ -148,12 +141,8 @@ void QuerySet::DestroyImpl() {
 
     mVisibilityBuffer = nullptr;
 
-    // mCounterSampleBuffer isn't an NSRef because API_AVAILABLE doesn't work will with
-    // templates.
-    if (@available(macOS 10.15, iOS 14.0, *)) {
-        [mCounterSampleBuffer release];
-        mCounterSampleBuffer = nullptr;
-    }
+    [mCounterSampleBuffer release];
+    mCounterSampleBuffer = nullptr;
 }
 
 }  // namespace dawn::native::metal

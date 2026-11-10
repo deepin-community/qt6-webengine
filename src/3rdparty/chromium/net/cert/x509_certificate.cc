@@ -18,11 +18,15 @@
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/pickle.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
+#include "crypto/evp.h"
+#include "crypto/hash.h"
 #include "crypto/openssl_util.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
-#include "net/base/tracing.h"
 #include "net/base/url_util.h"
 #include "net/cert/asn1_util.h"
 #include "net/cert/time_conversions.h"
@@ -47,10 +51,9 @@ namespace {
 
 // Indicates the order to use when trying to decode binary data, which is
 // based on (speculation) as to what will be most common -> least common
-const X509Certificate::Format kFormatDecodePriority[] = {
-  X509Certificate::FORMAT_SINGLE_CERTIFICATE,
-  X509Certificate::FORMAT_PKCS7
-};
+constexpr auto kFormatDecodePriority = std::to_array<X509Certificate::Format>(
+    {X509Certificate::FORMAT_SINGLE_CERTIFICATE,
+     X509Certificate::FORMAT_PKCS7});
 
 // The PEM block header used for DER certificates
 const char kCertificateHeader[] = "CERTIFICATE";
@@ -79,7 +82,7 @@ void SplitOnChar(std::string_view src,
 [[nodiscard]] bool ParseSequenceValue(const bssl::der::Input& tlv,
                                       bssl::der::Input* value) {
   bssl::der::Parser parser(tlv);
-  return parser.ReadTag(bssl::der::kSequence, value) && !parser.HasMore();
+  return parser.ReadTag(CBS_ASN1_SEQUENCE, value) && !parser.HasMore();
 }
 
 // Normalize |cert|'s Issuer and store it in |out_normalized_issuer|, returning
@@ -90,7 +93,7 @@ bool GetNormalizedCertIssuer(CRYPTO_BUFFER* cert,
   bssl::der::Input signature_algorithm_tlv;
   bssl::der::BitString signature_value;
   if (!bssl::ParseCertificate(
-          bssl::der::Input(CRYPTO_BUFFER_data(cert), CRYPTO_BUFFER_len(cert)),
+          bssl::der::Input(x509_util::CryptoBufferAsSpan(cert)),
           &tbs_certificate_tlv, &signature_algorithm_tlv, &signature_value,
           nullptr)) {
     return false;
@@ -224,8 +227,6 @@ CertificateList X509Certificate::CreateCertificateListFromBytes(
   // Check to see if it is in a PEM-encoded form. This check is performed
   // first, as both OS X and NSS will both try to convert if they detect
   // PEM encoding, except they don't do it consistently between the two.
-  std::string_view data_string(reinterpret_cast<const char*>(data.data()),
-                               data.size());
   std::vector<std::string> pem_headers;
 
   // To maintain compatibility with NSS/Firefox, CERTIFICATE is a universally
@@ -234,7 +235,7 @@ CertificateList X509Certificate::CreateCertificateListFromBytes(
   if (format & FORMAT_PKCS7)
     pem_headers.push_back(kPKCS7Header);
 
-  bssl::PEMTokenizer pem_tokenizer(data_string, pem_headers);
+  bssl::PEMTokenizer pem_tokenizer(base::as_string_view(data), pem_headers);
   while (pem_tokenizer.GetNext()) {
     std::string decoded(pem_tokenizer.data());
 
@@ -314,7 +315,6 @@ void X509Certificate::Persist(base::Pickle* pickle) const {
   // This would be an absolutely insane number of intermediates.
   if (intermediate_ca_certs_.size() > static_cast<size_t>(INT_MAX) - 1) {
     NOTREACHED();
-    return;
   }
   pickle->WriteInt(static_cast<int>(intermediate_ca_certs_.size() + 1));
   pickle->WriteString(x509_util::CryptoBufferAsStringPiece(cert_buffer_.get()));
@@ -335,11 +335,9 @@ bool X509Certificate::GetSubjectAltName(
   bssl::der::Input tbs_certificate_tlv;
   bssl::der::Input signature_algorithm_tlv;
   bssl::der::BitString signature_value;
-  if (!bssl::ParseCertificate(
-          bssl::der::Input(CRYPTO_BUFFER_data(cert_buffer_.get()),
-                           CRYPTO_BUFFER_len(cert_buffer_.get())),
-          &tbs_certificate_tlv, &signature_algorithm_tlv, &signature_value,
-          nullptr)) {
+  if (!bssl::ParseCertificate(bssl::der::Input(cert_span()),
+                              &tbs_certificate_tlv, &signature_algorithm_tlv,
+                              &signature_value, nullptr)) {
     return false;
   }
 
@@ -435,7 +433,7 @@ bool X509Certificate::IsIssuedByEncoded(
 
 // static
 bool X509Certificate::VerifyHostname(
-    const std::string& hostname,
+    std::string_view hostname,
     const std::vector<std::string>& cert_san_dns_names,
     const std::vector<std::string>& cert_san_ip_addrs) {
   DCHECK(!hostname.empty());
@@ -452,11 +450,9 @@ bool X509Certificate::VerifyHostname(
   //                         access, i.e. the thing displayed in the URL bar.
   // Presented identifier(s) == name(s) the server knows itself as, in its cert.
 
-  // CanonicalizeHost requires surrounding brackets to parse an IPv6 address.
-  const std::string host_or_ip = hostname.find(':') != std::string::npos ?
-      "[" + hostname + "]" : hostname;
   url::CanonHostInfo host_info;
-  std::string reference_name = CanonicalizeHost(host_or_ip, &host_info);
+  std::string reference_name =
+      CanonicalizeHostSupportsBareIPV6(hostname, &host_info);
 
   // If the host cannot be canonicalized, fail fast.
   if (reference_name.empty())
@@ -566,7 +562,7 @@ bool X509Certificate::VerifyHostname(
   return false;
 }
 
-bool X509Certificate::VerifyNameMatch(const std::string& hostname) const {
+bool X509Certificate::VerifyNameMatch(std::string_view hostname) const {
   std::vector<std::string> dns_names, ip_addrs;
   GetSubjectAltName(&dns_names, &ip_addrs);
   return VerifyHostname(hostname, dns_names, ip_addrs);
@@ -614,18 +610,13 @@ void X509Certificate::GetPublicKeyInfo(const CRYPTO_BUFFER* cert_buffer,
 
   std::string_view spki;
   if (!asn1::ExtractSPKIFromDERCert(
-          std::string_view(
-              reinterpret_cast<const char*>(CRYPTO_BUFFER_data(cert_buffer)),
-              CRYPTO_BUFFER_len(cert_buffer)),
-          &spki)) {
+          x509_util::CryptoBufferAsStringPiece(cert_buffer), &spki)) {
     return;
   }
 
-  bssl::UniquePtr<EVP_PKEY> pkey;
   crypto::OpenSSLErrStackTracer err_tracer(FROM_HERE);
-  CBS cbs;
-  CBS_init(&cbs, reinterpret_cast<const uint8_t*>(spki.data()), spki.size());
-  pkey.reset(EVP_parse_public_key(&cbs));
+  bssl::UniquePtr<EVP_PKEY> pkey =
+      crypto::evp::PublicKeyFromBytes(base::as_byte_span(spki));
   if (!pkey)
     return;
 
@@ -633,14 +624,8 @@ void X509Certificate::GetPublicKeyInfo(const CRYPTO_BUFFER* cert_buffer,
     case EVP_PKEY_RSA:
       *type = kPublicKeyTypeRSA;
       break;
-    case EVP_PKEY_DSA:
-      *type = kPublicKeyTypeDSA;
-      break;
     case EVP_PKEY_EC:
       *type = kPublicKeyTypeECDSA;
-      break;
-    case EVP_PKEY_DH:
-      *type = kPublicKeyTypeDH;
       break;
   }
   *size_bits = base::saturated_cast<size_t>(EVP_PKEY_bits(pkey.get()));
@@ -666,7 +651,6 @@ X509Certificate::CreateCertBuffersFromBytes(base::span<const uint8_t> data,
     }
     default: {
       NOTREACHED() << "Certificate format " << format << " unimplemented";
-      break;
     }
   }
 
@@ -676,26 +660,18 @@ X509Certificate::CreateCertBuffersFromBytes(base::span<const uint8_t> data,
 // static
 SHA256HashValue X509Certificate::CalculateFingerprint256(
     const CRYPTO_BUFFER* cert) {
-  SHA256HashValue sha256;
-
-  SHA256(CRYPTO_BUFFER_data(cert), CRYPTO_BUFFER_len(cert), sha256.data);
-  return sha256;
+  return crypto::hash::Sha256(x509_util::CryptoBufferAsSpan(cert));
 }
 
 SHA256HashValue X509Certificate::CalculateChainFingerprint256() const {
-  SHA256HashValue sha256;
-  memset(sha256.data, 0, sizeof(sha256.data));
-
-  SHA256_CTX sha256_ctx;
-  SHA256_Init(&sha256_ctx);
-  SHA256_Update(&sha256_ctx, CRYPTO_BUFFER_data(cert_buffer_.get()),
-                CRYPTO_BUFFER_len(cert_buffer_.get()));
+  crypto::hash::Hasher hasher(crypto::hash::kSha256);
+  hasher.Update(x509_util::CryptoBufferAsSpan(cert_buffer_.get()));
   for (const auto& cert : intermediate_ca_certs_) {
-    SHA256_Update(&sha256_ctx, CRYPTO_BUFFER_data(cert.get()),
-                  CRYPTO_BUFFER_len(cert.get()));
+    hasher.Update(x509_util::CryptoBufferAsSpan(cert.get()));
   }
-  SHA256_Final(sha256.data, &sha256_ctx);
 
+  SHA256HashValue sha256;
+  hasher.Finish(sha256);
   return sha256;
 }
 
@@ -729,6 +705,10 @@ X509Certificate::X509Certificate(
 
 X509Certificate::~X509Certificate() = default;
 
+base::span<const uint8_t> X509Certificate::cert_span() const {
+  return x509_util::CryptoBufferAsSpan(cert_buffer_.get());
+}
+
 X509Certificate::ParsedFields::ParsedFields() = default;
 X509Certificate::ParsedFields::ParsedFields(const ParsedFields&) = default;
 X509Certificate::ParsedFields::ParsedFields(ParsedFields&&) = default;
@@ -741,10 +721,10 @@ bool X509Certificate::ParsedFields::Initialize(
   bssl::der::Input signature_algorithm_tlv;
   bssl::der::BitString signature_value;
 
-  if (!bssl::ParseCertificate(bssl::der::Input(CRYPTO_BUFFER_data(cert_buffer),
-                                               CRYPTO_BUFFER_len(cert_buffer)),
-                              &tbs_certificate_tlv, &signature_algorithm_tlv,
-                              &signature_value, nullptr)) {
+  if (!bssl::ParseCertificate(
+          bssl::der::Input(x509_util::CryptoBufferAsSpan(cert_buffer)),
+          &tbs_certificate_tlv, &signature_algorithm_tlv, &signature_value,
+          nullptr)) {
     return false;
   }
 

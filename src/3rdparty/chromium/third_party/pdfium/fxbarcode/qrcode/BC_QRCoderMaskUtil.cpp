@@ -22,11 +22,13 @@
 
 #include "fxbarcode/qrcode/BC_QRCoderMaskUtil.h"
 
+#include <stdlib.h>
+
+#include "core/fxcrt/check.h"
+#include "core/fxcrt/notreached.h"
 #include "fxbarcode/common/BC_CommonByteMatrix.h"
 #include "fxbarcode/qrcode/BC_QRCoder.h"
 #include "fxbarcode/qrcode/BC_QRCoderErrorCorrectionLevel.h"
-#include "third_party/base/check.h"
-#include "third_party/base/notreached.h"
 
 namespace {
 
@@ -150,8 +152,9 @@ int32_t CBC_QRCoderMaskUtil::ApplyMaskPenaltyRule4(
   size_t height = matrix->GetHeight();
   for (size_t y = 0; y < height; ++y) {
     for (size_t x = 0; x < width; ++x) {
-      if (array[y * width + x] == 1)
+      if (array[y * width + x] == 1) {
         numDarkCells += 1;
+      }
     }
   }
   size_t numTotalCells = matrix->GetHeight() * matrix->GetWidth();
@@ -196,7 +199,7 @@ bool CBC_QRCoderMaskUtil::GetDataMaskBit(int32_t maskPattern,
       intermediate = (((temp % 3) + ((y + x) & 0x1)) & 0x1);
       break;
     default:
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
   return intermediate == 0;
 }

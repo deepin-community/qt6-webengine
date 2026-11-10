@@ -5,19 +5,14 @@
 #ifndef CONTENT_BROWSER_ATTRIBUTION_REPORTING_ATTRIBUTION_CONSTANTS_H_
 #define CONTENT_BROWSER_ATTRIBUTION_REPORTING_ATTRIBUTION_CONSTANTS_H_
 
+#include "base/time/time.h"
+
 namespace content {
 
-constexpr char kAttributionReportingRegisterSourceHeader[] =
-    "Attribution-Reporting-Register-Source";
+inline constexpr char kAttributionReportingInfoHeader[] =
+    "Attribution-Reporting-Info";
 
-constexpr char kAttributionReportingRegisterTriggerHeader[] =
-    "Attribution-Reporting-Register-Trigger";
-
-constexpr char kAttributionReportingRegisterOsSourceHeader[] =
-    "Attribution-Reporting-Register-OS-Source";
-
-constexpr char kAttributionReportingRegisterOsTriggerHeader[] =
-    "Attribution-Reporting-Register-OS-Trigger";
+inline constexpr base::TimeDelta kReportExpiry = base::Days(30);
 
 }  // namespace content
 

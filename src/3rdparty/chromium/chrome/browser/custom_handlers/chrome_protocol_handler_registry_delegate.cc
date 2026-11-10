@@ -8,8 +8,7 @@
 
 #include "base/check_op.h"
 #include "base/functional/bind.h"
-#include "build/build_config.h"
-#ifndef TOOLKIT_QT
+#if !BUILDFLAG(IS_QTWEBENGINE)
 #include "chrome/browser/profiles/profile_io_data.h"
 #else
 #include "url/url_util_qt.h"
@@ -44,14 +43,14 @@ bool ChromeProtocolHandlerRegistryDelegate::IsExternalHandlerRegistered(
     const std::string& protocol) {
   // NOTE(koz): This function is safe to call from any thread, despite living
   // in ProfileIOData.
-#ifdef TOOLKIT_QT
+#if BUILDFLAG(IS_QTWEBENGINE)
   return url::IsHandledProtocol(protocol);
 #else
   return ProfileIOData::IsHandledProtocol(protocol);
 #endif
 }
 
-#ifndef TOOLKIT_QT
+#if !BUILDFLAG(IS_QTWEBENGINE)
 void ChromeProtocolHandlerRegistryDelegate::RegisterWithOSAsDefaultClient(
     const std::string& protocol,
     DefaultClientCallback callback) {

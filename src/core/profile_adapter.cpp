@@ -1,11 +1,14 @@
 // Copyright (C) 2016 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "profile_adapter.h"
 
 #include "base/files/file_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/version_info/version_info.h"
 #include "components/embedder_support/user_agent_utils.h"
 #include "components/favicon/core/favicon_service.h"
 #include "components/history/content/browser/history_database_helper.h"
@@ -19,9 +22,11 @@
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "url/url_util.h"
 
+#include "api/qwebengineextensionmanager.h"
 #include "api/qwebengineurlscheme.h"
 #include "content_browser_client_qt.h"
 #include "download_manager_delegate_qt.h"
+#include "favicon_driver_qt.h"
 #include "favicon_service_factory_qt.h"
 #include "permission_manager_qt.h"
 #include "profile_adapter_client.h"
@@ -30,12 +35,10 @@
 #include "renderer_host/user_resource_controller_host.h"
 #include "type_conversion.h"
 #include "visited_links_manager_qt.h"
+#include "web_contents_adapter.h"
 #include "web_contents_adapter_client.h"
+#include "web_contents_delegate_qt.h"
 #include "web_engine_context.h"
-
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-#include "extensions/browser/extension_system.h"
-#endif
 
 #include <QCoreApplication>
 #include <QDir>
@@ -44,30 +47,85 @@
 #include <QString>
 #include <QStandardPaths>
 
+using namespace Qt::StringLiterals;
+
 namespace {
 inline QString buildLocationFromStandardPath(const QString &standardPath, const QString &name) {
-    QString location = standardPath;
+    QString location;
+    location += standardPath;
     if (location.isEmpty())
-        location = QDir::homePath() % QLatin1String("/.") % QCoreApplication::applicationName();
+        location += QDir::homePath() % "/."_L1 % QCoreApplication::applicationName();
 
-    location.append(QLatin1String("/QtWebEngine/") % name);
+    location += "/QtWebEngine/"_L1 % name;
     return location;
+}
+
+void PopulateBrandVersionLists(const QJsonObject &fullVersionList,
+                               blink::UserAgentMetadata &userAgentMetadata)
+{
+    userAgentMetadata.brand_version_list.clear();
+    userAgentMetadata.brand_full_version_list.clear();
+
+    for (const QString &key : fullVersionList.keys()) {
+        std::string version = fullVersionList.value(key).toString().toStdString();
+        userAgentMetadata.brand_full_version_list.push_back({ key.toStdString(), version });
+        version = version.substr(0, version.find('.'));
+        userAgentMetadata.brand_version_list.push_back({ key.toStdString(), version });
+    }
+
+    // Shuffle the lists
+    int permutations = 1;
+    for (int i = 2; i <= fullVersionList.size(); i++)
+        permutations *= i;
+    // We keep the brand lists identical throughout the lifetime of each major version of Chromium.
+    permutations = version_info::GetMajorVersionNumberAsInt() % permutations;
+    auto compare = [](blink::UserAgentBrandVersion &a, blink::UserAgentBrandVersion &b) {
+        return a.brand + a.version < b.brand + b.version;
+    };
+    for (int i = 0; i < permutations; i++) {
+        std::next_permutation(userAgentMetadata.brand_version_list.begin(),
+                              userAgentMetadata.brand_version_list.end(), compare);
+        std::next_permutation(userAgentMetadata.brand_full_version_list.begin(),
+                              userAgentMetadata.brand_full_version_list.end(), compare);
+    }
 }
 }
 
 namespace QtWebEngineCore {
 
-ProfileAdapter::ProfileAdapter(const QString &storageName):
-      m_name(storageName)
+ProfileAdapter::ProfileAdapter(const QString &storageName, const QString &dataPath,
+                               const QString &cachePath, HttpCacheType httpCacheType,
+                               PersistentCookiesPolicy persistentCookiesPolicy,
+                               int httpCacheMaximumSize,
+                               PersistentPermissionsPolicy persistentPermissionPolicy
+#if QT_CONFIG(ssl)
+                               ,
+                               const QList<QSslCertificate> &additionalTrustedCertificates
+#endif
+                               )
+    : m_name(storageName)
     , m_offTheRecord(storageName.isEmpty())
+    , m_dataPath(dataPath.isEmpty() && !m_name.isEmpty()
+                         ? buildLocationFromStandardPath(QStandardPaths::writableLocation(
+                                                                 QStandardPaths::AppDataLocation),
+                                                         m_name)
+                         : dataPath)
     , m_downloadPath(QStandardPaths::writableLocation(QStandardPaths::DownloadLocation))
-    , m_httpCacheType(DiskHttpCache)
-    , m_persistentCookiesPolicy(AllowPersistentCookies)
-    , m_persistentPermissionsPolicy(PersistentPermissionsPolicy::StoreOnDisk)
+    , m_cachePath(cachePath.isEmpty() && !m_name.isEmpty()
+                          ? buildLocationFromStandardPath(
+                                    QStandardPaths::writableLocation(QStandardPaths::CacheLocation),
+                                    m_name)
+                          : cachePath)
+    , m_httpCacheType(httpCacheType)
+    , m_persistentCookiesPolicy(persistentCookiesPolicy)
+    , m_persistentPermissionsPolicy(persistentPermissionPolicy)
     , m_visitedLinksPolicy(TrackVisitedLinksOnDisk)
+#if QT_CONFIG(ssl)
+    , m_additionalTrustedCertificates(additionalTrustedCertificates)
+#endif
     , m_clientHintsEnabled(true)
     , m_pushServiceEnabled(false)
-    , m_httpCacheMaxSize(0)
+    , m_httpCacheMaxSize(m_name.isEmpty() ? 0 : httpCacheMaximumSize)
 {
     WebEngineContext::current()->addProfileAdapter(this);
     // creation of profile requires webengine context
@@ -77,12 +135,11 @@ ProfileAdapter::ProfileAdapter(const QString &storageName):
     // fixme: this should not be here
     m_profile->m_profileIOData->initializeOnUIThread();
     m_customUrlSchemeHandlers.insert(QByteArrayLiteral("qrc"), &m_qrcHandler);
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-    if (!storageName.isEmpty())
-        extensions::ExtensionSystem::Get(m_profile.data())->InitForRegularProfile(true);
-#endif
     m_cancelableTaskTracker.reset(new base::CancelableTaskTracker());
 
+#if QT_CONFIG(webengine_extensions)
+    m_extensionManager.reset(new QWebEngineExtensionManager(m_profile->extensionManager()));
+#endif
     m_profile->DoFinalInit();
 }
 
@@ -228,9 +285,23 @@ void ProfileAdapter::removeDownload(quint32 downloadId)
     downloadManagerDelegate()->removeDownload(downloadId);
 }
 
+void ProfileAdapter::acceptDownload(quint32 downloadId, bool accepted, bool useDownloadTargetCallback,
+                                    const QString &path, int savePageFormat)
+{
+    if (useDownloadTargetCallback)
+        downloadManagerDelegate()->downloadTargetDetermined(downloadId, accepted, path);
+    else
+        downloadManagerDelegate()->savePathDetermined(downloadId, accepted, path, savePageFormat);
+}
+
 ProfileAdapter *ProfileAdapter::createDefaultProfileAdapter()
 {
     return WebEngineContext::current()->createDefaultProfileAdapter();
+}
+
+bool ProfileAdapter::profileExistOnPath(const QString &dataPath)
+{
+    return WebEngineContext::current()->profileExistOnPath(dataPath);
 }
 
 ProfileAdapter *ProfileAdapter::defaultProfileAdapter()
@@ -253,9 +324,9 @@ QString ProfileAdapter::dataPath() const
     // a location to do so.
     QString name = m_name;
     if (m_offTheRecord)
-        name = QStringLiteral("OffTheRecord");
+        name = u"OffTheRecord"_s;
     else if (m_name.isEmpty())
-        name = QStringLiteral("UnknownProfile");
+        name = u"UnknownProfile"_s;
     return buildLocationFromStandardPath(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation), name);
 }
 
@@ -305,9 +376,9 @@ QString ProfileAdapter::httpCachePath() const
 {
     if (m_offTheRecord)
         return QString();
-    QString basePath = cachePath();
+    const QString basePath = cachePath();
     if (!basePath.isEmpty())
-        return basePath % QLatin1String("/Cache");
+        return basePath % "/Cache"_L1;
     return QString();
 }
 
@@ -520,7 +591,7 @@ void ProfileAdapter::removeUrlSchemeHandler(QWebEngineUrlSchemeHandler *handler)
 
 void ProfileAdapter::removeUrlScheme(const QByteArray &scheme)
 {
-    QByteArray canonicalScheme = scheme.toLower();
+    const QByteArray canonicalScheme = scheme.toLower();
     if (schemeType(canonicalScheme) == SchemeType::Protected) {
         qWarning("Cannot remove the URL scheme handler for an internal scheme: %s", scheme.constData());
         return;
@@ -532,7 +603,7 @@ void ProfileAdapter::removeUrlScheme(const QByteArray &scheme)
 void ProfileAdapter::installUrlSchemeHandler(const QByteArray &scheme, QWebEngineUrlSchemeHandler *handler)
 {
     Q_ASSERT(handler);
-    QByteArray canonicalScheme = scheme.toLower();
+    const QByteArray canonicalScheme = scheme.toLower();
     SchemeType type = schemeType(canonicalScheme);
 
     if (type == SchemeType::Protected) {
@@ -570,15 +641,29 @@ UserResourceControllerHost *ProfileAdapter::userResourceController()
 }
 
 void ProfileAdapter::setPermission(const QUrl &origin, QWebEnginePermission::PermissionType permissionType,
-    QWebEnginePermission::State state, content::RenderFrameHost *rfh)
+    QWebEnginePermission::State state, int childId, const std::string &serializedToken)
 {
-    static_cast<PermissionManagerQt*>(profile()->GetPermissionControllerDelegate())->setPermission(origin, permissionType, state, rfh);
+    auto token = PermissionManagerQt::deserializeToken(childId, serializedToken);
+
+    // Check if the frame token is valid, and defer to WebContentsAdapter if so
+    auto *rfh = content::RenderFrameHost::FromFrameToken(token);
+    if (rfh) {
+        static_cast<WebContentsDelegateQt *>(content::WebContents::FromRenderFrameHost(rfh)->GetDelegate())
+            ->webContentsAdapter()
+                ->setPermission(origin, permissionType, state, childId, serializedToken);
+        return;
+    }
+
+    // Otherwise, set the permission directly
+    static_cast<PermissionManagerQt *>(profile()->GetPermissionControllerDelegate())
+        ->setPermission(origin, permissionType, state, token);
 }
 
 QWebEnginePermission::State ProfileAdapter::getPermissionState(const QUrl &origin, QWebEnginePermission::PermissionType permissionType,
-    content::RenderFrameHost *rfh)
+    int childId, const std::string &serializedToken)
 {
-    return static_cast<PermissionManagerQt*>(profile()->GetPermissionControllerDelegate())->getPermissionState(origin, permissionType, rfh);
+    return static_cast<PermissionManagerQt*>(profile()->GetPermissionControllerDelegate())
+        ->getPermissionState(origin, permissionType, PermissionManagerQt::deserializeToken(childId, serializedToken));
 }
 
 QList<QWebEnginePermission> ProfileAdapter::listPermissions(const QUrl &origin, QWebEnginePermission::PermissionType permissionType)
@@ -591,12 +676,12 @@ QList<QWebEnginePermission> ProfileAdapter::listPermissions(const QUrl &origin, 
 
 QString ProfileAdapter::httpAcceptLanguageWithoutQualities() const
 {
-    const QStringList list = m_httpAcceptLanguage.split(QLatin1Char(','));
     QString out;
-    for (const QString &str : list) {
-        if (!out.isEmpty())
-            out.append(QLatin1Char(','));
-        out.append(str.split(QLatin1Char(';')).first());
+    auto sep = ""_L1;
+    for (auto lang : m_httpAcceptLanguage.tokenize(u',')) {
+        out += sep;
+        out += *lang.tokenize(u';').begin(); // tokenize() is never empty with KeepEmptyParts!
+        sep = ","_L1;
     }
     return out;
 }
@@ -655,6 +740,13 @@ QVariant ProfileAdapter::clientHint(ClientHint clientHint) const
         }
     case ProfileAdapter::UAWOW64:
         return QVariant(userAgentMetadata.wow64);
+    case ProfileAdapter::UAFormFactors: {
+        QStringList formFactors;
+        for (auto formFactor: userAgentMetadata.form_factors) {
+            formFactors.append(toQt(formFactor));
+        }
+        return formFactors;
+    }
     default:
         return QVariant();
     }
@@ -686,18 +778,20 @@ void ProfileAdapter::setClientHint(ClientHint clientHint, const QVariant &value)
         userAgentMetadata.bitness = value.toString().toStdString();
         break;
     case ProfileAdapter::UAFullVersionList: {
-        userAgentMetadata.brand_full_version_list.clear();
-        QJsonObject fullVersionList = value.toJsonObject();
-        for (const QString &key : fullVersionList.keys())
-            userAgentMetadata.brand_full_version_list.push_back({
-                key.toStdString(),
-                fullVersionList.value(key).toString().toStdString()
-            });
+        PopulateBrandVersionLists(value.toJsonObject(), userAgentMetadata);
         break;
     }
     case ProfileAdapter::UAWOW64:
         userAgentMetadata.wow64 = value.toBool();
         break;
+    case ProfileAdapter::UAFormFactors: {
+        userAgentMetadata.form_factors.clear();
+        QStringList formFactors = value.toStringList();
+        formFactors.sort();
+        for (auto formFactor : formFactors)
+            userAgentMetadata.form_factors.push_back(formFactor.toStdString());
+        break;
+    }
     default:
         break;
     }
@@ -723,7 +817,7 @@ void ProfileAdapter::setClientHintsEnabled(bool enabled)
 
 void ProfileAdapter::resetClientHints()
 {
-    m_profile->m_userAgentMetadata = embedder_support::GetUserAgentMetadata();
+    m_profile->initUserAgentMetadata();
     std::vector<content::WebContentsImpl *> list = content::WebContentsImpl::GetAllWebContents();
     for (content::WebContentsImpl *web_contents : list) {
         if (web_contents->GetBrowserContext() == m_profile.data()) {
@@ -805,12 +899,19 @@ void ProfileAdapter::reinitializeHistoryService()
 {
     Q_ASSERT(!m_offTheRecord);
     if (ensureDataPathExists()) {
+        // remove the associated services first, so we can get new ones (initialized with
+        // the new data paths) from the factory
+        FaviconServiceFactoryQt::RemoveFromBrowserContext(m_profile.data());
+        HistoryServiceFactoryQt::RemoveFromBrowserContext(m_profile.data());
+
         favicon::FaviconService *faviconService =
                 FaviconServiceFactoryQt::GetForBrowserContext(m_profile.data());
         history::HistoryService *historyService = static_cast<history::HistoryService *>(
                 HistoryServiceFactoryQt::GetInstance()->GetForBrowserContext(m_profile.data()));
         Q_ASSERT(historyService);
         faviconService->SetHistoryService(historyService);
+        if (auto *faviconDriver = FaviconDriverQt::GetForBrowserContext(m_profile.data()))
+            faviconDriver->setFaviconService(faviconService);
     } else {
         qWarning("Favicon database is not available for this profile.");
     }
@@ -822,14 +923,12 @@ QString ProfileAdapter::determineDownloadPath(const QString &downloadDirectory, 
     QString suggestedFilePath = suggestedFile.absoluteFilePath();
     base::FilePath tmpFilePath(toFilePath(suggestedFilePath).NormalizePathSeparatorsTo('/'));
 
-    int uniquifier = 0;
+    base::FilePath uniqueFilePath;
     {
         base::ScopedAllowBlocking allowBlock;
-        uniquifier = base::GetUniquePathNumber(tmpFilePath);
+        uniqueFilePath = base::GetUniquePath(tmpFilePath);
     }
-    if (uniquifier > 0)
-        suggestedFilePath = toQt(tmpFilePath.InsertBeforeExtensionASCII(base::StringPrintf(" (%d)", uniquifier)).AsUTF8Unsafe());
-    else if (uniquifier == -1) {
+    if (uniqueFilePath.empty()) {
         base::Time::Exploded exploded;
         base::Time::FromTimeT(startTime).LocalExplode(&exploded);
         std::string suffix = base::StringPrintf(
@@ -837,6 +936,8 @@ QString ProfileAdapter::determineDownloadPath(const QString &downloadDirectory, 
                     exploded.day_of_month, exploded.hour, exploded.minute,
                     exploded.second, exploded.millisecond);
         suggestedFilePath = toQt(tmpFilePath.InsertBeforeExtensionASCII(suffix).AsUTF8Unsafe());
+    } else if (uniqueFilePath != tmpFilePath) {
+        suggestedFilePath = toQt(uniqueFilePath.AsUTF8Unsafe());
     }
     return suggestedFilePath;
 }
@@ -847,6 +948,11 @@ QWebEngineClientCertificateStore *ProfileAdapter::clientCertificateStore()
     if (!m_clientCertificateStore)
         m_clientCertificateStore = new QWebEngineClientCertificateStore(m_profile->m_profileIOData->clientCertificateStoreData());
     return m_clientCertificateStore;
+}
+
+QList<QSslCertificate> ProfileAdapter::additionalTrustedCertificates() const
+{
+    return m_additionalTrustedCertificates;
 }
 #endif
 
@@ -946,5 +1052,22 @@ void ProfileAdapter::requestIconForIconURL(const QUrl &iconUrl,
                            touchIconsEnabled),
             m_cancelableTaskTracker.get());
 }
+
+void ProfileAdapter::setCryptoModulePasswordFunction(std::function<std::string(std::string, std::string, bool)> passwordFunction)
+{
+    m_cryptoModulePasswordFunction = std::move(passwordFunction);
+}
+
+const std::function<std::string(std::string, std::string, bool)> &ProfileAdapter::cryptoModulePasswordFunction() const
+{
+    return m_cryptoModulePasswordFunction;
+}
+
+#if QT_CONFIG(webengine_extensions)
+QWebEngineExtensionManager *ProfileAdapter::extensionManager()
+{
+    return m_extensionManager.get();
+}
+#endif
 
 } // namespace QtWebEngineCore

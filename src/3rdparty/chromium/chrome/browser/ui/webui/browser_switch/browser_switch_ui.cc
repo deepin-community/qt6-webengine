@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/webui/browser_switch/browser_switch_ui.h"
 
 #include <memory>
+#include <string_view>
 
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_macros.h"
@@ -19,7 +20,6 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/browser/ui/webui/webui_util.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/branded_strings.h"
 #include "chrome/grit/browser_switch_resources.h"
@@ -33,6 +33,7 @@
 #include "content/public/browser/web_ui_message_handler.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/page_transition_types.h"
+#include "ui/webui/webui_util.h"
 #include "url/gurl.h"
 
 namespace {
@@ -42,7 +43,7 @@ void GotoNewTabPage(content::WebContents* web_contents) {
   content::OpenURLParams params(url, content::Referrer(),
                                 WindowOpenDisposition::CURRENT_TAB,
                                 ui::PAGE_TRANSITION_AUTO_TOPLEVEL, false);
-  web_contents->OpenURL(params);
+  web_contents->OpenURL(params, /*navigation_handle_callback=*/{});
 }
 
 // Returns true if there's only 1 tab left open in this profile. Incognito
@@ -51,11 +52,13 @@ bool IsLastTab(const Profile* profile) {
   profile = profile->GetOriginalProfile();
   int tab_count = 0;
   for (const Browser* browser : *BrowserList::GetInstance()) {
-    if (browser->profile()->GetOriginalProfile() != profile)
+    if (browser->profile()->GetOriginalProfile() != profile) {
       continue;
+    }
     tab_count += browser->tab_strip_model()->count();
-    if (tab_count > 1)
+    if (tab_count > 1) {
       return false;
+    }
   }
   return true;
 }
@@ -190,10 +193,8 @@ void CreateAndAddBrowserSwitchUIHTMLSource(content::WebUI* web_ui) {
                              IDS_ABOUT_BROWSER_SWITCH_PROTOCOL_ERROR);
   source->AddLocalizedString("title", IDS_ABOUT_BROWSER_SWITCH_TITLE);
 
-  webui::SetupWebUIDataSource(
-      source,
-      base::make_span(kBrowserSwitchResources, kBrowserSwitchResourcesSize),
-      IDR_BROWSER_SWITCH_BROWSER_SWITCH_HTML);
+  webui::SetupWebUIDataSource(source, kBrowserSwitchResources,
+                              IDR_BROWSER_SWITCH_BROWSER_SWITCH_HTML);
 
   // Setup chrome://browser-switch/internals debug UI.
   source->AddResourcePath(
@@ -303,7 +304,7 @@ class BrowserSwitchHandler : public content::WebUIMessageHandler {
   base::WeakPtrFactory<BrowserSwitchHandler> weak_ptr_factory_{this};
 };
 
-BrowserSwitchHandler::BrowserSwitchHandler() {}
+BrowserSwitchHandler::BrowserSwitchHandler() = default;
 
 BrowserSwitchHandler::~BrowserSwitchHandler() = default;
 
@@ -451,10 +452,10 @@ void BrowserSwitchHandler::HandleGetDecision(const base::Value::List& args) {
   auto* service = GetBrowserSwitcherService(web_ui());
   browser_switcher::Decision decision = service->sitelist()->GetDecision(url);
 
-  base::StringPiece action_name =
+  std::string_view action_name =
       (decision.action == browser_switcher::kStay) ? "stay" : "go";
 
-  base::StringPiece reason_name;
+  std::string_view reason_name;
   switch (decision.reason) {
     case browser_switcher::kDisabled:
       reason_name = "globally_disabled";
@@ -519,8 +520,9 @@ void BrowserSwitchHandler::HandleGetRulesetSources(
   base::Value::Dict retval;
   for (const auto& source : sources) {
     base::Value val;
-    if (source.url.is_valid())
+    if (source.url.is_valid()) {
       val = base::Value(source.url.spec());
+    }
     // |pref_name| is something like "browser_switcher.blah"; however path
     // expansion is not expected on it as the JavaScript expects to see
     // "browser_switcher.blah" as a key in the object, not a nested hierarchy.
@@ -540,6 +542,11 @@ void BrowserSwitchHandler::HandleIsBrowserSwitchEnabled(
 
   auto* service = GetBrowserSwitcherService(web_ui());
   ResolveJavascriptCallback(args[0], base::Value(service->prefs().IsEnabled()));
+}
+
+bool BrowserSwitchUIConfig::IsWebUIEnabled(
+    content::BrowserContext* browser_context) {
+  return browser_context && !browser_context->IsOffTheRecord();
 }
 
 BrowserSwitchUI::BrowserSwitchUI(content::WebUI* web_ui)

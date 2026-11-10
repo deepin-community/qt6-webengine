@@ -1,6 +1,7 @@
 // Copyright 2021 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
 import * as Common from '../../core/common/common.js';
 import * as Host from '../../core/host/host.js';
@@ -8,7 +9,7 @@ import * as i18n from '../../core/i18n/i18n.js';
 import type * as Platform from '../../core/platform/platform.js';
 import type * as Protocol from '../../generated/protocol.js';
 import * as NetworkForward from '../../panels/network/forward/forward.js';
-import * as UI from '../../ui/legacy/legacy.js';
+import * as VisualLogging from '../../ui/visual_logging/visual_logging.js';
 
 import {AffectedItem, AffectedResourcesView} from './AffectedResourcesView.js';
 
@@ -37,7 +38,7 @@ const UIStrings = {
    *@description Title for text button in the Issues panel. Clicking the button navigates the user to the Network Panel. `Set-Cookie` is a specific header line in an HTTP network request and consists of a single line of text.
    */
   filterSetCookieTitle: 'Show network requests that include this `Set-Cookie` header in the network panel',
-};
+} as const;
 const str_ = i18n.i18n.registerUIStrings('panels/issues/AffectedCookiesView.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
@@ -68,8 +69,14 @@ export class AffectedCookiesView extends AffectedResourcesView {
     element.classList.add('affected-resource-cookie');
     const name = document.createElement('td');
     if (hasAssociatedRequest) {
-      const button = UI.UIUtils.createTextButton(cookie.name, () => {
-        Host.userMetrics.issuesPanelResourceOpened(this.issue.getCategory(), AffectedItem.Cookie);
+      const link = document.createElement('button');
+      link.classList.add('link', 'devtools-link');
+      link.textContent = cookie.name;
+      link.tabIndex = 0;
+      link.setAttribute(
+          'jslog', `${VisualLogging.link('issues.filter-network-requests-by-cookie').track({click: true})}`);
+      link.addEventListener('click', () => {
+        Host.userMetrics.issuesPanelResourceOpened(this.issue.getCategory(), AffectedItem.COOKIE);
         void Common.Revealer.reveal(NetworkForward.UIFilter.UIRequestFilter.filters([
           {
             filterType: NetworkForward.UIFilter.FilterType.CookieDomain,
@@ -84,11 +91,8 @@ export class AffectedCookiesView extends AffectedResourcesView {
             filterValue: cookie.path,
           },
         ]));
-      }, {
-        className: 'link-style devtools-link',
-        jslogContext: 'issues.filter-network-requests-by-cookie',
       });
-      name.appendChild(button);
+      name.appendChild(link);
     } else {
       name.textContent = cookie.name;
     }
@@ -119,19 +123,22 @@ export class AffectedRawCookieLinesView extends AffectedResourcesView {
       row.classList.add('affected-resource-directive');
       if (cookie.hasRequest) {
         const cookieLine = document.createElement('td');
-        const textButton = UI.UIUtils.createTextButton(cookie.rawCookieLine, () => {
+        const link = document.createElement('button');
+        link.classList.add('link', 'devtools-link');
+        link.textContent = cookie.rawCookieLine;
+        link.title = i18nString(UIStrings.filterSetCookieTitle);
+        link.tabIndex = 0;
+        link.setAttribute(
+            'jslog', `${VisualLogging.link('issues.filter-network-requests-by-raw-cookie').track({click: true})}`);
+        link.addEventListener('click', () => {
           void Common.Revealer.reveal(NetworkForward.UIFilter.UIRequestFilter.filters([
             {
               filterType: NetworkForward.UIFilter.FilterType.ResponseHeaderValueSetCookie,
               filterValue: cookie.rawCookieLine,
             },
           ]));
-        }, {
-          className: 'link-style devtools-link',
-          jslogContext: 'issues.filter-network-requests-by-raw-cookie',
         });
-        textButton.title = i18nString(UIStrings.filterSetCookieTitle);
-        cookieLine.appendChild(textButton);
+        cookieLine.appendChild(link);
         row.appendChild(cookieLine);
       } else {
         this.appendIssueDetailCell(row, cookie.rawCookieLine);

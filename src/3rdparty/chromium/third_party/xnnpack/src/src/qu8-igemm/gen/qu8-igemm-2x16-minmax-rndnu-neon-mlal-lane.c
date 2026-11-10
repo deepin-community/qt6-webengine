@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/qs8-igemm/neon-mlal-lane.c.in
 //   Generator: tools/xngen
@@ -7,13 +8,14 @@
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree.
 
-
-#include <assert.h>
-
 #include <arm_neon.h>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/igemm.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/igemm.h"
+#include "src/xnnpack/microparams.h"
 
 
 void xnn_qu8_igemm_minmax_rndnu_ukernel_2x16__neon_mlal_lane(
@@ -28,7 +30,7 @@ void xnn_qu8_igemm_minmax_rndnu_ukernel_2x16__neon_mlal_lane(
     size_t cn_stride,
     size_t a_offset,
     const uint8_t* zero,
-    const union xnn_qu8_conv_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const union xnn_qu8_conv_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(mr != 0);
   assert(mr <= 2);
@@ -47,7 +49,7 @@ void xnn_qu8_igemm_minmax_rndnu_ukernel_2x16__neon_mlal_lane(
     c1 = c0;
   }
 
-  const uint8x8_t vb_zero_point = vld1_dup_u8(&params->rndnu_neon.kernel_zero_point[0]);
+  const uint8x8_t vb_zero_point = vdup_n_u8(params->rndnu_neon.kernel_zero_point);
   do {
     int32x4_t vacc0x0123 = vld1q_s32(w); w = (const void*) ((const int32_t*) w + 4);
     int32x4_t vacc0x4567 = vld1q_s32(w); w = (const void*) ((const int32_t*) w + 4);
@@ -314,9 +316,9 @@ void xnn_qu8_igemm_minmax_rndnu_ukernel_2x16__neon_mlal_lane(
     } while (p != 0);
 
     // Post-accumulation work
-    const int32x4_t vright_pre_shift = vld1q_dup_s32(&params->rndnu_neon.right_pre_shift);
-    const int32x4_t vmultiplier = vld1q_dup_s32(&params->rndnu_neon.multiplier);
-    const int32x4_t vright_post_shift = vld1q_dup_s32(&params->rndnu_neon.right_post_shift);
+    const int32x4_t vright_pre_shift = vdupq_n_s32(params->rndnu_neon.right_pre_shift);
+    const int32x4_t vmultiplier = vdupq_n_s32(params->rndnu_neon.multiplier);
+    const int32x4_t vright_post_shift = vdupq_n_s32(params->rndnu_neon.right_post_shift);
 
     vacc0x0123 = vqshlq_s32(vacc0x0123, vright_pre_shift);
     vacc0x4567 = vqshlq_s32(vacc0x4567, vright_pre_shift);
@@ -345,7 +347,7 @@ void xnn_qu8_igemm_minmax_rndnu_ukernel_2x16__neon_mlal_lane(
     vacc1x89AB = vrshlq_s32(vacc1x89AB, vright_post_shift);
     vacc1xCDEF = vrshlq_s32(vacc1xCDEF, vright_post_shift);
 
-    const int16x8_t voutput_zero_point = vld1q_dup_s16(&params->rndnu_neon.output_zero_point);
+    const int16x8_t voutput_zero_point = vdupq_n_s16(params->rndnu_neon.output_zero_point);
     #if XNN_ARCH_ARM64
       int16x8_t vacc0x01234567 = vqmovn_high_s32(vqmovn_s32(vacc0x0123), vacc0x4567);
       int16x8_t vacc0x89ABCDEF = vqmovn_high_s32(vqmovn_s32(vacc0x89AB), vacc0xCDEF);
@@ -374,11 +376,11 @@ void xnn_qu8_igemm_minmax_rndnu_ukernel_2x16__neon_mlal_lane(
       uint8x16_t vout1x0123456789ABCDEF = vcombine_u8(vqmovun_s16(vacc1x01234567), vqmovun_s16(vacc1x89ABCDEF));
     #endif
 
-    const uint8x16_t voutput_min = vld1q_dup_u8(&params->rndnu_neon.output_min);
+    const uint8x16_t voutput_min = vdupq_n_u8(params->rndnu_neon.output_min);
     vout0x0123456789ABCDEF = vmaxq_u8(vout0x0123456789ABCDEF, voutput_min);
     vout1x0123456789ABCDEF = vmaxq_u8(vout1x0123456789ABCDEF, voutput_min);
 
-    const uint8x16_t voutput_max = vld1q_dup_u8(&params->rndnu_neon.output_max);
+    const uint8x16_t voutput_max = vdupq_n_u8(params->rndnu_neon.output_max);
     vout0x0123456789ABCDEF = vminq_u8(vout0x0123456789ABCDEF, voutput_max);
     vout1x0123456789ABCDEF = vminq_u8(vout1x0123456789ABCDEF, voutput_max);
 

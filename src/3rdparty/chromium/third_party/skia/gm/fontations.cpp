@@ -15,6 +15,7 @@
 #include "include/ports/SkTypeface_fontations.h"
 #include "tools/Resources.h"
 
+
 namespace skiagm {
 
 namespace {
@@ -176,7 +177,7 @@ private:
 };
 
 namespace {
-SkFourByteTag constexpr operator"" _t(const char* tagName, size_t size) {
+SkFourByteTag constexpr operator""_t(const char* tagName, size_t size) {
     SkASSERT(size == 4);
     return SkSetFourByteTag(tagName[0], tagName[1], tagName[2], tagName[3]);
 }

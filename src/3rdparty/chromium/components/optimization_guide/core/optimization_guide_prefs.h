@@ -6,6 +6,7 @@
 #define COMPONENTS_OPTIMIZATION_GUIDE_CORE_OPTIMIZATION_GUIDE_PREFS_H_
 
 #include "base/component_export.h"
+#include "components/optimization_guide/core/model_execution/feature_keys.h"
 #include "components/optimization_guide/proto/model_execution.pb.h"
 
 class PrefRegistrySimple;
@@ -17,10 +18,6 @@ namespace prefs {
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 extern const char kHintsFetcherLastFetchAttempt[];
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
-extern const char kModelAndFeaturesLastFetchAttempt[];
-COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
-extern const char kModelLastFetchSuccess[];
-COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 extern const char kHintsFetcherHostsSuccessfullyFetched[];
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 extern const char kPendingHintsProcessingVersion[];
@@ -28,8 +25,6 @@ COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 extern const char kPreviouslyRegisteredOptimizationTypes[];
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 extern const char kStoreFilePathsToDelete[];
-COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
-extern const char kModelExecutionMainToggleSettingState[];
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 extern const char kPreviousOptimizationTypesWithFilter[];
 
@@ -48,31 +43,21 @@ enum class FeatureOptInState {
 // Returns the name of the pref that stores the user's setting opt-in state for
 // the given `feature`.
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
-std::string GetSettingEnabledPrefName(proto::ModelExecutionFeature feature);
+std::string GetSettingEnabledPrefName(UserVisibleFeatureKey feature);
 
 namespace localstate {
 
 // Local state prefs.
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
+extern const char kModelLastFetchAttempt[];
+COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
+extern const char kModelLastFetchSuccess[];
+COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 extern const char kModelStoreMetadata[];
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 extern const char kModelCacheKeyMapping[];
 COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
-extern const char kOnDeviceModelChromeVersion[];
-COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
-extern const char kOnDeviceModelCrashCount[];
-COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
-extern const char kOnDeviceModelTimeoutCount[];
-COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
-extern const char kOnDevicePerformanceClass[];
-COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
 extern const char kStoreFilePathsToDelete[];
-COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
-extern const char kLastTimeOnDeviceEligibleFeatureWasUsed[];
-COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
-extern const char kLastTimeEligibleForOnDeviceModelDownload[];
-COMPONENT_EXPORT(OPTIMIZATION_GUIDE_FEATURES)
-extern const char kModelQualityLogggingClientId[];
 
 }  // namespace localstate
 

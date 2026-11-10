@@ -18,9 +18,9 @@ import * as ForwardedInputEventHandler from './ForwardedInputEventHandler.js';
 import * as Fragment from './Fragment.js';
 import * as Geometry from './Geometry.js';
 import * as GlassPane from './GlassPane.js';
-import * as HistoryInput from './HistoryInput.js';
 import * as Infobar from './Infobar.js';
 import * as InplaceEditor from './InplaceEditor.js';
+import inspectorCommonStyles from './inspectorCommon.css.js';
 import * as InspectorView from './InspectorView.js';
 import * as KeyboardShortcut from './KeyboardShortcut.js';
 import * as ListControl from './ListControl.js';
@@ -48,7 +48,6 @@ import * as Toolbar from './Toolbar.js';
 import * as Tooltip from './Tooltip.js';
 import * as TreeOutline from './Treeoutline.js';
 import * as UIUtils from './UIUtils.js';
-import * as Utils from './utils/utils.js';
 import * as View from './View.js';
 import * as ViewManager from './ViewManager.js';
 import * as Widget from './Widget.js';
@@ -74,9 +73,9 @@ export {
   Fragment,
   Geometry,
   GlassPane,
-  HistoryInput,
   Infobar,
   InplaceEditor,
+  inspectorCommonStyles,
   InspectorView,
   KeyboardShortcut,
   ListControl,
@@ -104,7 +103,6 @@ export {
   Tooltip,
   TreeOutline,
   UIUtils,
-  Utils,
   View,
   ViewManager,
   Widget,

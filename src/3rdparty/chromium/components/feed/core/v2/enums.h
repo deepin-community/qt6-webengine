@@ -6,7 +6,7 @@
 #define COMPONENTS_FEED_CORE_V2_ENUMS_H_
 
 #include <iosfwd>
-#include "base/strings/string_piece.h"
+#include <string_view>
 
 namespace feed {
 
@@ -25,7 +25,6 @@ enum class NetworkRequestType : int {
   kQueryNextPage = 10,
   kSingleWebFeedListContents = 11,
   kQueryWebFeed = 12,
-  kSupervisedFeed = 13,
 };
 std::ostream& operator<<(std::ostream& out, NetworkRequestType value);
 
@@ -94,7 +93,8 @@ enum class LoadStreamStatus {
   kNetworkFetchTimedOut = 29,
   kLoadNotAllowedDisabled = 30,
   kLoadNotAllowedDisabledByDse = 31,
-  kMaxValue = kLoadNotAllowedDisabledByDse,
+  kNoCardReceived = 32,
+  kMaxValue = kNoCardReceived,
 };
 
 // Were we able to load fresh Feed data. This should be 'true' unless some kind
@@ -179,7 +179,7 @@ enum class UserSettingsOnStart {
   kFeedNotEnabledByDse = 10,
   kMaxValue = kFeedNotEnabledByDse,
 };
-base::StringPiece ToString(UserSettingsOnStart v);
+std::string_view ToString(UserSettingsOnStart v);
 std::ostream& operator<<(std::ostream& out, UserSettingsOnStart value);
 
 }  // namespace feed

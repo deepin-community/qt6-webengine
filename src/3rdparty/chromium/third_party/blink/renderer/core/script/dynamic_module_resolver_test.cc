@@ -81,7 +81,7 @@ class DynamicModuleResolverTestModulator final : public DummyModulator {
 
   KURL ResolveModuleSpecifier(const String& module_request,
                               const KURL& base_url,
-                              String* failure_reason) final {
+                              String*) final {
     if (module_request == "invalid-specifier")
       return KURL();
 
@@ -96,6 +96,7 @@ class DynamicModuleResolverTestModulator final : public DummyModulator {
                  const ScriptFetchOptions&,
                  ModuleScriptCustomFetchType custom_fetch_type,
                  ModuleTreeClient* client,
+                 ModuleImportPhase import_phase,
                  String) final {
     EXPECT_EQ(expected_fetch_tree_url_, url);
     EXPECT_EQ(expected_fetch_tree_module_type_, module_type);
@@ -111,7 +112,7 @@ class DynamicModuleResolverTestModulator final : public DummyModulator {
   Member<ScriptState> script_state_;
   Member<ModuleTreeClient> pending_client_;
   KURL expected_fetch_tree_url_;
-  ModuleType expected_fetch_tree_module_type_ = ModuleType::kJavaScript;
+  ModuleType expected_fetch_tree_module_type_ = ModuleType::kJavaScriptOrWasm;
   bool fetch_tree_was_called_ = false;
 };
 
@@ -125,7 +126,8 @@ void DynamicModuleResolverTestModulator::Trace(Visitor* visitor) const {
 // with a single argument of type module namespace.
 // CaptureExportedStringFunction captures the exported string value
 // from the module namespace as a WTF::String, exposed via CapturedValue().
-class CaptureExportedStringFunction final : public ScriptFunction::Callable {
+class CaptureExportedStringFunction final
+    : public ThenCallable<IDLAny, CaptureExportedStringFunction> {
  public:
   explicit CaptureExportedStringFunction(const String& export_name)
       : export_name_(export_name) {}
@@ -133,7 +135,7 @@ class CaptureExportedStringFunction final : public ScriptFunction::Callable {
   bool WasCalled() const { return was_called_; }
   const String& CapturedValue() const { return captured_value_; }
 
-  ScriptValue Call(ScriptState* script_state, ScriptValue value) override {
+  void React(ScriptState* script_state, ScriptValue value) {
     was_called_ = true;
 
     v8::Isolate* isolate = script_state->GetIsolate();
@@ -146,8 +148,6 @@ class CaptureExportedStringFunction final : public ScriptFunction::Callable {
             .ToLocalChecked();
     captured_value_ = ToCoreString(
         isolate, exported_value->ToString(context).ToLocalChecked());
-
-    return ScriptValue();
   }
 
  private:
@@ -158,7 +158,8 @@ class CaptureExportedStringFunction final : public ScriptFunction::Callable {
 
 // CaptureErrorFunction implements a javascript function which captures
 // name and error of the exception passed as its argument.
-class CaptureErrorFunction final : public ScriptFunction::Callable {
+class CaptureErrorFunction final
+    : public ThenCallable<IDLAny, CaptureErrorFunction> {
  public:
   CaptureErrorFunction() = default;
 
@@ -166,7 +167,7 @@ class CaptureErrorFunction final : public ScriptFunction::Callable {
   const String& Name() const { return name_; }
   const String& Message() const { return message_; }
 
-  ScriptValue Call(ScriptState* script_state, ScriptValue value) override {
+  void React(ScriptState* script_state, ScriptValue value) {
     was_called_ = true;
 
     v8::Isolate* isolate = script_state->GetIsolate();
@@ -183,8 +184,6 @@ class CaptureErrorFunction final : public ScriptFunction::Callable {
             .ToLocalChecked();
     message_ =
         ToCoreString(isolate, message->ToString(context).ToLocalChecked());
-
-    return ScriptValue();
   }
 
  private:
@@ -194,14 +193,11 @@ class CaptureErrorFunction final : public ScriptFunction::Callable {
 };
 
 class DynamicModuleResolverTestNotReached final
-    : public ScriptFunction::Callable {
+    : public ThenCallable<IDLAny, DynamicModuleResolverTestNotReached> {
  public:
   DynamicModuleResolverTestNotReached() = default;
 
-  ScriptValue Call(ScriptState*, ScriptValue) override {
-    ADD_FAILURE();
-    return ScriptValue();
-  }
+  void React(ScriptState*, ScriptValue) { ADD_FAILURE(); }
 };
 
 class DynamicModuleResolverTest : public testing::Test, public ModuleTestBase {
@@ -220,21 +216,18 @@ TEST_F(DynamicModuleResolverTest, ResolveSuccess) {
       scope.GetScriptState());
   modulator->SetExpectedFetchTreeURL(TestDependencyURL());
 
-  auto* promise_resolver =
-      MakeGarbageCollected<ScriptPromiseResolver>(scope.GetScriptState());
-  ScriptPromise promise = promise_resolver->Promise();
+  auto* promise_resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLAny>>(
+      scope.GetScriptState());
+  auto promise = promise_resolver->Promise();
 
   auto* capture = MakeGarbageCollected<CaptureExportedStringFunction>("foo");
-  promise.Then(
-      MakeGarbageCollected<ScriptFunction>(scope.GetScriptState(), capture),
-      MakeGarbageCollected<ScriptFunction>(
-          scope.GetScriptState(),
-          MakeGarbageCollected<DynamicModuleResolverTestNotReached>()));
+  promise.Then(scope.GetScriptState(), capture,
+               MakeGarbageCollected<DynamicModuleResolverTestNotReached>());
 
   auto* resolver = MakeGarbageCollected<DynamicModuleResolver>(modulator);
   ModuleRequest module_request("./dependency.js",
                                TextPosition::MinimumPosition(),
-                               Vector<ImportAssertion>());
+                               Vector<ImportAttribute>());
   resolver->ResolveDynamically(module_request, TestReferrerScriptInfo(),
                                promise_resolver);
 
@@ -262,15 +255,14 @@ TEST_F(DynamicModuleResolverTest, ResolveJSONModuleSuccess) {
   modulator->SetExpectedFetchTreeURL(TestDependencyURLJSON());
   modulator->SetExpectedFetchTreeModuleType(ModuleType::kJSON);
 
-  auto* promise_resolver =
-      MakeGarbageCollected<ScriptPromiseResolver>(scope.GetScriptState());
-  ScriptPromise promise = promise_resolver->Promise();
+  auto* promise_resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLAny>>(
+      scope.GetScriptState());
 
   auto* resolver = MakeGarbageCollected<DynamicModuleResolver>(modulator);
-  Vector<ImportAssertion> import_assertions{
-      ImportAssertion("type", "json", TextPosition::MinimumPosition())};
+  Vector<ImportAttribute> import_attributes{
+      ImportAttribute("type", "json", TextPosition::MinimumPosition())};
   ModuleRequest module_request(
-      "./dependency.json", TextPosition::MinimumPosition(), import_assertions);
+      "./dependency.json", TextPosition::MinimumPosition(), import_attributes);
   resolver->ResolveDynamically(module_request, TestReferrerScriptInfo(),
                                promise_resolver);
 
@@ -288,21 +280,19 @@ TEST_F(DynamicModuleResolverTest, ResolveSpecifierFailure) {
       scope.GetScriptState());
   modulator->SetExpectedFetchTreeURL(TestDependencyURL());
 
-  auto* promise_resolver =
-      MakeGarbageCollected<ScriptPromiseResolver>(scope.GetScriptState());
-  ScriptPromise promise = promise_resolver->Promise();
+  auto* promise_resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLAny>>(
+      scope.GetScriptState());
+  auto promise = promise_resolver->Promise();
 
   auto* capture = MakeGarbageCollected<CaptureErrorFunction>();
-  promise.Then(
-      MakeGarbageCollected<ScriptFunction>(
-          scope.GetScriptState(),
-          MakeGarbageCollected<DynamicModuleResolverTestNotReached>()),
-      MakeGarbageCollected<ScriptFunction>(scope.GetScriptState(), capture));
+  promise.Then(scope.GetScriptState(),
+               MakeGarbageCollected<DynamicModuleResolverTestNotReached>(),
+               capture);
 
   auto* resolver = MakeGarbageCollected<DynamicModuleResolver>(modulator);
   ModuleRequest module_request("invalid-specifier",
                                TextPosition::MinimumPosition(),
-                               Vector<ImportAssertion>());
+                               Vector<ImportAttribute>());
   resolver->ResolveDynamically(module_request, TestReferrerScriptInfo(),
                                promise_resolver);
 
@@ -318,22 +308,20 @@ TEST_F(DynamicModuleResolverTest, ResolveModuleTypeFailure) {
       scope.GetScriptState());
   modulator->SetExpectedFetchTreeURL(TestDependencyURL());
 
-  auto* promise_resolver =
-      MakeGarbageCollected<ScriptPromiseResolver>(scope.GetScriptState());
-  ScriptPromise promise = promise_resolver->Promise();
+  auto* promise_resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLAny>>(
+      scope.GetScriptState());
+  auto promise = promise_resolver->Promise();
 
   auto* capture = MakeGarbageCollected<CaptureErrorFunction>();
-  promise.Then(
-      MakeGarbageCollected<ScriptFunction>(
-          scope.GetScriptState(),
-          MakeGarbageCollected<DynamicModuleResolverTestNotReached>()),
-      MakeGarbageCollected<ScriptFunction>(scope.GetScriptState(), capture));
+  promise.Then(scope.GetScriptState(),
+               MakeGarbageCollected<DynamicModuleResolverTestNotReached>(),
+               capture);
 
   auto* resolver = MakeGarbageCollected<DynamicModuleResolver>(modulator);
-  Vector<ImportAssertion> import_assertions{
-      ImportAssertion("type", "notARealType", TextPosition::MinimumPosition())};
+  Vector<ImportAttribute> import_attributes{
+      ImportAttribute("type", "notARealType", TextPosition::MinimumPosition())};
   ModuleRequest module_request(
-      "./dependency.js", TextPosition::MinimumPosition(), import_assertions);
+      "./dependency.js", TextPosition::MinimumPosition(), import_attributes);
   resolver->ResolveDynamically(module_request, TestReferrerScriptInfo(),
                                promise_resolver);
 
@@ -349,21 +337,19 @@ TEST_F(DynamicModuleResolverTest, FetchFailure) {
       scope.GetScriptState());
   modulator->SetExpectedFetchTreeURL(TestDependencyURL());
 
-  auto* promise_resolver =
-      MakeGarbageCollected<ScriptPromiseResolver>(scope.GetScriptState());
-  ScriptPromise promise = promise_resolver->Promise();
+  auto* promise_resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLAny>>(
+      scope.GetScriptState());
+  auto promise = promise_resolver->Promise();
 
   auto* capture = MakeGarbageCollected<CaptureErrorFunction>();
-  promise.Then(
-      MakeGarbageCollected<ScriptFunction>(
-          scope.GetScriptState(),
-          MakeGarbageCollected<DynamicModuleResolverTestNotReached>()),
-      MakeGarbageCollected<ScriptFunction>(scope.GetScriptState(), capture));
+  promise.Then(scope.GetScriptState(),
+               MakeGarbageCollected<DynamicModuleResolverTestNotReached>(),
+               capture);
 
   auto* resolver = MakeGarbageCollected<DynamicModuleResolver>(modulator);
   ModuleRequest module_request("./dependency.js",
                                TextPosition::MinimumPosition(),
-                               Vector<ImportAssertion>());
+                               Vector<ImportAttribute>());
   resolver->ResolveDynamically(module_request, TestReferrerScriptInfo(),
                                promise_resolver);
 
@@ -383,21 +369,19 @@ TEST_F(DynamicModuleResolverTest, ExceptionThrown) {
       scope.GetScriptState());
   modulator->SetExpectedFetchTreeURL(TestDependencyURL());
 
-  auto* promise_resolver =
-      MakeGarbageCollected<ScriptPromiseResolver>(scope.GetScriptState());
-  ScriptPromise promise = promise_resolver->Promise();
+  auto* promise_resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLAny>>(
+      scope.GetScriptState());
+  auto promise = promise_resolver->Promise();
 
   auto* capture = MakeGarbageCollected<CaptureErrorFunction>();
-  promise.Then(
-      MakeGarbageCollected<ScriptFunction>(
-          scope.GetScriptState(),
-          MakeGarbageCollected<DynamicModuleResolverTestNotReached>()),
-      MakeGarbageCollected<ScriptFunction>(scope.GetScriptState(), capture));
+  promise.Then(scope.GetScriptState(),
+               MakeGarbageCollected<DynamicModuleResolverTestNotReached>(),
+               capture);
 
   auto* resolver = MakeGarbageCollected<DynamicModuleResolver>(modulator);
   ModuleRequest module_request("./dependency.js",
                                TextPosition::MinimumPosition(),
-                               Vector<ImportAssertion>());
+                               Vector<ImportAttribute>());
   resolver->ResolveDynamically(module_request, TestReferrerScriptInfo(),
                                promise_resolver);
 
@@ -426,21 +410,18 @@ TEST_F(DynamicModuleResolverTest, ResolveWithNullReferrerScriptSuccess) {
       scope.GetScriptState());
   modulator->SetExpectedFetchTreeURL(TestDependencyURL());
 
-  auto* promise_resolver =
-      MakeGarbageCollected<ScriptPromiseResolver>(scope.GetScriptState());
-  ScriptPromise promise = promise_resolver->Promise();
+  auto* promise_resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLAny>>(
+      scope.GetScriptState());
+  auto promise = promise_resolver->Promise();
 
   auto* capture = MakeGarbageCollected<CaptureExportedStringFunction>("foo");
-  promise.Then(
-      MakeGarbageCollected<ScriptFunction>(scope.GetScriptState(), capture),
-      MakeGarbageCollected<ScriptFunction>(
-          scope.GetScriptState(),
-          MakeGarbageCollected<DynamicModuleResolverTestNotReached>()));
+  promise.Then(scope.GetScriptState(), capture,
+               MakeGarbageCollected<DynamicModuleResolverTestNotReached>());
 
   auto* resolver = MakeGarbageCollected<DynamicModuleResolver>(modulator);
   ModuleRequest module_request("./dependency.js",
                                TextPosition::MinimumPosition(),
-                               Vector<ImportAssertion>());
+                               Vector<ImportAttribute>());
   resolver->ResolveDynamically(module_request, ReferrerScriptInfo(),
                                promise_resolver);
 
@@ -471,13 +452,13 @@ TEST_F(DynamicModuleResolverTest, ResolveWithReferrerScriptInfoBaseURL) {
   modulator->SetExpectedFetchTreeURL(
       KURL("https://example.com/correct/dependency.js"));
 
-  auto* promise_resolver =
-      MakeGarbageCollected<ScriptPromiseResolver>(scope.GetScriptState());
+  auto* promise_resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLAny>>(
+      scope.GetScriptState());
   auto* resolver = MakeGarbageCollected<DynamicModuleResolver>(modulator);
   KURL correct_base_url("https://example.com/correct/baz.js");
   ModuleRequest module_request("./dependency.js",
                                TextPosition::MinimumPosition(),
-                               Vector<ImportAssertion>());
+                               Vector<ImportAttribute>());
   resolver->ResolveDynamically(
       module_request,
       ReferrerScriptInfo(correct_base_url, ScriptFetchOptions()),

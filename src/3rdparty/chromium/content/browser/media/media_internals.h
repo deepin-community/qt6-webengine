@@ -5,10 +5,12 @@
 #ifndef CONTENT_BROWSER_MEDIA_MEDIA_INTERNALS_H_
 #define CONTENT_BROWSER_MEDIA_MEDIA_INTERNALS_H_
 
+#include <array>
 #include <list>
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -23,6 +25,7 @@
 #include "content/common/media/media_log_records.mojom.h"
 #include "content/public/browser/render_process_host_creation_observer.h"
 #include "content/public/browser/render_process_host_observer.h"
+#include "ipc/constants.mojom.h"
 #include "media/audio/audio_logging.h"
 #include "media/base/media_log.h"
 #include "media/capture/video/video_capture_device_descriptor.h"
@@ -44,7 +47,7 @@ enum class AudioFocusType;
 namespace content {
 
 // This class stores information about currently active media.
-// TODO(crbug.com/812557): Remove inheritance from media::AudioLogFactory once
+// TODO(crbug.com/40563083): Remove inheritance from media::AudioLogFactory once
 // the creation of the AudioManager instance moves to the audio service.
 class CONTENT_EXPORT MediaInternals : public media::AudioLogFactory,
                                       public RenderProcessHostCreationObserver,
@@ -116,7 +119,7 @@ class CONTENT_EXPORT MediaInternals : public media::AudioLogFactory,
       AudioComponent component,
       int component_id,
       int render_process_id = -1,
-      int render_frame_id = MSG_ROUTING_NONE);
+      int render_frame_id = IPC::mojom::kRoutingIdNone);
 
   // Strongly bounds |receiver| to a new media::mojom::AudioLog instance. Safe
   // to call from any thread.
@@ -125,7 +128,7 @@ class CONTENT_EXPORT MediaInternals : public media::AudioLogFactory,
       int component_id,
       mojo::PendingReceiver<media::mojom::AudioLog> receiver,
       int render_process_id = -1,
-      int render_frame_id = MSG_ROUTING_NONE);
+      int render_frame_id = IPC::mojom::kRoutingIdNone);
 
   static void CreateMediaLogRecords(
       int render_process_id,
@@ -163,8 +166,8 @@ class CONTENT_EXPORT MediaInternals : public media::AudioLogFactory,
     UPDATE_AND_DELETE,  // Deletes an existing AudioLog cache entry.
   };
   void UpdateAudioLog(AudioLogUpdateType type,
-                      base::StringPiece cache_key,
-                      base::StringPiece function,
+                      std::string_view cache_key,
+                      std::string_view function,
                       const base::Value::Dict& value);
 
   std::unique_ptr<AudioLogImpl> CreateAudioLogImpl(AudioComponent component,
@@ -193,8 +196,10 @@ class CONTENT_EXPORT MediaInternals : public media::AudioLogFactory,
   base::Lock lock_;
   bool can_update_ = false;
   base::Value::Dict audio_streams_cached_data_;
-  int owner_ids_[base::to_underlying(
-      media::AudioLogFactory::AudioComponent::kAudiocomponentMax)] = {};
+  std::array<int,
+             base::to_underlying(
+                 media::AudioLogFactory::AudioComponent::kAudiocomponentMax)>
+      owner_ids_ = {};
 };
 
 }  // namespace content

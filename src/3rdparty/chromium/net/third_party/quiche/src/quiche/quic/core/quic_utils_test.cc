@@ -5,6 +5,7 @@
 #include "quiche/quic/core/quic_utils.h"
 
 #include <string>
+#include <vector>
 
 #include "absl/base/macros.h"
 #include "absl/numeric/int128.h"
@@ -206,11 +207,7 @@ TEST_F(QuicUtilsTest, VariableLengthConnectionId) {
   EXPECT_FALSE(VersionAllowsVariableLengthConnectionIds(QUIC_VERSION_46));
   EXPECT_TRUE(QuicUtils::IsConnectionIdValidForVersion(
       QuicUtils::CreateZeroConnectionId(QUIC_VERSION_46), QUIC_VERSION_46));
-  EXPECT_TRUE(QuicUtils::IsConnectionIdValidForVersion(
-      QuicUtils::CreateZeroConnectionId(QUIC_VERSION_50), QUIC_VERSION_50));
   EXPECT_NE(QuicUtils::CreateZeroConnectionId(QUIC_VERSION_46),
-            EmptyQuicConnectionId());
-  EXPECT_EQ(QuicUtils::CreateZeroConnectionId(QUIC_VERSION_50),
             EmptyQuicConnectionId());
   EXPECT_FALSE(QuicUtils::IsConnectionIdValidForVersion(EmptyQuicConnectionId(),
                                                         QUIC_VERSION_46));
@@ -237,6 +234,19 @@ TEST_F(QuicUtilsTest, EcnCodepointToString) {
   EXPECT_EQ(EcnCodepointToString(ECN_ECT0), "ECT(0)");
   EXPECT_EQ(EcnCodepointToString(ECN_ECT1), "ECT(1)");
   EXPECT_EQ(EcnCodepointToString(ECN_CE), "CE");
+}
+
+TEST_F(QuicUtilsTest, PosixBasename) {
+  EXPECT_EQ("", PosixBasename("/hello/"));
+  EXPECT_EQ("hello", PosixBasename("/hello"));
+  EXPECT_EQ("world", PosixBasename("hello/world"));
+  EXPECT_EQ("", PosixBasename("hello/"));
+  EXPECT_EQ("world", PosixBasename("world"));
+  EXPECT_EQ("", PosixBasename("/"));
+  EXPECT_EQ("", PosixBasename(""));
+  // "\\" is not treated as a path separator.
+  EXPECT_EQ("C:\\hello", PosixBasename("C:\\hello"));
+  EXPECT_EQ("world", PosixBasename("C:\\hello/world"));
 }
 
 enum class TestEnumClassBit : uint8_t {

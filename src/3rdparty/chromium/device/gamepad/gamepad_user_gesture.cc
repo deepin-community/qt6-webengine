@@ -8,6 +8,7 @@
 
 #include <algorithm>
 
+#include "base/compiler_specific.h"
 #include "device/gamepad/public/cpp/gamepads.h"
 
 namespace {
@@ -35,13 +36,16 @@ bool GamepadsHaveUserGesture(const Gamepads& gamepads) {
 
       for (size_t button_index = 0; button_index < pad.buttons_length;
            button_index++) {
-        if (pad.buttons[button_index].pressed)
+        if (UNSAFE_TODO(pad.buttons[button_index]).pressed) {
           return true;
+        }
       }
 
       for (size_t axes_index = 0; axes_index < pad.axes_length; axes_index++) {
-        if (fabs(pad.axes[axes_index]) > kAxisMoveAmountThreshold)
+        if (fabs(UNSAFE_TODO(pad.axes[axes_index])) >
+            kAxisMoveAmountThreshold) {
           return true;
+        }
       }
     }
   }

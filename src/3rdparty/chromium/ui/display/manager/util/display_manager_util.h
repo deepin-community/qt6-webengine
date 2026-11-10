@@ -7,19 +7,17 @@
 
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
+#include "base/containers/flat_set.h"
 #include "base/memory/raw_ptr.h"
-#include "build/chromeos_buildflags.h"
+#include "third_party/cros_system_api/dbus/service_constants.h"
 #include "ui/display/display.h"
 #include "ui/display/display_layout.h"
 #include "ui/display/manager/display_manager_export.h"
 #include "ui/display/manager/managed_display_info.h"
 #include "ui/display/types/display_constants.h"
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
-#include "third_party/cros_system_api/dbus/service_constants.h"
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 namespace gfx {
 class Rect;
@@ -28,18 +26,19 @@ class Size;
 
 namespace display {
 
-class DisplayMode;
 class DisplaySnapshot;
 class ManagedDisplayMode;
 class ManagedDisplayInfo;
 using DisplayInfoList = std::vector<ManagedDisplayInfo>;
 
-#if BUILDFLAG(IS_CHROMEOS_ASH)
 // Returns a string describing |state|.
 std::string DisplayPowerStateToString(chromeos::DisplayPowerState state);
 
 // Returns a string describing |state|.
-std::string RefreshRateThrottleStateToString(RefreshRateThrottleState state);
+std::string VrrStateToString(const base::flat_set<int64_t>& state);
+
+std::string RefreshRateOverrideToString(
+    const std::unordered_map<int64_t, float>& refresh_rate_override);
 
 // Returns the number of displays in |displays| that should be turned on, per
 // |state|.  If |display_power| is non-NULL, it is updated to contain the
@@ -48,17 +47,6 @@ DISPLAY_MANAGER_EXPORT int GetDisplayPower(
     const std::vector<raw_ptr<DisplaySnapshot, VectorExperimental>>& displays,
     chromeos::DisplayPowerState state,
     std::vector<bool>* display_power);
-
-// Get a vector of DisplayMode pointers from |display|'s set of modes that
-// should be considered for seamless refresh rate switching. These will have the
-// same refresh rate as |matching_mode|, be no slower than 60 Hz, and no faster
-// than the display's native mode. The vector will be ordered by refresh rate,
-// with the slowest refresh rate at index 0.
-std::vector<const DisplayMode*> GetSeamlessRefreshRateModes(
-    const DisplaySnapshot& display,
-    const DisplayMode& matching_mode);
-
-#endif  // BUILDFLAG(IS_CHROMEOS_ASH)
 
 // Determines whether |a| is within an epsilon of |b|.
 bool WithinEpsilon(float a, float b);
@@ -76,7 +64,7 @@ DISPLAY_MANAGER_EXPORT std::vector<float> GetDisplayZoomFactors(
     const ManagedDisplayMode& mode);
 
 // Returns a list of display zooms supported by the given |display_width|.
-DISPLAY_MANAGER_EXPORT std::vector<float> GetDisplayZoomFactorsByDsiplayWidth(
+DISPLAY_MANAGER_EXPORT std::vector<float> GetDisplayZoomFactorsByDisplayWidth(
     const int display_width);
 
 // Returns a list of display zooms based on the provided |dsf| of the display.
@@ -138,7 +126,7 @@ DISPLAY_MANAGER_EXPORT bool IsDisplayIdListSorted(const DisplayIdList& list);
 template <typename Range, typename UnaryOperation = std::identity>
 DisplayIdList GenerateDisplayIdList(Range&& range, UnaryOperation op = {}) {
   DisplayIdList list;
-  base::ranges::transform(range, std::back_inserter(list), op);
+  std::ranges::transform(range, std::back_inserter(list), op);
   SortDisplayIdList(&list);
   return list;
 }

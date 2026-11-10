@@ -4,7 +4,9 @@
 
 #include "components/gcm_driver/crypto/message_payload_parser.h"
 
-#include "base/big_endian.h"
+#include "base/compiler_specific.h"
+#include "base/containers/span.h"
+#include "base/numerics/byte_conversions.h"
 #include "components/gcm_driver/crypto/gcm_decryption_result.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -51,23 +53,24 @@ TEST(MessagePayloadParserTest, ValidMessage) {
   const uint8_t* salt = kValidMessage;
 
   ASSERT_EQ(parser.salt().size(), kSaltSize);
-  EXPECT_EQ(parser.salt(), std::string(salt, salt + kSaltSize));
+  UNSAFE_TODO(EXPECT_EQ(parser.salt(), std::string(salt, salt + kSaltSize)));
 
   ASSERT_EQ(parser.record_size(), 18u);
 
-  const uint8_t* public_key =
-      kValidMessage + kSaltSize + sizeof(uint32_t) + sizeof(uint8_t);
+  const uint8_t* public_key = UNSAFE_TODO(kValidMessage + kSaltSize +
+                                          sizeof(uint32_t) + sizeof(uint8_t));
 
   ASSERT_EQ(parser.public_key().size(), kPublicKeySize);
-  EXPECT_EQ(parser.public_key(),
-            std::string(public_key, public_key + kPublicKeySize));
+  UNSAFE_TODO(EXPECT_EQ(parser.public_key(),
+                        std::string(public_key, public_key + kPublicKeySize)));
 
-  const uint8_t* ciphertext = kValidMessage + kSaltSize + sizeof(uint32_t) +
-                              sizeof(uint8_t) + kPublicKeySize;
+  const uint8_t* ciphertext =
+      UNSAFE_TODO(kValidMessage + kSaltSize + sizeof(uint32_t) +
+                  sizeof(uint8_t) + kPublicKeySize);
 
   ASSERT_EQ(parser.ciphertext().size(), kCiphertextSize);
-  EXPECT_EQ(parser.ciphertext(),
-            std::string(ciphertext, ciphertext + kCiphertextSize));
+  UNSAFE_TODO(EXPECT_EQ(parser.ciphertext(),
+                        std::string(ciphertext, ciphertext + kCiphertextSize)));
 }
 
 TEST(MessagePayloadParserTest, MinimumMessageSize) {
@@ -83,8 +86,10 @@ TEST(MessagePayloadParserTest, MinimumMessageSize) {
 TEST(MessagePayloadParserTest, MinimumRecordSize) {
   std::string message = CreateMessageString();
 
-  uint32_t invalid_record_size = 11;
-  base::WriteBigEndian(&message[0] + 16 /* salt */, invalid_record_size);
+  auto record_size_span = base::as_writable_byte_span(message).subspan(
+      16u /* salt */, sizeof(uint32_t));
+  const uint32_t invalid_record_size = 11u;
+  record_size_span.copy_from(base::U32ToBigEndian(invalid_record_size));
 
   MessagePayloadParser parser(message);
   EXPECT_FALSE(parser.IsValid());
@@ -95,9 +100,10 @@ TEST(MessagePayloadParserTest, MinimumRecordSize) {
 TEST(MessagePayloadParserTest, InvalidPublicKeyLength) {
   std::string message = CreateMessageString();
 
+  auto pubkey_span = base::as_writable_byte_span(message).subspan(
+      16u /* salt */ + 4u /* rs */, sizeof(uint8_t));
   uint8_t invalid_public_key_size = 42;
-  base::WriteBigEndian(&message[0] + 16 /* salt */ + 4 /* rs */,
-                       invalid_public_key_size);
+  pubkey_span.copy_from(base::U8ToBigEndian(invalid_public_key_size));
 
   MessagePayloadParser parser(message);
   EXPECT_FALSE(parser.IsValid());
@@ -108,9 +114,8 @@ TEST(MessagePayloadParserTest, InvalidPublicKeyLength) {
 TEST(MessagePayloadParserTest, InvalidPublicKeyFormat) {
   std::string message = CreateMessageString();
 
-  uint8_t invalid_p256_uncompressed_key_prefix = 0x42;
-  base::WriteBigEndian(&message[0] + 16 /* salt */ + 4 /* rs */ + 1 /* idlen */,
-                       invalid_p256_uncompressed_key_prefix);
+  // Replace the first byte of the key, which signals the point format.
+  message[16u /* salt */ + 4u /* rs */ + 1u /* idlen */] = 0x42;
 
   MessagePayloadParser parser(message);
   EXPECT_FALSE(parser.IsValid());

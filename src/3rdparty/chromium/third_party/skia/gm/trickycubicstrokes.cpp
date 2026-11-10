@@ -11,13 +11,14 @@
 #include "include/core/SkMatrix.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkPath.h"
+#include "include/core/SkPathBuilder.h"
 #include "include/core/SkPoint.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkSize.h"
 #include "include/core/SkString.h"
 #include "include/core/SkTypes.h"
-#include "include/gpu/GrContextOptions.h"
-#include "include/gpu/GrDirectContext.h"
+#include "include/gpu/ganesh/GrContextOptions.h"
+#include "include/gpu/ganesh/GrDirectContext.h"
 #include "src/base/SkRandom.h"
 #include "src/core/SkGeometry.h"
 #include "src/gpu/ganesh/GrCaps.h"
@@ -60,6 +61,7 @@ static const TrickyCubic kTrickyCubics[] = {
     {{{0,0}, {0,-10}, {0,-10}, {0,10}}, 4, CellFillMode::kCenter, 1.098283f},  // Flat line with 180
     {{{10,0}, {0,0}, {20,0}, {10,0}}, 4, CellFillMode::kStretch},  // Flat line with 2 180s
     {{{39,-39}, {40,-40}, {40,-40}, {0,0}}, 4, CellFillMode::kStretch},  // Flat diagonal with 180
+    {{{39,-39}, {40,-40}, {37,-39}, {0,0}}, 4, CellFillMode::kStretch},  // Near-flat diagonal
     {{{40, 40}, {0, 0}, {200, 200}, {0, 0}}, 4, CellFillMode::kStretch},  // Diag w/ an internal 180
     {{{0,0}, {1e-2f,0}, {-1e-2f,0}, {0,0}}, 4, CellFillMode::kCenter},  // Circle
     {{{400.75f,100.05f}, {400.75f,100.05f}, {100.05f,300.95f}, {100.05f,300.95f}}, 4,
@@ -171,4 +173,30 @@ DEF_SIMPLE_GM(trickycubicstrokes, canvas, kTestWidth, kTestHeight) {
 
 DEF_SIMPLE_GM(trickycubicstrokes_roundcaps, canvas, kTestWidth, kTestHeight) {
     draw_test(canvas, SkPaint::kRound_Cap, SkPaint::kRound_Join);
+}
+
+// See b/433057370
+DEF_SIMPLE_GM(trickycubicstrokes_largeradius, canvas, 128, 256) {
+    SkPathBuilder b;
+
+    // Starts as a line with a single tangent direction, with increasing curvature
+    for (int y = 0; y < 2; ++y) {
+        float shift = 210.f * y;
+        float dy = 5.f * y;
+        b.moveTo(159.429f, 149.808f + shift)
+         .cubicTo({232.5f, 149.808f + dy + shift},
+                  {232.5f, 149.808f + dy + shift},
+                  {305.572f, 149.808f + shift});
+    }
+
+    // A large stroke width is required to show the cusp circle artifacts with
+    // the tessellating path renderer
+    SkPaint s;
+    s.setStroke(true);
+    s.setStrokeWidth(200.f);
+    s.setAntiAlias(true);
+    b.setFillType(SkPathFillType::kWinding);
+    canvas->scale(0.5f, 0.5f);
+    canvas->translate(-125.f, 0.f);
+    canvas->drawPath(b.detach(), s);
 }

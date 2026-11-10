@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("//tools/build_defs/apple:ios.bzl", "ios_unit_test")
-load("//tools/build_defs/swift:swift_library.bzl", "swift_library")
+load("@rules_apple//apple:ios.bzl", "ios_unit_test")
 load("//third_party/nearby:minimum_os.bzl", "IOS_LATEST_TEST_RUNNER", "IOS_MINIMUM_OS")
+load("//tools/build_defs/swift:swift_library.bzl", "swift_library")
 
 licenses(["notice"])
 
@@ -33,10 +33,12 @@ objc_library(
     deps = [
         "//connections:core",
         "//connections:core_types",
+        "//connections/implementation/flags:connections_flags",
+        "//internal/flags:nearby_flags",
         "//internal/platform:base",
         "//internal/platform/implementation/apple",  # buildcleaner: keep
+        "//internal/platform/implementation/apple/Log:GNCLogger",
         "//third_party/apple_frameworks:Foundation",
-        "//third_party/objective_c/google_toolbox_for_mac:GTM_Logger",
     ],
 )
 

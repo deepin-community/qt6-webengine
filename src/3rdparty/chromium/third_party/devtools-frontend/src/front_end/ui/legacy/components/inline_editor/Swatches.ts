@@ -1,135 +1,47 @@
 // Copyright (c) 2015 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
 
-import * as Common from '../../../../core/common/common.js';
-import * as TextUtils from '../../../../models/text_utils/text_utils.js';
-import * as IconButton from '../../../components/icon_button/icon_button.js';
-import * as VisualLogging from '../../../visual_logging/visual_logging.js';
-import * as UI from '../../legacy.js';
+import '../../../components/icon_button/icon_button.js';
 
-import bezierSwatchStyles from './bezierSwatch.css.js';
-import {ColorChangedEvent, ColorSwatch} from './ColorSwatch.js';
-import {type CSSShadowModel} from './CSSShadowModel.js';
+import type * as IconButton from '../../../components/icon_button/icon_button.js';
+import {html, render} from '../../../lit/lit.js';
+
+import type {CSSShadowModel} from './CSSShadowEditor.js';
 import cssShadowSwatchStyles from './cssShadowSwatch.css.js';
 
-export class BezierSwatch extends HTMLSpanElement {
-  private readonly iconElementInternal: IconButton.Icon.Icon;
-  private textElement: HTMLElement;
+export class CSSShadowSwatch extends HTMLElement {
+  readonly #icon: IconButton.Icon.Icon;
+  readonly #model: CSSShadowModel;
 
-  constructor() {
+  constructor(model: CSSShadowModel) {
     super();
-    const root = UI.Utils.createShadowRootWithCoreStyles(this, {
-      cssFile: [bezierSwatchStyles],
-      delegatesFocus: undefined,
-    });
-    this.iconElementInternal = IconButton.Icon.create('bezier-curve-filled', 'bezier-swatch-icon');
-    this.iconElementInternal.setAttribute('jslog', `${VisualLogging.showStyleEditor().context('bezier')}`);
-    root.appendChild(this.iconElementInternal);
-    this.textElement = this.createChild('span');
-    root.createChild('slot');
-  }
+    this.#model = model;
 
-  static create(): BezierSwatch {
-    let constructor: (() => Element)|((() => Element) | null) = BezierSwatch.constructorInternal;
-    if (!constructor) {
-      constructor = UI.Utils.registerCustomElement('span', 'bezier-swatch', BezierSwatch);
-      BezierSwatch.constructorInternal = constructor;
-    }
+    // clang-format off
+    render(html`
+        <style>${cssShadowSwatchStyles}</style>
+        <devtools-icon tabindex=-1 name="shadow" class="shadow-swatch-icon"></devtools-icon>`,
+        this, {host: this});
+    // clang-format on
 
-    return constructor() as BezierSwatch;
-  }
-
-  bezierText(): string {
-    return this.textElement.textContent || '';
-  }
-
-  setBezierText(text: string): void {
-    this.textElement.textContent = text;
-  }
-
-  hideText(hide: boolean): void {
-    this.textElement.hidden = hide;
-  }
-
-  iconElement(): HTMLSpanElement {
-    return this.iconElementInternal;
-  }
-
-  private static constructorInternal: (() => Element)|null = null;
-}
-
-export class CSSShadowSwatch extends HTMLSpanElement {
-  private readonly iconElementInternal: IconButton.Icon.Icon;
-  private contentElement: HTMLElement;
-  private colorSwatchInternal!: ColorSwatch|null;
-  private modelInternal?: CSSShadowModel;
-
-  constructor() {
-    super();
-    const root = UI.Utils.createShadowRootWithCoreStyles(this, {
-      cssFile: [cssShadowSwatchStyles],
-      delegatesFocus: undefined,
-    });
-    this.iconElementInternal = IconButton.Icon.create('shadow', 'shadow-swatch-icon');
-    root.appendChild(this.iconElementInternal);
-    root.createChild('slot');
-    this.contentElement = this.createChild('span');
-  }
-
-  static create(): CSSShadowSwatch {
-    let constructor: (() => Element)|((() => Element) | null) = CSSShadowSwatch.constructorInternal;
-    if (!constructor) {
-      constructor = UI.Utils.registerCustomElement('span', 'css-shadow-swatch', CSSShadowSwatch);
-      CSSShadowSwatch.constructorInternal = constructor;
-    }
-
-    return constructor() as CSSShadowSwatch;
+    this.#icon = this.querySelector('devtools-icon') as IconButton.Icon.Icon;
   }
 
   model(): CSSShadowModel {
-    return this.modelInternal as CSSShadowModel;
+    return this.#model;
   }
 
-  setCSSShadow(model: CSSShadowModel): void {
-    this.modelInternal = model;
-    this.contentElement.removeChildren();
-    const results = TextUtils.TextUtils.Utils.splitStringByRegexes(
-        model.asCSSText(), [/!important/g, /inset/g, Common.Color.Regex]);
-    for (let i = 0; i < results.length; i++) {
-      const result = results[i];
-      if (result.regexIndex === 2) {
-        if (!this.colorSwatchInternal) {
-          this.colorSwatchInternal = new ColorSwatch();
-          const value = this.colorSwatchInternal.createChild('span');
-          this.colorSwatchInternal.addEventListener(ColorChangedEvent.eventName, (event: ColorChangedEvent) => {
-            value.textContent = event.data.text;
-          });
-        }
-
-        this.colorSwatchInternal.renderColor(model.color());
-        const value = this.colorSwatchInternal.querySelector('span');
-        if (value) {
-          value.textContent = model.color().getAuthoredText() ?? model.color().asString();
-        }
-        this.contentElement.appendChild(this.colorSwatchInternal);
-      } else {
-        this.contentElement.appendChild(document.createTextNode(result.value));
-      }
-    }
+  iconElement(): IconButton.Icon.Icon {
+    return this.#icon;
   }
+}
 
-  hideText(hide: boolean): void {
-    this.contentElement.hidden = hide;
+customElements.define('css-shadow-swatch', CSSShadowSwatch);
+
+declare global {
+  interface HTMLElementTagNameMap {
+    'css-shadow-swatch': CSSShadowSwatch;
   }
-
-  iconElement(): HTMLSpanElement {
-    return this.iconElementInternal;
-  }
-
-  colorSwatch(): ColorSwatch|null {
-    return this.colorSwatchInternal;
-  }
-
-  private static constructorInternal: (() => Element)|null = null;
 }

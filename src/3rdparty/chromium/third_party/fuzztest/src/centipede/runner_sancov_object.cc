@@ -24,14 +24,20 @@
 #include <functional>
 #include <vector>
 
+#include "absl/base/nullability.h"
 #include "./centipede/foreach_nonzero.h"
 #include "./centipede/pc_info.h"
 #include "./centipede/runner_dl_info.h"
 #include "./centipede/runner_utils.h"
 
-namespace centipede {
+namespace fuzztest::internal {
 
-void SanCovObjectArray::PCGuardInit(PCGuard *start, PCGuard *stop) {
+void SanCovObjectArray::PCGuardInit(PCGuard *absl_nullable start,
+                                    PCGuard *stop) {
+  RunnerCheck((start != nullptr) == (stop != nullptr),
+              "invalid PC guard table");
+  skipping_no_code_dso_ = start == stop;
+  if (skipping_no_code_dso_) return;
   // Ignore repeated calls with the same arguments.
   if (size_ != 0 && objects_[size_ - 1].pc_guard_start == start) return;
   RunnerCheck(size_ < kMaxSize, "too many sancov objects");
@@ -46,6 +52,12 @@ void SanCovObjectArray::PCGuardInit(PCGuard *start, PCGuard *stop) {
 
 void SanCovObjectArray::Inline8BitCountersInit(
     uint8_t *inline_8bit_counters_start, uint8_t *inline_8bit_counters_stop) {
+  RunnerCheck((inline_8bit_counters_start != nullptr) ==
+                  (inline_8bit_counters_stop != nullptr),
+              "invalid 8-bit counter table");
+  skipping_no_code_dso_ =
+      inline_8bit_counters_start == inline_8bit_counters_stop;
+  if (skipping_no_code_dso_) return;
   // Ignore repeated calls with the same arguments.
   if (size_ != 0 && objects_[size_ - 1].inline_8bit_counters_start ==
                         inline_8bit_counters_start) {
@@ -57,8 +69,14 @@ void SanCovObjectArray::Inline8BitCountersInit(
   sancov_object.inline_8bit_counters_stop = inline_8bit_counters_stop;
 }
 
-void SanCovObjectArray::PCInfoInit(const PCInfo *pcs_beg,
+void SanCovObjectArray::PCInfoInit(const PCInfo *absl_nullable pcs_beg,
                                    const PCInfo *pcs_end) {
+  RunnerCheck((pcs_beg != nullptr) == (pcs_end != nullptr), "invalid PC table");
+  if (skipping_no_code_dso_) {
+    RunnerCheck(pcs_beg == pcs_end,
+                "unexpected non-empty PC table for no-code DSO");
+    return;
+  }
   const char *called_early =
       "__sanitizer_cov_pcs_init is called before either of "
       "__sanitizer_cov_trace_pc_guard_init or "
@@ -90,6 +108,13 @@ void SanCovObjectArray::PCInfoInit(const PCInfo *pcs_beg,
 
 void SanCovObjectArray::CFSInit(const uintptr_t *cfs_beg,
                                 const uintptr_t *cfs_end) {
+  RunnerCheck((cfs_beg != nullptr) == (cfs_end != nullptr),
+              "invalid control-flow table");
+  if (skipping_no_code_dso_) {
+    RunnerCheck(cfs_beg == cfs_end,
+                "unexpected non-empty control-flow table for no-code DSO");
+    return;
+  }
   // Assumes __sanitizer_cov_pcs_init has been called.
   const char *called_early =
       "__sanitizer_cov_cfs_init is called before __sanitizer_cov_pcs_init";
@@ -107,8 +132,8 @@ std::vector<PCInfo> SanCovObjectArray::CreatePCTable() const {
     const auto &object = objects_[i];
     for (const auto *ptr = object.pcs_beg; ptr != object.pcs_end; ++ptr) {
       auto pc_info = *ptr;
-      // Subtract the ASLR base.
-      pc_info.pc -= object.dl_info.start_address;
+      // Convert into the link-time address
+      pc_info.pc -= object.dl_info.link_offset;
       result.push_back(pc_info);
     }
   }
@@ -123,8 +148,8 @@ std::vector<uintptr_t> SanCovObjectArray::CreateCfTable() const {
     for (const auto *ptr = object.cfs_beg; ptr != object.cfs_end; ++ptr) {
       uintptr_t data = *ptr;
       // CF table is an array of PCs, except for delimiter (Null) and indirect
-      // call indicator (-1). Subtract the ASLR base only from PCs.
-      if (data != 0 && data != -1ULL) data -= object.dl_info.start_address;
+      // call indicator (-1). Convert into link-time address.
+      if (data != 0 && data != -1ULL) data -= object.dl_info.link_offset;
       result.push_back(data);
     }
   }
@@ -169,4 +194,4 @@ void SanCovObjectArray::ForEachNonZeroInlineCounter(
   }
 }
 
-}  // namespace centipede
+}  // namespace fuzztest::internal

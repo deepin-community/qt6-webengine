@@ -224,6 +224,20 @@ TEST(UrlUtilTest, GetValueForKeyInQueryInvalidURL) {
   EXPECT_FALSE(GetValueForKeyInQuery(url, "test", &value));
 }
 
+TEST(UrlUtilTest, GetValueForKeyInQueryNoOutputValue) {
+  GURL url(
+      "http://example.com/path?name=value&boolParam&"
+      "url=http://test.com/q?n1%3Dv1%26n2");
+
+  // False when getting a non-existent query param.
+  EXPECT_FALSE(GetValueForKeyInQuery(url, "non-exist", nullptr));
+
+  // True when query param exists.
+  EXPECT_TRUE(GetValueForKeyInQuery(url, "name", nullptr));
+  EXPECT_TRUE(GetValueForKeyInQuery(url, "boolParam", nullptr));
+  EXPECT_TRUE(GetValueForKeyInQuery(url, "url", nullptr));
+}
+
 TEST(UrlUtilTest, ParseQuery) {
   const GURL url("http://example.com/path?name=value&boolParam&"
                  "url=http://test.com/q?n1%3Dv1%26n2&"
@@ -544,47 +558,57 @@ void PrintTo(const NonUniqueNameTestData& data, std::ostream* os) {
 }
 
 const NonUniqueNameTestData kNonUniqueNameTestData[] = {
+    // eTLDs
+    {true, "com"},
+    {true, "com."},
+    {true, ".com"},
+    {true, "co.uk"},
+    {true, "co.uk."},
+    {true, ".co.uk"},
+    {false, "notarealtld"},
+    {false, ".notarealtld"},
+    {false, "notarealtld."},
     // Domains under ICANN-assigned domains.
-    { true, "google.com" },
-    { true, "google.co.uk" },
+    {true, "google.com"},
+    {true, "google.co.uk"},
     // Domains under private registries.
-    { true, "appspot.com" },
-    { true, "test.appspot.com" },
+    {true, "appspot.com"},
+    {true, "test.appspot.com"},
     // Unreserved IPv4 addresses (in various forms).
-    { true, "8.8.8.8" },
-    { true, "99.64.0.0" },
-    { true, "212.15.0.0" },
-    { true, "212.15" },
-    { true, "212.15.0" },
-    { true, "3557752832" },
+    {true, "8.8.8.8"},
+    {true, "99.64.0.0"},
+    {true, "212.15.0.0"},
+    {true, "212.15"},
+    {true, "212.15.0"},
+    {true, "3557752832"},
     // Reserved IPv4 addresses (in various forms).
-    { false, "192.168.0.0" },
-    { false, "192.168.0.6" },
-    { false, "10.0.0.5" },
-    { false, "10.0" },
-    { false, "10.0.0" },
-    { false, "3232235526" },
+    {false, "192.168.0.0"},
+    {false, "192.168.0.6"},
+    {false, "10.0.0.5"},
+    {false, "10.0"},
+    {false, "10.0.0"},
+    {false, "3232235526"},
     // Unreserved IPv6 addresses.
-    { true, "FFC0:ba98:7654:3210:FEDC:BA98:7654:3210" },
-    { true, "2000:ba98:7654:2301:EFCD:BA98:7654:3210" },
+    {true, "FFC0:ba98:7654:3210:FEDC:BA98:7654:3210"},
+    {true, "2000:ba98:7654:2301:EFCD:BA98:7654:3210"},
     // Reserved IPv6 addresses.
-    { false, "::192.9.5.5" },
-    { false, "FEED::BEEF" },
-    { false, "FEC0:ba98:7654:3210:FEDC:BA98:7654:3210" },
+    {false, "::192.9.5.5"},
+    {false, "FEED::BEEF"},
+    {false, "FEC0:ba98:7654:3210:FEDC:BA98:7654:3210"},
     // 'internal'/non-IANA assigned domains.
-    { false, "intranet" },
-    { false, "intranet." },
-    { false, "intranet.example" },
-    { false, "host.intranet.example" },
+    {false, "intranet"},
+    {false, "intranet."},
+    {false, "intranet.example"},
+    {false, "host.intranet.example"},
     // gTLDs under discussion, but not yet assigned.
-    { false, "intranet.corp" },
-    { false, "intranet.internal" },
+    {false, "intranet.corp"},
+    {false, "intranet.internal"},
     // Invalid host names are treated as unique - but expected to be
     // filtered out before then.
-    { true, "junk)(£)$*!@~#" },
-    { true, "w$w.example.com" },
-    { true, "nocolonsallowed:example" },
-    { true, "[::4.5.6.9]" },
+    {true, "junk)(£)$*!@~#"},
+    {true, "w$w.example.com"},
+    {true, "nocolonsallowed:example"},
+    {true, "[::4.5.6.9]"},
 };
 
 class UrlUtilNonUniqueNameTest
@@ -665,42 +689,88 @@ TEST(UrlUtilTest, SimplifyUrlForRequest) {
     const char* const input_url;
     const char* const expected_simplified_url;
   } tests[] = {
-    {
-      // Reference section should be stripped.
-      "http://www.google.com:78/foobar?query=1#hash",
-      "http://www.google.com:78/foobar?query=1",
-    },
-    {
-      // Reference section can itself contain #.
-      "http://192.168.0.1?query=1#hash#10#11#13#14",
-      "http://192.168.0.1?query=1",
-    },
-    { // Strip username/password.
-      "http://user:pass@google.com",
-      "http://google.com/",
-    },
-    { // Strip both the reference and the username/password.
-      "http://user:pass@google.com:80/sup?yo#X#X",
-      "http://google.com/sup?yo",
-    },
-    { // Try an HTTPS URL -- strip both the reference and the username/password.
-      "https://user:pass@google.com:80/sup?yo#X#X",
-      "https://google.com:80/sup?yo",
-    },
-    { // Try an FTP URL -- strip both the reference and the username/password.
-      "ftp://user:pass@google.com:80/sup?yo#X#X",
-      "ftp://google.com:80/sup?yo",
-    },
-    { // Try a nonstandard URL
-      "foobar://user:pass@google.com:80/sup?yo#X#X",
-      "foobar://user:pass@google.com:80/sup?yo",
-    },
+      {
+          // Reference section should be stripped.
+          "http://www.google.com:78/foobar?query=1#hash",
+          "http://www.google.com:78/foobar?query=1",
+      },
+      {
+          // Reference section can itself contain #.
+          "http://192.168.0.1?query=1#hash#10#11#13#14",
+          "http://192.168.0.1?query=1",
+      },
+      {
+          // Strip username/password.
+          "http://user:pass@google.com",
+          "http://google.com/",
+      },
+      {
+          // Strip both the reference and the username/password.
+          "http://user:pass@google.com:80/sup?yo#X#X",
+          "http://google.com/sup?yo",
+      },
+      {
+          // Try an HTTPS URL -- strip both the reference and the
+          // username/password.
+          "https://user:pass@google.com:80/sup?yo#X#X",
+          "https://google.com:80/sup?yo",
+      },
+      {
+          // Try an FTP URL -- strip both the reference and the
+          // username/password.
+          "ftp://user:pass@google.com:80/sup?yo#X#X",
+          "ftp://google.com:80/sup?yo",
+      },
+      {
+          // Try a non-special URL.
+          "foobar://user:pass@google.com:80/sup?yo#X#X",
+          "foobar://google.com:80/sup?yo",
+      },
   };
   for (const auto& test : tests) {
     SCOPED_TRACE(test.input_url);
     GURL input_url(GURL(test.input_url));
     GURL expected_url(GURL(test.expected_simplified_url));
     EXPECT_EQ(expected_url, SimplifyUrlForRequest(input_url));
+  }
+}
+
+TEST(UrlUtilTest, RemoveCredentialsFromUrl) {
+  const struct {
+    GURL input_url;
+    GURL output_url;
+  } kTests[] = {
+      {
+          // Everything other than the username/password should be left alone.
+          GURL("http://a.test:78/foobar?query=1#hash"),
+          GURL("http://a.test:78/foobar?query=1#hash"),
+      },
+      {
+          // Strip username/password.
+          GURL("http://user:pass@a.test"),
+          GURL("http://a.test/"),
+      },
+      {
+          // Try an HTTPS URL.
+          GURL("https://user:pass@a.test:80/sup?yo#hash"),
+          GURL("https://a.test:80/sup?yo#hash"),
+      },
+      {
+          // Try an FTP URL. GURL removes references from these, so don't
+          // include one.
+          GURL("ftp://user:pass@a.test:80/sup?yo"),
+          GURL("ftp://a.test:80/sup?yo"),
+      },
+      {
+          // Try a non-special URL. GURL removes references from these, so don't
+          // include one.
+          GURL("foobar://user:pass@a.test:80/sup?yo"),
+          GURL("foobar://a.test:80/sup?yo"),
+      },
+  };
+  for (const auto& test : kTests) {
+    SCOPED_TRACE(test.input_url.spec());
+    EXPECT_EQ(test.output_url, RemoveCredentialsFromUrl(test.input_url));
   }
 }
 
@@ -749,6 +819,42 @@ TEST(UrlUtilTest, SchemeHasNetworkHost) {
   EXPECT_FALSE(IsStandardSchemeWithNetworkHost(kCustomSchemeWithHost));
   EXPECT_FALSE(IsStandardSchemeWithNetworkHost(kCustomSchemeWithoutAuthority));
   EXPECT_FALSE(IsStandardSchemeWithNetworkHost(kNonStandardScheme));
+}
+
+TEST(UrlUtilTest, GetOriginRelation) {
+  using enum OriginRelation;
+
+  const url::Origin kExampleOrigin =
+      url::Origin::Create(GURL("https://example.test"));
+  EXPECT_EQ(GetOriginRelation(kExampleOrigin, kExampleOrigin), kSameOrigin);
+
+  EXPECT_EQ(GetOriginRelation(
+                kExampleOrigin,
+                url::Origin::Create(GURL("https://other.example.test"))),
+            kSameSite);
+
+  EXPECT_EQ(
+      GetOriginRelation(kExampleOrigin,
+                        url::Origin::Create(GURL("https://cross-site.test"))),
+      kCrossSite);
+
+  // Same-site rules about schemes are followed.
+  const url::Origin cross_scheme_origin =
+      url::Origin::Create(GURL("http://example.test"));
+  EXPECT_EQ(GetOriginRelation(kExampleOrigin, cross_scheme_origin), kCrossSite);
+
+  // Same-site rules about opaque origins are followed.
+  EXPECT_EQ(
+      GetOriginRelation(kExampleOrigin, kExampleOrigin.DeriveNewOpaqueOrigin()),
+      kCrossSite);
+
+  // Cross-port origins are same-site.
+  EXPECT_EQ(
+      GetOriginRelation(kExampleOrigin,
+                        url::Origin::CreateFromNormalizedTuple(
+                            kExampleOrigin.scheme(), kExampleOrigin.host(),
+                            kExampleOrigin.port() + 1)),
+      kSameSite);
 }
 
 TEST(UrlUtilTest, GetIdentityFromURL) {

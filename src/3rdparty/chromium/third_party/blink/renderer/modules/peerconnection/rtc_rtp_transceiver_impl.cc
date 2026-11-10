@@ -16,12 +16,12 @@ RtpTransceiverState::RtpTransceiverState(
     scoped_refptr<base::SingleThreadTaskRunner> main_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> signaling_task_runner,
     scoped_refptr<webrtc::RtpTransceiverInterface> webrtc_transceiver,
-    absl::optional<blink::RtpSenderState> sender_state,
-    absl::optional<blink::RtpReceiverState> receiver_state,
-    absl::optional<std::string> mid,
+    std::optional<blink::RtpSenderState> sender_state,
+    std::optional<blink::RtpReceiverState> receiver_state,
+    std::optional<std::string> mid,
     webrtc::RtpTransceiverDirection direction,
-    absl::optional<webrtc::RtpTransceiverDirection> current_direction,
-    absl::optional<webrtc::RtpTransceiverDirection> fired_direction,
+    std::optional<webrtc::RtpTransceiverDirection> current_direction,
+    std::optional<webrtc::RtpTransceiverDirection> fired_direction,
     WTF::Vector<webrtc::RtpHeaderExtensionCapability>
         header_extensions_negotiated)
     : main_task_runner_(std::move(main_task_runner)),
@@ -120,7 +120,7 @@ RtpTransceiverState::webrtc_transceiver() const {
   return webrtc_transceiver_;
 }
 
-const absl::optional<blink::RtpSenderState>& RtpTransceiverState::sender_state()
+const std::optional<blink::RtpSenderState>& RtpTransceiverState::sender_state()
     const {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
   return sender_state_;
@@ -128,12 +128,12 @@ const absl::optional<blink::RtpSenderState>& RtpTransceiverState::sender_state()
 
 blink::RtpSenderState RtpTransceiverState::MoveSenderState() {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
-  absl::optional<blink::RtpSenderState> temp(absl::nullopt);
+  std::optional<blink::RtpSenderState> temp(std::nullopt);
   sender_state_.swap(temp);
   return *std::move(temp);
 }
 
-const absl::optional<blink::RtpReceiverState>&
+const std::optional<blink::RtpReceiverState>&
 RtpTransceiverState::receiver_state() const {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
   return receiver_state_;
@@ -141,12 +141,12 @@ RtpTransceiverState::receiver_state() const {
 
 blink::RtpReceiverState RtpTransceiverState::MoveReceiverState() {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
-  absl::optional<blink::RtpReceiverState> temp(absl::nullopt);
+  std::optional<blink::RtpReceiverState> temp(std::nullopt);
   receiver_state_.swap(temp);
   return *std::move(temp);
 }
 
-absl::optional<std::string> RtpTransceiverState::mid() const {
+std::optional<std::string> RtpTransceiverState::mid() const {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
   return mid_;
 }
@@ -162,13 +162,13 @@ void RtpTransceiverState::set_direction(
   direction_ = direction;
 }
 
-absl::optional<webrtc::RtpTransceiverDirection>
+std::optional<webrtc::RtpTransceiverDirection>
 RtpTransceiverState::current_direction() const {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
   return current_direction_;
 }
 
-absl::optional<webrtc::RtpTransceiverDirection>
+std::optional<webrtc::RtpTransceiverDirection>
 RtpTransceiverState::fired_direction() const {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
   return fired_direction_;
@@ -180,12 +180,12 @@ RtpTransceiverState::header_extensions_negotiated() const {
 }
 
 class RTCRtpTransceiverImpl::RTCRtpTransceiverInternal
-    : public WTF::ThreadSafeRefCounted<
+    : public ThreadSafeRefCounted<
           RTCRtpTransceiverImpl::RTCRtpTransceiverInternal,
           RTCRtpTransceiverImpl::RTCRtpTransceiverInternalTraits> {
  public:
   RTCRtpTransceiverInternal(
-      rtc::scoped_refptr<webrtc::PeerConnectionInterface>
+      webrtc::scoped_refptr<webrtc::PeerConnectionInterface>
           native_peer_connection,
       scoped_refptr<blink::WebRtcMediaStreamTrackAdapterMap> track_map,
       RtpTransceiverState state,
@@ -290,8 +290,8 @@ class RTCRtpTransceiverImpl::RTCRtpTransceiverInternal
   }
 
  private:
-  friend class WTF::ThreadSafeRefCounted<RTCRtpTransceiverInternal,
-                                         RTCRtpTransceiverInternalTraits>;
+  friend class ThreadSafeRefCounted<RTCRtpTransceiverInternal,
+                                    RTCRtpTransceiverInternalTraits>;
   friend struct RTCRtpTransceiverImpl::RTCRtpTransceiverInternalTraits;
 
   ~RTCRtpTransceiverInternal() {
@@ -332,7 +332,8 @@ uintptr_t RTCRtpTransceiverImpl::GetId(
 }
 
 RTCRtpTransceiverImpl::RTCRtpTransceiverImpl(
-    rtc::scoped_refptr<webrtc::PeerConnectionInterface> native_peer_connection,
+    webrtc::scoped_refptr<webrtc::PeerConnectionInterface>
+        native_peer_connection,
     scoped_refptr<blink::WebRtcMediaStreamTrackAdapterMap> track_map,
     RtpTransceiverState transceiver_state,
     bool encoded_insertable_streams,
@@ -405,12 +406,12 @@ webrtc::RTCError RTCRtpTransceiverImpl::SetDirection(
   return internal_->SetDirection(direction);
 }
 
-absl::optional<webrtc::RtpTransceiverDirection>
+std::optional<webrtc::RtpTransceiverDirection>
 RTCRtpTransceiverImpl::CurrentDirection() const {
   return internal_->state().current_direction();
 }
 
-absl::optional<webrtc::RtpTransceiverDirection>
+std::optional<webrtc::RtpTransceiverDirection>
 RTCRtpTransceiverImpl::FiredDirection() const {
   return internal_->state().fired_direction();
 }

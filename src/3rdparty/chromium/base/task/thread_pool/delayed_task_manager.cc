@@ -5,6 +5,7 @@
 #include "base/task/thread_pool/delayed_task_manager.h"
 
 #include <algorithm>
+#include <optional>
 
 #include "base/check.h"
 #include "base/feature_list.h"
@@ -14,10 +15,8 @@
 #include "base/task/task_features.h"
 #include "base/task/task_runner.h"
 #include "base/task/thread_pool/task.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
-namespace base {
-namespace internal {
+namespace base::internal {
 
 DelayedTaskManager::DelayedTask::DelayedTask() = default;
 
@@ -101,8 +100,9 @@ void DelayedTaskManager::AddDelayedTask(
     delayed_task_queue_.insert(
         DelayedTask(std::move(task), std::move(post_task_now_callback)));
     // Not started or already shutdown.
-    if (service_thread_task_runner_ == nullptr)
+    if (service_thread_task_runner_ == nullptr) {
       return;
+    }
 
     std::tie(process_ripe_tasks_time, delay_policy) =
         GetTimeAndDelayPolicyToScheduleProcessRipeTasksLockRequired();
@@ -126,8 +126,9 @@ void DelayedTaskManager::ProcessRipeTasks() {
     CheckedAutoLock auto_lock(queue_lock_);
 
     // Already shutdown.
-    if (!service_thread_task_runner_)
+    if (!service_thread_task_runner_) {
       return;
+    }
 
     const TimeTicks now = tick_clock_->NowTicks();
     // A delayed task is ripe if it reached its delayed run time or if it is
@@ -162,10 +163,11 @@ void DelayedTaskManager::ProcessRipeTasks() {
   }
 }
 
-absl::optional<TimeTicks> DelayedTaskManager::NextScheduledRunTime() const {
+std::optional<TimeTicks> DelayedTaskManager::NextScheduledRunTime() const {
   CheckedAutoLock auto_lock(queue_lock_);
-  if (delayed_task_queue_.empty())
-    return absl::nullopt;
+  if (delayed_task_queue_.empty()) {
+    return std::nullopt;
+  }
   return delayed_task_queue_.top().task.delayed_run_time;
 }
 
@@ -224,8 +226,9 @@ void DelayedTaskManager::ScheduleProcessRipeTasksOnServiceThread() {
         GetTimeAndDelayPolicyToScheduleProcessRipeTasksLockRequired();
   }
   DCHECK(!process_ripe_tasks_time.is_null());
-  if (process_ripe_tasks_time.is_max())
+  if (process_ripe_tasks_time.is_max()) {
     return;
+  }
   delayed_task_handle_.CancelTask();
   delayed_task_handle_ =
       service_thread_task_runner_->PostCancelableDelayedTaskAt(
@@ -233,5 +236,4 @@ void DelayedTaskManager::ScheduleProcessRipeTasksOnServiceThread() {
           process_ripe_tasks_closure_, process_ripe_tasks_time, delay_policy);
 }
 
-}  // namespace internal
-}  // namespace base
+}  // namespace base::internal

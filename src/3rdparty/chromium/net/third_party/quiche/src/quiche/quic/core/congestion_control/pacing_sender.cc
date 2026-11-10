@@ -4,6 +4,8 @@
 
 #include "quiche/quic/core/congestion_control/pacing_sender.h"
 
+#include <algorithm>
+
 #include "quiche/quic/core/quic_bandwidth.h"
 #include "quiche/quic/platform/api/quic_flag_utils.h"
 #include "quiche/quic/platform/api/quic_flags.h"
@@ -21,11 +23,11 @@ static const uint32_t kInitialUnpacedBurst = 10;
 PacingSender::PacingSender()
     : sender_(nullptr),
       max_pacing_rate_(QuicBandwidth::Zero()),
+      application_driven_pacing_rate_(QuicBandwidth::Infinite()),
       burst_tokens_(kInitialUnpacedBurst),
       ideal_next_packet_send_time_(QuicTime::Zero()),
       initial_burst_size_(kInitialUnpacedBurst),
       lumpy_tokens_(0),
-      alarm_granularity_(kAlarmGranularity),
       pacing_limited_(false) {}
 
 PacingSender::~PacingSender() {}
@@ -164,7 +166,7 @@ QuicTime::Delta PacingSender::TimeUntilSend(
   }
 
   // If the next send time is within the alarm granularity, send immediately.
-  if (ideal_next_packet_send_time_ > now + alarm_granularity_) {
+  if (ideal_next_packet_send_time_ > now + kAlarmGranularity) {
     QUIC_DVLOG(1) << "Delaying packet: "
                   << (ideal_next_packet_send_time_ - now).ToMicroseconds();
     return ideal_next_packet_send_time_ - now;

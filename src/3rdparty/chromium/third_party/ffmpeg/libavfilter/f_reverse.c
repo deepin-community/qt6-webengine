@@ -20,8 +20,9 @@
 
 #include "config_components.h"
 
+#include "libavutil/mem.h"
 #include "avfilter.h"
-#include "internal.h"
+#include "filters.h"
 
 #define DEFAULT_LENGTH 300
 
@@ -146,9 +147,9 @@ static const AVFilterPad reverse_outputs[] = {
     },
 };
 
-const AVFilter ff_vf_reverse = {
-    .name        = "reverse",
-    .description = NULL_IF_CONFIG_SMALL("Reverse a clip."),
+const FFFilter ff_vf_reverse = {
+    .p.name        = "reverse",
+    .p.description = NULL_IF_CONFIG_SMALL("Reverse a clip."),
     .priv_size   = sizeof(ReverseContext),
     .init        = init,
     .uninit      = uninit,
@@ -266,7 +267,8 @@ static int areverse_request_frame(AVFilterLink *outlink)
         AVFrame *out = s->frames[s->nb_frames - 1];
         out->duration = s->duration[s->flush_idx];
         out->pts     = s->pts[s->flush_idx++] - s->nb_samples;
-        s->nb_samples += s->pts[s->flush_idx] - s->pts[s->flush_idx - 1] - out->nb_samples;
+        if (s->nb_frames > 1)
+            s->nb_samples += s->pts[s->flush_idx] - s->pts[s->flush_idx - 1] - out->nb_samples;
 
         if (av_sample_fmt_is_planar(out->format))
             reverse_samples_planar(out);
@@ -297,9 +299,9 @@ static const AVFilterPad areverse_outputs[] = {
     },
 };
 
-const AVFilter ff_af_areverse = {
-    .name          = "areverse",
-    .description   = NULL_IF_CONFIG_SMALL("Reverse an audio clip."),
+const FFFilter ff_af_areverse = {
+    .p.name        = "areverse",
+    .p.description = NULL_IF_CONFIG_SMALL("Reverse an audio clip."),
     .priv_size     = sizeof(ReverseContext),
     .init          = init,
     .uninit        = uninit,

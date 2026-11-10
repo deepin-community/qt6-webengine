@@ -38,8 +38,6 @@ devtools_entrypoint("bundle") {
 
   visibility = [
     ":*",
-    "../../../test/unittests/front_end/entrypoints/missing_entrypoints/*",
-    "../../../test/unittests/front_end/panels/emulation/*",
     "../../entrypoints/*",
     "../../legacy_test_runner/*",
     "../browser_debugger/*",
@@ -47,4 +45,15 @@ devtools_entrypoint("bundle") {
   ]
 
   visibility += devtools_panels_visibility
+}
+
+ts_library("unittests") {
+  testonly = true
+
+  sources = [ "EventListenersView.test.ts" ]
+
+  deps = [
+    ":bundle",
+    "../../testing",
+  ]
 }

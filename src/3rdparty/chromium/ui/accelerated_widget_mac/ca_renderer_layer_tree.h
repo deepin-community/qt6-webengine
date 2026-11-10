@@ -11,13 +11,15 @@
 
 #include <list>
 #include <memory>
+#include <optional>
+#include <unordered_map>
 
 #include "base/apple/scoped_cftyperef.h"
-#include "base/containers/flat_map.h"
 #include "base/feature_list.h"
 #include "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr_exclusion.h"
 #include "base/memory/scoped_refptr.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "base/memory/weak_ptr.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/accelerated_widget_mac/accelerated_widget_mac_export.h"
 #include "ui/gfx/geometry/rect.h"
@@ -34,7 +36,6 @@ namespace ui {
 
 ACCELERATED_WIDGET_MAC_EXPORT BASE_DECLARE_FEATURE(
     kFullscreenLowPowerBackdropMac);
-ACCELERATED_WIDGET_MAC_EXPORT BASE_DECLARE_FEATURE(kCALayerTreeOptimization);
 
 struct CARendererLayerParams;
 
@@ -54,7 +55,8 @@ enum class CALayerType {
 class ACCELERATED_WIDGET_MAC_EXPORT CARendererLayerTree {
  public:
   CARendererLayerTree(bool allow_av_sample_buffer_display_layer,
-                      bool allow_solid_color_layers);
+                      bool allow_solid_color_layers,
+                      id<MTLDevice> metal_device = nil);
 
   CARendererLayerTree(const CARendererLayerTree&) = delete;
   CARendererLayerTree& operator=(const CARendererLayerTree&) = delete;
@@ -67,9 +69,8 @@ class ACCELERATED_WIDGET_MAC_EXPORT CARendererLayerTree {
   // cannot be called anymore after CommitScheduledCALayers has been called.
   bool ScheduleCALayer(const CARendererLayerParams& params);
 
-  // Set the MTLDevice to use for any CAMetalLayers.
-  void SetMetalDevice(id<MTLDevice> metal_device) {
-    metal_device_ = metal_device;
+  void SetDisplayHDRHeadroom(float display_hdr_headroom) {
+    display_hdr_headroom_ = display_hdr_headroom;
   }
 
   // Create a CALayer tree for the scheduled layers, and set |superlayer| to
@@ -97,9 +98,9 @@ class ACCELERATED_WIDGET_MAC_EXPORT CARendererLayerTree {
   class ContentLayer;
   friend class ContentLayer;
 
-  using CALayerMap = base::flat_map<IOSurfaceRef, base::WeakPtr<ContentLayer>>;
+  using CALayerMap =
+      std::unordered_map<IOSurfaceRef, base::WeakPtr<ContentLayer>>;
 
-  void MatchLayersToOldTreeDefault(CARendererLayerTree* old_tree);
   void MatchLayersToOldTree(CARendererLayerTree* old_tree);
 
   class RootLayer {
@@ -170,7 +171,8 @@ class ACCELERATED_WIDGET_MAC_EXPORT CARendererLayerTree {
     CARendererLayerTree* tree() { return parent_layer_->tree_; }
 
     // Parent layer that owns `this`, and child layers that `this` owns.
-    const raw_ptr<RootLayer> parent_layer_;
+    // RAW_PTR_EXCLUSION: Performance reasons (based on analysis of MotionMark).
+    RAW_PTR_EXCLUSION RootLayer* const parent_layer_ = nullptr;
     std::list<TransformLayer> transform_layers_;
 
     bool is_clipped_ = false;
@@ -209,7 +211,8 @@ class ACCELERATED_WIDGET_MAC_EXPORT CARendererLayerTree {
     CARendererLayerTree* tree() { return parent_layer_->tree(); }
 
     // Parent layer that owns `this`, and child layers that `this` owns.
-    const raw_ptr<ClipAndSortingLayer> parent_layer_;
+    // RAW_PTR_EXCLUSION: Performance reasons (based on analysis of MotionMark).
+    RAW_PTR_EXCLUSION ClipAndSortingLayer* const parent_layer_ = nullptr;
     std::list<ContentLayer> content_layers_;
 
     gfx::Transform transform_;
@@ -253,7 +256,8 @@ class ACCELERATED_WIDGET_MAC_EXPORT CARendererLayerTree {
                                     int& last_old_layer_order);
 
     // Parent layer that owns `this`.
-    const raw_ptr<TransformLayer> parent_layer_;
+    // RAW_PTR_EXCLUSION: Performance reasons (based on analysis of MotionMark).
+    RAW_PTR_EXCLUSION TransformLayer* const parent_layer_ = nullptr;
 
     // Ensure that the IOSurface be marked as in-use as soon as it is received.
     // When they are committed to the window server, that will also increment
@@ -314,11 +318,11 @@ class ACCELERATED_WIDGET_MAC_EXPORT CARendererLayerTree {
   bool has_committed_ = false;
   const bool allow_av_sample_buffer_display_layer_ = true;
   const bool allow_solid_color_layers_ = true;
-  id<MTLDevice> __strong metal_device_ = nil;
+  float display_hdr_headroom_ = 1.f;
 
-  // Enable CALayerTree optimization that will try to reuse the CALayer with a
-  // matched CALayer from the old CALayerTree in the previous frame.
-  const bool ca_layer_tree_optimization_;
+  // This is needed to ensure synchronization between the display compositor and
+  // the HDRCopierLayer. See https://crbug.com/1372898
+  id<MTLDevice> __strong metal_device_;
 
   // Map of content IOSurface.
   CALayerMap ca_layer_map_;

@@ -10,6 +10,9 @@
 #include "ash/wm/window_resizer.h"
 #include "base/bit_cast.h"
 #include "base/command_line.h"
+#include "base/notimplemented.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chromeos/ui/base/window_pin_type.h"
 #include "components/exo/display.h"
@@ -240,7 +243,6 @@ int SystemUiVisibility(const display::Display& display) {
   }
   NOTREACHED() << "Got unexpected shelf visibility state "
                << shelf_layout_manager->visibility_state();
-  return 0;
 }
 
 int SystemUiBehavior(const display::Display& display) {
@@ -253,7 +255,6 @@ int SystemUiBehavior(const display::Display& display) {
       return ZCR_REMOTE_OUTPUT_V1_SYSTEMUI_BEHAVIOR_HIDDEN;
   }
   NOTREACHED() << "Got unexpected shelf visibility behavior.";
-  return 0;
 }
 
 uint32_t ResizeDirection(int component) {
@@ -280,7 +281,7 @@ uint32_t ResizeDirection(int component) {
       LOG(ERROR) << "Unknown component:" << component;
       break;
   }
-  NOTREACHED();
+  DUMP_WILL_BE_NOTREACHED();
   return ZCR_REMOTE_SURFACE_V1_RESIZE_DIRECTION_NONE;
 }
 
@@ -400,14 +401,16 @@ void WaylandRemoteSurfaceDelegate::OnStateChanged(
 void WaylandRemoteSurfaceDelegate::OnBoundsChanged(
     chromeos::WindowStateType current_state,
     chromeos::WindowStateType requested_state,
-    int64_t display_id,
-    const gfx::Rect& bounds_in_display,
+    int64_t requested_display_id,
+    const gfx::Rect& requested_bounds_in_display,
     bool is_resize,
-    int bounds_change) {
+    int bounds_change,
+    bool is_adjusted_bounds) {
   if (shell_) {
-    shell_->OnRemoteSurfaceBoundsChanged(
-        resource_, current_state, requested_state, display_id,
-        bounds_in_display, is_resize, bounds_change);
+    shell_->OnRemoteSurfaceBoundsChanged(resource_, current_state,
+                                         requested_state, requested_display_id,
+                                         requested_bounds_in_display, is_resize,
+                                         bounds_change, is_adjusted_bounds);
   }
 }
 void WaylandRemoteSurfaceDelegate::OnDragStarted(int component) {
@@ -542,7 +545,8 @@ void WaylandRemoteShell::OnDisplayAdded(const display::Display& new_display) {
   ScheduleSendDisplayMetrics(0);
 }
 
-void WaylandRemoteShell::OnDisplayRemoved(const display::Display& old_display) {
+void WaylandRemoteShell::OnDisplaysRemoved(
+    const display::Displays& removed_displays) {
   ScheduleSendDisplayMetrics(0);
 }
 
@@ -608,7 +612,6 @@ wl_output_transform WaylandRemoteShell::DisplayTransform(
       return WL_OUTPUT_TRANSFORM_270;
   }
   NOTREACHED();
-  return WL_OUTPUT_TRANSFORM_NORMAL;
 }
 
 void WaylandRemoteShell::SendDisplayMetrics() {
@@ -771,7 +774,8 @@ void WaylandRemoteShell::OnRemoteSurfaceBoundsChanged(
     int64_t display_id,
     const gfx::Rect& bounds_in_display,
     bool resize,
-    int bounds_change) {
+    int bounds_change,
+    bool is_adjusted_bounds) {
   uint32_t reason =
       ZCR_REMOTE_SURFACE_V1_BOUNDS_CHANGE_REASON_RESIZE;
   if (!resize)
@@ -798,6 +802,12 @@ void WaylandRemoteShell::OnRemoteSurfaceBoundsChanged(
   }
 
   if (in_display_update_ || needs_send_display_metrics_) {
+    if (is_adjusted_bounds && pending_bounds_changes_.count(resource) > 0) {
+      // If there is any ash-requested bounds for the resource, do not overwrite
+      // it with the adjusted bounds which is based on the bounds before the
+      // display update, which is to be obsolete soon.
+      return;
+    }
     // We store only the latest bounds for each |resource|.
     pending_bounds_changes_.insert_or_assign(
         std::move(resource),

@@ -10,12 +10,13 @@
 #include <stdint.h>
 
 #include <memory>
+#include <variant>
 
 #include "core/fxcrt/bytestring.h"
 #include "core/fxcrt/data_vector.h"
+#include "core/fxcrt/raw_span.h"
 #include "core/fxcrt/retain_ptr.h"
-#include "third_party/abseil-cpp/absl/types/variant.h"
-#include "third_party/base/containers/span.h"
+#include "core/fxcrt/span.h"
 
 class CPDF_Dictionary;
 class CPDF_Stream;
@@ -38,8 +39,8 @@ class CPDF_StreamAcc final : public Retainable {
   uint32_t GetSize() const;
   pdfium::span<const uint8_t> GetSpan() const;
   uint64_t KeyForCache() const;
-  ByteString ComputeDigest() const;
-  ByteString GetImageDecoder() const { return m_ImageDecoder; }
+  DataVector<uint8_t> ComputeDigest() const;
+  ByteString GetImageDecoder() const { return image_decoder_; }
   DataVector<uint8_t> DetachData();
 
   int GetLength1ForTest() const;
@@ -52,18 +53,18 @@ class CPDF_StreamAcc final : public Retainable {
   void ProcessRawData();
   void ProcessFilteredData(uint32_t estimated_size, bool bImageAcc);
 
-  // Returns the raw data from `m_pStream`, or no data on failure.
+  // Returns the raw data from `stream_`, or no data on failure.
   DataVector<uint8_t> ReadRawStream() const;
 
   bool is_owned() const {
-    return absl::holds_alternative<DataVector<uint8_t>>(m_Data);
+    return std::holds_alternative<DataVector<uint8_t>>(data_);
   }
 
-  ByteString m_ImageDecoder;
-  RetainPtr<const CPDF_Dictionary> m_pImageParam;
-  // Needs to outlive `m_Data` when the data is not owned.
-  RetainPtr<const CPDF_Stream> const m_pStream;
-  absl::variant<pdfium::span<const uint8_t>, DataVector<uint8_t>> m_Data;
+  ByteString image_decoder_;
+  RetainPtr<const CPDF_Dictionary> image_param_;
+  // Needs to outlive `data_` when the data is not owned.
+  RetainPtr<const CPDF_Stream> const stream_;
+  std::variant<pdfium::raw_span<const uint8_t>, DataVector<uint8_t>> data_;
 };
 
 #endif  // CORE_FPDFAPI_PARSER_CPDF_STREAM_ACC_H_

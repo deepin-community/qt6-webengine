@@ -2,17 +2,7 @@
 
 include /usr/share/dpkg/architecture.mk
 
-ifeq (riscv64, $(DEB_HOST_ARCH))
-	# FIXME: qt6-webengine does not build on riscv64 with GCC as it
-	# complains about a misused '%c' asm variable, so we chose to use
-	# Clang as a workaround, however it does not support the
-	# -ffat-lto-objects option as defined by optimize=+lto.
-	#
-	# Disable LTO for riscv64 as a secondary workaround.
-	export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=-lto
-else
-	export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=+lto
-endif
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 
 PARALLEL_OPTION = $(filter parallel=%,$(DEB_BUILD_OPTIONS))
 ifneq (,$(PARALLEL_OPTION))
@@ -31,15 +21,14 @@ ifeq (i386, $(DEB_HOST_ARCH))
 	export NINJAJOBS = -j2
 endif
 
-ifeq (loong64, $(DEB_HOST_ARCH))
-	export LDFLAGS+=-Wl,--no-keep-memory
-	export NINJAJOBS = -j2
+ifeq (i386, $(DEB_HOST_ARCH_CPU))
+	export DEB_CFLAGS_MAINT_APPEND = -msse -msse2
+	export DEB_CXXFLAGS_MAINT_APPEND = -msse -msse2
 endif
 
-ifeq (sw64, $(DEB_HOST_ARCH))
-	export LDFLAGS+=-Wl,--no-keep-memory
-	export NINJAJOBS = -j2
-	export NODE_OPTIONS="--jitless"
+# enable ccache with corresponding build-profile
+ifneq ($(filter ccache,$(DEB_BUILD_PROFILES)),)
+	extra_cmake_args += -DQT_USE_CCACHE=ON
 endif
 
 %:
@@ -48,97 +37,52 @@ endif
 touch_files = src/3rdparty/chromium/third_party/devtools-frontend/src/front_end/third_party/lighthouse/lighthouse-dt-bundle.js \
 	      src/3rdparty/chromium/third_party/devtools-frontend/src/front_end/third_party/lighthouse/report-assets/report-generator.js
 
-ifeq (loong64, $(DEB_HOST_ARCH))
-	TARGET_PATCH = patch_loong64
-else ifeq (riscv64, $(DEB_HOST_ARCH))
-	TARGET_PATCH = patch_riscv64
-else ifeq (sw64, $(DEB_HOST_ARCH))
-	TARGET_PATCH = patch_sw64
-endif
-
-ifeq (riscv64, $(DEB_HOST_ARCH))
-	USE_CC = clang-17
-	USE_CXX = clang++-17
-else
-	USE_CC = gcc
-	USE_CXX = g++
-endif
-
-patch_loong64:
-	patch -p1 < debian/patches/loong64.patch
-
-patch_riscv64:
-	patch -p1 < debian/patches/riscv64-dav1d.patch
-	patch -p1 < debian/patches/riscv64-sandbox.patch
-	patch -p1 < debian/patches/riscv64-unscaledcycleclock-remove-riscv-support.patch
-	patch -p1 < debian/patches/riscv64-Skip-check-sv57-when-enable-pointer-compress.patch
-	patch -p1 < debian/patches/riscv64-avoid-cpu-probing-in-li_ptr.patch
-	patch -p1 < debian/patches/riscv-ffmpeg-script.patch
-	patch -p1 < debian/patches/riscv-ffmpeg-generated.patch
-	patch -p1 < debian/patches/riscv-ffmpeg-gni-sources.patch
-	patch -p1 < debian/patches/riscv-hack-devtools-remove-terser.patch
-
-patch_sw64:
-	patch -p2 < debian/patches/sw64.patch
-
-override_dh_autoreconf: $(TARGET_PATCH)
-	dh_autoreconf
-
 override_dh_auto_clean:
 	dh_auto_clean
 
-	rm -f $(CURDIR)/src/3rdparty/chromium/third_party/jstemplate/jstemplate_compiled.js
-	for fname in $(touch_files); do \
-		rm -f $(CURDIR)/$${fname}; \
-	done
-
 # Turn on system FFmpeg libraries for 6.3
 override_dh_auto_configure:
-	# Create js files, that are needed for building step for arch and indep builds
-	cd $(CURDIR)/src/3rdparty/chromium/third_party/jstemplate/; \
-		cat util.js jsevalcontext.js jstemplate.js exports.js > jstemplate_compiled.js
-
-	# jQuery
-	cp /usr/share/javascript/jquery/jquery.min.js examples/webenginewidgets/contentmanipulation/
-	cp /usr/share/javascript/jquery/jquery.min.js src/3rdparty/chromium/third_party/pycoverage/coverage/htmlfiles/
-	cp /usr/share/javascript/jquery-tablesorter/jquery.tablesorter.min.js src/3rdparty/chromium/third_party/pycoverage/coverage/htmlfiles/
-
-	set -ex; for fname in $(touch_files); do \
-		mkdir -p $(CURDIR)/$$(dirname $${fname}); \
-		touch $(CURDIR)/$${fname}; \
-	done
-
 	dh_auto_configure -- \
 		--log-level=STATUS \
 		-DCMAKE_LIBRARY_PATH=$(DEB_HOST_MULTIARCH) \
-		-DFEATURE_webengine_system_icu=OFF \
+		-DFEATURE_webengine_system_ffmpeg=OFF \
+		-DFEATURE_webengine_system_icu=ON \
 		-DFEATURE_webengine_system_libevent=ON \
 		-DFEATURE_webengine_system_libopenjpeg2=ON \
 		-DFEATURE_webengine_system_libpng=ON \
 		-DFEATURE_webengine_system_libtiff=ON \
+		-DFEATURE_webengine_system_libvpx=OFF \
+		-DFEATURE_webengine_system_openh264=OFF \
+		-DFEATURE_webengine_system_re2=OFF \
 		-DFEATURE_qtpdf_build=ON \
 		-DFEATURE_qtpdf_widgets_build=ON \
 		-DFEATURE_qtpdf_quick_build=ON \
 		-DFEATURE_webengine_proprietary_codecs=ON \
 		-DFEATURE_webengine_kerberos=ON \
-		-DCMAKE_C_COMPILER=/usr/bin/$(USE_CC) \
-		-DCMAKE_CXX_COMPILER=/usr/bin/$(USE_CXX) \
-		-DQT_USE_OLD_VERSION_LESS_TARGETS=ON
+		$(extra_cmake_args)
 
+ifneq ($(filter nodoc,$(DEB_BUILD_PROFILES)),)
 override_dh_auto_build:
-	dh_auto_build -- WebEngineCore_sync_all_public_headers
+	dh_auto_build
+else
+override_dh_auto_build:
 	dh_auto_build
 	dh_auto_build -- docs
+endif
 
 execute_after_dh_auto_install:
 	# Reproducible builds: remove build paths from .prl files
 	sed -i -e '/^QMAKE_PRL_BUILD_DIR/d' debian/tmp/usr/lib/$(DEB_HOST_MULTIARCH)/libQt6*.prl
-	# Install documentation.
+	# Reproducible builds: remove kernel version from build artifacts
+	sed -i '/^[[:space:]]*"version":.*deb/d' debian/tmp/usr/lib/${DEB_HOST_MULTIARCH}/qt6/modules/*.json
+
+ifneq ($(filter nodoc,$(DEB_BUILD_PROFILES)),)
+	: # docs skipped (nodoc)
+else
 	DESTDIR=$(CURDIR)/debian/tmp dh_auto_build -- install_docs
 	# Remove build path from index files.
 	find $(CURDIR)/debian/tmp/usr/share/qt6/doc -type f -name *.index -exec \
-               sed -i 's@$(CURDIR)/@@g' {} \;
-	# Create the /usr/share/qt6/resources/locales directory
-	mkdir -p $(CURDIR)/debian/libqt6webengine6-data/usr/share/qt6/resources/locales
+               sed -i 's@$(CURDIR)/@@g' {} \; 2>/dev/null || true
+endif
 
 override_dh_dwz:

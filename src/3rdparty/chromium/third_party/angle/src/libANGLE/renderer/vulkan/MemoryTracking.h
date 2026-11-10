@@ -12,18 +12,19 @@
 
 #include <array>
 #include <atomic>
-#include <mutex>
 
+#include "common/SimpleMutex.h"
 #include "common/angleutils.h"
 #include "common/backtrace_utils.h"
+#include "common/hash_containers.h"
 #include "common/vulkan/vk_headers.h"
 
 namespace rx
 {
-class RendererVk;
-
 namespace vk
 {
+class Renderer;
+
 // Used to designate memory allocation type for tracking purposes.
 enum class MemoryAllocationType
 {
@@ -39,8 +40,9 @@ enum class MemoryAllocationType
     RenderBufferStorageImage                 = 9,
     Buffer                                   = 10,
     BufferExternal                           = 11,
+    ImplicitYuvTargetImage                   = 12,
 
-    InvalidEnum = 12,
+    InvalidEnum = 13,
     EnumCount   = InvalidEnum,
 };
 
@@ -57,6 +59,7 @@ constexpr const char *kMemoryAllocationTypeMessage[] = {
     "RenderBufferStorageImage",
     "Buffer",
     "BufferExternal",
+    "ImplicitYuvTargetImage",
     "Invalid",
 };
 constexpr const uint32_t kMemoryAllocationTypeCount =
@@ -113,7 +116,7 @@ class MemoryReport final : angle::NonCopyable
         VkDeviceSize importedMemory;
         VkDeviceSize importedMemoryMax;
     };
-    mutable std::mutex mMemoryReportMutex;
+    mutable angle::SimpleMutex mMemoryReportMutex;
     VkDeviceSize mCurrentTotalAllocatedMemory;
     VkDeviceSize mMaxTotalAllocatedMemory;
     angle::HashMap<VkObjectType, MemorySizes> mSizesPerType;
@@ -136,11 +139,12 @@ struct hash<rx::vk::MemoryAllocInfoMapKey>
 
 namespace rx
 {
-// Memory tracker for allocations and deallocations, which is used in RendererVk.
+
+// Memory tracker for allocations and deallocations, which is used in vk::Renderer.
 class MemoryAllocationTracker : angle::NonCopyable
 {
   public:
-    MemoryAllocationTracker(RendererVk *renderer);
+    MemoryAllocationTracker(vk::Renderer *renderer);
     void initMemoryTrackers();
     void onDeviceInit();
     void onDestroy();
@@ -172,6 +176,9 @@ class MemoryAllocationTracker : angle::NonCopyable
                                                 VkMemoryPropertyFlags allocatedFlags,
                                                 void *handle);
 
+    // Issue warning in case of exceeding maximum allowed allocation size.
+    void onExceedingMaxMemoryAllocationSize(VkDeviceSize size);
+
     // Pending memory allocation information is used for logging in case of an unsuccessful
     // allocation. It is cleared in onMemoryAlloc().
     VkDeviceSize getPendingMemoryAllocationSize() const;
@@ -185,7 +192,7 @@ class MemoryAllocationTracker : angle::NonCopyable
 
   private:
     // Pointer to parent renderer object.
-    RendererVk *const mRenderer;
+    vk::Renderer *const mRenderer;
 
     // For tracking the overall memory allocation sizes and counts per memory allocation type.
     std::array<std::atomic<VkDeviceSize>, vk::kMemoryAllocationTypeCount>
@@ -211,7 +218,7 @@ class MemoryAllocationTracker : angle::NonCopyable
     std::atomic<uint32_t> mPendingMemoryTypeIndex;
 
     // Mutex is used to update the data when debug layers are enabled.
-    std::mutex mMemoryAllocationMutex;
+    angle::SimpleMutex mMemoryAllocationMutex;
 
     // Additional information regarding memory allocation with debug layers enabled, including
     // allocation ID and a record of all active allocations.

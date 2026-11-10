@@ -9,11 +9,17 @@
 #include <string>
 #include <utility>
 
+#include "base/feature_list.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
+#include "base/types/expected.h"
+#include "build/android_buildflags.h"
+#include "build/buildflag.h"
 #include "content/public/browser/desktop_media_id.h"
 #include "content/public/browser/media_stream_request.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
+#include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/native_widget_types.h"
 
@@ -23,13 +29,20 @@ namespace content {
 class WebContents;
 }
 
+#if BUILDFLAG(IS_ANDROID)
+BASE_DECLARE_FEATURE(kAndroidMediaPicker);
+#endif
+
 // Base class for desktop media picker UI. It's used by Desktop Media API, and
 // by ARC to let user choose a desktop media source.
 //
-// TODO(crbug.com/987001): Rename this class.
+// TODO(crbug.com/40637301): Rename this class.
 class DesktopMediaPicker {
  public:
-  using DoneCallback = base::OnceCallback<void(content::DesktopMediaID id)>;
+  using DoneCallbackArgumentType =
+      base::expected<content::DesktopMediaID,
+                     blink::mojom::MediaStreamRequestResult>;
+  using DoneCallback = base::OnceCallback<void(DoneCallbackArgumentType)>;
 
   struct Params {
     // Possible sources of the request.
@@ -40,6 +53,7 @@ class DesktopMediaPicker {
       kGetDisplayMedia,
       kScreenshotDataCollector,
       kArcScreenCapture,
+      kGlic
     };
 
     explicit Params(RequestSource request_source);
@@ -56,7 +70,7 @@ class DesktopMediaPicker {
     // Parent window the dialog is relative to, only used on Mac.
     gfx::NativeWindow parent = gfx::NativeWindow();
     // The modality used for showing the dialog.
-    ui::ModalType modality = ui::ModalType::MODAL_TYPE_CHILD;
+    ui::mojom::ModalType modality = ui::mojom::ModalType::kChild;
     // The name used in the dialog for what is requesting the picker to be
     // shown.
     std::u16string app_name;
@@ -66,10 +80,15 @@ class DesktopMediaPicker {
     std::u16string target_name;
     // Whether audio capture should be shown as an option in the picker.
     bool request_audio = false;
-    // If audio is requested, |exclude_system_audio| can indicate that
-    // system-audio should nevertheless not be offered to the user.
+    // If audio is requested, |exclude_system_audio| indicates that
+    // audio should not be offered to the user when sharing a window surface.
     // Mutually exclusive with |force_audio_checkboxes_to_default_checked|.
     bool exclude_system_audio = false;
+    // If audio is requested, |window_audio_preference| can indicate that
+    // audio should be offered to the user when sharing a window surface.
+    // Mutually exclusive with |force_audio_checkboxes_to_default_checked|.
+    blink::mojom::WindowAudioPreference window_audio_preference =
+        blink::mojom::WindowAudioPreference::kExclude;
     // Normally, the media-picker sets the default states for the audio
     // checkboxes. If |force_audio_checkboxes_to_default_checked| is |true|,
     // it sets them all to |checked|. This is used by Chromecasting.
@@ -78,6 +97,9 @@ class DesktopMediaPicker {
     // Indicates that, if audio ends up being captured, then local playback
     // over the user's local speakers should be suppressed.
     bool suppress_local_audio_playback = false;
+    // Captured audio should not include audio originating from the document
+    // that called getDisplayMedia.
+    bool restrict_own_audio = false;
     // This flag controls the behvior in the case where the picker is invoked to
     // select a screen and there is only one screen available.  If true, the
     // dialog is bypassed entirely and the screen is automatically selected.
@@ -101,7 +123,7 @@ class DesktopMediaPicker {
 
   // Creates a picker dialog/confirmation box depending on the value of
   // |request|. If no request is available the default picker, namely
-  // DesktopMediaPickerViews is used.
+  // DesktopMediaPickerImpl is used.
   static std::unique_ptr<DesktopMediaPicker> Create(
       const content::MediaStreamRequest* request);
 

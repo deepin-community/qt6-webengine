@@ -4,9 +4,9 @@
 
 #include "core/fxge/win32/cfx_psfonttracker.h"
 
+#include "core/fxcrt/check.h"
+#include "core/fxcrt/containers/contains.h"
 #include "core/fxge/cfx_font.h"
-#include "third_party/base/check.h"
-#include "third_party/base/containers/contains.h"
 
 CFX_PSFontTracker::CFX_PSFontTracker() = default;
 
@@ -25,7 +25,8 @@ void CFX_PSFontTracker::AddFontObject(const CFX_Font* font) {
 
 bool CFX_PSFontTracker::SeenFontObject(const CFX_Font* font) const {
   uint64_t tag = font->GetObjectTag();
-  if (tag != 0)
+  if (tag != 0) {
     return pdfium::Contains(seen_font_tags_, tag);
+  }
   return pdfium::Contains(seen_font_ptrs_, font);
 }

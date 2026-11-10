@@ -5,12 +5,14 @@
 #include "components/spellcheck/renderer/hunspell_engine.h"
 
 #include <stddef.h>
+
 #include <algorithm>
 #include <iterator>
 #include <memory>
 #include <utility>
 
 #include "base/files/memory_mapped_file.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "components/spellcheck/common/spellcheck.mojom.h"
 #include "components/spellcheck/common/spellcheck_common.h"
@@ -64,8 +66,7 @@ void HunspellEngine::InitializeHunspell() {
   bdict_file_ = std::make_unique<base::MemoryMappedFile>();
 
   if (bdict_file_->Initialize(std::move(file_))) {
-    hunspell_ =
-        std::make_unique<Hunspell>(bdict_file_->data(), bdict_file_->length());
+    hunspell_ = std::make_unique<Hunspell>(bdict_file_->bytes());
   } else {
     NOTREACHED() << "Could not mmap spellchecker dictionary.";
   }

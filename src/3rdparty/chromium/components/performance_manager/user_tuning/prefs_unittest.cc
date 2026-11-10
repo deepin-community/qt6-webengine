@@ -4,8 +4,13 @@
 
 #include "components/performance_manager/public/user_tuning/prefs.h"
 
-#include "components/performance_manager/public/features.h"
+#include <utility>
+
+#include "base/json/values_util.h"
+#include "base/values.h"
+#include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/testing_pref_service.h"
+#include "content/public/test/browser_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace performance_manager::user_tuning::prefs {
@@ -39,7 +44,7 @@ TEST_F(MemorySaverModePrefMigrationTest, BothPrefsDefaultNoMigration) {
   pref_service_.SetDefaultPrefValue(kMemorySaverModeState, base::Value(1));
 
   EXPECT_EQ(pref_service_.GetInteger(kMemorySaverModeState),
-            static_cast<int>(MemorySaverModeState::kEnabled));
+            static_cast<int>(MemorySaverModeState::kDeprecated));
   EXPECT_TRUE(
       pref_service_.FindPreference(kMemorySaverModeState)->IsDefaultValue());
 
@@ -49,7 +54,7 @@ TEST_F(MemorySaverModePrefMigrationTest, BothPrefsDefaultNoMigration) {
   EXPECT_TRUE(
       pref_service_.FindPreference(kMemorySaverModeState)->IsDefaultValue());
   EXPECT_EQ(pref_service_.GetInteger(kMemorySaverModeState),
-            static_cast<int>(MemorySaverModeState::kEnabled));
+            static_cast<int>(MemorySaverModeState::kDeprecated));
 }
 
 TEST_F(MemorySaverModePrefMigrationTest,
@@ -68,7 +73,7 @@ TEST_F(MemorySaverModePrefMigrationTest,
       pref_service_.FindPreference(kMemorySaverModeState)->IsDefaultValue());
   // "true" in the boolean pref maps to `2` (enabled on timer)
   EXPECT_EQ(pref_service_.GetInteger(kMemorySaverModeState),
-            static_cast<int>(MemorySaverModeState::kEnabledOnTimer));
+            static_cast<int>(MemorySaverModeState::kEnabled));
 
   // The old pref should be reset.
   EXPECT_TRUE(
@@ -98,6 +103,20 @@ TEST_F(MemorySaverModePrefMigrationTest,
   EXPECT_TRUE(
       pref_service_.FindPreference(kMemorySaverModeEnabled)->IsDefaultValue());
   EXPECT_FALSE(pref_service_.GetBoolean(kMemorySaverModeEnabled));
+}
+
+TEST_F(MemorySaverModePrefMigrationTest, MigrateMultiStateModePref) {
+  // Set the old pref as-if set by the user.
+  pref_service_.SetInteger(kMemorySaverModeState,
+                           static_cast<int>(MemorySaverModeState::kDeprecated));
+
+  EXPECT_EQ(pref_service_.GetInteger(kMemorySaverModeState),
+            static_cast<int>(MemorySaverModeState::kDeprecated));
+
+  MigrateMultiStateMemorySaverModePref(&pref_service_);
+
+  EXPECT_EQ(pref_service_.GetInteger(kMemorySaverModeState),
+            static_cast<int>(MemorySaverModeState::kEnabled));
 }
 
 }  // namespace performance_manager::user_tuning::prefs

@@ -11,7 +11,6 @@
 #include "base/system/sys_info.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/ash/multidevice_setup/multidevice_setup_handler.h"
-#include "chrome/browser/ui/webui/webui_util.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/browser_resources.h"
@@ -27,6 +26,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/webui/web_ui_util.h"
 #include "ui/chromeos/devicetype_utils.h"
+#include "ui/webui/webui_util.h"
 
 namespace ash::multidevice_setup {
 
@@ -43,12 +43,17 @@ constexpr webui::LocalizedString kLocalizedStringsWithoutPlaceholders[] = {
     {"passwordPageHeader", IDS_MULTIDEVICE_SETUP_PASSWORD_PAGE_HEADER},
     {"enterPassword", IDS_MULTIDEVICE_SETUP_PASSWORD_PAGE_ENTER_PASSWORD_LABEL},
     {"wrongPassword", IDS_MULTIDEVICE_SETUP_PASSWORD_PAGE_WRONG_PASSWORD_LABEL},
+    {"passwordPageHeaderForPIN",
+     IDS_MULTIDEVICE_SETUP_PASSWORD_PAGE_HEADER_FOR_PIN},
+    {"enterPIN", IDS_MULTIDEVICE_SETUP_PASSWORD_PAGE_ENTER_PIN_LABEL},
+    {"wrongPIN", IDS_MULTIDEVICE_SETUP_PASSWORD_PAGE_WRONG_PIN_LABEL},
     {"startSetupPageMultipleDeviceHeader",
      IDS_MULTIDEVICE_SETUP_START_SETUP_PAGE_MULTIPLE_DEVICE_HEADER},
     {"startSetupPageSingleDeviceHeader",
      IDS_MULTIDEVICE_SETUP_START_SETUP_PAGE_SINGLE_DEVICE_HEADER},
     {"startSetupPageOfflineDeviceOption",
      IDS_MULTIDEVICE_SETUP_START_SETUP_PAGE_OFFLINE_DEVICE_OPTION},
+    {"startSetupPageFootnote", IDS_MULTIDEVICE_SETUP_START_SETUP_PAGE_FOOTNOTE},
     {"startSetupPageFeatureMirrorPhoneNotifications",
      IDS_MULTIDEVICE_SETUP_START_SETUP_PAGE_MIRROR_PHONE_NOTIFICATIONS},
     {"startSetupPageFeatureWifiSyncTitle",
@@ -82,7 +87,10 @@ constexpr webui::LocalizedString kLocalizedStringsWithoutPlaceholders[] = {
     {"dialogAccessibilityTitle",
      IDS_MULTIDEVICE_SETUP_DIALOG_ACCESSIBILITY_TITLE},
     {"startSetupPageFeatureListHeader",
-     IDS_MULTIDEVICE_SETUP_START_SETUP_PAGE_FEATURE_LIST_HEADER}};
+     IDS_MULTIDEVICE_SETUP_START_SETUP_PAGE_FEATURE_LIST_HEADER},
+    {"pauseAnimationAriaLabel", IDS_OOBE_PAUSE_ANIMATION_MESSAGE},
+    {"playAnimationAriaLabel", IDS_OOBE_PLAY_ANIMATION_MESSAGE},
+};
 
 struct LocalizedStringWithName {
   LocalizedStringWithName(const char* name,
@@ -109,12 +117,6 @@ GetLocalizedStringsWithPlaceholders() {
                 ui::GetChromeOSDeviceName(), kFootnoteMarker,
                 base::UTF8ToUTF16(
                     GetBoardSpecificBetterTogetherSuiteLearnMoreUrl().spec())));
-
-        localized_strings.emplace_back(
-            "startSetupPageFootnote",
-            l10n_util::GetStringFUTF16(
-                IDS_MULTIDEVICE_SETUP_START_SETUP_PAGE_FOOTNOTE,
-                kFootnoteMarker));
 
         localized_strings.emplace_back(
             "startSetupPageFeatureListAwm",
@@ -156,8 +158,9 @@ void AddLocalizedStrings(content::WebUIDataSource* html_source) {
 }
 
 void AddLocalizedValuesToBuilder(::login::LocalizedValuesBuilder* builder) {
-  for (const auto& entry : kLocalizedStringsWithoutPlaceholders)
+  for (const auto& entry : kLocalizedStringsWithoutPlaceholders) {
     builder->Add(entry.name, entry.id);
+  }
 
   // TODO(crbug.com/964547): Refactor so that any change to these strings will
   // surface in both the OOBE and post-OOBE UIs without having to adjust both
@@ -167,10 +170,6 @@ void AddLocalizedValuesToBuilder(::login::LocalizedValuesBuilder* builder) {
                 ui::GetChromeOSDeviceName(), kFootnoteMarker,
                 base::UTF8ToUTF16(
                     GetBoardSpecificBetterTogetherSuiteLearnMoreUrl().spec()));
-
-  builder->AddF("startSetupPageFootnote",
-                IDS_MULTIDEVICE_SETUP_START_SETUP_PAGE_FOOTNOTE,
-                kFootnoteMarker);
 
   builder->AddF(
       "startSetupPageFeatureListAwm",

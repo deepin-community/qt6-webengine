@@ -37,21 +37,20 @@
   color: var(--sys-color-on-surface-subtle);
 }
 
-.filter-text-filter {
-  display: inline-flex;
-  margin-left: 1px;
-  margin-right: 2px;
-  min-width: 40px;
-  max-width: 200px;
-  height: 24px;
-  align-items: center;
+.text-filter {
+  flex-grow: 1;
+  min-width: var(--sys-size-25);
+  max-width: var(--sys-size-36);
 }
 
 .filter-bitset-filter {
   padding: 2px;
   display: inline-flex;
   overflow: hidden;
-  height: 24px;
+  min-height: var(--sys-size-11);
+  height: auto;
+  flex-wrap: wrap;
+  row-gap: var(--sys-size-2);
   position: relative;
   margin: 0;
 }
@@ -74,19 +73,26 @@
 }
 
 .filter-bitset-filter span:focus-visible {
-  outline: -webkit-focus-ring-color auto 5px;
+  outline: var(--sys-size-2) solid var(--sys-color-state-focus-ring);
 }
 
 .filter-bitset-filter span:hover {
-  outline: none;
   background: var(--sys-color-state-hover-on-subtle);
+}
+
+.filter-bitset-filter span:hover:not(:focus-visible) {
+  outline: none;
 }
 
 .filter-bitset-filter span.selected,
 .filter-bitset-filter span:active {
   color: var(--sys-color-on-tonal-container);
-  outline: none;
   background-color: var(--sys-color-tonal-container);
+}
+
+.filter-bitset-filter span.selected:not(:focus-visible),
+.filter-bitset-filter span:active:not(:focus-visible) {
+  outline: none;
 }
 
 .filter-bitset-filter-divider {
@@ -98,7 +104,7 @@
 }
 
 .filter-checkbox-filter {
-  padding-left: 4px;
+  padding-left: 1px;
   padding-right: 7px;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -109,7 +115,7 @@
   position: relative;
 }
 
-.filter-checkbox-filter > [is="dt-checkbox"] {
+.filter-checkbox-filter > devtools-checkbox {
   display: flex;
   margin: auto 0;
 }
@@ -119,7 +125,7 @@
 }
 
 .filter-divider {
-  background-color: var(--sys-color-on-base-divider);
+  background-color: var(--sys-color-divider);
   width: 1px;
   margin: 5px 4px;
   height: 16px;
@@ -154,71 +160,36 @@
 
 .dropdown-filterbar {
   justify-content: space-between;
-  padding: 0 3px 0 5px;
-  border: 1px solid transparent;
-  border-radius: 7px;
+  align-items: center;
+  height: var(--sys-size-9);
+  margin: 0 var(--sys-size-3) 0 var(--sys-size-5);
+  border: none;
+  border-radius: var(--sys-shape-corner-extra-small);
   display: flex;
   background-color: transparent;
   color: var(--sys-color-on-surface-subtle);
-}
 
-.filter-input-field {
-  padding-left: 3px;
-  width: 163px;
-  height: 18px;
-  line-height: 20px;
-  display: inline-block;
-  overflow: hidden;
-  white-space: nowrap;
-  cursor: auto;
-}
-
-.filter-input-container {
-  margin: 0 3px;
-  display: flex;
-  background: var(--sys-color-cdt-base-container);
-  border: 1px solid var(--sys-color-neutral-outline);
-  border-radius: 4px;
-  width: 163px;
-
-  &:focus-within {
-    border-color: var(--sys-color-state-focus-ring);
-  }
-
-  &:hover:not(:focus-within) {
-    background: var(--sys-color-state-hover-on-subtle);
-  }
-}
-
-.filter-text-filter:not(.filter-text-empty) .filter-input-container {
-  border-color: var(--sys-color-state-focus-ring);
-}
-
-.filter-input-clear-button {
-  opacity: 70%;
-  height: 16px;
-  margin: 0;
-  cursor: pointer;
-  border: none;
-  background: none;
-  padding: 1px 2px;
-
-  devtools-icon {
-    display: block;
+  .toolbar-dropdown-arrow {
+    top: var(--sys-size-2);
   }
 
   &:hover {
-    opacity: 99%;
+    background-color: var(--sys-color-state-hover-on-subtle);
   }
-}
 
-.filter-text-empty .filter-input-clear-button {
-  display: none;
-}
+  &:active {
+    background-color: var(--sys-color-state-ripple-neutral-on-subtle);
+  }
 
-button.toolbar-item:focus-visible {
-  background: var(--sys-color-state-hover-on-subtle);
-  border-radius: 2px;
+  &:hover:active {
+    background:
+      linear-gradient(var(--sys-color-state-hover-on-subtle), var(--sys-color-state-hover-on-subtle)),
+      linear-gradient(var(--sys-color-state-ripple-neutral-on-subtle), var(--sys-color-state-ripple-neutral-on-subtle));
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--sys-color-state-focus-ring);
+  }
 }
 
 @media (forced-colors: active) {
@@ -228,18 +199,5 @@ button.toolbar-item:focus-visible {
     forced-color-adjust: none;
     background: Highlight;
     color: HighlightText;
-  }
-
-  .filter-input-container {
-    forced-color-adjust: none;
-    background: ButtonFace;
-    box-shadow: var(--legacy-focus-ring-inactive-shadow);
-    color: fieldtext;
-  }
-
-  .filter-input-container:hover,
-  .filter-input-container:focus-within,
-  .filter-text-filter:not(.filter-text-empty) .filter-input-container {
-    box-shadow: var(--legacy-focus-ring-active-shadow);
   }
 }

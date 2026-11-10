@@ -17,7 +17,7 @@
 
 // This file contains constants related to media.
 
-namespace cricket {
+namespace webrtc {
 
 extern const int kVideoCodecClockrate;
 
@@ -47,7 +47,6 @@ extern const char kCodecParamNotInNameValueFormat[];
 extern const char kOpusCodecName[];
 extern const char kL16CodecName[];
 extern const char kG722CodecName[];
-extern const char kIlbcCodecName[];
 extern const char kPcmuCodecName[];
 extern const char kPcmaCodecName[];
 extern const char kCnCodecName[];
@@ -62,8 +61,10 @@ extern const char kCodecParamSPropStereo[];
 extern const char kCodecParamStereo[];
 extern const char kCodecParamUseInbandFec[];
 extern const char kCodecParamUseDtx[];
+extern const char kCodecParamCbr[];
 extern const char kCodecParamMaxAverageBitrate[];
 extern const char kCodecParamMaxPlaybackRate[];
+extern const char kCodecParamPerLayerPictureLossIndication[];
 
 extern const char kParamValueTrue[];
 // Parameters are stored as parameter/value pairs. For parameters who do not
@@ -147,10 +148,17 @@ RTC_EXPORT extern const char kH265FmtpProfileCompatibilityIndicator[];
 RTC_EXPORT extern const char kH265FmtpInteropConstraints[];
 RTC_EXPORT extern const char kH265FmtpTxMode[];
 
+// draft-ietf-payload-vp9
 extern const char kVP9ProfileId[];
+
+// https://aomediacodec.github.io/av1-rtp-spec/
+extern const char kAv1FmtpProfile[];
+extern const char kAv1FmtpLevelIdx[];
+extern const char kAv1FmtpTier[];
 
 extern const int kDefaultVideoMaxFramerate;
 extern const int kDefaultVideoMaxQpVpx;
+extern const int kDefaultVideoMaxQpAv1;
 extern const int kDefaultVideoMaxQpH26x;
 
 extern const size_t kConferenceMaxNumSpatialLayers;
@@ -159,6 +167,7 @@ extern const size_t kConferenceDefaultNumTemporalLayers;
 
 extern const char kApplicationSpecificBandwidth[];
 extern const char kTransportSpecificBandwidth[];
-}  // namespace cricket
+}  //  namespace webrtc
+
 
 #endif  // MEDIA_BASE_MEDIA_CONSTANTS_H_

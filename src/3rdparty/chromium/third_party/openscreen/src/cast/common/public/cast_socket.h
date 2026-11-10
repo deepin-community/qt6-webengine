@@ -12,13 +12,10 @@
 #include "platform/api/tls_connection.h"
 #include "util/weak_ptr.h"
 
-namespace cast {
-namespace channel {
-class CastMessage;
-}  // namespace channel
-}  // namespace cast
-
 namespace openscreen::cast {
+namespace proto {
+class CastMessage;
+}
 
 // Represents a simple message-oriented socket for communicating with the Cast
 // V2 protocol.  It isn't thread-safe, so it should only be used on the same
@@ -27,12 +24,10 @@ class CastSocket : public TlsConnection::Client {
  public:
   class Client {
    public:
+    // Called when a terminal error on `socket` has occurred.
+    virtual void OnError(CastSocket* socket, const Error& error) = 0;
 
-    // Called when a terminal error on |socket| has occurred.
-    virtual void OnError(CastSocket* socket, Error error) = 0;
-
-    virtual void OnMessage(CastSocket* socket,
-                           ::cast::channel::CastMessage message) = 0;
+    virtual void OnMessage(CastSocket* socket, proto::CastMessage message) = 0;
 
    protected:
     virtual ~Client();
@@ -41,16 +36,16 @@ class CastSocket : public TlsConnection::Client {
   CastSocket(std::unique_ptr<TlsConnection> connection, Client* client);
   ~CastSocket();
 
-  // Sends |message| immediately unless the underlying TLS connection is
-  // write-blocked, in which case |message| will be queued.  An error will be
-  // returned if |message| cannot be serialized for any reason, even while
+  // Sends `message` immediately unless the underlying TLS connection is
+  // write-blocked, in which case `message` will be queued.  An error will be
+  // returned if `message` cannot be serialized for any reason, even while
   // write-blocked.
   //
-  // NOTE: Send() does not validate that |message| is well-formed or
+  // NOTE: Send() does not validate that `message` is well-formed or
   // semantically correct according to the Cast protocol.  Callers should use
   // the functions in {sender,receiver}/channel/message_util.h to construct a
   // valid CastMessage to pass into Send().
-  [[nodiscard]] Error Send(const ::cast::channel::CastMessage& message);
+  [[nodiscard]] Error Send(const proto::CastMessage& message);
 
   void SetClient(Client* client);
 
@@ -62,7 +57,7 @@ class CastSocket : public TlsConnection::Client {
   bool audio_only() const { return audio_only_; }
 
   // TlsConnection::Client overrides.
-  void OnError(TlsConnection* connection, Error error) override;
+  void OnError(TlsConnection* connection, const Error& error) override;
   void OnRead(TlsConnection* connection, std::vector<uint8_t> block) override;
 
   WeakPtr<CastSocket> GetWeakPtr() const { return weak_factory_.GetWeakPtr(); }
@@ -85,7 +80,7 @@ class CastSocket : public TlsConnection::Client {
   WeakPtrFactory<CastSocket> weak_factory_{this};
 };
 
-// Returns socket->socket_id() if |socket| is not null, otherwise 0.
+// Returns socket->socket_id() if `socket` is not null, otherwise 0.
 constexpr int ToCastSocketId(CastSocket* socket) {
   return socket ? socket->socket_id() : 0;
 }

@@ -4,38 +4,31 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
-#include <math.h>
+#include <inttypes.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#include <xnnpack.h>
-#include <xnnpack/log.h>
-#include <xnnpack/operator.h>
-#include <xnnpack/params.h>
-#include <xnnpack/subgraph.h>
-#include <xnnpack/subgraph-validation.h>
-
+#include "include/xnnpack.h"
+#include "src/xnnpack/log.h"
+#include "src/xnnpack/node-type.h"
+#include "src/xnnpack/subgraph-validation.h"
+#include "src/xnnpack/subgraph.h"
+#include <pthreadpool.h>
 
 static enum xnn_status create_argmax_pooling_operator(
   const struct xnn_node* node,
-  const struct xnn_value* values,
+  const struct xnn_runtime_value* values,
   size_t num_values,
   struct xnn_operator_data* opdata,
-  struct xnn_code_cache* code_cache,
-  struct xnn_weights_cache* weights_cache)
+  xnn_weights_cache_t weights_cache)
 {
-  assert(node->compute_type == xnn_compute_type_fp32);
-
   assert(node->num_inputs == 1);
   const uint32_t input_id = node->inputs[0];
   assert(input_id != XNN_INVALID_VALUE_ID);
   assert(input_id < num_values);
+  (void) input_id;  // Silence unused warning, only use in asserts.
 
   assert(node->num_outputs == 2);
-
-  const size_t channel_dim = values[input_id].shape.dim[3];
-  assert(channel_dim == values[node->outputs[0]].shape.dim[3]);
-  assert(channel_dim == values[node->outputs[1]].shape.dim[3]);
 
   const enum xnn_status status = xnn_create_argmax_pooling2d_nhwc_f32(
     node->params.pooling_2d.padding_top,
@@ -44,7 +37,6 @@ static enum xnn_status create_argmax_pooling_operator(
     node->params.pooling_2d.padding_left,
     node->params.pooling_2d.pooling_height,
     node->params.pooling_2d.pooling_width,
-    channel_dim /* channels */, channel_dim /* input stride */, channel_dim /* output stride */,
     node->flags,
     &opdata->operator_objects[0]);
   return status;
@@ -52,7 +44,7 @@ static enum xnn_status create_argmax_pooling_operator(
 
 static enum xnn_status reshape_argmax_pooling_operator(
   struct xnn_operator_data* opdata,
-  struct xnn_value* values,
+  struct xnn_runtime_value* values,
   size_t num_values,
   pthreadpool_t threadpool)
 {
@@ -61,19 +53,58 @@ static enum xnn_status reshape_argmax_pooling_operator(
   const size_t batch_size = values[input_id].shape.dim[0];
   const size_t input_height = values[input_id].shape.dim[1];
   const size_t input_width = values[input_id].shape.dim[2];
-  return xnn_reshape_argmax_pooling2d_nhwc_f32(
+  const size_t channel_dim = values[input_id].shape.dim[3];
+
+  size_t output_height, output_width;
+  enum xnn_status status = xnn_reshape_argmax_pooling2d_nhwc_f32(
     opdata->operator_objects[0],
     batch_size,
     input_height,
     input_width,
-    &opdata->workspace_size,
-    &opdata->workspace_alignment,
+    /*channels=*/channel_dim,
+    /*input_pixel_stride=*/channel_dim,
+    /*output_pixel_stride=*/channel_dim,
+    &output_height,
+    &output_width,
     threadpool);
+  if (status != xnn_status_success) {
+    return status;
+  }
+  const uint32_t output_id = opdata->outputs[0];
+  assert(output_id < num_values);
+  const uint32_t index_id = opdata->outputs[1];
+  assert(index_id < num_values);
+
+  struct xnn_runtime_value* output_value = values + output_id;
+  output_value->shape.dim[0] = batch_size;
+  output_value->shape.dim[1] = output_height;
+  output_value->shape.dim[2] = output_width;
+  output_value->shape.dim[3] = channel_dim;
+
+  struct xnn_runtime_value* output_index = values + index_id;
+  output_index->shape.dim[0] = batch_size;
+  output_index->shape.dim[1] = output_height;
+  output_index->shape.dim[2] = output_width;
+  output_index->shape.dim[3] = channel_dim;
+
+  output_value->shape.num_dims = 4;
+  output_index->shape.num_dims = 4;
+  const size_t new_output_size = xnn_runtime_tensor_get_size(output_value);
+  if (new_output_size > output_value->size) {
+    output_value->size = new_output_size;
+    return xnn_status_reallocation_required;
+  }
+  const size_t new_index_size = xnn_runtime_tensor_get_size(output_index);
+  if (new_index_size > output_index->size) {
+    output_index->size = new_index_size;
+    return xnn_status_reallocation_required;
+  }
+  return xnn_status_success;
 }
 
 static enum xnn_status setup_argmax_pooling_operator(
   const struct xnn_operator_data* opdata,
-  const struct xnn_value* values,
+  const struct xnn_runtime_value* values,
   size_t num_values,
   pthreadpool_t threadpool)
 {
@@ -89,21 +120,20 @@ static enum xnn_status setup_argmax_pooling_operator(
   assert(output_index_id != XNN_INVALID_VALUE_ID);
   assert(output_index_id < num_values);
 
-  const struct xnn_value* input_value = values + input_id;
+  const struct xnn_runtime_value* input_value = values + input_id;
   const void* input_data = input_value->data;
   assert(input_data != NULL);
 
-  const struct xnn_value* output_value_value = values + output_value_id;
+  const struct xnn_runtime_value* output_value_value = values + output_value_id;
   void* output_value_data = output_value_value->data;
   assert(output_value_data != NULL);
 
-  const struct xnn_value* output_index_value = values + output_index_id;
+  const struct xnn_runtime_value* output_index_value = values + output_index_id;
   void* output_index_data = output_index_value->data;
   assert(output_index_data != NULL);
 
   return xnn_setup_argmax_pooling2d_nhwc_f32(
     opdata->operator_objects[0],
-    opdata->workspace,
     input_data,
     output_value_data,
     output_index_data);
@@ -133,13 +163,6 @@ enum xnn_status xnn_define_argmax_pooling_2d(
       "failed to define %s operator with %" PRIu32 "x%" PRIu32 " pooling size: "
       "pooling size dimensions must be non-zero",
       xnn_node_type_to_string(xnn_node_type_argmax_pooling_2d), pooling_width, pooling_height);
-    return xnn_status_invalid_parameter;
-  }
-
-  if (pooling_size == 1) {
-    xnn_log_error(
-      "failed to define %s operator with 1 pooling element: 1x1 pooling is meaningless",
-      xnn_node_type_to_string(xnn_node_type_argmax_pooling_2d));
     return xnn_status_invalid_parameter;
   }
 
@@ -212,7 +235,6 @@ enum xnn_status xnn_define_argmax_pooling_2d(
   }
 
   node->type = xnn_node_type_argmax_pooling_2d;
-  node->compute_type = xnn_compute_type_fp32;
   node->params.pooling_2d.padding_top = input_padding_top;
   node->params.pooling_2d.padding_right = input_padding_right;
   node->params.pooling_2d.padding_bottom = input_padding_bottom;

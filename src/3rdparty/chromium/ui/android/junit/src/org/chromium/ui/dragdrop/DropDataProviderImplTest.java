@@ -21,7 +21,6 @@ import org.junit.runner.RunWith;
 import org.robolectric.shadows.ShadowLooper;
 
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.base.metrics.UmaRecorderHolder;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 
 import java.io.FileNotFoundException;
@@ -46,16 +45,15 @@ public class DropDataProviderImplTest {
     @Before
     public void setUp() {
         mDropDataProviderImpl = new DropDataProviderImpl();
-        shadowOf(MimeTypeMap.getSingleton()).addExtensionMimeTypMapping("jpg", "image/jpeg");
-        shadowOf(MimeTypeMap.getSingleton()).addExtensionMimeTypMapping("gif", "image/gif");
-        shadowOf(MimeTypeMap.getSingleton()).addExtensionMimeTypMapping("png", "image/png");
+        shadowOf(MimeTypeMap.getSingleton()).addExtensionMimeTypeMapping("jpg", "image/jpeg");
+        shadowOf(MimeTypeMap.getSingleton()).addExtensionMimeTypeMapping("gif", "image/gif");
+        shadowOf(MimeTypeMap.getSingleton()).addExtensionMimeTypeMapping("png", "image/png");
     }
 
     @After
     public void tearDown() {
         mDropDataProviderImpl.clearCache();
         mDropDataProviderImpl.clearLastUriCreatedTimestampForTesting();
-        UmaRecorderHolder.resetForTesting();
     }
 
     @Test
@@ -180,21 +178,18 @@ public class DropDataProviderImplTest {
         mDropDataProviderImpl.cache(IMAGE_DATA_B, EXTENSION_B, IMAGE_FILENAME_B);
         assertImageUriCreatedIntervalRecorded(/* expectedCnt= */ 1);
         assertImageFirstExpiredOpenFileRecorded(/* expectedCnt= */ 0);
-        assertImageAllExpiredOpenFileRecorded(/* expectedCnt= */ 0);
 
         // #openFile is called from the drop target app with the expired uri.
         Assert.assertNull(
                 "Previous uri should expire.",
                 mDropDataProviderImpl.openFile(new DropDataContentProvider(), uri));
         assertImageFirstExpiredOpenFileRecorded(/* expectedCnt= */ 1);
-        assertImageAllExpiredOpenFileRecorded(/* expectedCnt= */ 1);
 
         // #openFile is called again from the drop target app with the expired uri.
         Assert.assertNull(
                 "Previous uri should expire.",
                 mDropDataProviderImpl.openFile(new DropDataContentProvider(), uri));
         assertImageFirstExpiredOpenFileRecorded(/* expectedCnt= */ 1);
-        assertImageAllExpiredOpenFileRecorded(/* expectedCnt= */ 2);
 
         ShadowLooper.idleMainLooper(CLEAR_CACHED_DATA_INTERVAL_MS, TimeUnit.MILLISECONDS);
         assertImageFirstOpenFileRecorded(/* expectedCnt= */ 1);
@@ -233,13 +228,6 @@ public class DropDataProviderImplTest {
 
     private void assertImageFirstExpiredOpenFileRecorded(int expectedCnt) {
         final String histogram = "Android.DragDrop.Image.OpenFileTime.FirstExpired";
-        final String errorMsg = "<" + histogram + "> is not recorded properly.";
-        Assert.assertEquals(
-                errorMsg, expectedCnt, RecordHistogram.getHistogramTotalCountForTesting(histogram));
-    }
-
-    private void assertImageAllExpiredOpenFileRecorded(int expectedCnt) {
-        final String histogram = "Android.DragDrop.Image.OpenFileTime.AllExpired";
         final String errorMsg = "<" + histogram + "> is not recorded properly.";
         Assert.assertEquals(
                 errorMsg, expectedCnt, RecordHistogram.getHistogramTotalCountForTesting(histogram));

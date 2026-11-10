@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -81,18 +82,18 @@ void GetApplicationDirs(std::vector<base::FilePath>* locations) {
 void GetPathsFromEnvironment(std::vector<base::FilePath>* paths) {
   base::FilePath::StringType delimiter;
   base::FilePath::StringType common_path;
-  std::string path;
   std::unique_ptr<base::Environment> env(base::Environment::Create());
 
-  if (!env->GetVar("PATH", &path)) {
+  std::optional<std::string> path = env->GetVar("PATH");
+  if (!path.has_value()) {
     return;
   }
 
 #if BUILDFLAG(IS_WIN)
-  common_path = base::UTF8ToWide(path);
+  common_path = base::UTF8ToWide(path.value());
   delimiter = L";";
 #else
-  common_path = path;
+  common_path = path.value();
   delimiter = ":";
 #endif
 
@@ -218,7 +219,7 @@ bool FindBrowser(
   base::FilePath module_dir;
 #if BUILDFLAG(IS_FUCHSIA)
   // Use -1 to allow this to compile.
-  // TODO(crbug.com/1262176): Determine whether Fuchsia should support this and
+  // TODO(crbug.com/40799321): Determine whether Fuchsia should support this and
   // if so provide an appropriate implementation for this function.
   if (base::PathService::Get(-1, &module_dir)) {
 #else

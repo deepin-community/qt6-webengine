@@ -11,24 +11,39 @@
 #include "test/pc/e2e/analyzer/video/default_video_quality_analyzer.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
 #include <map>
 #include <memory>
+#include <optional>
+#include <set>
+#include <string>
+#include <utility>
 #include <vector>
 
+#include "absl/strings/string_view.h"
+#include "api/array_view.h"
+#include "api/numerics/samples_stats_counter.h"
 #include "api/rtp_packet_info.h"
 #include "api/rtp_packet_infos.h"
+#include "api/scoped_refptr.h"
 #include "api/test/create_frame_generator.h"
+#include "api/test/frame_generator_interface.h"
 #include "api/test/metrics/global_metrics_logger_and_exporter.h"
 #include "api/test/time_controller.h"
+#include "api/test/video_quality_analyzer_interface.h"
 #include "api/units/time_delta.h"
 #include "api/units/timestamp.h"
 #include "api/video/encoded_image.h"
 #include "api/video/i420_buffer.h"
 #include "api/video/video_frame.h"
+#include "api/video/video_frame_buffer.h"
 #include "common_video/libyuv/include/webrtc_libyuv.h"
 #include "rtc_base/strings/string_builder.h"
+#include "rtc_base/thread.h"
 #include "rtc_tools/frame_analyzer/video_geometry_aligner.h"
-#include "system_wrappers/include/sleep.h"
+#include "system_wrappers/include/clock.h"
 #include "test/gmock.h"
 #include "test/gtest.h"
 #include "test/pc/e2e/analyzer/video/default_video_quality_analyzer_shared_objects.h"
@@ -44,7 +59,7 @@ using ::testing::Test;
 using ::testing::TestWithParam;
 using ::testing::ValuesIn;
 
-using StatsSample = ::webrtc::SamplesStatsCounter::StatsSample;
+using StatsSample = SamplesStatsCounter::StatsSample;
 
 constexpr int kAnalyzerMaxThreadsCount = 1;
 constexpr TimeDelta kMaxFramesInFlightStorageDuration = TimeDelta::Seconds(3);
@@ -81,7 +96,7 @@ EncodedImage FakeEncode(const VideoFrame& frame) {
   packet_infos.push_back(RtpPacketInfo(
       /*ssrc=*/1,
       /*csrcs=*/{},
-      /*rtp_timestamp=*/frame.timestamp(),
+      /*rtp_timestamp=*/frame.rtp_timestamp(),
       /*receive_time=*/Timestamp::Micros(frame.timestamp_us() + 10000)));
   image.SetPacketInfos(RtpPacketInfos(packet_infos));
   return image;
@@ -95,7 +110,7 @@ VideoFrame DeepCopy(const VideoFrame& frame) {
 }
 
 std::vector<StatsSample> GetSortedSamples(const SamplesStatsCounter& counter) {
-  rtc::ArrayView<const StatsSample> view = counter.GetTimedSamples();
+  ArrayView<const StatsSample> view = counter.GetTimedSamples();
   std::vector<StatsSample> out(view.begin(), view.end());
   std::sort(out.begin(), out.end(),
             [](const StatsSample& a, const StatsSample& b) {
@@ -105,7 +120,7 @@ std::vector<StatsSample> GetSortedSamples(const SamplesStatsCounter& counter) {
 }
 
 std::vector<double> GetTimeSortedValues(const SamplesStatsCounter& counter) {
-  rtc::ArrayView<const StatsSample> view = counter.GetTimedSamples();
+  ArrayView<const StatsSample> view = counter.GetTimedSamples();
   std::vector<StatsSample> sorted(view.begin(), view.end());
   std::sort(sorted.begin(), sorted.end(),
             [](const StatsSample& a, const StatsSample& b) {
@@ -125,7 +140,7 @@ void ExpectRateIs(const SamplesRateCounter& rate_couter, double expected_rate) {
 }
 
 std::string ToString(const std::vector<StatsSample>& values) {
-  rtc::StringBuilder out;
+  StringBuilder out;
   for (const auto& v : values) {
     out << "{ time_ms=" << v.time.ms() << "; value=" << v.value << "}, ";
   }
@@ -163,7 +178,7 @@ void PassFramesThroughAnalyzerSenderOnly(
     }
     if (i < frames_count - 1 && interframe_delay_ms > 0) {
       if (time_controller == nullptr) {
-        SleepMs(interframe_delay_ms);
+        Thread::SleepMs(interframe_delay_ms);
       } else {
         time_controller->AdvanceTime(TimeDelta::Millis(interframe_delay_ms));
       }
@@ -200,7 +215,7 @@ void PassFramesThroughAnalyzer(DefaultVideoQualityAnalyzer& analyzer,
     }
     if (i < frames_count - 1 && interframe_delay_ms > 0) {
       if (time_controller == nullptr) {
-        SleepMs(interframe_delay_ms);
+        Thread::SleepMs(interframe_delay_ms);
       } else {
         time_controller->AdvanceTime(TimeDelta::Millis(interframe_delay_ms));
       }
@@ -211,8 +226,8 @@ void PassFramesThroughAnalyzer(DefaultVideoQualityAnalyzer& analyzer,
 TEST(DefaultVideoQualityAnalyzerTest, NormalScenario) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzer analyzer(Clock::GetRealTimeClock(),
                                        test::GetGlobalMetricsLogger(),
@@ -248,7 +263,7 @@ TEST(DefaultVideoQualityAnalyzerTest, NormalScenario) {
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   AnalyzerStats stats = analyzer.GetAnalyzerStats();
@@ -271,8 +286,8 @@ TEST(DefaultVideoQualityAnalyzerTest, NormalScenario) {
 TEST(DefaultVideoQualityAnalyzerTest, OneFrameReceivedTwice) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzer analyzer(Clock::GetRealTimeClock(),
                                        test::GetGlobalMetricsLogger(),
@@ -306,7 +321,7 @@ TEST(DefaultVideoQualityAnalyzerTest, OneFrameReceivedTwice) {
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   AnalyzerStats stats = analyzer.GetAnalyzerStats();
@@ -324,8 +339,8 @@ TEST(DefaultVideoQualityAnalyzerTest, OneFrameReceivedTwice) {
 TEST(DefaultVideoQualityAnalyzerTest, NormalScenario2Receivers) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   constexpr char kAlice[] = "alice";
   constexpr char kBob[] = "bob";
@@ -345,23 +360,23 @@ TEST(DefaultVideoQualityAnalyzerTest, NormalScenario2Receivers) {
     frames_order.push_back(frame.id());
     captured_frames.insert({frame.id(), frame});
     analyzer.OnFramePreEncode(kAlice, frame);
-    SleepMs(20);
+    Thread::SleepMs(20);
     analyzer.OnFrameEncoded(kAlice, frame.id(), FakeEncode(frame),
                             VideoQualityAnalyzerInterface::EncoderStats(),
                             false);
   }
 
-  SleepMs(50);
+  Thread::SleepMs(50);
 
   for (size_t i = 1; i < frames_order.size(); i += 2) {
     uint16_t frame_id = frames_order.at(i);
     VideoFrame received_frame = DeepCopy(captured_frames.at(frame_id));
     analyzer.OnFramePreDecode(kBob, received_frame.id(),
                               FakeEncode(received_frame));
-    SleepMs(30);
+    Thread::SleepMs(30);
     analyzer.OnFrameDecoded(kBob, received_frame,
                             VideoQualityAnalyzerInterface::DecoderStats());
-    SleepMs(10);
+    Thread::SleepMs(10);
     analyzer.OnFrameRendered(kBob, received_frame);
   }
 
@@ -370,17 +385,17 @@ TEST(DefaultVideoQualityAnalyzerTest, NormalScenario2Receivers) {
     VideoFrame received_frame = DeepCopy(captured_frames.at(frame_id));
     analyzer.OnFramePreDecode(kCharlie, received_frame.id(),
                               FakeEncode(received_frame));
-    SleepMs(40);
+    Thread::SleepMs(40);
     analyzer.OnFrameDecoded(kCharlie, received_frame,
                             VideoQualityAnalyzerInterface::DecoderStats());
-    SleepMs(5);
+    Thread::SleepMs(5);
     analyzer.OnFrameRendered(kCharlie, received_frame);
   }
 
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   AnalyzerStats analyzer_stats = analyzer.GetAnalyzerStats();
@@ -456,8 +471,8 @@ TEST(DefaultVideoQualityAnalyzerTest,
      OneFrameReceivedTwiceBySamePeerWith2Receivers) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   constexpr char kAlice[] = "alice";
   constexpr char kBob[] = "bob";
@@ -494,7 +509,7 @@ TEST(DefaultVideoQualityAnalyzerTest,
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   AnalyzerStats stats = analyzer.GetAnalyzerStats();
@@ -514,8 +529,8 @@ TEST(DefaultVideoQualityAnalyzerTest,
 TEST(DefaultVideoQualityAnalyzerTest, HeavyQualityMetricsFromEqualFrames) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions analyzer_options;
   analyzer_options.compute_psnr = true;
@@ -548,7 +563,7 @@ TEST(DefaultVideoQualityAnalyzerTest, HeavyQualityMetricsFromEqualFrames) {
   // Give analyzer some time to process frames on async thread. Heavy metrics
   // computation is turned on, so giving some extra time to be sure that
   // computatio have ended.
-  SleepMs(500);
+  Thread::SleepMs(500);
   analyzer.Stop();
 
   AnalyzerStats stats = analyzer.GetAnalyzerStats();
@@ -573,8 +588,8 @@ TEST(DefaultVideoQualityAnalyzerTest,
      HeavyQualityMetricsFromShiftedFramesWithAdjustment) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions analyzer_options;
   analyzer_options.compute_psnr = true;
@@ -599,7 +614,7 @@ TEST(DefaultVideoQualityAnalyzerTest,
     VideoFrame received_frame = frame;
     // Shift frame by a few pixels.
     test::CropRegion crop_region{0, 1, 3, 0};
-    rtc::scoped_refptr<VideoFrameBuffer> cropped_buffer =
+    scoped_refptr<VideoFrameBuffer> cropped_buffer =
         CropAndZoom(crop_region, received_frame.video_frame_buffer()->ToI420());
     received_frame.set_video_frame_buffer(cropped_buffer);
 
@@ -613,7 +628,7 @@ TEST(DefaultVideoQualityAnalyzerTest,
   // Give analyzer some time to process frames on async thread. Heavy metrics
   // computation is turned on, so giving some extra time to be sure that
   // computatio have ended.
-  SleepMs(500);
+  Thread::SleepMs(500);
   analyzer.Stop();
 
   AnalyzerStats stats = analyzer.GetAnalyzerStats();
@@ -637,8 +652,8 @@ TEST(DefaultVideoQualityAnalyzerTest,
 TEST(DefaultVideoQualityAnalyzerTest, CpuUsage) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzer analyzer(Clock::GetRealTimeClock(),
                                        test::GetGlobalMetricsLogger(),
@@ -678,13 +693,13 @@ TEST(DefaultVideoQualityAnalyzerTest, CpuUsage) {
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   double cpu_usage = analyzer.GetCpuUsagePercent();
   ASSERT_GT(cpu_usage, 0);
 
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   EXPECT_EQ(analyzer.GetCpuUsagePercent(), cpu_usage);
@@ -693,8 +708,8 @@ TEST(DefaultVideoQualityAnalyzerTest, CpuUsage) {
 TEST(DefaultVideoQualityAnalyzerTest, RuntimeParticipantsAdding) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   constexpr char kAlice[] = "alice";
   constexpr char kBob[] = "bob";
@@ -788,7 +803,7 @@ TEST(DefaultVideoQualityAnalyzerTest, RuntimeParticipantsAdding) {
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   AnalyzerStats stats = analyzer.GetAnalyzerStats();
@@ -849,8 +864,8 @@ TEST(DefaultVideoQualityAnalyzerTest,
      SimulcastFrameWasFullyReceivedByAllPeersBeforeEncodeFinish) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzer analyzer(Clock::GetRealTimeClock(),
                                        test::GetGlobalMetricsLogger(),
@@ -891,7 +906,7 @@ TEST(DefaultVideoQualityAnalyzerTest,
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   AnalyzerStats stats = analyzer.GetAnalyzerStats();
@@ -911,8 +926,8 @@ TEST(DefaultVideoQualityAnalyzerTest,
      FrameCanBeReceivedBySenderAfterItWasReceivedByReceiver) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   options.enable_receive_own_stream = true;
@@ -966,7 +981,7 @@ TEST(DefaultVideoQualityAnalyzerTest,
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   analyzer_stats = analyzer.GetAnalyzerStats();
@@ -1008,8 +1023,8 @@ TEST(DefaultVideoQualityAnalyzerTest,
      FrameCanBeReceivedByReceiverAfterItWasReceivedBySender) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   options.enable_receive_own_stream = true;
@@ -1063,7 +1078,7 @@ TEST(DefaultVideoQualityAnalyzerTest,
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   analyzer_stats = analyzer.GetAnalyzerStats();
@@ -1104,8 +1119,8 @@ TEST(DefaultVideoQualityAnalyzerTest,
 TEST(DefaultVideoQualityAnalyzerTest, CodecTrackedCorrectly) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzer analyzer(Clock::GetRealTimeClock(),
                                        test::GetGlobalMetricsLogger(),
@@ -1147,7 +1162,7 @@ TEST(DefaultVideoQualityAnalyzerTest, CodecTrackedCorrectly) {
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   std::map<StatsKey, StreamStats> stats = analyzer.GetStats();
@@ -1175,8 +1190,8 @@ TEST(DefaultVideoQualityAnalyzerTest,
      FramesInFlightAreCorrectlySentToTheComparatorAfterStop) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   DefaultVideoQualityAnalyzer analyzer(Clock::GetRealTimeClock(),
@@ -1228,7 +1243,7 @@ TEST(DefaultVideoQualityAnalyzerTest,
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   AnalyzerStats analyzer_stats = analyzer.GetAnalyzerStats();
@@ -1267,8 +1282,8 @@ TEST(
     FramesInFlightAreCorrectlySentToTheComparatorAfterStopForSenderAndReceiver) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   options.enable_receive_own_stream = true;
@@ -1326,7 +1341,7 @@ TEST(
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   AnalyzerStats analyzer_stats = analyzer.GetAnalyzerStats();
@@ -1373,8 +1388,8 @@ TEST(
 TEST(DefaultVideoQualityAnalyzerTest, GetStreamFrames) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   DefaultVideoQualityAnalyzer analyzer(Clock::GetRealTimeClock(),
@@ -1410,7 +1425,7 @@ TEST(DefaultVideoQualityAnalyzerTest, GetStreamFrames) {
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   EXPECT_EQ(analyzer.GetStreamFrames(), stream_to_frame_ids);
@@ -1419,8 +1434,8 @@ TEST(DefaultVideoQualityAnalyzerTest, GetStreamFrames) {
 TEST(DefaultVideoQualityAnalyzerTest, ReceiverReceivedFramesWhenSenderRemoved) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   DefaultVideoQualityAnalyzer analyzer(Clock::GetRealTimeClock(),
@@ -1445,7 +1460,7 @@ TEST(DefaultVideoQualityAnalyzerTest, ReceiverReceivedFramesWhenSenderRemoved) {
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   FrameCounters stream_conters =
@@ -1462,8 +1477,8 @@ TEST(DefaultVideoQualityAnalyzerTest,
      ReceiverReceivedFramesWhenSenderRemovedWithSelfview) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   options.enable_receive_own_stream = true;
@@ -1489,7 +1504,7 @@ TEST(DefaultVideoQualityAnalyzerTest,
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   FrameCounters stream_conters =
@@ -1506,8 +1521,8 @@ TEST(DefaultVideoQualityAnalyzerTest,
      SenderReceivedFramesWhenReceiverRemovedWithSelfview) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   options.enable_receive_own_stream = true;
@@ -1533,7 +1548,7 @@ TEST(DefaultVideoQualityAnalyzerTest,
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   FrameCounters stream_conters =
@@ -1550,8 +1565,8 @@ TEST(DefaultVideoQualityAnalyzerTest,
      SenderAndReceiverReceivedFramesWhenReceiverRemovedWithSelfview) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   options.enable_receive_own_stream = true;
@@ -1582,7 +1597,7 @@ TEST(DefaultVideoQualityAnalyzerTest,
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   FrameCounters alice_alice_stream_conters =
@@ -1607,8 +1622,8 @@ TEST(DefaultVideoQualityAnalyzerTest,
 TEST(DefaultVideoQualityAnalyzerTest, ReceiverRemovedBeforeCapturing2ndFrame) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   DefaultVideoQualityAnalyzer analyzer(Clock::GetRealTimeClock(),
@@ -1625,7 +1640,7 @@ TEST(DefaultVideoQualityAnalyzerTest, ReceiverRemovedBeforeCapturing2ndFrame) {
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   FrameCounters global_stream_conters = analyzer.GetGlobalCounters();
@@ -1648,8 +1663,8 @@ TEST(DefaultVideoQualityAnalyzerTest, ReceiverRemovedBeforeCapturing2ndFrame) {
 TEST(DefaultVideoQualityAnalyzerTest, ReceiverRemovedBeforePreEncoded) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   DefaultVideoQualityAnalyzer analyzer(Clock::GetRealTimeClock(),
@@ -1668,7 +1683,7 @@ TEST(DefaultVideoQualityAnalyzerTest, ReceiverRemovedBeforePreEncoded) {
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   FrameCounters global_stream_conters = analyzer.GetGlobalCounters();
@@ -1691,8 +1706,8 @@ TEST(DefaultVideoQualityAnalyzerTest, ReceiverRemovedBeforePreEncoded) {
 TEST(DefaultVideoQualityAnalyzerTest, ReceiverRemovedBeforeEncoded) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   DefaultVideoQualityAnalyzer analyzer(Clock::GetRealTimeClock(),
@@ -1711,7 +1726,7 @@ TEST(DefaultVideoQualityAnalyzerTest, ReceiverRemovedBeforeEncoded) {
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   FrameCounters global_stream_conters = analyzer.GetGlobalCounters();
@@ -1735,8 +1750,8 @@ TEST(DefaultVideoQualityAnalyzerTest,
      ReceiverRemovedBetweenSimulcastLayersEncoded) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   DefaultVideoQualityAnalyzer analyzer(Clock::GetRealTimeClock(),
@@ -1759,7 +1774,7 @@ TEST(DefaultVideoQualityAnalyzerTest,
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   FrameCounters global_stream_conters = analyzer.GetGlobalCounters();
@@ -1782,8 +1797,8 @@ TEST(DefaultVideoQualityAnalyzerTest,
 TEST(DefaultVideoQualityAnalyzerTest, UnregisterOneAndRegisterAnother) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   DefaultVideoQualityAnalyzer analyzer(Clock::GetRealTimeClock(),
@@ -1804,7 +1819,7 @@ TEST(DefaultVideoQualityAnalyzerTest, UnregisterOneAndRegisterAnother) {
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   FrameCounters global_stream_conters = analyzer.GetGlobalCounters();
@@ -1844,8 +1859,8 @@ TEST(DefaultVideoQualityAnalyzerTest,
      UnregisterOneAndRegisterAnotherRegisterBack) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   DefaultVideoQualityAnalyzer analyzer(Clock::GetRealTimeClock(),
@@ -1868,7 +1883,7 @@ TEST(DefaultVideoQualityAnalyzerTest,
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   FrameCounters global_stream_conters = analyzer.GetGlobalCounters();
@@ -1900,8 +1915,8 @@ TEST(DefaultVideoQualityAnalyzerTest,
      FramesInFlightAreAccountedForUnregisterPeers) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   DefaultVideoQualityAnalyzer analyzer(Clock::GetRealTimeClock(),
@@ -1914,7 +1929,7 @@ TEST(DefaultVideoQualityAnalyzerTest,
   uint16_t frame_id = analyzer.OnFrameCaptured("alice", "alice_video", frame);
   frame.set_id(frame_id);
   analyzer.OnFramePreEncode("alice", frame);
-  SleepMs(10);
+  Thread::SleepMs(10);
   analyzer.OnFrameEncoded("alice", frame.id(), FakeEncode(frame),
                           VideoQualityAnalyzerInterface::EncoderStats(), false);
 
@@ -1923,7 +1938,7 @@ TEST(DefaultVideoQualityAnalyzerTest,
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   StreamStats stats = analyzer.GetStats().at(StatsKey("alice_video", "bob"));
@@ -1934,8 +1949,8 @@ TEST(DefaultVideoQualityAnalyzerTest,
 TEST(DefaultVideoQualityAnalyzerTest, InfraMetricsAreReportedWhenRequested) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   options.report_infra_metrics = true;
@@ -1950,7 +1965,7 @@ TEST(DefaultVideoQualityAnalyzerTest, InfraMetricsAreReportedWhenRequested) {
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   AnalyzerStats stats = analyzer.GetAnalyzerStats();
@@ -1966,8 +1981,8 @@ TEST(DefaultVideoQualityAnalyzerTest, InfraMetricsAreReportedWhenRequested) {
 TEST(DefaultVideoQualityAnalyzerTest, InfraMetricsNotCollectedByDefault) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   options.report_infra_metrics = false;
@@ -1982,7 +1997,7 @@ TEST(DefaultVideoQualityAnalyzerTest, InfraMetricsNotCollectedByDefault) {
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   AnalyzerStats stats = analyzer.GetAnalyzerStats();
@@ -1999,8 +2014,8 @@ TEST(DefaultVideoQualityAnalyzerTest,
      FrameDroppedByDecoderIsAccountedCorrectly) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   options.report_infra_metrics = false;
@@ -2027,7 +2042,7 @@ TEST(DefaultVideoQualityAnalyzerTest,
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   StreamStats stats = analyzer.GetStats().at(StatsKey("alice_video", "bob"));
@@ -2041,8 +2056,8 @@ TEST_P(DefaultVideoQualityAnalyzerTimeBetweenFreezesTest,
        TimeBetweenFreezesIsEqualToStreamDurationWhenThereAreNoFeeezes) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   DefaultVideoQualityAnalyzer analyzer(Clock::GetRealTimeClock(),
@@ -2060,7 +2075,7 @@ TEST_P(DefaultVideoQualityAnalyzerTimeBetweenFreezesTest,
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(50);
+  Thread::SleepMs(50);
   analyzer.Stop();
 
   StreamStats stats = analyzer.GetStats().at(StatsKey("alice_video", "bob"));
@@ -2094,8 +2109,8 @@ TEST_F(DefaultVideoQualityAnalyzerSimulatedTimeTest,
        PausedAndResumedStreamIsAccountedInStatsCorrectly) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   options.report_infra_metrics = false;
@@ -2172,8 +2187,8 @@ TEST_F(DefaultVideoQualityAnalyzerSimulatedTimeTest,
        PausedAndResumedTwoStreamsAreAccountedInStatsCorrectly) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzer analyzer(
       GetClock(), test::GetGlobalMetricsLogger(), AnalyzerOptionsForTest());
@@ -2250,8 +2265,8 @@ TEST_F(DefaultVideoQualityAnalyzerSimulatedTimeTest,
        PausedStreamIsAccountedInStatsCorrectly) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzerOptions options = AnalyzerOptionsForTest();
   options.report_infra_metrics = false;
@@ -2320,8 +2335,8 @@ TEST_F(DefaultVideoQualityAnalyzerSimulatedTimeTest,
        MemoryOverloadedAndThenAllFramesReceived) {
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
 
   DefaultVideoQualityAnalyzer analyzer(
       GetClock(), test::GetGlobalMetricsLogger(), AnalyzerOptionsForTest());
@@ -2382,8 +2397,8 @@ TEST(DefaultVideoQualityAnalyzerTest, CheckFrameSenderPeerName) {
   constexpr char kBobStreamLabel[] = "bob-video";
   std::unique_ptr<test::FrameGeneratorInterface> frame_generator =
       test::CreateSquareFrameGenerator(kFrameWidth, kFrameHeight,
-                                       /*type=*/absl::nullopt,
-                                       /*num_squares=*/absl::nullopt);
+                                       /*type=*/std::nullopt,
+                                       /*num_squares=*/std::nullopt);
   DefaultVideoQualityAnalyzer analyzer(Clock::GetRealTimeClock(),
                                        test::GetGlobalMetricsLogger(),
                                        AnalyzerOptionsForTest());
@@ -2401,7 +2416,7 @@ TEST(DefaultVideoQualityAnalyzerTest, CheckFrameSenderPeerName) {
   // Give analyzer some time to process frames on async thread. The computations
   // have to be fast (heavy metrics are disabled!), so if doesn't fit 100ms it
   // means we have an issue!
-  SleepMs(100);
+  Thread::SleepMs(100);
   analyzer.Stop();
 
   EXPECT_EQ(sender_alice, kAlice);

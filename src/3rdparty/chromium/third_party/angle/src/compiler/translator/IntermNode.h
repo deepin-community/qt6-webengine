@@ -115,6 +115,12 @@ class TIntermNode : angle::NonCopyable
     // node and it is replaced; otherwise, return false.
     virtual bool replaceChildNode(TIntermNode *original, TIntermNode *replacement) = 0;
 
+    // True if executing the expression represented by this node is safe to execute even if it's
+    // inside a short-circuited expression's branch that's not taken.
+    virtual bool isSafeToExecuteInShortCircuit() const { return false; }
+
+    TIntermNode *getAsNode() { return this; }
+
   protected:
     TSourceLoc mLine;
 };
@@ -228,12 +234,13 @@ class TIntermLoop : public TIntermNode
     TIntermNode *getInit() { return mInit; }
     TIntermTyped *getCondition() { return mCond; }
     TIntermTyped *getExpression() { return mExpr; }
+    // Returns non-null body.
     TIntermBlock *getBody() { return mBody; }
 
     void setInit(TIntermNode *init) { mInit = init; }
     void setCondition(TIntermTyped *condition) { mCond = condition; }
     void setExpression(TIntermTyped *expression) { mExpr = expression; }
-    void setBody(TIntermBlock *body) { mBody = body; }
+    void setBody(TIntermBlock *body) { mBody = EnsureBody(body); }
 
     virtual TIntermLoop *deepCopy() const override { return new TIntermLoop(*this); }
 
@@ -242,10 +249,11 @@ class TIntermLoop : public TIntermNode
     TIntermNode *mInit;   // for-loop initialization
     TIntermTyped *mCond;  // loop exit condition
     TIntermTyped *mExpr;  // for-loop expression
-    TIntermBlock *mBody;  // loop body
+    TIntermBlock *mBody;  // loop body, non-null.
 
   private:
     TIntermLoop(const TIntermLoop &);
+    static TIntermBlock *EnsureBody(TIntermBlock *body);
 };
 
 //
@@ -290,6 +298,8 @@ class TIntermSymbol : public TIntermTyped
     const TConstantUnion *getConstantValue() const override;
 
     bool hasSideEffects() const override { return false; }
+
+    bool isSafeToExecuteInShortCircuit() const override { return true; }
 
     const TType &getType() const override;
 
@@ -352,6 +362,8 @@ class TIntermConstantUnion : public TIntermExpression
 
     bool hasSideEffects() const override { return false; }
 
+    bool isSafeToExecuteInShortCircuit() const override { return true; }
+
     int getIConst(size_t index) const
     {
         return mUnionArrayPointer ? mUnionArrayPointer[index].getIConst() : 0;
@@ -399,7 +411,6 @@ class TIntermConstantUnion : public TIntermExpression
                                               int index);
     static TConstantUnion *FoldAggregateBuiltIn(TIntermAggregate *aggregate,
                                                 TDiagnostics *diagnostics);
-    static bool IsFloatDivision(TBasicType t1, TBasicType t2);
 
   protected:
     // Same data may be shared between multiple constant unions, so it can't be modified.
@@ -432,6 +443,8 @@ class TIntermOperator : public TIntermExpression
 
     bool hasSideEffects() const override { return isAssignment(); }
 
+    bool isShortCircuitNeeded() const;
+
   protected:
     TIntermOperator(TOperator op) : TIntermExpression(TType(EbtFloat, EbpUndefined)), mOp(op) {}
     TIntermOperator(TOperator op, const TType &type) : TIntermExpression(type), mOp(op) {}
@@ -446,7 +459,7 @@ class TIntermSwizzle : public TIntermExpression
 {
   public:
     // This constructor determines the type of the node based on the operand.
-    TIntermSwizzle(TIntermTyped *operand, const TVector<int> &swizzleOffsets);
+    TIntermSwizzle(TIntermTyped *operand, const TVector<uint32_t> &swizzleOffsets);
 
     TIntermTyped *deepCopy() const override { return new TIntermSwizzle(*this); }
 
@@ -459,20 +472,23 @@ class TIntermSwizzle : public TIntermExpression
 
     bool hasSideEffects() const override { return mOperand->hasSideEffects(); }
 
+    bool isSafeToExecuteInShortCircuit() const override;
+
     TIntermTyped *getOperand() { return mOperand; }
+    ImmutableString getOffsetsAsXYZW() const;
     void writeOffsetsAsXYZW(TInfoSinkBase *out) const;
 
-    const TVector<int> &getSwizzleOffsets() { return mSwizzleOffsets; }
+    const TVector<uint32_t> &getSwizzleOffsets() { return mSwizzleOffsets; }
 
     bool hasDuplicateOffsets() const;
     void setHasFoldedDuplicateOffsets(bool hasFoldedDuplicateOffsets);
-    bool offsetsMatch(int offset) const;
+    bool offsetsMatch(uint32_t offset) const;
 
     TIntermTyped *fold(TDiagnostics *diagnostics) override;
 
   protected:
     TIntermTyped *mOperand;
-    TVector<int> mSwizzleOffsets;
+    TVector<uint32_t> mSwizzleOffsets;
     bool mHasFoldedDuplicateOffsets;
 
   private:
@@ -514,6 +530,8 @@ class TIntermBinary : public TIntermOperator
     {
         return isAssignment() || mLeft->hasSideEffects() || mRight->hasSideEffects();
     }
+
+    bool isSafeToExecuteInShortCircuit() const override;
 
     TIntermTyped *getLeft() const { return mLeft; }
     TIntermTyped *getRight() const { return mRight; }
@@ -643,6 +661,8 @@ class TIntermAggregate : public TIntermOperator, public TIntermAggregateBase
 
     bool hasSideEffects() const override;
 
+    bool isSafeToExecuteInShortCircuit() const override;
+
     TIntermTyped *fold(TDiagnostics *diagnostics) override;
 
     TIntermSequence *getSequence() override { return &mArguments; }
@@ -696,7 +716,7 @@ class TIntermBlock : public TIntermNode, public TIntermAggregateBase
     size_t getChildCount() const final;
     TIntermNode *getChildNode(size_t index) const final;
     bool replaceChildNode(TIntermNode *original, TIntermNode *replacement) override;
-    void replaceAllChildren(const TIntermSequence &newStatements);
+    void replaceAllChildren(TIntermSequence &&newStatements);
 
     // Only intended for initially building the block.
     void appendStatement(TIntermNode *statement);
@@ -1040,6 +1060,16 @@ class TIntermPreprocessorDirective final : public TIntermNode
 
     TIntermPreprocessorDirective(const TIntermPreprocessorDirective &);
 };
+
+inline TIntermBlock *TIntermLoop::EnsureBody(TIntermBlock *body)
+{
+    if (ANGLE_LIKELY(body))
+    {
+        return body;
+    }
+    UNREACHABLE();
+    return new TIntermBlock();
+}
 
 }  // namespace sh
 

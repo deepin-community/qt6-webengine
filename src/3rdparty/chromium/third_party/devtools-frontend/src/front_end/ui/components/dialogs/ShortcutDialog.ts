@@ -1,19 +1,17 @@
 // Copyright 2023 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+import './ButtonDialog.js';
+
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
 
 import * as i18n from '../../../core/i18n/i18n.js';
 import type * as Platform from '../../../core/platform/platform.js';
 import * as Buttons from '../../../ui/components/buttons/buttons.js';
 import * as ComponentHelpers from '../../../ui/components/helpers/helpers.js';
-import * as LitHtml from '../../../ui/lit-html/lit-html.js';
+import {html, nothing, render, type TemplateResult} from '../../../ui/lit/lit.js';
 
-import {
-  Dialog as DialogElement,
-  DialogVerticalPosition,
-  DialogHorizontalAlignment,
-  type ClickOutsideDialogEvent,
-} from './Dialog.js';
+import type {ButtonDialogData} from './ButtonDialog.js';
 import shortcutDialogStyles from './shortcutDialog.css.js';
 
 const UIStrings = {
@@ -26,51 +24,47 @@ const UIStrings = {
    * @description Title of the keyboard shortcuts help menu.
    */
   dialogTitle: 'Keyboard shortcuts',
-  /**
-   * @description Title of close button for the shortcuts dialog.
-   */
-  close: 'Close',
-};
+} as const;
 
 const str_ = i18n.i18n.registerUIStrings('ui/components/dialogs/ShortcutDialog.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
 
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface HTMLElementTagNameMap {
     'devtools-shortcut-dialog': ShortcutDialog;
   }
 }
 
-export class ShowDialog extends Event {
-  static readonly eventName = 'showdialog';
+export type ShortcutPart = {
+  key: string,
+}|{joinText: string};
 
-  constructor() {
-    super(ShowDialog.eventName);
-  }
-}
+export type ShortcutRow = ShortcutPart[]|{footnote: string};
 
 export interface Shortcut {
   title: string|Platform.UIString.LocalizedString;
-  bindings: string[];
+  rows: readonly ShortcutRow[];
 }
 export interface ShortcutDialogData {
   shortcuts: Shortcut[];
   open?: boolean;
+  customTitle?: Platform.UIString.LocalizedString;
 }
 
 export class ShortcutDialog extends HTMLElement {
-  static readonly litTagName = LitHtml.literal`devtools-shortcut-dialog`;
   readonly #shadow = this.attachShadow({mode: 'open'});
-  readonly #renderBound = this.#render.bind(this);
 
-  #dialog: DialogElement|null = null;
-  #showButton: Buttons.Button.Button|null = null;
   #shortcuts: Shortcut[] = [];
   #openOnRender = false;
+  #customTitle?: Platform.UIString.LocalizedString;
+  #prependedElement: HTMLElement|null = null;
 
-  connectedCallback(): void {
-    this.#shadow.adoptedStyleSheets = [shortcutDialogStyles];
+  get data(): ShortcutDialogData {
+    return {
+      shortcuts: this.#shortcuts,
+      open: this.#openOnRender,
+      customTitle: this.#customTitle,
+    };
   }
 
   set data(data: ShortcutDialogData) {
@@ -78,28 +72,31 @@ export class ShortcutDialog extends HTMLElement {
     if (data.open) {
       this.#openOnRender = data.open;
     }
+    if (data.customTitle) {
+      this.#customTitle = data.customTitle;
+    }
 
-    void ComponentHelpers.ScheduledRender.scheduleRender(this, this.#renderBound);
+    void ComponentHelpers.ScheduledRender.scheduleRender(this, this.#render);
   }
 
-  #showDialog(): void {
-    if (!this.#dialog) {
-      throw new Error('Dialog not found');
-    }
-    void this.#dialog.setDialogVisible(true);
-    void ComponentHelpers.ScheduledRender.scheduleRender(this, this.#renderBound);
-    this.dispatchEvent(new ShowDialog());
+  prependElement(element: HTMLElement): void {
+    this.#prependedElement = element;
   }
 
-  #closeDialog(evt?: ClickOutsideDialogEvent): void {
-    if (!this.#dialog) {
-      throw new Error('Dialog not found');
+  #renderRow(row: ShortcutRow): TemplateResult {
+    if (!Array.isArray(row)) {
+      // If it's not an array it's a footnote, which is the easier case, so
+      // render that and return.
+      return html`<span class="footnote">${row.footnote}</span>`;
     }
-    void this.#dialog.setDialogVisible(false);
-    if (evt) {
-      evt.stopImmediatePropagation();
-    }
-    void ComponentHelpers.ScheduledRender.scheduleRender(this, this.#renderBound);
+
+    return html`${row.map(part => {
+      if ('key' in part) {
+        return html`<span class="keybinds-key">${part.key}</span>`;
+      }
+      return html`<span class="keybinds-join-text">${part.joinText}</span>`;
+    })}
+    `;
   }
 
   #render(): void {
@@ -108,74 +105,37 @@ export class ShortcutDialog extends HTMLElement {
     }
 
     // clang-format off
-    LitHtml.render(
-      LitHtml.html`
-      <${Buttons.Button.Button.litTagName}
-        @click=${this.#showDialog}
-        on-render=${ComponentHelpers.Directives.nodeRenderedCallback(node => {
-          this.#showButton = node as Buttons.Button.Button;
-        })}
-        .data=${{
+    render(
+      html`
+      <style>${shortcutDialogStyles}</style>
+      <devtools-button-dialog .data=${{
+          openOnRender: this.#openOnRender,
+          closeButton: true,
+          dialogTitle: this.#customTitle ?? i18nString(UIStrings.dialogTitle),
           variant: Buttons.Button.Variant.TOOLBAR,
           iconName: 'help',
-          title: i18nString(UIStrings.showShortcutTitle),
-        } as Buttons.Button.ButtonData}
-      ></${Buttons.Button.Button.litTagName}>
-      <${DialogElement.litTagName}
-        @clickoutsidedialog=${this.#closeDialog}
-        .showConnector=${true}
-        .origin=${(): Buttons.Button.Button => {
-          if (!this.#showButton) {
-            throw new Error('Button not found');
-          }
-          return this.#showButton;
-        }}
-        .position=${DialogVerticalPosition.BOTTOM}
-        .horizontalAlignment=${DialogHorizontalAlignment.RIGHT}
-        on-render=${ComponentHelpers.Directives.nodeRenderedCallback(node => {
-          this.#dialog = node as DialogElement;
-        })}
-      >
-        <div class="keybinds-category-header">
-          <span class="keybinds-category-header-text">${i18nString(UIStrings.dialogTitle)}</span>
-          <${Buttons.Button.Button.litTagName}
-            @click=${this.#closeDialog}
-            class='close-icon'
-            .data=${{
-              variant: Buttons.Button.Variant.TOOLBAR,
-              iconName: 'cross',
-              title: i18nString(UIStrings.close),
-            } as Buttons.Button.ButtonData}
-          ></${Buttons.Button.Button.litTagName}>
-        </div>
+          iconTitle: i18nString(UIStrings.showShortcutTitle),
+        } as ButtonDialogData}>
         <ul class="keybinds-list">
+          ${(this.#prependedElement) ? html`${this.#prependedElement}` : nothing}
           ${this.#shortcuts.map(shortcut =>
-            LitHtml.html`
+            html`
               <li class="keybinds-list-item">
-                <div class="keybinds-action-name keybinds-list-text">${shortcut.title}</div>
-                ${shortcut.bindings.map((binding, index) =>
-                  LitHtml.html`
-                    <div class="keybinds-shortcut keybinds-list-text">
-                      <span class="keybinds-key">${binding}</span>
-                    </div>
-                    ${shortcut.bindings.at(index + 1) ?
-                      LitHtml.html`<span class="keybinds-shortcut-separator"> - </span>`
-                      : LitHtml.nothing
-                    }
-                `)}
+                <div class="keybinds-list-title">${shortcut.title}</div>
+                <div class="shortcuts-for-actions">
+                  ${shortcut.rows.map(row => {
+                    return html`<div class="row-container">${this.#renderRow(row)}</div>
+                  `;
+                  })}
+                </div>
               </li>`,
           )}
         </ul>
-      </${DialogElement.litTagName}>
+      </devtools-button-dialog>
       `,
       this.#shadow, {host: this});
     // clang-format on
-
-    if (this.#openOnRender) {
-      this.#showDialog();
-      this.#openOnRender = false;
-    }
   }
 }
 
-ComponentHelpers.CustomElements.defineComponent('devtools-shortcut-dialog', ShortcutDialog);
+customElements.define('devtools-shortcut-dialog', ShortcutDialog);

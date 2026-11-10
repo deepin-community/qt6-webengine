@@ -16,8 +16,8 @@
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkString.h"
 #include "include/core/SkTypes.h"
-#include "include/gpu/GrDirectContext.h"
-#include "include/gpu/GrRecordingContext.h"
+#include "include/gpu/ganesh/GrDirectContext.h"
+#include "include/gpu/ganesh/GrRecordingContext.h"
 #include "include/gpu/ganesh/SkImageGanesh.h"
 #include "tools/Resources.h"
 
@@ -54,7 +54,8 @@ DEF_SIMPLE_GPU_GM_CAN_FAIL(cross_context_image, rContext, canvas, errorMsg,
         canvas->drawImage(images[i], 0, 0);
         canvas->translate(0, 256 + 10);
 
-        auto subset = images[i]->makeSubset(dContext, SkIRect::MakeXYWH(64, 64, 128, 128));
+        auto subset = images[i]->makeSubset(
+                dContext->asRecorder(), SkIRect::MakeXYWH(64, 64, 128, 128), {});
         SkASSERTF(subset, "subset was null");
         canvas->drawImage(subset, 0, 0);
         canvas->translate(128, 0);

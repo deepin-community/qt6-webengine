@@ -1,5 +1,6 @@
 include_rules = [
   "+base",
+  "+components/viz/common/resources/shared_image_format.h",
   "+cc/base",
   "+cc/paint",
   "+device/vr/buildflags/buildflags.h",
@@ -13,8 +14,6 @@ include_rules = [
   "+ui/base/ui_base_features.h",
   "+ui/ios",
   "+ui/linux",
-
-  "-testing/gmock",
 ]
 
 specific_include_rules = {

@@ -9,9 +9,16 @@ cmake_minimum_required(VERSION 3.16)
 include(.cmake.conf)
 include(ExternalProject)
 include(cmake/Functions.cmake)
+include(cmake/QtGnTargetHelpers.cmake)
+include(cmake/QtGnConfigHelpers.cmake)
+include(cmake/QtConfigureHelpers.cmake)
+include(cmake/QtToolchainHelpers.cmake)
 
 project(QtWebEngineDummy)
-find_package(Qt6 6.5 CONFIG REQUIRED COMPONENTS BuildInternals Core)
+find_package(Qt6 6.8 CONFIG REQUIRED COMPONENTS BuildInternals)
+
+# Should be after find_package to ensure SBOM functions are available
+include(cmake/QtWebEngineSbomHelpers.cmake)
 
 # Sepcial case of just doing gn build
 if(DEFINED BUILD_ONLY_GN)
@@ -20,29 +27,40 @@ if(DEFINED BUILD_ONLY_GN)
 endif()
 
 project(QtWebEngine
-    VERSION ${Qt6Core_VERSION}
+    VERSION ${QT_REPO_MODULE_VERSION}
     DESCRIPTION "QtWebEngine and QtPdf modules"
     HOMEPAGE_URL "https://qt.io/"
     LANGUAGES CXX C
 )
 qt_internal_project_setup()
 
-find_package(Qt6 ${PROJECT_VERSION} CONFIG QUIET OPTIONAL_COMPONENTS
+find_package(Qt6 ${Qt6BuildInternals_VERSION} CONFIG REQUIRED COMPONENTS Core)
+find_package(Qt6 ${Qt6BuildInternals_VERSION} CONFIG QUIET OPTIONAL_COMPONENTS
     Gui Widgets Network OpenGL Quick Qml PrintSupport
     WebChannel WebChannelQuick Positioning QuickControls2
     Test QuickWidgets QuickTest WebSockets Designer
     JpegPrivate PngPrivate HarfbuzzPrivate FreetypePrivate ZlibPrivate
-    HttpServer
+    HttpServer Svg
 )
 
 if(MATRIX_BUILD AND NOT MATRIX_SUBBUILD AND NOT QT_SUPERBUILD)
-    add_build(webengine_webrtc OFF)
-    add_build(webengine_proprietary_codecs ON)
-    add_build(webengine_printing_and_pdf OFF)
-    add_build(webengine_extensions OFF)
-    add_build(webengine_spellchecker OFF)
-    add_build(qtwebengine_build OFF)
+    qt_webengine_add_build(webengine_webrtc OFF)
+    qt_webengine_add_build(webengine_proprietary_codecs ON)
+    qt_webengine_add_build(webengine_printing_and_pdf OFF)
+    qt_webengine_add_build(webengine_extensions OFF)
+    qt_webengine_add_build(webengine_spellchecker OFF)
+    qt_webengine_add_build(qtwebengine_build OFF)
     return()
 endif()
 
+# Don't auto create the SBOM projects, they will be manually created
+# for each sub-project.
+set(QT_SKIP_SBOM_AUTO_PROJECT TRUE)
 qt_build_repo()
+
+# Coin sanity check after qt_build_repo report is printed
+
+qt_webengine_configure_check_coin(coin.nodes
+    "${QT_CONFIGURE_CHECK_qtwebengine_build}"
+    "${QT_CONFIGURE_CHECK_qtpdf_build}"
+)

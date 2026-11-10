@@ -1,16 +1,20 @@
 // Copyright 2022 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-imperative-dom-api */
 
-import * as i18n from '../../core/i18n/i18n.js';
-import * as UI from '../../ui/legacy/legacy.js';
-import type * as Platform from '../../core/platform/platform.js';
+import '../../ui/legacy/legacy.js';
+
 import type * as Common from '../../core/common/common.js';
+import * as i18n from '../../core/i18n/i18n.js';
+import type * as Platform from '../../core/platform/platform.js';
+import * as Buttons from '../../ui/components/buttons/buttons.js';
+import * as UI from '../../ui/legacy/legacy.js';
 
-import {Presets, RuntimeSettings, type LighthouseController, type Preset} from './LighthouseController.js';
-import {RadioSetting} from './RadioSetting.js';
+import {type LighthouseController, type Preset, Presets, RuntimeSettings} from './LighthouseController.js';
+import type {LighthousePanel} from './LighthousePanel.js';
 import lighthouseStartViewStyles from './lighthouseStartView.css.js';
-import {type LighthousePanel} from './LighthousePanel.js';
+import {RadioSetting} from './RadioSetting.js';
 
 const UIStrings = {
   /**
@@ -25,10 +29,6 @@ const UIStrings = {
    * @description Title in the Lighthouse Start View for list of categories to run during audit
    */
   categories: 'Categories',
-  /**
-   * @description Title in the Lighthouse Start View for list of available start plugins
-   */
-  plugins: 'Plugins',
   /**
    * @description Label for a button to start analyzing a page navigation with Lighthouse
    */
@@ -49,7 +49,7 @@ const UIStrings = {
    * @description Text that refers to device such as a phone
    */
   device: 'Device',
-};
+} as const;
 
 const str_ = i18n.i18n.registerUIStrings('panels/lighthouse/LighthouseStartView.ts', UIStrings);
 const i18nString = i18n.i18n.getLocalizedString.bind(undefined, str_);
@@ -58,7 +58,7 @@ export class StartView extends UI.Widget.Widget {
   private controller: LighthouseController;
   private panel: LighthousePanel;
   private readonly settingsToolbarInternal: UI.Toolbar.Toolbar;
-  private startButton!: HTMLButtonElement;
+  private startButton!: Buttons.Button.Button;
   private helpText?: Element;
   private warningText?: Element;
   private checkboxes: Array<{preset: Preset, checkbox: UI.Toolbar.ToolbarCheckbox}> = [];
@@ -66,17 +66,19 @@ export class StartView extends UI.Widget.Widget {
   changeFormMode?: (mode: string) => void;
 
   constructor(controller: LighthouseController, panel: LighthousePanel) {
-    super();
+    super({useShadowDom: true});
+    this.registerRequiredCSS(lighthouseStartViewStyles);
 
     this.controller = controller;
     this.panel = panel;
-    this.settingsToolbarInternal = new UI.Toolbar.Toolbar('');
+    this.settingsToolbarInternal = document.createElement('devtools-toolbar');
+    this.settingsToolbarInternal.classList.add('lighthouse-settings-toolbar');
     this.render();
   }
 
   private populateRuntimeSettingAsRadio(settingName: string, label: string, parentElement: Element): void {
     const runtimeSetting = RuntimeSettings.find(item => item.setting.name === settingName);
-    if (!runtimeSetting || !runtimeSetting.options) {
+    if (!runtimeSetting?.options) {
       throw new Error(`${settingName} is not a setting with options`);
     }
 
@@ -100,7 +102,7 @@ export class StartView extends UI.Widget.Widget {
 
   private populateRuntimeSettingAsToolbarCheckbox(settingName: string, toolbar: UI.Toolbar.Toolbar): void {
     const runtimeSetting = RuntimeSettings.find(item => item.setting.name === settingName);
-    if (!runtimeSetting || !runtimeSetting.title) {
+    if (!runtimeSetting?.title) {
       throw new Error(`${settingName} is not a setting with a title`);
     }
 
@@ -118,7 +120,7 @@ export class StartView extends UI.Widget.Widget {
 
   private populateRuntimeSettingAsToolbarDropdown(settingName: string, toolbar: UI.Toolbar.Toolbar): void {
     const runtimeSetting = RuntimeSettings.find(item => item.setting.name === settingName);
-    if (!runtimeSetting || !runtimeSetting.title) {
+    if (!runtimeSetting?.title) {
       throw new Error(`${settingName} is not a setting with a title`);
     }
 
@@ -135,26 +137,25 @@ export class StartView extends UI.Widget.Widget {
     if (runtimeSetting.learnMore) {
       const link = UI.XLink.XLink.create(
           runtimeSetting.learnMore, i18nString(UIStrings.learnMore), 'lighthouse-learn-more', undefined, 'learn-more');
-      link.style.margin = '5px';
-      control.element.appendChild(link);
+      link.style.paddingLeft = '5px';
+      link.style.display = 'inline-flex';
+      toolbar.appendToolbarItem(new UI.Toolbar.ToolbarItem(link));
     }
   }
 
   private populateFormControls(fragment: UI.Fragment.Fragment, mode?: string): void {
     // Populate the device type
     const deviceTypeFormElements = fragment.$('device-type-form-elements');
-    this.populateRuntimeSettingAsRadio('lighthouse.device_type', i18nString(UIStrings.device), deviceTypeFormElements);
+    this.populateRuntimeSettingAsRadio('lighthouse.device-type', i18nString(UIStrings.device), deviceTypeFormElements);
 
     // Populate the categories
     const categoryFormElements = fragment.$('categories-form-elements') as HTMLElement;
-    const pluginFormElements = fragment.$('plugins-form-elements') as HTMLElement;
 
     this.checkboxes = [];
     for (const preset of Presets) {
-      const formElements = preset.plugin ? pluginFormElements : categoryFormElements;
       preset.setting.setTitle(preset.title());
       const checkbox = new UI.Toolbar.ToolbarSettingCheckbox(preset.setting, preset.description());
-      const row = formElements.createChild('div', 'vbox lighthouse-launcher-row');
+      const row = categoryFormElements.createChild('div', 'vbox lighthouse-launcher-row');
       row.appendChild(checkbox.element);
       checkbox.element.setAttribute('data-lh-category', preset.configID);
       this.checkboxes.push({preset, checkbox});
@@ -165,12 +166,11 @@ export class StartView extends UI.Widget.Widget {
     }
     UI.ARIAUtils.markAsGroup(categoryFormElements);
     UI.ARIAUtils.setLabel(categoryFormElements, i18nString(UIStrings.categories));
-    UI.ARIAUtils.markAsGroup(pluginFormElements);
-    UI.ARIAUtils.setLabel(pluginFormElements, i18nString(UIStrings.plugins));
   }
 
   private render(): void {
-    this.populateRuntimeSettingAsToolbarCheckbox('lighthouse.clear_storage', this.settingsToolbarInternal);
+    this.populateRuntimeSettingAsToolbarCheckbox('lighthouse.clear-storage', this.settingsToolbarInternal);
+    this.populateRuntimeSettingAsToolbarCheckbox('lighthouse.enable-sampling', this.settingsToolbarInternal);
     this.populateRuntimeSettingAsToolbarDropdown('lighthouse.throttling', this.settingsToolbarInternal);
 
     const {mode} = this.controller.getFlags();
@@ -195,12 +195,6 @@ export class StartView extends UI.Widget.Widget {
       <div class="lighthouse-form-section">
         <div class="lighthouse-form-section-label">${i18nString(UIStrings.categories)}</div>
         <div class="lighthouse-form-elements" $="categories-form-elements"></div>
-      </div>
-      <div class="lighthouse-form-section">
-        <div class="lighthouse-form-section-label">
-          <div class="lighthouse-icon-label">${i18nString(UIStrings.plugins)}</div>
-        </div>
-        <div class="lighthouse-form-elements" $="plugins-form-elements"></div>
       </div>
     </div>
   </div>
@@ -228,17 +222,17 @@ export class StartView extends UI.Widget.Widget {
 
     if (mode === 'timespan') {
       buttonLabel = i18nString(UIStrings.startTimespan);
-      callback = (): void => {
+      callback = () => {
         void this.panel.handleTimespanStart();
       };
     } else if (mode === 'snapshot') {
       buttonLabel = i18nString(UIStrings.analyzeSnapshot);
-      callback = (): void => {
+      callback = () => {
         void this.panel.handleCompleteRun();
       };
     } else {
       buttonLabel = i18nString(UIStrings.analyzeNavigation);
-      callback = (): void => {
+      callback = () => {
         void this.panel.handleCompleteRun();
       };
     }
@@ -246,8 +240,8 @@ export class StartView extends UI.Widget.Widget {
     const startButtonContainer = this.contentElement.querySelector('.lighthouse-start-button-container');
     if (startButtonContainer) {
       startButtonContainer.textContent = '';
-      this.startButton =
-          UI.UIUtils.createTextButton(buttonLabel, callback, {primary: true, jslogContext: 'lighthouse.start'});
+      this.startButton = UI.UIUtils.createTextButton(
+          buttonLabel, callback, {variant: Buttons.Button.Variant.PRIMARY, jslogContext: 'lighthouse.start'});
       startButtonContainer.append(this.startButton);
     }
   }
@@ -315,7 +309,6 @@ export class StartView extends UI.Widget.Widget {
   override wasShown(): void {
     super.wasShown();
     this.controller.recomputePageAuditability();
-    this.registerCSSFiles([lighthouseStartViewStyles]);
   }
 
   settingsToolbar(): UI.Toolbar.Toolbar {

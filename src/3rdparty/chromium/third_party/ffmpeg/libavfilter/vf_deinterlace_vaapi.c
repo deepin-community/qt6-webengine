@@ -23,7 +23,7 @@
 #include "libavutil/pixdesc.h"
 
 #include "avfilter.h"
-#include "internal.h"
+#include "filters.h"
 #include "video.h"
 #include "vaapi_vpp.h"
 
@@ -158,7 +158,9 @@ static int deint_vaapi_build_filter_params(AVFilterContext *avctx)
 
 static int deint_vaapi_config_output(AVFilterLink *outlink)
 {
+    FilterLink     *outl = ff_filter_link(outlink);
     AVFilterLink *inlink = outlink->src->inputs[0];
+    FilterLink      *inl = ff_filter_link(inlink);
     AVFilterContext *avctx = outlink->src;
     DeintVAAPIContext *ctx = avctx->priv;
     int err;
@@ -168,8 +170,8 @@ static int deint_vaapi_config_output(AVFilterLink *outlink)
         return err;
     outlink->time_base  = av_mul_q(inlink->time_base,
                                    (AVRational) { 1, ctx->field_rate });
-    outlink->frame_rate = av_mul_q(inlink->frame_rate,
-                                   (AVRational) { ctx->field_rate, 1 });
+    outl->frame_rate = av_mul_q(inl->frame_rate,
+                                (AVRational) { ctx->field_rate, 1 });
 
     return 0;
 }
@@ -302,11 +304,6 @@ static int deint_vaapi_filter_frame(AVFilterLink *inlink, AVFrame *input_frame)
                 output_frame->pts = input_frame->pts +
                     ctx->frame_queue[current_frame_index + 1]->pts;
         }
-#if FF_API_INTERLACED_FRAME
-FF_DISABLE_DEPRECATION_WARNINGS
-        output_frame->interlaced_frame = 0;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
         output_frame->flags &= ~AV_FRAME_FLAG_INTERLACED;
 
         av_log(avctx, AV_LOG_DEBUG, "Filter output: %s, %ux%u (%"PRId64").\n",
@@ -365,24 +362,24 @@ static av_cold int deint_vaapi_init(AVFilterContext *avctx)
 static const AVOption deint_vaapi_options[] = {
     { "mode", "Deinterlacing mode",
       OFFSET(mode), AV_OPT_TYPE_INT, { .i64 = VAProcDeinterlacingNone },
-      VAProcDeinterlacingNone, VAProcDeinterlacingCount - 1, FLAGS, "mode" },
+      VAProcDeinterlacingNone, VAProcDeinterlacingCount - 1, FLAGS, .unit = "mode" },
     { "default", "Use the highest-numbered (and therefore possibly most advanced) deinterlacing algorithm",
-      0, AV_OPT_TYPE_CONST, { .i64 = VAProcDeinterlacingNone }, 0, 0, FLAGS, "mode" },
+      0, AV_OPT_TYPE_CONST, { .i64 = VAProcDeinterlacingNone }, 0, 0, FLAGS, .unit = "mode" },
     { "bob", "Use the bob deinterlacing algorithm",
-      0, AV_OPT_TYPE_CONST, { .i64 = VAProcDeinterlacingBob }, 0, 0, FLAGS, "mode" },
+      0, AV_OPT_TYPE_CONST, { .i64 = VAProcDeinterlacingBob }, 0, 0, FLAGS, .unit = "mode" },
     { "weave", "Use the weave deinterlacing algorithm",
-      0, AV_OPT_TYPE_CONST, { .i64 = VAProcDeinterlacingWeave }, 0, 0, FLAGS,  "mode" },
+      0, AV_OPT_TYPE_CONST, { .i64 = VAProcDeinterlacingWeave }, 0, 0, FLAGS,  .unit = "mode" },
     { "motion_adaptive", "Use the motion adaptive deinterlacing algorithm",
-      0, AV_OPT_TYPE_CONST, { .i64 = VAProcDeinterlacingMotionAdaptive }, 0, 0, FLAGS, "mode" },
+      0, AV_OPT_TYPE_CONST, { .i64 = VAProcDeinterlacingMotionAdaptive }, 0, 0, FLAGS, .unit = "mode" },
     { "motion_compensated", "Use the motion compensated deinterlacing algorithm",
-      0, AV_OPT_TYPE_CONST, { .i64 = VAProcDeinterlacingMotionCompensated }, 0, 0, FLAGS, "mode" },
+      0, AV_OPT_TYPE_CONST, { .i64 = VAProcDeinterlacingMotionCompensated }, 0, 0, FLAGS, .unit = "mode" },
 
     { "rate", "Generate output at frame rate or field rate",
-      OFFSET(field_rate), AV_OPT_TYPE_INT, { .i64 = 1 }, 1, 2, FLAGS, "rate" },
+      OFFSET(field_rate), AV_OPT_TYPE_INT, { .i64 = 1 }, 1, 2, FLAGS, .unit = "rate" },
     { "frame", "Output at frame rate (one frame of output for each field-pair)",
-      0, AV_OPT_TYPE_CONST, { .i64 = 1 }, 0, 0, FLAGS, "rate" },
+      0, AV_OPT_TYPE_CONST, { .i64 = 1 }, 0, 0, FLAGS, .unit = "rate" },
     { "field", "Output at field rate (one frame of output for each field)",
-      0, AV_OPT_TYPE_CONST, { .i64 = 2 }, 0, 0, FLAGS, "rate" },
+      0, AV_OPT_TYPE_CONST, { .i64 = 2 }, 0, 0, FLAGS, .unit = "rate" },
 
     { "auto", "Only deinterlace fields, passing frames through unchanged",
       OFFSET(auto_enable), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, FLAGS },
@@ -415,15 +412,15 @@ static const AVFilterPad deint_vaapi_outputs[] = {
     },
 };
 
-const AVFilter ff_vf_deinterlace_vaapi = {
-    .name           = "deinterlace_vaapi",
-    .description    = NULL_IF_CONFIG_SMALL("Deinterlacing of VAAPI surfaces"),
+const FFFilter ff_vf_deinterlace_vaapi = {
+    .p.name         = "deinterlace_vaapi",
+    .p.description  = NULL_IF_CONFIG_SMALL("Deinterlacing of VAAPI surfaces"),
+    .p.priv_class   = &deint_vaapi_class,
     .priv_size      = sizeof(DeintVAAPIContext),
     .init           = &deint_vaapi_init,
     .uninit         = &ff_vaapi_vpp_ctx_uninit,
     FILTER_INPUTS(deint_vaapi_inputs),
     FILTER_OUTPUTS(deint_vaapi_outputs),
-    FILTER_QUERY_FUNC(&ff_vaapi_vpp_query_formats),
-    .priv_class     = &deint_vaapi_class,
+    FILTER_QUERY_FUNC2(&ff_vaapi_vpp_query_formats),
     .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
 };

@@ -5,122 +5,88 @@
 #ifndef COMPONENTS_POLICY_CORE_COMMON_REMOTE_COMMANDS_REMOTE_COMMANDS_INVALIDATOR_H_
 #define COMPONENTS_POLICY_CORE_COMMON_REMOTE_COMMANDS_REMOTE_COMMANDS_INVALIDATOR_H_
 
+#include <string>
+
 #include "base/memory/raw_ptr.h"
-#include "base/threading/thread_checker.h"
-#include "components/invalidation/public/invalidation_handler.h"
-#include "components/invalidation/public/invalidation_util.h"
+#include "base/scoped_observation.h"
+#include "components/invalidation/invalidation_listener.h"
+#include "components/policy/core/common/cloud/cloud_policy_core.h"
+#include "components/policy/core/common/cloud/policy_invalidation_scope.h"
 #include "components/policy/policy_export.h"
 #include "components/policy/proto/device_management_backend.pb.h"
 
-namespace invalidation {
-class InvalidationService;
-}  // namespace invalidation
-
-namespace invalidation {
-class Invalidation;
-}  // namespace invalidation
+namespace base {
+class Clock;
+}
 
 namespace policy {
 
-// This class provides basic intefaces for an invalidator for remote commands
-// services. It's not interacting with CloudPolicyClient/CloudPolicyCore
-// directly, instead, it handles the interacting with invalidation service
-// only and leaves interfaces to integrate with subclasses.
+// Handles invalidations for remote commands. When `CloudPolicyCore` is
+// connected and `RemoteCommandsService` is running, listens to
+// `InvalidationListener` for incoming invalidations and triggers remote
+// commands fetch when receives an invalidation.
 class POLICY_EXPORT RemoteCommandsInvalidator
-    : public invalidation::InvalidationHandler {
+    : public invalidation::InvalidationListener::Observer,
+      public CloudPolicyCore::Observer {
  public:
-  explicit RemoteCommandsInvalidator(std::string owner_name);
+  RemoteCommandsInvalidator(
+      invalidation::InvalidationListener* invalidation_listener,
+      CloudPolicyCore* core,
+      const base::Clock* clock,
+      PolicyInvalidationScope scope);
   RemoteCommandsInvalidator(const RemoteCommandsInvalidator&) = delete;
   RemoteCommandsInvalidator& operator=(const RemoteCommandsInvalidator&) =
       delete;
   ~RemoteCommandsInvalidator() override;
 
-  // Initialize this invalidator to pair with |invalidation_service|. Must be
-  // called before Start().
-  void Initialize(invalidation::InvalidationService* invalidation_service);
+  // invalidation::InvalidationListener::Observer:
+  void OnExpectationChanged(
+      invalidation::InvalidationsExpected expected) override;
+  void OnInvalidationReceived(
+      const invalidation::DirectInvalidation& invalidation) override;
+  std::string GetType() const override;
 
-  // Shutdown this invalidator. Will stop the invalidator first, and after
-  // shutting down, the invalidator can't be started anymore unless it's
-  // initialized again.
-  void Shutdown();
+  // CloudPolicyCore::Observer:
+  void OnCoreConnected(CloudPolicyCore* core) override;
+  void OnRefreshSchedulerStarted(CloudPolicyCore* core) override;
+  void OnCoreDisconnecting(CloudPolicyCore* core) override;
+  void OnRemoteCommandsServiceStarted(CloudPolicyCore* core) override;
 
-  // Starts to process invalidations.
-  void Start();
-
-  // Stops to process invalidation. May only be called after Start() has been
-  // called.
-  void Stop();
-
-  // Helpful accessors.
-  invalidation::InvalidationService* invalidation_service() {
-    return invalidation_service_;
-  }
-
-  // Whether the invalidator currently has the ability to receive invalidations.
-  bool invalidations_enabled() {
-    return IsRegistered() && AreInvalidationsEnabled();
-  }
-
-  // invalidation::InvalidationHandler:
-  void OnInvalidatorStateChange(invalidation::InvalidatorState state) override;
-  void OnIncomingInvalidation(
-      const invalidation::Invalidation& invalidation) override;
-  std::string GetOwnerName() const override;
-  bool IsPublicTopic(const invalidation::Topic& topic) const override;
-
- protected:
-  virtual void OnInitialize() = 0;
-  virtual void OnShutdown() = 0;
-  virtual void OnStart() = 0;
-  virtual void OnStop() = 0;
-
-  // Subclasses must override this method to implement the actual remote
-  // commands fetch.
-  virtual void DoRemoteCommandsFetch(
-      const invalidation::Invalidation& invalidation) = 0;
-
-  // Subclasses must call this function to set the topic for remote command
-  // invalidations.
-  void ReloadPolicyData(const enterprise_management::PolicyData* policy);
-
- private:
-  // Returns true if `this` is observing `invalidation_service_`.
+  // Returns true if ready to receive invalidations.
   bool IsRegistered() const;
 
-  // Returns true if `IsRegistered()` and `invalidation_service_` is enabled.
+  // Returns true if ready to receive invalidations and invalidations are
+  // enabled.
   bool AreInvalidationsEnabled() const;
 
-  // Registers this handler with |invalidation_service_| if needed and
-  // subscribes to the given |topic| with the invalidation service.
-  void Register(const invalidation::Topic& topic);
+ private:
+  void DoRemoteCommandsFetch(
+      const invalidation::DirectInvalidation& invalidation);
 
-  // Unregisters this handler but keeps the current topic subscribed with
-  // the invalidation service.
-  void Unregister();
+  // This function will be called when invalidator successfully subscribed to
+  // invalidations to fetch initial remote commands that were triggered before
+  // the invalidator has subscribed.
+  void DoInitialRemoteCommandsFetch();
 
-  // Unsubscribes from the current topics but keeps the registration as is.
-  void UnsubscribeFromTopics();
+  void RecordInvalidationMetric(
+      const invalidation::DirectInvalidation& invalidation) const;
 
-  // The state of the object.
-  enum State {
-    SHUT_DOWN,
-    STOPPED,
-    STARTED,
-  };
-  State state_ = SHUT_DOWN;
+  const PolicyInvalidationScope scope_;
 
-  // The unique name to be returned with by GetOwnerName().
-  const std::string owner_name_;
+  // The invalidation service or listener.
+  const raw_ptr<invalidation::InvalidationListener> invalidation_listener_;
+  const raw_ptr<CloudPolicyCore> core_;
+  const raw_ptr<const base::Clock> clock_;
 
-  // The invalidation service.
-  raw_ptr<invalidation::InvalidationService> invalidation_service_ = nullptr;
+  // The current status of `InvalidationListener`.
+  invalidation::InvalidationsExpected are_invalidations_expected_ =
+      invalidation::InvalidationsExpected::kMaybe;
 
-  // The Topic representing the remote commands in the invalidation service.
-  invalidation::Topic topic_;
-
-  // A thread checker to make sure that callbacks are invoked on the correct
-  // thread.
-  base::ThreadChecker thread_checker_;
+  base::ScopedObservation<invalidation::InvalidationListener,
+                          RemoteCommandsInvalidator>
+      invalidation_listener_observation_{this};
+  base::ScopedObservation<CloudPolicyCore, RemoteCommandsInvalidator>
+      core_observation_{this};
 };
 
 }  // namespace policy

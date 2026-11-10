@@ -31,13 +31,13 @@ class WebElementTest : public PageTestBase {
 };
 
 void WebElementTest::InsertHTML(String html) {
-  GetDocument().documentElement()->setInnerHTML(html);
+  GetDocument().documentElement()->SetInnerHTMLWithoutTrustedTypes(html);
 }
 
 void WebElementTest::AddScript(String js) {
   GetDocument().GetSettings()->SetScriptEnabled(true);
   Element* script = GetDocument().CreateRawElement(html_names::kScriptTag);
-  script->setInnerHTML(js);
+  script->SetInnerHTMLWithoutTrustedTypes(js);
   GetDocument().body()->AppendChild(script);
   GetDocument().UpdateStyleAndLayout(DocumentUpdateReason::kTest);
 }
@@ -180,6 +180,34 @@ TEST_F(WebElementTest, SelectedTextEmptyDocument) {
   EXPECT_EQ(test_element.SelectedText().Utf8(), "");
 }
 
+// Tests SelectText() with a textarea.
+TEST_F(WebElementTest, SelectTextOfTextArea) {
+  InsertHTML(
+      R"(<div>Foo</div>
+      <textarea id=testElement>Some plain text here.</textarea>
+      <div>Bar</div>)");
+
+  TestElement().SelectText(/*select_all=*/false);
+  EXPECT_EQ(Selection().SelectedText(), "");
+
+  TestElement().SelectText(/*select_all=*/true);
+  EXPECT_EQ(Selection().SelectedText(), "Some plain text here.");
+}
+
+// Tests SelectText() with a contenteditable.
+TEST_F(WebElementTest, SelectTextOfContentEditable) {
+  InsertHTML(
+      R"(<div>Foo</div>
+      <div id=testElement contenteditable>Some <b>rich text</b> here.</div>
+      <textarea>Some plain text here.</textarea>)");
+
+  TestElement().SelectText(/*select_all=*/false);
+  EXPECT_EQ(Selection().SelectedText(), "");
+
+  TestElement().SelectText(/*select_all=*/true);
+  EXPECT_EQ(Selection().SelectedText(), "Some rich text here.");
+}
+
 TEST_F(WebElementTest, PasteTextIntoContentEditable) {
   InsertHTML(
       "<div id=testElement contenteditable>Some <b>rich text</b> here.</div>"
@@ -190,14 +218,14 @@ TEST_F(WebElementTest, PasteTextIntoContentEditable) {
   ASSERT_EQ(Selection().SelectedText(), String("rich text"));
   // Paste and replace selection.
   TestElement().PasteText("fancy text", /*replace_all=*/false);
-  EXPECT_EQ(element->innerHTML(), "Some <b>fancy text</b>&nbsp;here.");
+  EXPECT_EQ(element->GetInnerHTMLString(), "Some <b>fancy text</b>&nbsp;here.");
   // Paste and replace all.
   TestElement().PasteText("Hello", /*replace_all=*/true);
-  EXPECT_EQ(element->innerHTML(), "Hello");
+  EXPECT_EQ(element->GetInnerHTMLString(), "Hello");
   // Paste into an unfocused element.
   element->nextElementSibling()->Focus();
   TestElement().PasteText("world", /*replace_all=*/false);
-  EXPECT_EQ(element->innerHTML(), "Hello&nbsp;world");
+  EXPECT_EQ(element->GetInnerHTMLString(), "Hello&nbsp;world");
 }
 
 TEST_F(WebElementTest, PasteTextIntoTextArea) {
@@ -242,7 +270,7 @@ TEST_F(WebElementTest, PasteTextIsNoOpWhenPasteIsCancelled) {
   ASSERT_EQ(Selection().SelectedText(), String("rich text"));
   // Paste and replace selection.
   TestElement().PasteText("fancy text", /*replace_all=*/false);
-  EXPECT_EQ(element->innerHTML(), "Some <b>UPPERCASE TEXT</b> here.");
+  EXPECT_EQ(element->GetInnerHTMLString(), "Some <b>UPPERCASE TEXT</b> here.");
 }
 
 // Tests that PasteText() aborts when the JavaScript handler of the
@@ -262,7 +290,7 @@ TEST_F(WebElementTest, PasteTextIsNoOpWhenBeforeInputIsCancelled) {
   ASSERT_EQ(Selection().SelectedText(), String("rich text"));
   // Paste and replace selection.
   TestElement().PasteText("fancy text", /*replace_all=*/false);
-  EXPECT_EQ(element->innerHTML(), "Some <b>UPPERCASE TEXT</b> here.");
+  EXPECT_EQ(element->GetInnerHTMLString(), "Some <b>UPPERCASE TEXT</b> here.");
 }
 
 TEST_F(WebElementTest, ShadowRoot) {
@@ -275,7 +303,7 @@ TEST_F(WebElementTest, ShadowRoot) {
     EXPECT_TRUE(TestElement().ShadowRoot().IsNull())
         << "No ShadowRoot initially.";
     auto* element = GetDocument().getElementById(AtomicString("testElement"));
-    element->AttachShadowRootInternal(ShadowRootType::kOpen);
+    element->AttachShadowRootForTesting(ShadowRootMode::kOpen);
     EXPECT_FALSE(TestElement().ShadowRoot().IsNull())
         << "Should return V1 open ShadowRoot.";
   }
@@ -285,7 +313,7 @@ TEST_F(WebElementTest, ShadowRoot) {
     EXPECT_TRUE(TestElement().ShadowRoot().IsNull())
         << "No ShadowRoot initially.";
     auto* element = GetDocument().getElementById(AtomicString("testElement"));
-    element->AttachShadowRootInternal(ShadowRootType::kClosed);
+    element->AttachShadowRootForTesting(ShadowRootMode::kClosed);
     EXPECT_FALSE(TestElement().ShadowRoot().IsNull())
         << "Should return V1 closed ShadowRoot.";
   }
@@ -311,7 +339,9 @@ TEST_F(WebElementTest, ComputedStyleProperties) {
   // text-decoration
   {
     EXPECT_EQ(element.GetComputedValue("text-decoration"),
-              "none solid rgb(0, 0, 255)");
+              RuntimeEnabledFeatures::TextDecorationShortSerializationEnabled()
+                  ? "rgb(0, 0, 255)"
+                  : "none solid rgb(0, 0, 255)");
     element.SetAttribute("style", "text-decoration: line-through");
     EXPECT_EQ(element.GetComputedValue("text-decoration-line"), "line-through");
     EXPECT_EQ(element.GetComputedValue("-Webkit-text-decorations-in-effect"),

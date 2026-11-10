@@ -19,12 +19,13 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libavutil/version.h"
+#include "libavutil/mem.h"
 
 #include "libavutil/avassert.h"
 #include "libavcodec/bytestream.h"
 #include "libavcodec/packet_internal.h"
 #include "avformat.h"
+#include "avformat_internal.h"
 #include "avio_internal.h"
 #include "demux.h"
 #include "internal.h"
@@ -42,7 +43,7 @@ void avpriv_stream_set_need_parsing(AVStream *st, enum AVStreamParseType type)
 AVChapter *avpriv_new_chapter(AVFormatContext *s, int64_t id, AVRational time_base,
                               int64_t start, int64_t end, const char *title)
 {
-    FFFormatContext *const si = ffformatcontext(s);
+    FormatContextInternal *const fci = ff_fc_internal(s);
     AVChapter *chapter = NULL;
     int ret;
 
@@ -52,13 +53,13 @@ AVChapter *avpriv_new_chapter(AVFormatContext *s, int64_t id, AVRational time_ba
     }
 
     if (!s->nb_chapters) {
-        si->chapter_ids_monotonic = 1;
-    } else if (!si->chapter_ids_monotonic || s->chapters[s->nb_chapters-1]->id >= id) {
+        fci->chapter_ids_monotonic = 1;
+    } else if (!fci->chapter_ids_monotonic || s->chapters[s->nb_chapters-1]->id >= id) {
         for (unsigned i = 0; i < s->nb_chapters; i++)
             if (s->chapters[i]->id == id)
                 chapter = s->chapters[i];
         if (!chapter)
-            si->chapter_ids_monotonic = 0;
+            fci->chapter_ids_monotonic = 0;
     }
 
     if (!chapter) {
@@ -80,19 +81,9 @@ AVChapter *avpriv_new_chapter(AVFormatContext *s, int64_t id, AVRational time_ba
     return chapter;
 }
 
-void av_format_inject_global_side_data(AVFormatContext *s)
-{
-    FFFormatContext *const si = ffformatcontext(s);
-    si->inject_global_side_data = 1;
-    for (unsigned i = 0; i < s->nb_streams; i++) {
-        AVStream *st = s->streams[i];
-        ffstream(st)->inject_global_side_data = 1;
-    }
-}
-
 int avformat_queue_attached_pictures(AVFormatContext *s)
 {
-    FFFormatContext *const si = ffformatcontext(s);
+    FormatContextInternal *const fci = ff_fc_internal(s);
     int ret;
     for (unsigned i = 0; i < s->nb_streams; i++)
         if (s->streams[i]->disposition & AV_DISPOSITION_ATTACHED_PIC &&
@@ -104,7 +95,7 @@ int avformat_queue_attached_pictures(AVFormatContext *s)
                 continue;
             }
 
-            ret = avpriv_packet_list_put(&si->raw_packet_buffer,
+            ret = avpriv_packet_list_put(&fci->raw_packet_buffer,
                                          &s->streams[i]->attached_pic,
                                          av_packet_ref, 0);
             if (ret < 0)
@@ -158,18 +149,6 @@ int ff_add_param_change(AVPacket *pkt, int32_t channels,
     if (!pkt)
         return AVERROR(EINVAL);
 
-#if FF_API_OLD_CHANNEL_LAYOUT
-FF_DISABLE_DEPRECATION_WARNINGS
-    if (channels) {
-        size  += 4;
-        flags |= AV_SIDE_DATA_PARAM_CHANGE_CHANNEL_COUNT;
-    }
-    if (channel_layout) {
-        size  += 8;
-        flags |= AV_SIDE_DATA_PARAM_CHANGE_CHANNEL_LAYOUT;
-    }
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
     if (sample_rate) {
         size  += 4;
         flags |= AV_SIDE_DATA_PARAM_CHANGE_SAMPLE_RATE;
@@ -182,14 +161,6 @@ FF_ENABLE_DEPRECATION_WARNINGS
     if (!data)
         return AVERROR(ENOMEM);
     bytestream_put_le32(&data, flags);
-#if FF_API_OLD_CHANNEL_LAYOUT
-FF_DISABLE_DEPRECATION_WARNINGS
-    if (channels)
-        bytestream_put_le32(&data, channels);
-    if (channel_layout)
-        bytestream_put_le64(&data, channel_layout);
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
     if (sample_rate)
         bytestream_put_le32(&data, sample_rate);
     if (width || height) {
@@ -201,8 +172,8 @@ FF_ENABLE_DEPRECATION_WARNINGS
 
 int av_read_play(AVFormatContext *s)
 {
-    if (s->iformat->read_play)
-        return s->iformat->read_play(s);
+    if (ffifmt(s->iformat)->read_play)
+        return ffifmt(s->iformat)->read_play(s);
     if (s->pb)
         return avio_pause(s->pb, 0);
     return AVERROR(ENOSYS);
@@ -210,8 +181,8 @@ int av_read_play(AVFormatContext *s)
 
 int av_read_pause(AVFormatContext *s)
 {
-    if (s->iformat->read_pause)
-        return s->iformat->read_pause(s);
+    if (ffifmt(s->iformat)->read_pause)
+        return ffifmt(s->iformat)->read_pause(s);
     if (s->pb)
         return avio_pause(s->pb, 1);
     return AVERROR(ENOSYS);

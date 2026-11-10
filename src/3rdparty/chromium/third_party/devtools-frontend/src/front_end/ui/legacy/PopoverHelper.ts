@@ -28,34 +28,39 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+import * as VisualLogging from '../visual_logging/visual_logging.js';
+
 import {GlassPane, MarginBehavior, SizeBehavior} from './GlassPane.js';
-import popoverStyles from './popover.css.legacy.js';
+import popoverStyles from './popover.css.js';
 
 export class PopoverHelper {
-  static createPopover = (): GlassPane => {
-    const popover = new GlassPane();
+  static createPopover = (jslogContext?: string): GlassPane => {
+    const popover = new GlassPane(`${VisualLogging.popover(jslogContext).parent('mapped')}`);
     popover.registerRequiredCSS(popoverStyles);
-    popover.setSizeBehavior(SizeBehavior.MeasureContent);
-    popover.setMarginBehavior(MarginBehavior.Arrow);
+    popover.setSizeBehavior(SizeBehavior.MEASURE_CONTENT);
+    popover.setMarginBehavior(MarginBehavior.DEFAULT_MARGIN);
     return popover;
   };
   private disableOnClick: boolean;
-  private hasPadding: boolean;
-  private getRequest: (arg0: MouseEvent) => PopoverRequest | null;
+  private getRequest: (arg0: MouseEvent|KeyboardEvent) => PopoverRequest | null;
   private scheduledRequest: PopoverRequest|null;
   private hidePopoverCallback: (() => void)|null;
-  private readonly container: Element;
+  readonly container: HTMLElement;
   private showTimeout: number;
   private hideTimeout: number;
   private hidePopoverTimer: number|null;
   private showPopoverTimer: number|null;
-  private readonly boundMouseDown: (event: Event) => void;
-  private readonly boundMouseMove: (ev: Event) => void;
-  private readonly boundMouseOut: (event: Event) => void;
-  constructor(container: Element, getRequest: (arg0: MouseEvent) => PopoverRequest | null) {
+  private readonly boundMouseDown: (event: MouseEvent) => void;
+  private readonly boundMouseMove: (ev: MouseEvent) => void;
+  private readonly boundMouseOut: (event: MouseEvent) => void;
+  private readonly boundKeyUp: (ev: KeyboardEvent) => void;
+  jslogContext?: string;
+  constructor(
+      container: HTMLElement, getRequest: (arg0: MouseEvent|KeyboardEvent) => PopoverRequest | null,
+      jslogContext?: string) {
     this.disableOnClick = false;
-    this.hasPadding = false;
     this.getRequest = getRequest;
+    this.jslogContext = jslogContext;
     this.scheduledRequest = null;
     this.hidePopoverCallback = null;
     this.container = container;
@@ -66,9 +71,11 @@ export class PopoverHelper {
     this.boundMouseDown = this.mouseDown.bind(this);
     this.boundMouseMove = this.mouseMove.bind(this);
     this.boundMouseOut = this.mouseOut.bind(this);
+    this.boundKeyUp = this.keyUp.bind(this);
     this.container.addEventListener('mousedown', this.boundMouseDown, false);
     this.container.addEventListener('mousemove', this.boundMouseMove, false);
     this.container.addEventListener('mouseout', this.boundMouseOut, false);
+    this.container.addEventListener('keyup', this.boundKeyUp, false);
     this.setTimeout(1000);
   }
 
@@ -77,20 +84,15 @@ export class PopoverHelper {
     this.hideTimeout = typeof hideTimeout === 'number' ? hideTimeout : showTimeout / 2;
   }
 
-  setHasPadding(hasPadding: boolean): void {
-    this.hasPadding = hasPadding;
-  }
-
   setDisableOnClick(disableOnClick: boolean): void {
     this.disableOnClick = disableOnClick;
   }
 
-  private eventInScheduledContent(ev: Event): boolean {
-    const event = (ev as MouseEvent);
+  private eventInScheduledContent(event: MouseEvent): boolean {
     return this.scheduledRequest ? this.scheduledRequest.box.contains(event.clientX, event.clientY) : false;
   }
 
-  private mouseDown(event: Event): void {
+  private mouseDown(event: MouseEvent): void {
     if (this.disableOnClick) {
       this.hidePopover();
       return;
@@ -101,11 +103,26 @@ export class PopoverHelper {
 
     this.startHidePopoverTimer(0);
     this.stopShowPopoverTimer();
-    this.startShowPopoverTimer((event as MouseEvent), 0);
+    this.startShowPopoverTimer(event, 0);
   }
 
-  private mouseMove(ev: Event): void {
-    const event = (ev as MouseEvent);
+  private keyUp(event: KeyboardEvent): void {
+    if (event.altKey && event.key === 'ArrowDown') {
+      if (this.isPopoverVisible()) {
+        this.hidePopover();
+      } else {
+        this.stopShowPopoverTimer();
+        this.startHidePopoverTimer(0);
+        this.startShowPopoverTimer(event, 0);
+      }
+      event.stopPropagation();
+    } else if (event.key === 'Escape' && this.isPopoverVisible()) {
+      this.hidePopover();
+      event.stopPropagation();
+    }
+  }
+
+  private mouseMove(event: MouseEvent): void {
     if (this.eventInScheduledContent(event)) {
       // Reschedule showing popover since mouse moved and
       // we only want to show the popover when the mouse is
@@ -127,8 +144,7 @@ export class PopoverHelper {
     this.stopHidePopoverTimer();
   }
 
-  private popoverMouseOut(popover: GlassPane, ev: Event): void {
-    const event = (ev as MouseEvent);
+  private popoverMouseOut(popover: GlassPane, event: MouseEvent): void {
     if (!popover.isShowing()) {
       return;
     }
@@ -138,7 +154,7 @@ export class PopoverHelper {
     }
   }
 
-  private mouseOut(event: Event): void {
+  private mouseOut(event: MouseEvent): void {
     if (!this.isPopoverVisible()) {
       return;
     }
@@ -159,7 +175,7 @@ export class PopoverHelper {
     }, timeout);
   }
 
-  private startShowPopoverTimer(event: MouseEvent, timeout: number): void {
+  private startShowPopoverTimer(event: MouseEvent|KeyboardEvent, timeout: number): void {
     this.scheduledRequest = this.getRequest.call(null, event);
     if (!this.scheduledRequest) {
       return;
@@ -200,7 +216,7 @@ export class PopoverHelper {
   }
 
   private showPopover(document: Document): void {
-    const popover = PopoverHelper.createPopover();
+    const popover = PopoverHelper.createPopover(this.jslogContext);
     const request = this.scheduledRequest;
     if (!request) {
       return;
@@ -223,13 +239,14 @@ export class PopoverHelper {
       }
       popoverHelperInstance = this;
 
-      popover.contentElement.classList.toggle('has-padding', this.hasPadding);
+      VisualLogging.setMappedParent(popover.contentElement, this.container);
+      popover.contentElement.style.scrollbarGutter = 'stable';
       popover.contentElement.addEventListener('mousemove', this.popoverMouseMove.bind(this), true);
       popover.contentElement.addEventListener('mouseout', this.popoverMouseOut.bind(this, popover), true);
       popover.setContentAnchorBox(request.box);
       popover.show(document);
 
-      this.hidePopoverCallback = (): void => {
+      this.hidePopoverCallback = () => {
         if (request.hide) {
           request.hide.call(null);
         }

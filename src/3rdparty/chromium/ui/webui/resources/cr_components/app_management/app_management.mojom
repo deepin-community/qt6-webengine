@@ -10,18 +10,14 @@ import "url/mojom/url.mojom";
 enum AppType {
   kUnknown = 0,
   kArc,                   // Android app.
-  kBuiltIn,               // Built-in app.
   kCrostini,              // Linux (via Crostini) app.
   kChromeApp,             // Chrome app.
   kWeb,                   // Web app.
   kPluginVm,              // Plugin VM app, see go/pluginvm.
-  kStandaloneBrowser,     // Lacros browser app, see //docs/lacros.md.
   kRemote,                // Remote app.
   kBorealis,              // Borealis app, see go/borealis-app.
   kSystemWeb,             // System web app.
-  kStandaloneBrowserChromeApp,  // Chrome app hosted in Lacros.
   kExtension,             // Browser extension.
-  kStandaloneBrowserExtension,  // Extension hosted in Lacros.
   kBruschetta,            // Bruschetta app, see go/bruschetta.
 };
 
@@ -64,15 +60,15 @@ struct Permission {
 // re-ordered or removed. New entries should be added at the bottom.
 enum InstallReason {
   kUnknown = 0,
-  kSystem,     // Installed with the system and is considered a part of the OS.
-  kPolicy,     // Installed by policy.
-  kOem,        // Installed by an OEM.
-  kDefault,    // Preinstalled by default, but is not considered a system app.
-  kSync,       // Installed by sync.
-  kUser,       // Installed by user action.
-  kSubApp,     // Installed by the SubApp API call.
-  kKiosk,      // Installed by Kiosk on Chrome OS.
-  kCommandLine,     // Installed by the command line argument.
+  kSystem,      // Installed with the system and is considered a part of the OS.
+  kPolicy,      // Installed by policy.
+  kOem,         // Installed by an OEM.
+  kDefault,     // Preinstalled by default, but is not considered a system app.
+  kSync,        // Installed by sync.
+  kUser,        // Installed by user action.
+  kSubApp,      // Installed by the SubApp API call.
+  kKiosk,       // Installed by Kiosk on Chrome OS.
+  kCommandLine, // Deprecated, no longer used.
 };
 
 // Where the app was installed from.
@@ -172,6 +168,15 @@ struct App {
   array<string> scope_extensions;
   array<Locale> supported_locales;
   Locale? selected_locale;
+  // Set to true to include a link using the
+  //"appManagementNotificationsDescription" string to the system level
+  // notification settings for this app.
+  bool show_system_notifications_settings_link;
+  // Whether to allow uninstall of the app.
+  bool allow_uninstall;
+  // Whether to disable the user choice area to set navigation capturing for
+  // an app.
+  bool disable_user_choice_navigation_capturing;
 };
 
 // Extension-based apps primarily use install-time permissions that cannot be
@@ -244,6 +249,11 @@ interface PageHandler {
   // Sets app locale for an app with the given |app_id|. Empty |locale_tag|
   // indicates system language being chosen.
   SetAppLocale(string app_id, string locale_tag);
+  // Called when the user clicks on the system notification settings link for an
+  // app with the given `app_id`, when that link was displayed because
+  // `show_system_notifications_settings_link` was true for the app.
+  [EnableIf=is_mac]
+  OpenSystemNotificationSettings(string app_id);
 };
 
 // Frontend interface.

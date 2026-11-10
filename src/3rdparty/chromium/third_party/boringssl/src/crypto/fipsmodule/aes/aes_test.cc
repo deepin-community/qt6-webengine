@@ -1,16 +1,16 @@
-/* Copyright (c) 2015, Google Inc.
- *
- * Permission to use, copy, modify, and/or distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
- * SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
- * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
- * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. */
+// Copyright 2015 The BoringSSL Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -316,9 +316,7 @@ TEST(AESTest, ABI) {
         CHECK_ABI(vpaes_cbc_encrypt, buf, buf, AES_BLOCK_SIZE * blocks, &key,
                   block, AES_ENCRYPT);
 #endif
-#if defined(VPAES_CTR32)
         CHECK_ABI(vpaes_ctr32_encrypt_blocks, buf, buf, blocks, &key, block);
-#endif
       }
 
       ASSERT_EQ(CHECK_ABI(vpaes_set_decrypt_key, kKey, bits, &key), 0);
@@ -333,7 +331,7 @@ TEST(AESTest, ABI) {
     }
 
     if (hwaes_capable()) {
-      ASSERT_EQ(CHECK_ABI(aes_hw_set_encrypt_key, kKey, bits, &key), 0);
+      ASSERT_EQ(CHECK_ABI_SEH(aes_hw_set_encrypt_key, kKey, bits, &key), 0);
       CHECK_ABI(aes_hw_encrypt, block, block, &key);
       for (size_t blocks : block_counts) {
         SCOPED_TRACE(blocks);
@@ -346,7 +344,21 @@ TEST(AESTest, ABI) {
 #endif
       }
 
-      ASSERT_EQ(CHECK_ABI(aes_hw_set_decrypt_key, kKey, bits, &key), 0);
+#if defined(OPENSSL_X86) || defined(OPENSSL_X86_64)
+      ASSERT_EQ(CHECK_ABI_SEH(aes_hw_set_encrypt_key_base, kKey, bits, &key), 0);
+      if (aes_hw_set_encrypt_key_alt_capable()) {
+        AES_KEY alt;
+        ASSERT_EQ(CHECK_ABI_SEH(aes_hw_set_encrypt_key_alt, kKey, bits, &alt),
+                  0);
+        EXPECT_EQ(alt.rounds, key.rounds);
+        for (unsigned i = 0; i <= alt.rounds; i++) {
+          EXPECT_EQ(alt.rd_key[i], key.rd_key[i]);
+        }
+      }
+      CHECK_ABI_SEH(aes_hw_encrypt_key_to_decrypt_key, &key);
+#else
+      ASSERT_EQ(CHECK_ABI_SEH(aes_hw_set_decrypt_key, kKey, bits, &key), 0);
+#endif
       CHECK_ABI(aes_hw_decrypt, block, block, &key);
       for (size_t blocks : block_counts) {
         SCOPED_TRACE(blocks);

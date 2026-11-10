@@ -4,7 +4,7 @@
 
 #include "third_party/blink/renderer/core/layout/grid/grid_placement.h"
 
-#include "third_party/blink/renderer/core/layout/grid/grid_line_resolver.h"
+#include "third_party/blink/renderer/core/layout/grid/grid_item.h"
 
 namespace blink {
 
@@ -104,7 +104,6 @@ GridPlacementData GridPlacement::RunAutoPlacementAlgorithm(
       case AutoPlacementType::kNotNeeded:
         NOTREACHED() << "Placement of non-auto placed items and items locked "
                         "to a major axis should've already occurred.";
-        break;
     }
     if (!HasSparsePacking()) {
       // For dense packing, set the cursor’s major and minor positions to the

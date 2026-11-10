@@ -10,6 +10,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/containers/contains.h"
 #include "base/containers/span.h"
 #include "base/files/file_util.h"
@@ -182,27 +183,31 @@ bool FileSystemUsageCache::Read(const base::FilePath& usage_file_path,
   DCHECK(is_valid);
   DCHECK(dirty_out);
   DCHECK(usage_out);
+
   uint8_t buffer[kUsageFileSize];
-  const char* header;
-  if (usage_file_path.empty() ||
-      !ReadBytes(usage_file_path, base::make_span<kUsageFileSize>(buffer))) {
+  if (usage_file_path.empty() || !ReadBytes(usage_file_path, buffer)) {
     return false;
   }
-  base::Pickle read_pickle(buffer);
+  base::Pickle read_pickle = base::Pickle::WithUnownedBuffer(buffer);
   base::PickleIterator iter(read_pickle);
   uint32_t dirty = 0;
   int64_t usage = 0;
 
-  // TODO(crbug.com/1490484): Use base::span here once base::Pickle supports it.
+  // TODO(https://crbug.com/40284755): Use base::span here once base::Pickle
+  // supports it.
+  const char* header;
   if (!iter.ReadBytes(&header, kUsageFileHeaderSize) ||
       !iter.ReadBool(is_valid) || !iter.ReadUInt32(&dirty) ||
       !iter.ReadInt64(&usage)) {
     return false;
   }
 
-  if (header[0] != kUsageFileHeader[0] || header[1] != kUsageFileHeader[1] ||
-      header[2] != kUsageFileHeader[2] || header[3] != kUsageFileHeader[3])
+  if (header[0] != kUsageFileHeader[0] ||
+      UNSAFE_TODO(header[1]) != kUsageFileHeader[1] ||
+      UNSAFE_TODO(header[2]) != kUsageFileHeader[2] ||
+      UNSAFE_TODO(header[3]) != kUsageFileHeader[3]) {
     return false;
+  }
 
   *dirty_out = dirty;
   *usage_out = usage;
@@ -232,7 +237,6 @@ base::File* FileSystemUsageCache::GetFile(const base::FilePath& file_path) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (is_incognito_) {
     NOTREACHED();
-    return nullptr;
   }
   if (cache_files_.size() >= kMaxHandleCacheSize)
     CloseCacheFiles();
@@ -262,7 +266,8 @@ bool FileSystemUsageCache::ReadBytes(const base::FilePath& file_path,
   if (is_incognito_) {
     if (!base::Contains(incognito_usages_, file_path))
       return false;
-    memcpy(buffer.data(), incognito_usages_[file_path].data(), buffer.size());
+    UNSAFE_TODO(memcpy(buffer.data(), incognito_usages_[file_path].data(),
+                       buffer.size()));
     return true;
   }
   base::File* file = GetFile(file_path);
@@ -277,7 +282,8 @@ bool FileSystemUsageCache::WriteBytes(const base::FilePath& file_path,
   if (is_incognito_) {
     if (!base::Contains(incognito_usages_, file_path))
       incognito_usages_[file_path] = std::vector<uint8_t>(buffer.size());
-    memcpy(incognito_usages_[file_path].data(), buffer.data(), buffer.size());
+    UNSAFE_TODO(memcpy(incognito_usages_[file_path].data(), buffer.data(),
+                       buffer.size()));
     return true;
   }
   base::File* file = GetFile(file_path);

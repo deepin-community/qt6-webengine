@@ -27,20 +27,10 @@ const BufferedSlice* QuicStreamSendBufferPeer::CurrentWriteSlice(
   return QuicIntervalDequePeer::GetItem(&send_buffer->interval_deque_, wi);
 }
 
-QuicStreamOffset QuicStreamSendBufferPeer::EndOffset(
-    QuicStreamSendBuffer* send_buffer) {
-  return send_buffer->current_end_offset_;
-}
-
 // static
 QuicByteCount QuicStreamSendBufferPeer::TotalLength(
-    QuicStreamSendBuffer* send_buffer) {
-  QuicByteCount length = 0;
-  for (auto slice = send_buffer->interval_deque_.DataBegin();
-       slice != send_buffer->interval_deque_.DataEnd(); ++slice) {
-    length += slice->slice.length();
-  }
-  return length;
+    QuicStreamSendBufferBase* send_buffer) {
+  return send_buffer->TotalDataBufferedForTest();
 }
 
 // static

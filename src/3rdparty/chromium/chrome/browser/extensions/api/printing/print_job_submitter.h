@@ -28,10 +28,6 @@ namespace gfx {
 class Image;
 }  // namespace gfx
 
-namespace views {
-class NativeWindowTracker;
-}  // namespace views
-
 namespace printing {
 class PdfBlobDataFlattener;
 class PrintedDocument;
@@ -40,6 +36,10 @@ class PrintSettings;
 struct FlattenPdfResult;
 struct PrintJobCreatedInfo;
 }  // namespace printing
+
+namespace ui {
+class NativeWindowTracker;
+}  // namespace ui
 
 namespace extensions {
 
@@ -96,6 +96,8 @@ class PrintJobSubmitter {
   void OnPdfReadAndFlattened(
       std::unique_ptr<printing::FlattenPdfResult> result);
 
+  void OnImageDataRead(std::string data, int64_t);
+
   void ShowPrintJobConfirmationDialog(const gfx::Image& extension_icon);
 
   void OnPrintJobConfirmationDialogClosed(bool accepted);
@@ -109,15 +111,15 @@ class PrintJobSubmitter {
   gfx::NativeWindow native_window_;
   const raw_ptr<content::BrowserContext> browser_context_;
 
-  // Tracks whether |native_window_| got destroyed.
-  std::unique_ptr<views::NativeWindowTracker> native_window_tracker_;
+  // Tracks whether `native_window_` got destroyed.
+  std::unique_ptr<ui::NativeWindowTracker> native_window_tracker_;
 
   // These objects are owned by PrintingAPIHandler.
   const raw_ptr<printing::PrintJobController> print_job_controller_;
   const raw_ref<printing::PdfBlobDataFlattener> pdf_blob_data_flattener_;
 
-  // TODO(crbug.com/996785): Consider tracking extension being unloaded instead
-  // of storing scoped_refptr.
+  // TODO(crbug.com/40641692): Consider tracking extension being unloaded
+  // instead of storing scoped_refptr.
   scoped_refptr<const extensions::Extension> extension_;
 
   api::printing::SubmitJobRequest request_;

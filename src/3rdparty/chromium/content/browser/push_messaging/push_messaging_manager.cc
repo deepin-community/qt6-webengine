@@ -16,6 +16,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "content/browser/bad_message.h"
 #include "content/browser/child_process_security_policy_impl.h"
@@ -27,6 +28,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_host.h"
 #include "content/public/browser/permission_controller.h"
+#include "content/public/browser/permission_descriptor_util.h"
 #include "content/public/browser/permission_request_description.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/content_switches.h"
@@ -38,13 +40,6 @@
 #include "url/origin.h"
 
 namespace content {
-
-// Service Worker database keys. If a registration ID is stored, the stored
-// sender ID must be the one used to register. Unfortunately, this isn't always
-// true of pre-InstanceID registrations previously stored in the database, but
-// fortunately it's less important for their sender ID to be accurate.
-const char kPushSenderIdServiceWorkerKey[] = "push_sender_id";
-const char kPushRegistrationIdServiceWorkerKey[] = "push_registration_id";
 
 namespace {
 
@@ -101,7 +96,6 @@ const char* PushUnregistrationStatusToString(
       return "Unregistration failed - could not connect to push server";
   }
   NOTREACHED();
-  return "";
 }
 
 // Returns application_server_key if non-empty, otherwise checks if
@@ -197,7 +191,7 @@ void PushMessagingManager::Subscribe(
   // if the renderer if the renderer side check didn't happen for some reason.
   if (service_worker_registration->ancestor_frame_type() ==
       blink::mojom::AncestorFrameType::kFencedFrame) {
-    bad_message::ReceivedBadMessage(render_process_host_->GetID(),
+    bad_message::ReceivedBadMessage(render_process_host_->GetDeprecatedID(),
                                     bad_message::PMM_SUBSCRIBE_IN_FENCED_FRAME);
     return;
   }
@@ -205,7 +199,7 @@ void PushMessagingManager::Subscribe(
   const blink::StorageKey& storage_key = service_worker_registration->key();
 
   if (!ChildProcessSecurityPolicyImpl::GetInstance()->CanAccessDataForOrigin(
-          render_process_host_->GetID(), storage_key.origin())) {
+          render_process_host_->GetDeprecatedID(), storage_key.origin())) {
     bad_message::ReceivedBadMessage(&*render_process_host_,
                                     bad_message::PMM_SUBSCRIBE_INVALID_ORIGIN);
     return;
@@ -327,7 +321,7 @@ void PushMessagingManager::Register(PushMessagingManager::RegisterData data) {
             blink::mojom::PushRegistrationStatus::INCOGNITO_PERMISSION_DENIED);
       } else {
         RenderFrameHostImpl* render_frame_host_impl =
-            RenderFrameHostImpl::FromID(render_process_host_->GetID(),
+            RenderFrameHostImpl::FromID(render_process_host_->GetDeprecatedID(),
                                         render_frame_id_);
         if (render_frame_host_impl) {
           render_frame_host_impl->AddMessageToConsole(
@@ -347,7 +341,10 @@ void PushMessagingManager::Register(PushMessagingManager::RegisterData data) {
               ->RequestPermissionFromCurrentDocument(
                   render_frame_host_impl,
                   PermissionRequestDescription(
-                      blink::PermissionType::NOTIFICATIONS, user_gesture),
+                      PermissionDescriptorUtil::
+                          CreatePermissionDescriptorForPermissionType(
+                              blink::PermissionType::NOTIFICATIONS),
+                      user_gesture),
                   base::BindOnce(
                       &PushMessagingManager::DidRequestPermissionInIncognito,
                       AsWeakPtr(), std::move(data)));
@@ -365,14 +362,14 @@ void PushMessagingManager::Register(PushMessagingManager::RegisterData data) {
   if (IsRequestFromDocument(render_frame_id_)) {
     push_service->SubscribeFromDocument(
         requesting_origin.GetURL(), registration_id,
-        render_process_host_->GetID(), render_frame_id_, std::move(options),
-        user_gesture,
+        render_process_host_->GetDeprecatedID(), render_frame_id_,
+        std::move(options), user_gesture,
         base::BindOnce(&PushMessagingManager::DidRegister, AsWeakPtr(),
                        std::move(data)));
   } else {
     push_service->SubscribeFromWorker(
         requesting_origin.GetURL(), registration_id,
-        render_process_host_->GetID(), std::move(options),
+        render_process_host_->GetDeprecatedID(), std::move(options),
         base::BindOnce(&PushMessagingManager::DidRegister, AsWeakPtr(),
                        std::move(data)));
   }
@@ -389,7 +386,7 @@ void PushMessagingManager::DidRequestPermissionInIncognito(
       blink::mojom::PushRegistrationStatus::INCOGNITO_PERMISSION_DENIED);
 }
 
-// TODO(crbug.com/1104215): Handle expiration_time that is passed from push
+// TODO(crbug.com/40139581): Handle expiration_time that is passed from push
 // service check if |expiration_time| is valid before saving it in |data| and
 // passing it back in SendSubscriptionSuccess.
 void PushMessagingManager::DidRegister(
@@ -402,7 +399,7 @@ void PushMessagingManager::DidRegister(
     blink::mojom::PushRegistrationStatus status) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  // TODO(crbug.com/646721): Handle the case where |push_subscription_id| and
+  // TODO(crbug.com/41275327): Handle the case where |push_subscription_id| and
   // |data.existing_subscription_id| are not the same. Right now we just
   // override the old subscription ID and encryption information.
   const bool subscription_changed =
@@ -419,8 +416,8 @@ void PushMessagingManager::DidRegister(
                   SUCCESS_NEW_SUBSCRIPTION_FROM_PUSH_SERVICE
             : blink::mojom::PushRegistrationStatus::SUCCESS_FROM_PUSH_SERVICE);
   } else {
-    // TODO(crbug.com/646721): for invalid |expiration_time| send a subscription
-    // error with a new PushRegistrationStatus
+    // TODO(crbug.com/41275327): for invalid |expiration_time| send a
+    // subscription error with a new PushRegistrationStatus
     SendSubscriptionError(std::move(data), status);
   }
 }
@@ -520,7 +517,7 @@ void PushMessagingManager::Unsubscribe(int64_t service_worker_registration_id,
   const url::Origin& origin = service_worker_registration->key().origin();
 
   if (!ChildProcessSecurityPolicyImpl::GetInstance()->CanAccessDataForOrigin(
-          render_process_host_->GetID(), origin)) {
+          render_process_host_->GetDeprecatedID(), origin)) {
     bad_message::ReceivedBadMessage(
         &*render_process_host_, bad_message::PMM_UNSUBSCRIBE_INVALID_ORIGIN);
     return;
@@ -592,7 +589,6 @@ void PushMessagingManager::DidUnregister(
       break;
     case blink::mojom::PushUnregistrationStatus::NETWORK_ERROR:
       NOTREACHED();
-      break;
   }
   RecordUnregistrationStatus(unregistration_status);
 }
@@ -610,7 +606,8 @@ void PushMessagingManager::GetSubscription(
           service_worker_registration_id);
   if (registration) {
     if (!ChildProcessSecurityPolicyImpl::GetInstance()->CanAccessDataForOrigin(
-            render_process_host_->GetID(), registration->key().origin())) {
+            render_process_host_->GetDeprecatedID(),
+            registration->key().origin())) {
       bad_message::ReceivedBadMessage(
           &*render_process_host_,
           bad_message::PMM_GET_SUBSCRIPTION_INVALID_ORIGIN);
@@ -701,9 +698,10 @@ void PushMessagingManager::DidGetSubscription(
     case blink::ServiceWorkerStatusCode::kErrorInvalidArguments:
     case blink::ServiceWorkerStatusCode::kErrorStorageDisconnected:
     case blink::ServiceWorkerStatusCode::kErrorStorageDataCorrupted: {
-      NOTREACHED() << "Got unexpected error code: "
-                   << static_cast<uint32_t>(service_worker_status) << " "
-                   << blink::ServiceWorkerStatusToString(service_worker_status);
+      DUMP_WILL_BE_NOTREACHED()
+          << "Got unexpected error code: "
+          << static_cast<uint32_t>(service_worker_status) << " "
+          << blink::ServiceWorkerStatusToString(service_worker_status);
       get_status = blink::mojom::PushGetRegistrationStatus::STORAGE_ERROR;
       break;
     }
@@ -789,10 +787,10 @@ void PushMessagingManager::GetSubscriptionInfo(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   PushMessagingService* push_service = GetService();
   if (!push_service) {
-    std::move(callback).Run(
-        false /* is_valid */, GURL::EmptyGURL() /* endpoint */,
-        std::nullopt /* expiration_time */, std::vector<uint8_t>() /* p256dh */,
-        std::vector<uint8_t>() /* auth */);
+    std::move(callback).Run(false /* is_valid */, GURL() /* endpoint */,
+                            std::nullopt /* expiration_time */,
+                            std::vector<uint8_t>() /* p256dh */,
+                            std::vector<uint8_t>() /* auth */);
     return;
   }
 

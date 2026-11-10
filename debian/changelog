@@ -1,43 +1,213 @@
-qt6-webengine (6.8.0-0deepin5) unstable; urgency=medium
+qt6-webengine (6.140.0~rc-1) unstable; urgency=medium
 
-  * fix: loong64 build error
-  * feat: add sw64 support
+  * Trial packaging of the first standalone Qt WebEngine release (6.140.0-rc,
+    Chromium 140 baseline) for the Qt 6.12 cleanroom, based on the Debian
+    6.11.2+dfsg-4 packaging:
+    - debhelper compat 14 -> 13 (UOS 25 has debhelper 13.24)
+    - drop dh-sequence-qmldeps (not available in UOS repos)
+    - drop libjs-jquery / libjs-jquery-tablesorter / rollup build-deps and the
+      matching dfsg-companion steps in debian/rules (official upstream tarball
+    ships the bundled copies, no need to substitute system copies)
+    - disable LTO (optimize=+lto) to fit the cleanroom RAM budget
+    - gate the docs build/install behind the nodoc build profile
 
- -- wangrong <wangrong@uniontech.com>  Tue, 10 Mar 2026 10:41:37 +0800
+ -- pengfeixx <63588879+pengfeixx@users.noreply.github.com>  Tue, 10 Nov 2026 09:21:06 +0800
 
-qt6-webengine (6.8.0-0deepin4) unstable; urgency=medium
+qt6-webengine (6.11.2+dfsg-4) unstable; urgency=medium
 
-  * build(debian): enable QT_USE_OLD_VERSION_LESS_TARGETS
+  * Upload to unstable.
 
- -- zhanghongyuan <zhanghongyuan@uniontech.com>  Thu, 29 Jan 2026 11:29:49 +0800
+ -- Patrick Franz <deltaone@debian.org>  Sun, 20 Sep 2026 17:04:28 +0200
 
-qt6-webengine (6.8.0-0deepin3) unstable; urgency=medium
+qt6-webengine (6.11.2+dfsg-3) experimental; urgency=medium
 
-  * fix(qt): create webengine locales directory
+  [ Patrick Franz ]
+  * Update symbols from buildlogs.
 
- -- zhanghongyuan <zhanghongyuan@uniontech.com>  Wed, 28 Jan 2026 13:29:54 +0800
+ -- Patrick Franz <deltaone@debian.org>  Sat, 05 Sep 2026 09:24:43 +0200
 
-qt6-webengine (6.8.0-0deepin2) unstable; urgency=medium
+qt6-webengine (6.11.2+dfsg-2) experimental; urgency=medium
 
-  * fix: riscv64 build error.
+  [ Patrick Franz ]
+  * Update symbols from buildlogs.
+  * Add patch to disable [[clang::musttail]] in skcms on ARM when using
+    GCC to fix build failure on armhf.
 
- -- lichenggang <lichenggang@deepin.org>  Mon, 10 Mar 2025 20:31:43 +0800
+ -- Patrick Franz <deltaone@debian.org>  Wed, 02 Sep 2026 18:10:02 +0200
 
-qt6-webengine (6.8.0-0deepin1) unstable; urgency=medium
+qt6-webengine (6.11.2+dfsg-1) experimental; urgency=medium
 
-  * Rebase loong64 and riscv64 patchsets:
+  [ Patrick Franz ]
+  * New upstream release (6.11.2).
+  * Exclude files from the tarball that do not exist any longer.
+  * Bump Qt B-Ds to 6.11.2.
+  * Update ABI to 6.11.2.
+  * Bump compat level to 14.
+  * Refresh patches.
+  * Update list of installed files.
+  * Adjust the overrides for the QML dependencies as LifecycleUtils is
+    an internal module.
+  * Update symbols from buildlogs.
+  * Use systrem libraries for libvpx, openh264 and re2.
 
-      loong64: https://github.com/AOSC-Dev/chromium-loongarch64/releases/tag/qt6-6.8.2-1
-      riscv64: https://github.com/felixonmars/archriscv-packages/tree/ab3d717b2f706bb3978f6ed961cd37cf65e7fea9/qt6-webengine
+ -- Patrick Franz <deltaone@debian.org>  Tue, 01 Sep 2026 19:00:32 +0200
 
-  * FIXME: qt6-webengine does not build on riscv64 with GCC as it
-    complains about a misused '%c' asm variable, so we chose to use
-    Clang as a workaround, however it does not support the
-    ffat-lto-objects option as defined by optimize=+lto.
-    
-    Disable LTO for riscv64 as a secondary workaround.
+qt6-webengine (6.10.2+dfsg-5) unstable; urgency=medium
 
- -- Mingcong Bai <baimingcong@uniontech.com>  Wed, 19 Feb 2025 14:26:46 +0800
+  [ Patrick Franz ]
+  * Add patch to fix build failure with gcc-16 (Closes: #1133615).
+
+ -- Patrick Franz <deltaone@debian.org>  Mon, 17 Aug 2026 23:19:54 +0200
+
+qt6-webengine (6.10.2+dfsg-4) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Remove kernel version from build artifacts to ensure reproducible
+    builds.
+  * Bump Standards-Version to 4.7.4 (no changes needed).
+
+ -- Patrick Franz <deltaone@debian.org>  Sat, 30 May 2026 23:08:07 +0200
+
+qt6-webengine (6.10.2+dfsg-3) unstable; urgency=medium
+
+  * Upload to unstable.
+
+ -- Patrick Franz <deltaone@debian.org>  Thu, 19 Mar 2026 20:44:51 +0100
+
+qt6-webengine (6.10.2+dfsg-2) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Use the default-gcc on arm64 as it now builds with GCC-15 (Closes:
+    #1129514).
+
+ -- Patrick Franz <deltaone@debian.org>  Fri, 06 Mar 2026 23:55:26 +0100
+
+qt6-webengine (6.10.2+dfsg-1) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * New upstream release (6.10.2).
+  * Bump Qt B-Ds to 6.10.2.
+  * Update ABI to 6.10.2.
+  * Update d/watch to format version 5.
+  * Adjust files to be excluded from the tarball.
+  * Refresh patches.
+  * Update list of installed files.
+  * Update symbols from buildlogs.
+  * Bump Standards-Version to 4.7.3 (no changes needed).
+  * Remove Priority: optional, not needed anymore.
+
+ -- Patrick Franz <deltaone@debian.org>  Sun, 08 Feb 2026 13:40:14 +0100
+
+qt6-webengine (6.9.2+dfsg-5) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Fix build with glibc 2.43 (Closes: #1128868).
+
+ -- Patrick Franz <deltaone@debian.org>  Wed, 04 Mar 2026 16:09:16 +0100
+
+qt6-webengine (6.9.2+dfsg-4) unstable; urgency=medium
+
+  [ Patrick Franz ]
+  * Enable ccache only whhen build in corresponding build profile.
+  * Drop Rules-Requires-Root: no, not needed any more.
+
+ -- Patrick Franz <deltaone@debian.org>  Sat, 01 Nov 2025 23:41:20 +0100
+
+qt6-webengine (6.9.2+dfsg-3) unstable; urgency=medium
+
+  * Upload to unstable.
+
+ -- Patrick Franz <deltaone@debian.org>  Mon, 22 Sep 2025 21:11:43 +0200
+
+qt6-webengine (6.9.2+dfsg-2) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Use gcc-14 for builds on arm64.
+  * Add patch to fix GPU rendering with Mesa 25.2.
+
+ -- Patrick Franz <deltaone@debian.org>  Mon, 15 Sep 2025 20:29:36 +0200
+
+qt6-webengine (6.9.2+dfsg-1) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * New upstream release (6.9.2).
+  * Bump Qt B-Ds to 6.9.2.
+  * Update ABI to 6.9.2.
+  * Update list of installed files.
+
+ -- Patrick Franz <deltaone@debian.org>  Sun, 14 Sep 2025 11:10:29 +0200
+
+qt6-webengine (6.9.1+dfsg-5) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * New binary package qt6-pdf-private-dev.
+
+ -- Patrick Franz <deltaone@debian.org>  Thu, 28 Aug 2025 21:50:31 +0200
+
+qt6-webengine (6.9.1+dfsg-4) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Remove inactive uploaders, thank you for your work.
+  * Remove redundant build-dependencies.
+  * Update list of installed files.
+
+ -- Patrick Franz <deltaone@debian.org>  Wed, 27 Aug 2025 21:25:05 +0200
+
+qt6-webengine (6.9.1+dfsg-3) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Update ABI to 6.9.1.
+  * Add patch to avoid i386 make use of _mm_cvtsi128_si64 as that is
+    only available on x86_64.
+
+ -- Patrick Franz <deltaone@debian.org>  Thu, 14 Aug 2025 18:42:20 +0200
+
+qt6-webengine (6.9.1+dfsg-2) experimental; urgency=medium
+
+  [ Patrick Franz ]
+  * Require SSE2 for i386 CPUs as that is now required to compile qt6-
+    webengine.
+  * Update symbols from buildlogs.
+
+ -- Patrick Franz <deltaone@debian.org>  Wed, 13 Aug 2025 18:04:02 +0200
+
+qt6-webengine (6.9.1+dfsg-1) experimental; urgency=medium
+
+  [ Soren Stoutner ]
+  * Remove debian/salsa-ci.yml, which is currently non-fuctional because
+    of the size of the artifacts that are generated.
+
+  [ Patrick Franz ]
+  * New upstream release (6.9.1).
+  * Adjust files to be excluded from the tarball.
+  * Refresh patches.
+  * Bump Qt B-Ds to 6.9.1.
+  * Update list of installed files.
+  * Update symbols from buildlogs.
+  * Update d/copyright.
+
+ -- Patrick Franz <deltaone@debian.org>  Tue, 12 Aug 2025 19:06:45 +0200
+
+qt6-webengine (6.8.2+dfsg-4) unstable; urgency=medium
+
+  [ Pino Toscano ]
+  * Move all the development files for Qt6Pdf from qt6-webengine-dev to
+    qt6-pdf-dev, so that cmake-based builds using only Qt6Pdf without WebEngine
+    works (Closes: #1100320)
+    - add proper breaks/replaces
+  * Bump Standards-Version to 4.7.2, no changes required.
+
+  [ Soren Stoutner ]
+  * Add debian/salsa-ci.yml, setting the test timeout to be 8 hours.
+  * Update my email address in debian/copyright to be soren@debian.org.
+
+ -- Patrick Franz <deltaone@debian.org>  Tue, 15 Apr 2025 19:50:46 +0200
+
+qt6-webengine (6.8.2+dfsg-3) unstable; urgency=medium
+
+  * Upload to unstable.
+
+ -- Patrick Franz <deltaone@debian.org>  Sat, 01 Mar 2025 13:31:56 +0100
 
 qt6-webengine (6.8.2+dfsg-2) experimental; urgency=medium
 

@@ -1,4 +1,4 @@
-// Copyright 2024 The Chromium Authors. All rights reserved.
+// Copyright 2025 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -47,10 +47,6 @@ export const UIStrings = {
    */
   CSSSelectorInternalMediaControlsOverlayCastButton: "The `disableRemotePlayback` attribute should be used in order to disable the default Cast integration instead of using `-internal-media-controls-overlay-cast-button` selector.",
   /**
-   * @description Warning displayed to developers to let them know the CSS appearance property values they used are deprecated and will be removed.
-   */
-  CSSValueAppearanceNonStandard: "CSS appearance values  `inner-spin-button`, `media-slider`, `media-sliderthumb`, `media-volume-slider`, `media-volume-sliderthumb`, `push-button`, `searchfield-cancel-button`, `slider-horizontal`, `sliderthumb-horizontal`, `sliderthumb-vertical`, `square-button` are not standardized and will be removed.",
-  /**
    * @description Warning displayed to developers to let them know the CSS appearance property value they used is not standard and will be removed.
    */
   CSSValueAppearanceSliderVertical: "CSS appearance value `slider-vertical` is not standardized and will be removed.",
@@ -58,14 +54,6 @@ export const UIStrings = {
    * @description Warning displayed to developers when a data: URL is assigned to SVGUseElement to let them know that the support is deprecated.
    */
   DataUrlInSvgUse: "Support for data: URLs in SVGUseElement is deprecated and it will be removed in the future.",
-  /**
-   * @description This warning occurs when a script modifies `document.domain` without having set on `Origin-Agent-Cluster` http header. In other words, when a script relies on the default behaviour of `Origin-Agent-Cluster` when setting document.domain.
-   */
-  DocumentDomainSettingWithoutOriginAgentClusterHeader: "Relaxing the same-origin policy by setting `document.domain` is deprecated, and will be disabled by default. To continue using this feature, please opt-out of origin-keyed agent clusters by sending an `Origin-Agent-Cluster: ?0` header along with the HTTP response for the document and frames. See https://developer.chrome.com/blog/immutable-document-domain/ for more details.",
-  /**
-   * @description Warning displayed to developers when non-standard Mutation Events are used. These are deprecated and will be removed.
-   */
-  DOMMutationEvents: "DOM Mutation Events, including `DOMSubtreeModified`, `DOMNodeInserted`, `DOMNodeRemoved`, `DOMNodeRemovedFromDocument`, `DOMNodeInsertedIntoDocument`, and `DOMCharacterDataModified` are deprecated (https://w3c.github.io/uievents/#legacy-event-types) and will be removed. Please use `MutationObserver` instead.",
   /**
    * @description Warning displayed to developers when the Geolocation API is used from an insecure origin (one that isn't localhost or doesn't use HTTPS) to notify them that this use is no longer supported.
    */
@@ -95,6 +83,10 @@ export const UIStrings = {
    */
   InterestGroupDailyUpdateUrl: "The `dailyUpdateUrl` field of `InterestGroups` passed to `joinAdInterestGroup()` has been renamed to `updateUrl`, to more accurately reflect its behavior.",
   /**
+   * @description Warning displayed to developers that instead of calling the `Intl.v8BreakIterator` constructor, which is not a standard JavaScript API, use ECMA402 standard API Intl.Segmenter shipped in end of 2020 instead.
+   */
+  IntlV8BreakIterator: "`Intl.v8BreakIterator` is deprecated. Please use `Intl.Segmenter` instead.",
+  /**
    * @description This warning occurs when a stylesheet loaded from a local file directive does not end in the file type `.css`.
    */
   LocalCSSFileExtensionRejected: "CSS cannot be loaded from `file:` URLs unless they end in a `.css` file extension.",
@@ -121,7 +113,7 @@ export const UIStrings = {
   /**
    * @description Warning displayed to developers when CreateImageBitmap is used with the newly deprecated option imageOrientation: 'none'.
    */
-  ObsoleteCreateImageBitmapImageOrientationNone: "Option `imageOrientation: 'none'` in createImageBitmap is deprecated. Please use createImageBitmap with option {imageOrientation: 'from-image'} instead.",
+  ObsoleteCreateImageBitmapImageOrientationNone: "Option `imageOrientation: 'none'` in createImageBitmap is deprecated. Please use createImageBitmap with option '{imageOrientation: 'from-image'}' instead.",
   /**
    * @description This warning occurs when the WebRTC protocol attempts to negotiate a connection using an obsolete cipher and risks connection security.
    */
@@ -130,6 +122,10 @@ export const UIStrings = {
    * @description Warning displayed to developers that use overflow:visible for replaced elements. This declaration was earlier ignored but will now change the element's painting based on whether the overflow value allows the element to paint outside its bounds.
    */
   OverflowVisibleOnReplacedElement: "Specifying `overflow: visible` on img, video and canvas tags may cause them to produce visual content outside of the element bounds. See https://github.com/WICG/shared-element-transitions/blob/main/debugging_overflow_on_images.md.",
+  /**
+   * @description Warning displayed to developers when they use a Flash Embed URLS to let them know that the browser will not automatically link to their equivalent HTML5 link.
+   */
+  OverrideFlashEmbedwithHTML: "Legacy flash video embed has been rewritten to HTML iframe. Flash is long gone, this rewriting hack is deprecated and may be removed in the future.",
   /**
    * @description Warning displayed to developers when they use the PaymentInstruments API to let them know this API is deprecated.
    */
@@ -223,18 +219,6 @@ export const UIStrings = {
    */
   V8SharedArrayBufferConstructedInExtensionWithoutIsolation: "Extensions should opt into cross-origin isolation to continue using `SharedArrayBuffer`. See https://developer.chrome.com/docs/extensions/mv3/cross-origin-isolation/.",
   /**
-   * @description Warning displayed to developers when the Web SQL API is used to let them know this API is deprecated.
-   */
-  WebSQL: "Web SQL is deprecated. Please use SQLite WebAssembly or Indexed Database",
-  /**
-   * @description A deprecation warning shown in the DevTools Issues tab. 'window-placement' and 'window-management' are the name of the javascript descriptors (do not translate). The warning is shown when web pages attempt to use 'window-placement' in permission APIs (e.g. navigator.permissions.query(...))
-   */
-  WindowPlacementPermissionDescriptorUsed: "The permission descriptor `window-placement` is deprecated. Use `window-management` instead. For more help, check https://bit.ly/window-placement-rename.",
-  /**
-   * @description A deprecation warning shown in the DevTools Issues tab. 'window-placement' and 'window-management' are the name of the policy descriptors (do not translate). The warning is shown when web pages attempt to use 'window-placement' as a permission policy (parsed in iframe or header).
-   */
-  WindowPlacementPermissionPolicyParsed: "The permission policy `window-placement` is deprecated. Use `window-management` instead. For more help, check https://bit.ly/window-placement-rename.",
-  /**
    * @description Warning displayed to developers that they are using `XMLHttpRequest` API in a way that they expect an unsupported character encoding `UTF-16` could be used in the server reply.
    */
   XHRJSONEncodingDetection: "UTF-16 is not supported by response json in `XMLHttpRequest`",
@@ -242,11 +226,7 @@ export const UIStrings = {
    * @description Warning displayed to developers. It is shown when the `XMLHttpRequest` API is used in a way that it slows down the page load of the next page. The `main thread` refers to an operating systems thread used to run most of the processing of HTML documents, so please use a consistent wording.
    */
   XMLHttpRequestSynchronousInNonWorkerOutsideBeforeUnload: "Synchronous `XMLHttpRequest` on the main thread is deprecated because of its detrimental effects to the end user's experience. For more help, check https://xhr.spec.whatwg.org/.",
-  /**
-   * @description Warning displayed to developers that instead of using `supportsSession()`, which returns a promise that resolves if the XR session can be supported and rejects if not, they should use `isSessionSupported()` which will return a promise which resolves to a boolean indicating if the XR session can be supported or not, but may reject to throw an exception.
-   */
-  XRSupportsSession: "`supportsSession()` is deprecated. Please use `isSessionSupported()` and check the resolved boolean value instead.",
-};
+} as const;
 
 export interface DeprecationDescriptor {
   milestone?: number;
@@ -259,9 +239,6 @@ export const DEPRECATIONS_METADATA: Partial<Record<string, DeprecationDescriptor
   },
   "CSSSelectorInternalMediaControlsOverlayCastButton": {
     "chromeStatusFeature": 5714245488476160
-  },
-  "CSSValueAppearanceNonStandard": {
-    "chromeStatusFeature": 5066630972833792
   },
   "CSSValueAppearanceSliderVertical": {
     "chromeStatusFeature": 6001359429566464
@@ -284,16 +261,9 @@ export const DEPRECATIONS_METADATA: Partial<Record<string, DeprecationDescriptor
   "CrossOriginAccessBasedOnDocumentDomain": {
     "milestone": 115
   },
-  "DOMMutationEvents": {
-    "chromeStatusFeature": 5083947249172480,
-    "milestone": 127
-  },
   "DataUrlInSvgUse": {
     "chromeStatusFeature": 5128825141198848,
     "milestone": 119
-  },
-  "DocumentDomainSettingWithoutOriginAgentClusterHeader": {
-    "milestone": 115
   },
   "IdentityInCanMakePaymentEvent": {
     "chromeStatusFeature": 5190978431352832
@@ -327,6 +297,9 @@ export const DEPRECATIONS_METADATA: Partial<Record<string, DeprecationDescriptor
   "OverflowVisibleOnReplacedElement": {
     "chromeStatusFeature": 5137515594383360,
     "milestone": 108
+  },
+  "OverrideFlashEmbedwithHTML": {
+    "milestone": 140
   },
   "PaymentInstruments": {
     "chromeStatusFeature": 5099285054488576
@@ -368,22 +341,7 @@ export const DEPRECATIONS_METADATA: Partial<Record<string, DeprecationDescriptor
   "V8SharedArrayBufferConstructedInExtensionWithoutIsolation": {
     "milestone": 96
   },
-  "WebSQL": {
-    "chromeStatusFeature": 5134293578285056,
-    "milestone": 115
-  },
-  "WindowPlacementPermissionDescriptorUsed": {
-    "chromeStatusFeature": 5137018030391296,
-    "milestone": 112
-  },
-  "WindowPlacementPermissionPolicyParsed": {
-    "chromeStatusFeature": 5137018030391296,
-    "milestone": 112
-  },
   "XHRJSONEncodingDetection": {
     "milestone": 93
-  },
-  "XRSupportsSession": {
-    "milestone": 80
   }
 };

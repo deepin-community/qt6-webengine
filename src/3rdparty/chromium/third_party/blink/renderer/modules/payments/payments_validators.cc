@@ -5,17 +5,18 @@
 #include "third_party/blink/renderer/modules/payments/payments_validators.h"
 
 #include "services/network/public/cpp/is_potentially_trustworthy.h"
-#include "third_party/blink/renderer/bindings/core/v8/script_regexp.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_address_errors.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_payer_errors.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_payment_validation_errors.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/bindings/script_regexp.h"
 #include "third_party/blink/renderer/platform/bindings/string_resource.h"
 #include "third_party/blink/renderer/platform/bindings/to_blink_string.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_impl.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
@@ -29,15 +30,16 @@ bool PaymentsValidators::IsValidCurrencyCodeFormat(
     v8::Isolate* isolate,
     const String& code,
     String* optional_error_message) {
-  auto* regexp = MakeGarbageCollected<ScriptRegexp>(
-      isolate, "^[A-Z]{3}$", kTextCaseUnicodeInsensitive);
+  auto* regexp = MakeGarbageCollected<ScriptRegexp>(isolate, "^[A-Z]{3}$",
+                                                    kTextCaseASCIIInsensitive);
   if (regexp->Match(code) == 0)
     return true;
 
   if (optional_error_message) {
-    *optional_error_message = "'" + code +
-                              "' is not a valid ISO 4217 currency code, should "
-                              "be well-formed 3-letter alphabetic code.";
+    *optional_error_message =
+        StrCat({"'", code,
+                "' is not a valid ISO 4217 currency code, should be "
+                "well-formed 3-letter alphabetic code."});
   }
 
   return false;
@@ -54,7 +56,7 @@ bool PaymentsValidators::IsValidAmountFormat(v8::Isolate* isolate,
 
   if (optional_error_message) {
     *optional_error_message =
-        "'" + amount + "' is not a valid amount format for " + item_name;
+        StrCat({"'", amount, "' is not a valid amount format for ", item_name});
   }
 
   return false;
@@ -69,11 +71,11 @@ bool PaymentsValidators::IsValidCountryCodeFormat(
   if (regexp->Match(code) == 0)
     return true;
 
-  if (optional_error_message)
-    *optional_error_message = "'" + code +
-                              "' is not a valid CLDR country code, should be 2 "
-                              "upper case letters [A-Z]";
-
+  if (optional_error_message) {
+    *optional_error_message = StrCat({"'", code,
+                                      "' is not a valid CLDR country code, "
+                                      "should be 2 upper case letters [A-Z]"});
+  }
   return false;
 }
 

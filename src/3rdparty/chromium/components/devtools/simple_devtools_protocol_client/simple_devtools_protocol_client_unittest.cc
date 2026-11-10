@@ -12,6 +12,8 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/notreached.h"
+#include "base/run_loop.h"
 #include "base/values.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/test/browser_task_environment.h"
@@ -98,8 +100,7 @@ class SimpleDevToolsProtocolClientEventHandlerTest
 
     std::string json;
     base::JSONWriter::Write(base::Value(std::move(params)), &json);
-    DispatchProtocolMessage(agent_host_.get(),
-                            base::as_bytes(base::make_span(json)));
+    DispatchProtocolMessage(agent_host_.get(), base::as_byte_span(json));
     RunUntilIdle();
   }
 };
@@ -354,7 +355,7 @@ class SelfDestructingSimpleDevToolsProtocolClient
   void TryIt() {
     std::string json_message = "{}";
     SimpleDevToolsProtocolClient::DispatchProtocolMessage(
-        agent_host_.get(), base::as_bytes(base::make_span(json_message)));
+        agent_host_.get(), base::as_byte_span(json_message));
 
     // Delete self so that the task posted by the previous call has nowhere to
     // go.
@@ -362,7 +363,7 @@ class SelfDestructingSimpleDevToolsProtocolClient
   }
 
   void DispatchProtocolMessageTask(base::Value::Dict message) override {
-    CHECK(false) << "use-after-free";
+    NOTREACHED() << "use-after-free";
   }
 };
 
@@ -372,6 +373,41 @@ TEST(SimpleDevToolsProtocolClientTest, DestoroyClientInFlight) {
   (new SelfDestructingSimpleDevToolsProtocolClient)->TryIt();
 
   task_environment.RunUntilIdle();
+}
+
+class UnexpectedMessageIdSimpleDevToolsProtocolClient
+    : public SimpleDevToolsProtocolClient {
+ public:
+  void TryIt() {
+    std::string json_message = "{\"id\": 42}";
+    SimpleDevToolsProtocolClient::DispatchProtocolMessage(
+        agent_host_.get(), base::as_byte_span(json_message));
+  }
+
+  void DispatchProtocolMessageTask(base::DictValue message) override {
+    SimpleDevToolsProtocolClient::DispatchProtocolMessageTask(
+        std::move(message));
+    std::move(done_callback_).Run();
+  }
+
+  void set_done_callback(base::OnceClosure callback) {
+    done_callback_ = std::move(callback);
+  }
+
+ private:
+  base::OnceClosure done_callback_;
+};
+
+TEST(SimpleDevToolsProtocolClientTest, TryUnexpectedMessageId) {
+  content::BrowserTaskEnvironment task_environment;
+
+  auto client =
+      std::make_unique<UnexpectedMessageIdSimpleDevToolsProtocolClient>();
+
+  base::RunLoop run_loop;
+  client->set_done_callback(run_loop.QuitClosure());
+  client->TryIt();
+  run_loop.Run();
 }
 
 }  // namespace

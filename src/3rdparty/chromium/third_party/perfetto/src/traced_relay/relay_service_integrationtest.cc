@@ -17,7 +17,9 @@
 #include <memory>
 #include <string>
 #include <vector>
+
 #include "perfetto/ext/base/unix_socket.h"
+#include "perfetto/tracing/core/data_source_config.h"
 #include "src/traced_relay/relay_service.h"
 
 #include "src/base/test/test_task_runner.h"
@@ -26,6 +28,7 @@
 
 #include "protos/perfetto/config/test_config.gen.h"
 #include "protos/perfetto/config/trace_config.gen.h"
+#include "protos/perfetto/trace/remote_clock_sync.gen.h"
 #include "protos/perfetto/trace/test_event.gen.h"
 
 namespace perfetto {
@@ -59,11 +62,13 @@ TEST(TracedRelayIntegrationTest, BasicCase) {
   }
 
   TestHelper helper(&task_runner, TestHelper::Mode::kStartDaemons,
-                    sock_name.c_str());
+                    sock_name.c_str(), /*enable_relay_endpoint=*/true);
   ASSERT_EQ(helper.num_producers(), 1u);
   helper.StartServiceIfRequired();
 
   auto relay_service = std::make_unique<RelayService>(&task_runner);
+  // Don't let RelayClient interfere with the testing of relayed producers.
+  relay_service->SetRelayClientDisabledForTesting(true);
 
   relay_service->Start("@traced_relay", sock_name.c_str());
 
@@ -152,10 +157,12 @@ TEST(TracedRelayIntegrationTest, MachineID_MultiRelayService) {
   for (auto& param : test_params) {
     param.relay_service->Start(param.unix_sock_name.c_str(),
                                param.tcp_sock_name.c_str());
+    // Don't let RelayClient interfere with the testing of relayed producers.
+    param.relay_service->SetRelayClientDisabledForTesting(true);
   }
 
   TestHelper helper(&task_runner, TestHelper::Mode::kStartDaemons,
-                    relay_sock_name.c_str());
+                    relay_sock_name.c_str(), /*enable_relay_endpoint=*/true);
   ASSERT_EQ(helper.num_producers(), 2u);
   helper.StartServiceIfRequired();
 
@@ -236,6 +243,89 @@ TEST(TracedRelayIntegrationTest, MachineID_MultiRelayService) {
     param.producer_thread = nullptr;
     param.relay_service = nullptr;
   }
+}
+
+TEST(TracedRelayIntegrationTest, RelayClient) {
+  base::TestTaskRunner task_runner;
+
+  std::string sock_name;
+  {
+    // Set up a server UnixSocket to find an unused TCP port.
+    base::UnixSocket::EventListener event_listener;
+    auto srv = base::UnixSocket::Listen("127.0.0.1:0", &event_listener,
+                                        &task_runner, base::SockFamily::kInet,
+                                        base::SockType::kStream);
+    ASSERT_TRUE(srv->is_listening());
+    sock_name = srv->GetSockAddr();
+    // Shut down |srv| here to free the port. It's unlikely that the port will
+    // be taken by another process so quickly before we reach the code below.
+  }
+
+  TestHelper helper(&task_runner, TestHelper::Mode::kStartDaemons,
+                    sock_name.c_str(), /*enable_relay_endpoint=*/true);
+  ASSERT_EQ(helper.num_producers(), 1u);
+  helper.StartServiceIfRequired();
+
+  auto relay_service = std::make_unique<RelayService>(&task_runner);
+  // This also starts the RelayClient.
+  relay_service->Start("@traced_relay", sock_name.c_str());
+  ASSERT_TRUE(!!relay_service->relay_client_for_testing());
+
+  auto producer_connected =
+      task_runner.CreateCheckpoint("perfetto.FakeProducer.connected");
+  auto noop = []() {};
+  auto connected = [&]() { task_runner.PostTask(producer_connected); };
+
+  // We won't use the built-in fake producer and will start our own.
+  auto producer_thread = std::make_unique<FakeProducerThread>(
+      "@traced_relay", connected, noop, noop, "perfetto.FakeProducer");
+  producer_thread->Connect();
+  task_runner.RunUntilCheckpoint("perfetto.FakeProducer.connected");
+
+  helper.ConnectConsumer();
+  helper.WaitForConsumerConnect();
+
+  while (!relay_service->relay_client_for_testing()
+              ->clock_synced_with_service_for_testing())
+    task_runner.RunUntilIdle();
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(1024);
+  trace_config.set_duration_ms(200);
+
+  // Enable the producer.
+  auto* ds_config = trace_config.add_data_sources()->mutable_config();
+  ds_config->set_name("perfetto.FakeProducer");
+  ds_config->set_target_buffer(0);
+
+  helper.StartTracing(trace_config);
+  helper.WaitForTracingDisabled();
+
+  helper.ReadData();
+  helper.WaitForReadData();
+
+  const auto& packets = helper.full_trace();
+
+  std::map<uint32_t, size_t> system_info_counts;  // machine ID => count.
+  bool clock_sync_packet_seen = false;
+  for (auto& packet : packets) {
+    if (packet.has_system_info()) {
+      system_info_counts[packet.machine_id()]++;
+    } else if (packet.has_remote_clock_sync()) {
+      clock_sync_packet_seen = true;
+
+      auto& synced_clocks = packet.remote_clock_sync().synced_clocks();
+      ASSERT_FALSE(synced_clocks.empty());
+      for (auto& clock_offset : synced_clocks) {
+        ASSERT_TRUE(clock_offset.has_client_clocks());
+        ASSERT_TRUE(clock_offset.has_host_clocks());
+      }
+    }
+  }
+  ASSERT_EQ(system_info_counts.size(), 2u);
+  ASSERT_EQ(system_info_counts.begin()->second, 1u);
+  ASSERT_EQ(system_info_counts.rbegin()->second, 1u);
+  ASSERT_TRUE(clock_sync_packet_seen);
 }
 
 }  // namespace

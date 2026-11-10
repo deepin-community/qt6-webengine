@@ -4,6 +4,9 @@
 
 #include "base/metrics/statistics_recorder.h"
 
+#include <algorithm>
+#include <string_view>
+
 #include "base/at_exit.h"
 #include "base/barrier_closure.h"
 #include "base/containers/contains.h"
@@ -16,7 +19,7 @@
 #include "base/metrics/metrics_hashes.h"
 #include "base/metrics/persistent_histogram_allocator.h"
 #include "base/metrics/record_histogram_checker.h"
-#include "base/ranges/algorithm.h"
+#include "base/no_destructor.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
@@ -27,21 +30,10 @@ namespace {
 
 bool HistogramNameLesser(const base::HistogramBase* a,
                          const base::HistogramBase* b) {
-  return strcmp(a->histogram_name(), b->histogram_name()) < 0;
+  return a->histogram_name() < b->histogram_name();
 }
 
 }  // namespace
-
-// static
-LazyInstance<Lock>::Leaky StatisticsRecorder::lock_ = LAZY_INSTANCE_INITIALIZER;
-
-// static
-LazyInstance<Lock>::Leaky StatisticsRecorder::snapshot_lock_ =
-    LAZY_INSTANCE_INITIALIZER;
-
-// static
-StatisticsRecorder::SnapshotTransactionId
-    StatisticsRecorder::last_snapshot_transaction_id_ = 0;
 
 // static
 StatisticsRecorder* StatisticsRecorder::top_ = nullptr;
@@ -57,9 +49,30 @@ std::atomic<StatisticsRecorder::GlobalSampleCallback>
     StatisticsRecorder::global_sample_callback_{nullptr};
 
 StatisticsRecorder::ScopedHistogramSampleObserver::
-    ScopedHistogramSampleObserver(const std::string& name,
+    ScopedHistogramSampleObserver(std::string_view name,
                                   OnSampleCallback callback)
-    : histogram_name_(name), callback_(callback) {
+    : histogram_name_(name),
+      callback_(
+          base::IgnoreArgs<std::optional<uint64_t>>(std::move(callback))) {
+  StatisticsRecorder::AddHistogramSampleObserver(histogram_name_, this);
+}
+
+StatisticsRecorder::ScopedHistogramSampleObserver::
+    ScopedHistogramSampleObserver(std::string_view name,
+                                  OnSampleWithEventCallback callback)
+    : histogram_name_(name), callback_(std::move(callback)) {
+  StatisticsRecorder::AddHistogramSampleObserver(histogram_name_, this);
+}
+
+StatisticsRecorder::ScopedHistogramSampleObserver::
+    ScopedHistogramSampleObserver(std::string_view name,
+                                  base::RepeatingClosure callback)
+    : histogram_name_(name),
+      callback_(
+          base::IgnoreArgs<std::optional<uint64_t>,
+                           std::string_view,
+                           uint64_t,
+                           HistogramBase::Sample32>(std::move(callback))) {
   StatisticsRecorder::AddHistogramSampleObserver(histogram_name_, this);
 }
 
@@ -69,10 +82,11 @@ StatisticsRecorder::ScopedHistogramSampleObserver::
 }
 
 void StatisticsRecorder::ScopedHistogramSampleObserver::RunCallback(
-    const char* histogram_name,
+    std::string_view histogram_name,
     uint64_t name_hash,
-    HistogramBase::Sample sample) {
-  callback_.Run(histogram_name, name_hash, sample);
+    HistogramBase::Sample32 sample,
+    std::optional<uint64_t> event_id) {
+  callback_.Run(event_id, histogram_name, name_hash, sample);
 }
 
 StatisticsRecorder::~StatisticsRecorder() {
@@ -105,10 +119,13 @@ void StatisticsRecorder::RegisterHistogramProvider(
 // static
 HistogramBase* StatisticsRecorder::RegisterOrDeleteDuplicate(
     HistogramBase* histogram) {
+  CHECK(histogram);
+
   uint64_t hash = histogram->name_hash();
 
   // Ensure that histograms use HashMetricName() to compute their hash, since
-  // that function is used to look up histograms.
+  // that function is used to look up histograms. Intentionally a DCHECK since
+  // this is expensive.
   DCHECK_EQ(hash, HashMetricName(histogram->histogram_name()));
 
   // Declared before |auto_lock| so that the histogram is deleted after the lock
@@ -142,8 +159,7 @@ HistogramBase* StatisticsRecorder::RegisterOrDeleteDuplicate(
   // you are unluckily a victim of a hash collision. For now, the best solution
   // is to rename the histogram. Reach out to chrome-metrics-team@google.com if
   // you are unsure!
-  DCHECK_EQ(strcmp(histogram->histogram_name(), registered->histogram_name()),
-            0)
+  DCHECK_EQ(histogram->histogram_name(), registered->histogram_name())
       << "Histogram name hash collision between " << histogram->histogram_name()
       << " and " << registered->histogram_name() << " (hash = " << hash << ")";
 
@@ -181,10 +197,11 @@ const BucketRanges* StatisticsRecorder::RegisterOrDeleteDuplicateRanges(
 // static
 void StatisticsRecorder::WriteGraph(const std::string& query,
                                     std::string* output) {
-  if (query.length())
+  if (query.length()) {
     StringAppendF(output, "Collections of histograms for %s\n", query.c_str());
-  else
+  } else {
     output->append("Collections of all histograms\n");
+  }
 
   for (const HistogramBase* const histogram :
        Sort(WithName(GetHistograms(), query))) {
@@ -222,9 +239,13 @@ std::vector<const BucketRanges*> StatisticsRecorder::GetBucketRanges() {
 }
 
 // static
-HistogramBase* StatisticsRecorder::FindHistogram(base::StringPiece name) {
-  uint64_t hash = HashMetricName(name);
+HistogramBase* StatisticsRecorder::FindHistogram(std::string_view name) {
+  return FindHistogram(HashMetricName(name), name);
+}
 
+HistogramBase* StatisticsRecorder::FindHistogram(uint64_t hash,
+                                                 std::string_view name) {
+  DCHECK_EQ(hash, HashMetricName(name)) << "Hash does not match name.";
   // This must be called *before* the lock is acquired below because it may call
   // back into StatisticsRecorder to register histograms. Those called methods
   // will acquire the lock at that time.
@@ -278,35 +299,14 @@ void StatisticsRecorder::ImportProvidedHistogramsSync() {
 }
 
 // static
-StatisticsRecorder::SnapshotTransactionId StatisticsRecorder::PrepareDeltas(
+void StatisticsRecorder::PrepareDeltas(
     bool include_persistent,
     HistogramBase::Flags flags_to_set,
     HistogramBase::Flags required_flags,
     HistogramSnapshotManager* snapshot_manager) {
   Histograms histograms = Sort(GetHistograms(include_persistent));
-  AutoLock lock(snapshot_lock_.Get());
   snapshot_manager->PrepareDeltas(std::move(histograms), flags_to_set,
                                   required_flags);
-  return ++last_snapshot_transaction_id_;
-}
-
-// static
-StatisticsRecorder::SnapshotTransactionId
-StatisticsRecorder::SnapshotUnloggedSamples(
-    HistogramBase::Flags required_flags,
-    HistogramSnapshotManager* snapshot_manager) {
-  Histograms histograms = Sort(GetHistograms());
-  AutoLock lock(snapshot_lock_.Get());
-  snapshot_manager->SnapshotUnloggedSamples(std::move(histograms),
-                                            required_flags);
-  return ++last_snapshot_transaction_id_;
-}
-
-// static
-StatisticsRecorder::SnapshotTransactionId
-StatisticsRecorder::GetLastSnapshotTransactionId() {
-  AutoLock lock(snapshot_lock_.Get());
-  return last_snapshot_transaction_id_;
 }
 
 // static
@@ -315,9 +315,20 @@ void StatisticsRecorder::InitLogOnShutdown() {
   InitLogOnShutdownWhileLocked();
 }
 
+// static
+Lock& StatisticsRecorder::GetLock() {
+  static base::NoDestructor<Lock> lock;
+  return *lock;
+}
+
+// static
+void StatisticsRecorder::AssertLockHeld() {
+  GetLock().AssertAcquired();
+}
+
 HistogramBase* StatisticsRecorder::FindHistogramByHashInternal(
     uint64_t hash,
-    StringPiece name) const {
+    std::string_view name) const {
   AssertLockHeld();
   const HistogramMap::const_iterator it = histograms_.find(hash);
   if (it == histograms_.end()) {
@@ -351,7 +362,8 @@ void StatisticsRecorder::AddHistogramSampleObserver(
   auto iter = top_->observers_.find(hash);
   if (iter == top_->observers_.end()) {
     top_->observers_.insert(
-        {hash, base::MakeRefCounted<HistogramSampleObserverList>()});
+        {hash, base::MakeRefCounted<HistogramSampleObserverList>(
+                   ObserverListPolicy::EXISTING_ONLY)});
   }
 
   top_->observers_[hash]->AddObserver(observer);
@@ -378,7 +390,7 @@ void StatisticsRecorder::RemoveHistogramSampleObserver(
   EnsureGlobalRecorderWhileLocked();
 
   auto iter = top_->observers_.find(hash);
-  DCHECK(iter != top_->observers_.end());
+  CHECK(iter != top_->observers_.end());
 
   auto result = iter->second->RemoveObserver(observer);
   if (result ==
@@ -402,9 +414,10 @@ void StatisticsRecorder::RemoveHistogramSampleObserver(
 // static
 void StatisticsRecorder::FindAndRunHistogramCallbacks(
     base::PassKey<HistogramBase>,
-    const char* histogram_name,
+    std::string_view histogram_name,
     uint64_t name_hash,
-    HistogramBase::Sample sample) {
+    HistogramBase::Sample32 sample,
+    std::optional<uint64_t> event_id) {
   DCHECK_EQ(name_hash, HashMetricName(histogram_name));
 
   const AutoLock auto_lock(GetLock());
@@ -424,7 +437,7 @@ void StatisticsRecorder::FindAndRunHistogramCallbacks(
   }
 
   it->second->Notify(FROM_HERE, &ScopedHistogramSampleObserver::RunCallback,
-                     histogram_name, name_hash, sample);
+                     histogram_name, name_hash, sample, event_id);
 }
 
 // static
@@ -454,7 +467,7 @@ size_t StatisticsRecorder::GetHistogramCount() {
 }
 
 // static
-void StatisticsRecorder::ForgetHistogramForTesting(base::StringPiece name) {
+void StatisticsRecorder::ForgetHistogramForTesting(std::string_view name) {
   const AutoLock auto_lock(GetLock());
   EnsureGlobalRecorderWhileLocked();
 
@@ -540,36 +553,33 @@ StatisticsRecorder::Histograms StatisticsRecorder::GetHistograms(
 
 // static
 StatisticsRecorder::Histograms StatisticsRecorder::Sort(Histograms histograms) {
-  ranges::sort(histograms, &HistogramNameLesser);
+  std::ranges::sort(histograms, &HistogramNameLesser);
   return histograms;
 }
 
 // static
 StatisticsRecorder::Histograms StatisticsRecorder::WithName(
     Histograms histograms,
-    const std::string& query,
+    std::string_view query,
     bool case_sensitive) {
-  // Need a C-string query for comparisons against C-string histogram name.
-  std::string lowercase_query;
-  const char* query_string;
-  if (case_sensitive) {
-    query_string = query.c_str();
-  } else {
-    lowercase_query = base::ToLowerASCII(query);
-    query_string = lowercase_query.c_str();
-  }
-
-  histograms.erase(
-      ranges::remove_if(
-          histograms,
-          [query_string, case_sensitive](const HistogramBase* const h) {
-            return !strstr(
-                case_sensitive
-                    ? h->histogram_name()
-                    : base::ToLowerASCII(h->histogram_name()).c_str(),
-                query_string);
-          }),
-      histograms.end());
+  // Char equality comparator which respects the `case_sensitive` setting.
+  auto comparator = [case_sensitive](char a, char b) {
+    return case_sensitive ? a == b : std::toupper(a) == std::toupper(b);
+  };
+  // Filter function that returns true if `h->histogram_name()` does not contain
+  // `query`. Uses `comparator` to compare chars.
+  auto histogram_name_does_not_contain_query =
+      [comparator, query](const HistogramBase* const h) {
+        const auto& name = h->histogram_name();
+        return std::search(name.begin(), name.end(), query.begin(), query.end(),
+                           comparator) == name.end();
+      };
+  // Erase the non-matching histograms. Note that `histograms` was passed by
+  // value so we can efficiently remove the unwanted elements and return the
+  // local instance.
+  histograms.erase(std::remove_if(histograms.begin(), histograms.end(),
+                                  histogram_name_does_not_contain_query),
+                   histograms.end());
   return histograms;
 }
 
@@ -579,8 +589,9 @@ void StatisticsRecorder::ImportGlobalPersistentHistograms() {
   // added by other processes and they must be fetched and recognized locally.
   // If the persistent memory segment is not shared between processes, this call
   // does nothing.
-  if (GlobalHistogramAllocator* allocator = GlobalHistogramAllocator::Get())
+  if (GlobalHistogramAllocator* allocator = GlobalHistogramAllocator::Get()) {
     allocator->ImportHistogramsToStatisticsRecorder();
+  }
 }
 
 StatisticsRecorder::StatisticsRecorder() {

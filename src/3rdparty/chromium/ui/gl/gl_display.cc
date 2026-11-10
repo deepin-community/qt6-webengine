@@ -17,8 +17,12 @@
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
+#include "base/synchronization/atomic_flag.h"
 #include "base/system/sys_info.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
+#include "gl_display.h"
+#include "gl_switches.h"
 #include "ui/base/ozone_buildflags.h"
 #include "ui/gl/angle_platform_impl.h"
 #include "ui/gl/egl_util.h"
@@ -28,116 +32,11 @@
 #include "ui/gl/gl_features.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_surface.h"
+#include "ui/gl/gpu_switching_manager.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/build_info.h"
 #endif
-
-#if defined(USE_GLX)
-#include "ui/gfx/x/connection.h"
-#endif
-
-// From ANGLE's egl/eglext.h.
-
-#ifndef EGL_ANGLE_platform_angle
-#define EGL_ANGLE_platform_angle 1
-#define EGL_PLATFORM_ANGLE_ANGLE 0x3202
-#define EGL_PLATFORM_ANGLE_TYPE_ANGLE 0x3203
-#define EGL_PLATFORM_ANGLE_MAX_VERSION_MAJOR_ANGLE 0x3204
-#define EGL_PLATFORM_ANGLE_MAX_VERSION_MINOR_ANGLE 0x3205
-#define EGL_PLATFORM_ANGLE_TYPE_DEFAULT_ANGLE 0x3206
-#define EGL_PLATFORM_ANGLE_DEBUG_LAYERS_ENABLED_ANGLE 0x3451
-#define EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE 0x3209
-#define EGL_PLATFORM_ANGLE_DEVICE_TYPE_EGL_ANGLE 0x348E
-#define EGL_PLATFORM_ANGLE_DEVICE_TYPE_HARDWARE_ANGLE 0x320A
-#define EGL_PLATFORM_ANGLE_DEVICE_TYPE_NULL_ANGLE 0x345E
-#define EGL_PLATFORM_ANGLE_DEVICE_TYPE_SWIFTSHADER_ANGLE 0x3487
-#define EGL_PLATFORM_ANGLE_NATIVE_PLATFORM_TYPE_ANGLE 0x348F
-#endif /* EGL_ANGLE_platform_angle */
-
-#ifndef EGL_ANGLE_platform_angle_d3d
-#define EGL_ANGLE_platform_angle_d3d 1
-#define EGL_PLATFORM_ANGLE_TYPE_D3D9_ANGLE 0x3207
-#define EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE 0x3208
-#define EGL_PLATFORM_ANGLE_DEVICE_TYPE_D3D_WARP_ANGLE 0x320B
-#define EGL_PLATFORM_ANGLE_DEVICE_TYPE_D3D_REFERENCE_ANGLE 0x320C
-#endif /* EGL_ANGLE_platform_angle_d3d */
-
-#ifndef EGL_ANGLE_platform_angle_d3d_luid
-#define EGL_ANGLE_platform_angle_d3d_luid 1
-#define EGL_PLATFORM_ANGLE_D3D_LUID_HIGH_ANGLE 0x34A0
-#define EGL_PLATFORM_ANGLE_D3D_LUID_LOW_ANGLE 0x34A1
-#endif /* EGL_ANGLE_platform_angle_d3d_luid */
-
-#ifndef EGL_ANGLE_platform_angle_d3d11on12
-#define EGL_ANGLE_platform_angle_d3d11on12 1
-#define EGL_PLATFORM_ANGLE_D3D11ON12_ANGLE 0x3488
-#endif /* EGL_ANGLE_platform_angle_d3d11on12 */
-
-#ifndef EGL_ANGLE_platform_angle_opengl
-#define EGL_ANGLE_platform_angle_opengl 1
-#define EGL_PLATFORM_ANGLE_TYPE_OPENGL_ANGLE 0x320D
-#define EGL_PLATFORM_ANGLE_TYPE_OPENGLES_ANGLE 0x320E
-#endif /* EGL_ANGLE_platform_angle_opengl */
-
-#ifndef EGL_ANGLE_platform_angle_null
-#define EGL_ANGLE_platform_angle_null 1
-#define EGL_PLATFORM_ANGLE_TYPE_NULL_ANGLE 0x33AE
-#endif /* EGL_ANGLE_platform_angle_null */
-
-#ifndef EGL_ANGLE_platform_angle_vulkan
-#define EGL_ANGLE_platform_angle_vulkan 1
-#define EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE 0x3450
-#define EGL_PLATFORM_VULKAN_DISPLAY_MODE_HEADLESS_ANGLE 0x34A5
-#endif /* EGL_ANGLE_platform_angle_vulkan */
-
-#ifndef EGL_ANGLE_platform_angle_metal
-#define EGL_ANGLE_platform_angle_metal 1
-#define EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE 0x3489
-#endif /* EGL_ANGLE_platform_angle_metal */
-
-#ifndef EGL_ANGLE_x11_visual
-#define EGL_ANGLE_x11_visual 1
-#define EGL_X11_VISUAL_ID_ANGLE 0x33A3
-#endif /* EGL_ANGLE_x11_visual */
-
-#ifndef EGL_ANGLE_direct_composition
-#define EGL_ANGLE_direct_composition 1
-#define EGL_DIRECT_COMPOSITION_ANGLE 0x33A5
-#endif /* EGL_ANGLE_direct_composition */
-
-#ifndef EGL_ANGLE_display_robust_resource_initialization
-#define EGL_ANGLE_display_robust_resource_initialization 1
-#define EGL_DISPLAY_ROBUST_RESOURCE_INITIALIZATION_ANGLE 0x3453
-#endif /* EGL_ANGLE_display_robust_resource_initialization */
-
-#ifndef EGL_ANGLE_display_power_preference
-#define EGL_ANGLE_display_power_preference 1
-#define EGL_POWER_PREFERENCE_ANGLE 0x3482
-#define EGL_LOW_POWER_ANGLE 0x0001
-#define EGL_HIGH_POWER_ANGLE 0x0002
-#endif /* EGL_ANGLE_power_preference */
-
-#ifndef EGL_ANGLE_platform_angle_device_id
-#define EGL_ANGLE_platform_angle_device_id
-#define EGL_PLATFORM_ANGLE_DEVICE_ID_HIGH_ANGLE 0x34D6
-#define EGL_PLATFORM_ANGLE_DEVICE_ID_LOW_ANGLE 0x34D7
-#define EGL_PLATFORM_ANGLE_DISPLAY_KEY_ANGLE 0x34DC
-#endif /* EGL_ANGLE_platform_angle_device_id */
-
-// From ANGLE's egl/eglext.h.
-#ifndef EGL_ANGLE_feature_control
-#define EGL_ANGLE_feature_control 1
-#define EGL_FEATURE_NAME_ANGLE 0x3460
-#define EGL_FEATURE_CATEGORY_ANGLE 0x3461
-#define EGL_FEATURE_DESCRIPTION_ANGLE 0x3462
-#define EGL_FEATURE_BUG_ANGLE 0x3463
-#define EGL_FEATURE_STATUS_ANGLE 0x3464
-#define EGL_FEATURE_COUNT_ANGLE 0x3465
-#define EGL_FEATURE_OVERRIDES_ENABLED_ANGLE 0x3466
-#define EGL_FEATURE_OVERRIDES_DISABLED_ANGLE 0x3467
-#define EGL_FEATURE_ALL_DISABLED_ANGLE 0x3469
-#endif /* EGL_ANGLE_feature_control */
 
 using ui::GetLastEGLErrorString;
 
@@ -145,19 +44,9 @@ namespace gl {
 
 namespace {
 
-void AdjustAngleFeaturesFromChromeFeatures(
-    std::vector<std::string>& enabled_angle_features,
-    std::vector<std::string>& disabled_angle_features) {
-#if BUILDFLAG(IS_MAC)
-  if (base::FeatureList::IsEnabled(features::kWriteMetalShaderCacheToDisk)) {
-    disabled_angle_features.push_back("enableParallelMtlLibraryCompilation");
-    enabled_angle_features.push_back("compileMetalShaders");
-    enabled_angle_features.push_back("disableProgramCaching");
-  }
-  if (base::FeatureList::IsEnabled(features::kUseBuiltInMetalShaderCache)) {
-    enabled_angle_features.push_back("loadMetalShadersFromBlobCache");
-  }
-#endif
+base::AtomicFlag* GetANGLEDebugLayerFlag() {
+  static base::AtomicFlag* const flag = new base::AtomicFlag();
+  return flag;
 }
 
 std::vector<const char*> GetAttribArrayFromStringVector(
@@ -170,20 +59,13 @@ std::vector<const char*> GetAttribArrayFromStringVector(
   return attribs;
 }
 
-std::vector<std::string> GetStringVectorFromCommandLine(
-    const base::CommandLine* command_line,
-    const char switch_name[]) {
-  std::string command_string = command_line->GetSwitchValueASCII(switch_name);
-  return base::SplitString(command_string, ", ;", base::TRIM_WHITESPACE,
-                           base::SPLIT_WANT_NONEMPTY);
-}
-
 EGLDisplay GetPlatformANGLEDisplay(
     EGLNativeDisplayType display,
     EGLenum platform_type,
     const std::vector<std::string>& enabled_features,
     const std::vector<std::string>& disabled_features,
     const std::vector<EGLAttrib>& extra_display_attribs) {
+  TRACE_EVENT("gpu,startup", "gl_display::GetPlatformANGLEDisplay");
   std::vector<EGLAttrib> display_attribs(extra_display_attribs);
 
   display_attribs.push_back(EGL_PLATFORM_ANGLE_TYPE_ANGLE);
@@ -254,10 +136,9 @@ EGLDisplay GetPlatformANGLEDisplay(
     }
   }
 
-  if (base::FeatureList::IsEnabled(features::kANGLEDebugLayer)) {
-    display_attribs.push_back(EGL_PLATFORM_ANGLE_DEBUG_LAYERS_ENABLED_ANGLE);
-    display_attribs.push_back(EGL_TRUE);
-  }
+  display_attribs.push_back(EGL_PLATFORM_ANGLE_DEBUG_LAYERS_ENABLED_ANGLE);
+  display_attribs.push_back(GetANGLEDebugLayerFlag()->IsSet() ? EGL_TRUE
+                                                              : EGL_FALSE);
 
   display_attribs.push_back(EGL_NONE);
 
@@ -305,6 +186,13 @@ EGLDisplay GetDisplayFromType(
           display, EGL_PLATFORM_ANGLE_TYPE_D3D9_ANGLE, enabled_angle_features,
           disabled_angle_features, extra_display_attribs);
     case ANGLE_D3D11:
+      return GetPlatformANGLEDisplay(
+          display, EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE, enabled_angle_features,
+          disabled_angle_features, extra_display_attribs);
+    case ANGLE_D3D11_WARP:
+      extra_display_attribs.push_back(EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE);
+      extra_display_attribs.push_back(
+          EGL_PLATFORM_ANGLE_DEVICE_TYPE_D3D_WARP_ANGLE);
       return GetPlatformANGLEDisplay(
           display, EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE, enabled_angle_features,
           disabled_angle_features, extra_display_attribs);
@@ -399,7 +287,6 @@ EGLDisplay GetDisplayFromType(
           disabled_angle_features, extra_display_attribs);
     default:
       NOTREACHED();
-      return EGL_NO_DISPLAY;
   }
 }
 
@@ -412,6 +299,8 @@ ANGLEImplementation GetANGLEImplementationFromDisplayType(
     case ANGLE_D3D11_NULL:
     case ANGLE_D3D11on12:
       return ANGLEImplementation::kD3D11;
+    case ANGLE_D3D11_WARP:
+      return ANGLEImplementation::kD3D11Warp;
     case ANGLE_OPENGL:
     case ANGLE_OPENGL_EGL:
     case ANGLE_OPENGL_NULL:
@@ -445,6 +334,8 @@ const char* DisplayTypeString(DisplayType display_type) {
       return "D3D9";
     case ANGLE_D3D11:
       return "D3D11";
+    case ANGLE_D3D11_WARP:
+      return "D3D11Warp";
     case ANGLE_D3D11_NULL:
       return "D3D11Null";
     case ANGLE_OPENGL:
@@ -475,50 +366,6 @@ const char* DisplayTypeString(DisplayType display_type) {
       return "MetalNull";
     default:
       NOTREACHED();
-      return "Err";
-  }
-}
-
-const char* GetDebugMessageTypeString(EGLint source) {
-  switch (source) {
-    case EGL_DEBUG_MSG_CRITICAL_KHR:
-      return "Critical";
-    case EGL_DEBUG_MSG_ERROR_KHR:
-      return "Error";
-    case EGL_DEBUG_MSG_WARN_KHR:
-      return "Warning";
-    case EGL_DEBUG_MSG_INFO_KHR:
-      return "Info";
-    default:
-      return "UNKNOWN";
-  }
-}
-
-void EGLAPIENTRY LogEGLDebugMessage(EGLenum error,
-                                    const char* command,
-                                    EGLint message_type,
-                                    EGLLabelKHR thread_label,
-                                    EGLLabelKHR object_label,
-                                    const char* message) {
-  std::string formatted_message = std::string("EGL Driver message (") +
-                                  GetDebugMessageTypeString(message_type) +
-                                  ") " + command + ": " + message;
-
-  // Assume that all labels that have been set are strings
-  if (thread_label) {
-    formatted_message += " thread: ";
-    formatted_message += static_cast<const char*>(thread_label);
-  }
-  if (object_label) {
-    formatted_message += " object: ";
-    formatted_message += static_cast<const char*>(object_label);
-  }
-
-  if (message_type == EGL_DEBUG_MSG_CRITICAL_KHR ||
-      message_type == EGL_DEBUG_MSG_ERROR_KHR) {
-    LOG(ERROR) << formatted_message;
-  } else {
-    DVLOG(1) << formatted_message;
   }
 }
 
@@ -538,7 +385,7 @@ void SetEglDebugMessageControl() {
         EGL_NONE,
     };
 
-    eglDebugMessageControlKHR(&LogEGLDebugMessage, controls);
+    eglDebugMessageControlKHR(&ui::LogEGLDebugMessage, controls);
   }
 }
 
@@ -559,22 +406,9 @@ GLDisplayPlatform* GLDisplay::GetAs() {
   switch (type_) {
     case NONE:
       NOTREACHED();
-      break;
 
     case EGL:
-#if defined(USE_EGL)
       type_checked = std::is_same<GLDisplayPlatform, GLDisplayEGL>::value;
-#endif  // defined(USE_EGL)
-      break;
-    case X11:
-#if defined(USE_GLX)
-      type_checked = std::is_same<GLDisplayPlatform, GLDisplayX11>::value;
-#endif  // defined(USE_GLX)
-      break;
-    case WGL:
-#if BUILDFLAG(IS_WIN)
-      type_checked = std::is_same<GLDisplayPlatform, GLDisplayWGL>::value;
-#endif  // BUILDFLAG(IS_WIN)
       break;
   }
   if (type_checked)
@@ -583,22 +417,9 @@ GLDisplayPlatform* GLDisplay::GetAs() {
   return nullptr;
 }
 
-#if defined(USE_EGL)
 template EXPORT_TEMPLATE_DEFINE(GL_EXPORT)
     GLDisplayEGL* GLDisplay::GetAs<GLDisplayEGL>();
-#endif  // defined(USE_EGL)
 
-#if defined(USE_GLX)
-template EXPORT_TEMPLATE_DEFINE(GL_EXPORT)
-    GLDisplayX11* GLDisplay::GetAs<GLDisplayX11>();
-#endif  // defined(USE_GLX)
-
-#if BUILDFLAG(IS_WIN)
-template EXPORT_TEMPLATE_DEFINE(GL_EXPORT)
-    GLDisplayWGL* GLDisplay::GetAs<GLDisplayWGL>();
-#endif  // BUILDFLAG(IS_WIN)
-
-#if defined(USE_EGL)
 GLDisplayEGL::EGLGpuSwitchingObserver::EGLGpuSwitchingObserver(
     EGLDisplay display)
     : display_(display) {
@@ -636,7 +457,8 @@ void GLDisplayEGL::Shutdown() {
     gpu_switching_observer_.reset();
   }
 
-  angle::ResetPlatform(display_);
+  DCHECK(g_driver_egl.fn.eglGetProcAddressFn);
+  angle::ResetPlatform(display_, g_driver_egl.fn.eglGetProcAddressFn);
   DCHECK(g_driver_egl.fn.eglTerminateFn);
   eglTerminate(display_);
 
@@ -646,7 +468,7 @@ void GLDisplayEGL::Shutdown() {
   egl_android_native_fence_sync_supported_ = false;
 
 #if BUILDFLAG(IS_APPLE)
-  CleanupMetalSharedEvent();
+  CleanupMetalSharedEventStorage();
 #endif
 }
 
@@ -670,6 +492,11 @@ DisplayType GLDisplayEGL::GetDisplayType() const {
 GLDisplayEGL* GLDisplayEGL::GetDisplayForCurrentContext() {
   GLContext* context = GLContext::GetCurrent();
   return context ? context->GetGLDisplayEGL() : nullptr;
+}
+
+// static
+void GLDisplayEGL::EnableANGLEDebugLayer() {
+  GetANGLEDebugLayerFlag()->Set();
 }
 
 bool GLDisplayEGL::IsEGLSurfacelessContextSupported() {
@@ -751,6 +578,7 @@ bool GLDisplayEGL::InitializeDisplay(bool supports_angle,
                                      std::vector<DisplayType> init_displays,
                                      EGLDisplayPlatform native_display,
                                      gl::GLDisplayEGL* existing_display) {
+  TRACE_EVENT("gpu,startup", "gl::GLDisplayEGL::InitializeDisplay");
   if (display_ != EGL_NO_DISPLAY)
     return true;
 
@@ -761,17 +589,16 @@ bool GLDisplayEGL::InitializeDisplay(bool supports_angle,
     SetEglDebugMessageControl();
   }
 
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  if (g_driver_egl.client_ext.b_EGL_ANGLE_no_error &&
+      !features::IsANGLEValidationEnabled()) {
+    eglSetValidationEnabledANGLE(EGL_FALSE);
+  }
 
-  std::vector<std::string> enabled_angle_features =
-      GetStringVectorFromCommandLine(command_line,
-                                     switches::kEnableANGLEFeatures);
-  std::vector<std::string> disabled_angle_features =
-      GetStringVectorFromCommandLine(command_line,
-                                     switches::kDisableANGLEFeatures);
-
-  AdjustAngleFeaturesFromChromeFeatures(enabled_angle_features,
-                                        disabled_angle_features);
+  std::vector<std::string> enabled_angle_features;
+  std::vector<std::string> disabled_angle_features;
+  features::GetANGLEFeaturesFromCommandLineAndFinch(
+      base::CommandLine::ForCurrentProcess(), enabled_angle_features,
+      disabled_angle_features);
 
   for (size_t disp_index = 0; disp_index < init_displays.size(); ++disp_index) {
     DisplayType display_type = init_displays[disp_index];
@@ -787,7 +614,8 @@ bool GLDisplayEGL::InitializeDisplay(bool supports_angle,
     if (!existing_display) {
       // Init ANGLE platform now that we have the global display.
       if (supports_angle) {
-        if (!angle::InitializePlatform(display)) {
+        if (!angle::InitializePlatform(display,
+                                       g_driver_egl.fn.eglGetProcAddressFn)) {
           LOG(ERROR) << "ANGLE Platform initialization failed.";
         }
 
@@ -797,20 +625,23 @@ bool GLDisplayEGL::InitializeDisplay(bool supports_angle,
 
       // The platform may need to unset its platform specific display env in
       // case of vulkan if the platform doesn't support Vulkan surface.
-      absl::optional<base::ScopedEnvironmentVariableOverride> unset_display;
+      std::optional<base::ScopedEnvironmentVariableOverride> unset_display;
       if (display_type == ANGLE_VULKAN) {
         unset_display = GLDisplayEglUtil::GetInstance()
                             ->MaybeGetScopedDisplayUnsetForVulkan();
       }
     }
 
-    if (!eglInitialize(display, nullptr, nullptr)) {
-      bool is_last = disp_index == init_displays.size() - 1;
+    {
+      TRACE_EVENT("gpu,startup", "eglInitializeFn display");
+      if (!eglInitialize(display, nullptr, nullptr)) {
+        bool is_last = disp_index == init_displays.size() - 1;
 
-      LOG(ERROR) << "eglInitialize " << DisplayTypeString(display_type)
-                 << " failed with error " << GetLastEGLErrorString()
-                 << (is_last ? "" : ", trying next display type");
-      continue;
+        LOG(ERROR) << "eglInitialize " << DisplayTypeString(display_type)
+                   << " failed with error " << GetLastEGLErrorString()
+                   << (is_last ? "" : ", trying next display type");
+        continue;
+      }
     }
 
     if (!existing_display) {
@@ -847,6 +678,7 @@ bool GLDisplayEGL::InitializeDisplay(bool supports_angle,
 }
 
 void GLDisplayEGL::InitializeCommon(bool for_testing) {
+  TRACE_EVENT("gpu,startup", "gl::GLDisplayEGL::InitializeCommon");
   // According to https://source.android.com/compatibility/android-cdd.html the
   // EGL_IMG_context_priority extension is mandatory for Virtual Reality High
   // Performance support, but due to a bug in Android Nougat the extension
@@ -903,7 +735,7 @@ void GLDisplayEGL::InitializeCommon(bool for_testing) {
   // a useless wrapper function. See crbug.com/775707 for details. In short, if
   // the symbol is present and we're on Android N or newer and we are not on
   // Android emulator, assume that it's usable even if the extension wasn't
-  // reported. TODO(https://crbug.com/1086781): Once this is fixed at the
+  // reported. TODO(crbug.com/40132708): Once this is fixed at the
   // Android level, update the heuristic to trust the reported extension from
   // that version onward.
   egl_android_native_fence_sync_supported_ =
@@ -917,6 +749,11 @@ void GLDisplayEGL::InitializeCommon(bool for_testing) {
       base::SysInfo::GetAndroidHardwareEGL() != "emulation") {
     egl_android_native_fence_sync_supported_ = true;
   }
+
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableAndroidNativeFenceSyncForTesting)) {
+    egl_android_native_fence_sync_supported_ = false;
+  }
 #endif  // BUILDFLAG(IS_ANDROID)
 
   if (!for_testing) {
@@ -927,183 +764,10 @@ void GLDisplayEGL::InitializeCommon(bool for_testing) {
           gpu_switching_observer_.get());
     }
   }
+
+#if BUILDFLAG(IS_APPLE)
+  InitMetalSharedEventStorage();
+#endif
 }
-#endif  // defined(USE_EGL)
-
-#if defined(USE_GLX)
-GLDisplayX11::GLDisplayX11(uint64_t system_device_id, DisplayKey display_key)
-    : GLDisplay(system_device_id, display_key, X11) {}
-
-GLDisplayX11::~GLDisplayX11() = default;
-
-void* GLDisplayX11::GetDisplay() const {
-  return x11::Connection::Get()->GetXlibDisplay();
-}
-
-void GLDisplayX11::Shutdown() {}
-
-bool GLDisplayX11::IsInitialized() const {
-  return true;
-}
-
-bool GLDisplayX11::Initialize(gl::GLDisplay*) {
-    // FIXME?
-}
-#endif  // defined(USE_GLX)
-
-#if BUILDFLAG(IS_WIN)
-
-namespace {
-const PIXELFORMATDESCRIPTOR kPixelFormatDescriptor = {
-  sizeof(kPixelFormatDescriptor),    // Size of structure.
-  1,                       // Default version.
-  PFD_DRAW_TO_WINDOW |     // Window drawing support.
-  PFD_SUPPORT_OPENGL |     // OpenGL support.
-  PFD_DOUBLEBUFFER,        // Double buffering support (not stereo).
-  PFD_TYPE_RGBA,           // RGBA color mode (not indexed).
-  24,                      // 24 bit color mode.
-  0, 0, 0, 0, 0, 0,        // Don't set RGB bits & shifts.
-  8, 0,                    // 8 bit alpha
-  0,                       // No accumulation buffer.
-  0, 0, 0, 0,              // Ignore accumulation bits.
-  0,                       // no z-buffer.
-  0,                       // no stencil buffer.
-  0,                       // No aux buffer.
-  PFD_MAIN_PLANE,          // Main drawing plane (not overlay).
-  0,                       // Reserved.
-  0, 0, 0,                 // Layer masks ignored.
-};
-
-LRESULT CALLBACK IntermediateWindowProc(HWND window,
-                                        UINT message,
-                                        WPARAM w_param,
-                                        LPARAM l_param) {
-  switch (message) {
-    case WM_ERASEBKGND:
-      // Prevent windows from erasing the background.
-      return 1;
-    case WM_PAINT:
-      // Do not paint anything.
-      PAINTSTRUCT paint;
-      if (BeginPaint(window, &paint))
-        EndPaint(window, &paint);
-      return 0;
-    default:
-      return DefWindowProc(window, message, w_param, l_param);
-  }
-}
-}  // namespace
-
-GLDisplayWGL::GLDisplayWGL(uint64_t system_device_id, DisplayKey display_key)
-    : GLDisplay(system_device_id, display_key, WGL),
-      module_handle_(0),
-      window_class_(0),
-      window_handle_(0),
-      device_context_(0),
-      pixel_format_(0) {}
-
-GLDisplayWGL::~GLDisplayWGL() {
-  if (window_handle_)
-    DestroyWindow(window_handle_);
-  if (window_class_)
-    UnregisterClass(reinterpret_cast<wchar_t*>(window_class_),
-                    module_handle_);
-}
-
-bool GLDisplayWGL::Init(bool software_rendering) {
-  // We must initialize a GL context before we can bind to extension entry
-  // points. This requires the device context for a window.
-  if (!GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT |
-                         GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-                         reinterpret_cast<wchar_t*>(IntermediateWindowProc),
-                         &module_handle_)) {
-    LOG(ERROR) << "GetModuleHandleEx failed.";
-    return false;
-  }
-
-  WNDCLASS intermediate_class;
-  intermediate_class.style = CS_OWNDC;
-  intermediate_class.lpfnWndProc = IntermediateWindowProc;
-  intermediate_class.cbClsExtra = 0;
-  intermediate_class.cbWndExtra = 0;
-  intermediate_class.hInstance = module_handle_;
-  intermediate_class.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-  intermediate_class.hCursor = LoadCursor(NULL, IDC_ARROW);
-  intermediate_class.hbrBackground = NULL;
-  intermediate_class.lpszMenuName = NULL;
-  intermediate_class.lpszClassName = L"Intermediate GL Window";
-  window_class_ = RegisterClass(&intermediate_class);
-  if (!window_class_) {
-    LOG(ERROR) << "RegisterClass failed.";
-    return false;
-  }
-
-  window_handle_ = CreateWindowEx(WS_EX_NOPARENTNOTIFY,
-                                  reinterpret_cast<wchar_t*>(window_class_),
-                                  L"",
-                                  WS_OVERLAPPEDWINDOW,
-                                  0,
-                                  0,
-                                  100,
-                                  100,
-                                  NULL,
-                                  NULL,
-                                  NULL,
-                                  NULL);
-  if (!window_handle_) {
-    LOG(ERROR) << "CreateWindow failed.";
-    return false;
-  }
-
-  device_context_ = GetDC(window_handle_);
-  pixel_format_ = ChoosePixelFormat(device_context_,
-                                    &kPixelFormatDescriptor);
-  if (pixel_format_ == 0) {
-    LOG(ERROR) << "Unable to get the pixel format for GL context.";
-    return false;
-  }
-
-  bool result = false;
-  if (software_rendering) {
-    // wglSetPixelFormat needs to be called instead of SetPixelFormat to allow
-    // a differently named software GL implementation library to set up its
-    // internal data. The windows gdi.dll SetPixelFormat call directly calls
-    // into the stock opengl32.dll, instead of opengl32sw.dll for example.
-    typedef BOOL(WINAPI * wglSetPixelFormatProc)(
-        HDC, int, const PIXELFORMATDESCRIPTOR*);
-    wglSetPixelFormatProc wglSetPixelFormatFn =
-        reinterpret_cast<wglSetPixelFormatProc>(
-            GetGLProcAddress("wglSetPixelFormat"));
-
-    result = wglSetPixelFormatFn(device_context_, pixel_format_,
-                                 &kPixelFormatDescriptor);
-  } else {
-    result = SetPixelFormat(device_context_, pixel_format_,
-                            &kPixelFormatDescriptor);
-  }
-  if (!result) {
-    LOG(ERROR) << "Unable to set the pixel format for temporary GL context.";
-    return false;
-  }
-  return true;
-}
-
-void* GLDisplayWGL::GetDisplay() const
-{
-  return device_context();
-}
-
-bool GLDisplayWGL::IsInitialized() const
-{
-  return true;
-}
-void GLDisplayWGL::Shutdown()
-{
-}
-bool GLDisplayWGL::Initialize(gl::GLDisplay*) {
-  // FIXME?
-  return false;
-}
-#endif  // BUILDFLAG(IS_WIN)
 
 }  // namespace gl

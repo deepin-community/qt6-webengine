@@ -22,23 +22,23 @@ namespace ui {
 // contrast colors.
 void AddHighContrastSysColors(ColorMixer& mixer) {
   // Primary.
-  mixer[kColorSysPrimary] = {kColorNativeWindow};
-  mixer[kColorSysOnPrimary] = {kColorNativeWindowText};
+  mixer[kColorSysPrimary] = {kColorNativeHighlight};
+  mixer[kColorSysOnPrimary] = {kColorNativeHighlightText};
   mixer[kColorSysPrimaryContainer] = {kColorNativeBtnFace};
   mixer[kColorSysOnPrimaryContainer] = {kColorNativeBtnText};
   // Secondary.
-  mixer[kColorSysSecondary] = {kColorNativeWindow};
-  mixer[kColorSysOnSecondary] = {kColorNativeWindowText};
+  mixer[kColorSysSecondary] = {kColorNativeHighlight};
+  mixer[kColorSysOnSecondary] = {kColorNativeHighlightText};
   mixer[kColorSysSecondaryContainer] = {kColorNativeBtnFace};
   mixer[kColorSysOnSecondaryContainer] = {kColorNativeBtnText};
   // Tertiary.
-  mixer[kColorSysTertiary] = {kColorNativeWindow};
-  mixer[kColorSysOnTertiary] = {kColorNativeWindowText};
+  mixer[kColorSysTertiary] = {kColorNativeHighlight};
+  mixer[kColorSysOnTertiary] = {kColorNativeHighlightText};
   mixer[kColorSysTertiaryContainer] = {kColorNativeBtnFace};
   mixer[kColorSysOnTertiaryContainer] = {kColorNativeBtnText};
   // Error.
-  mixer[kColorSysError] = {kColorNativeWindow};
-  mixer[kColorSysOnError] = {kColorNativeWindowText};
+  mixer[kColorSysError] = {kColorNativeHighlight};
+  mixer[kColorSysOnError] = {kColorNativeHighlightText};
   mixer[kColorSysErrorContainer] = {kColorNativeBtnFace};
   mixer[kColorSysOnErrorContainer] = {kColorNativeBtnText};
   // Neutral.
@@ -72,7 +72,6 @@ void AddHighContrastSysColors(ColorMixer& mixer) {
   mixer[kColorSysBase] = {kColorNativeBtnFace};
   mixer[kColorSysBaseContainer] = {kColorNativeBtnFace};
   mixer[kColorSysBaseContainerElevated] = {kColorNativeBtnFace};
-  mixer[kColorSysOnBaseSecondary] = {kColorNativeWindowText};
   mixer[kColorSysHeader] = {kColorNativeWindow};
   mixer[kColorSysHeaderInactive] = {kColorNativeWindow};
   mixer[kColorSysHeaderContainer] = {kColorNativeBtnFace};
@@ -168,10 +167,6 @@ void AddNativeUiColorMixer(ColorProvider* provider,
 
   ColorMixer& mixer = provider->AddMixer();
 
-  mixer[kColorRadioButtonForegroundChecked] = {
-      key.color_mode == ColorProviderKey::ColorMode::kDark
-          ? gfx::kGoogleBlue100
-          : gfx::kGoogleBlue900};
   mixer[kColorNotificationInputPlaceholderForeground] =
       SetAlpha(kColorNotificationInputForeground, gfx::kGoogleGreyAlpha700);
   mixer[kColorSliderTrack] = AlphaBlend(
@@ -200,7 +195,6 @@ void AddNativeUiColorMixer(ColorProvider* provider,
 
   // Hyperlinks
   mixer[kColorLinkForegroundDefault] = {kColorNativeHotlight};
-  mixer[kColorLinkForegroundPressedDefault] = {kColorNativeHotlight};
   mixer[kColorMenuItemForegroundHighlighted] = {kColorNativeHotlight};
 
   // Gray/Disabled Text
@@ -230,6 +224,7 @@ void AddNativeUiColorMixer(ColorProvider* provider,
   mixer[kColorMenuItemForeground] = {kColorNativeBtnText};
   mixer[kColorMenuItemForegroundSecondary] = {kColorNativeBtnText};
   mixer[kColorMenuSeparator] = {kColorNativeBtnText};
+  mixer[kColorRadioButtonForegroundChecked] = {kColorNativeBtnText};
   mixer[kColorSeparator] = {kColorNativeBtnText};
   mixer[kColorSliderThumb] = {kColorNativeBtnText};
   mixer[kColorSliderThumbMinimal] = {kColorNativeBtnText};

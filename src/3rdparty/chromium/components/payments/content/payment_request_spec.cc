@@ -4,6 +4,7 @@
 
 #include "components/payments/content/payment_request_spec.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "base/check.h"
@@ -11,7 +12,6 @@
 #include "base/feature_list.h"
 #include "base/notreached.h"
 #include "base/observer_list.h"
-#include "base/ranges/algorithm.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -82,7 +82,7 @@ PaymentRequestSpec::PaymentRequestSpec(
 
   app_store_billing_methods_.insert(methods::kGooglePlayBilling);
 }
-PaymentRequestSpec::~PaymentRequestSpec() {}
+PaymentRequestSpec::~PaymentRequestSpec() = default;
 
 void PaymentRequestSpec::UpdateWith(mojom::PaymentDetailsPtr details) {
   DCHECK(details_);
@@ -254,8 +254,6 @@ PaymentShippingType PaymentRequestSpec::shipping_type() const {
     default:
       NOTREACHED();
   }
-  // Needed for compilation on some platforms.
-  return PaymentShippingType::SHIPPING;
 }
 
 std::u16string PaymentRequestSpec::GetFormattedCurrencyAmount(
@@ -284,7 +282,7 @@ void PaymentRequestSpec::StartWaitingForUpdateWith(
 bool PaymentRequestSpec::IsMixedCurrency() const {
   DCHECK(details_->display_items);
   const std::string& total_currency = details_->total->amount->currency;
-  return base::ranges::any_of(
+  return std::ranges::any_of(
       *details_->display_items,
       [&total_currency](const mojom::PaymentItemPtr& item) {
         return item->amount->currency != total_currency;
@@ -335,17 +333,6 @@ bool PaymentRequestSpec::IsAppStoreBillingAlsoRequested() const {
               app_store_billing_methods_, payment_method_identifiers_set_)
               .empty();
 }
-
-#if !BUILDFLAG(IS_ANDROID)
-bool PaymentRequestSpec::IsPaymentHandlerMinimalHeaderUXEnabled() const {
-  // PaymentHandlerMinimalHeaderUX is enabled when both the browser feature
-  // (enabled by default) and the blink feature (as indicated in the details)
-  // are enabled.
-  return base::FeatureList::IsEnabled(
-             features::kPaymentHandlerMinimalHeaderUX) &&
-         details_->payment_handler_minimal_header_ux_enabled;
-}
-#endif
 
 base::WeakPtr<PaymentRequestSpec> PaymentRequestSpec::AsWeakPtr() {
   return weak_ptr_factory_.GetWeakPtr();
@@ -406,8 +393,8 @@ void PaymentRequestSpec::UpdateSelectedShippingOption(bool after_update) {
   // one in the array that has its selected field set to true. If none are
   // selected by the merchant, |selected_shipping_option_| stays nullptr.
   auto selected_shipping_option_it =
-      base::ranges::find_if(base::Reversed(*details_->shipping_options),
-                            &payments::mojom::PaymentShippingOption::selected);
+      std::ranges::find_if(base::Reversed(*details_->shipping_options),
+                           &payments::mojom::PaymentShippingOption::selected);
   if (selected_shipping_option_it != details_->shipping_options->rend()) {
     selected_shipping_option_ = selected_shipping_option_it->get();
   }

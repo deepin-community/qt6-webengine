@@ -40,6 +40,7 @@
 #include "dawn/native/PerStage.h"
 #include "dawn/native/PipelineLayout.h"
 #include "dawn/native/ShaderModule.h"
+#include "partition_alloc/pointers/raw_ptr.h"
 
 #include "dawn/native/dawn_platform.h"
 
@@ -47,23 +48,23 @@ namespace dawn::native {
 
 ResultOrError<ShaderModuleEntryPoint> ValidateProgrammableStage(DeviceBase* device,
                                                                 const ShaderModuleBase* module,
-                                                                const char* entryPointName,
+                                                                StringView entryPointName,
                                                                 uint32_t constantCount,
                                                                 const ConstantEntry* constants,
                                                                 const PipelineLayoutBase* layout,
                                                                 SingleShaderStage stage);
-
-WGPUCreatePipelineAsyncStatus CreatePipelineAsyncStatusFromErrorType(InternalErrorType error);
 
 struct ProgrammableStage {
     Ref<ShaderModuleBase> module;
     std::string entryPoint;
 
     // The metadata lives as long as module, that's ref-ed in the same structure.
-    const EntryPointMetadata* metadata = nullptr;
+    raw_ptr<const EntryPointMetadata> metadata = nullptr;
 
     PipelineConstantEntries constants;
 };
+
+uint32_t GetRawBits(ImmediateConstantMask bits);
 
 class PipelineBase : public ApiObjectBase, public CachedObject {
   public:
@@ -76,6 +77,7 @@ class PipelineBase : public ApiObjectBase, public CachedObject {
     const PerStage<ProgrammableStage>& GetAllStages() const;
     bool HasStage(SingleShaderStage stage) const;
     wgpu::ShaderStage GetStageMask() const;
+    const ImmediateConstantMask& GetImmediateMask() const;
 
     ResultOrError<Ref<BindGroupLayoutBase>> GetBindGroupLayout(uint32_t groupIndex);
 
@@ -86,18 +88,29 @@ class PipelineBase : public ApiObjectBase, public CachedObject {
     // Implementation of the API entrypoint. Do not use in a reentrant manner.
     BindGroupLayoutBase* APIGetBindGroupLayout(uint32_t groupIndex);
 
+    using ScopedUseShaderPrograms = PerStage<ShaderModuleBase::ScopedUseTintProgram>;
+    ScopedUseShaderPrograms UseShaderPrograms();
+
     // Initialize() should only be called once by the frontend.
-    virtual MaybeError Initialize() = 0;
+    MaybeError Initialize(std::optional<ScopedUseShaderPrograms> scopedUsePrograms = std::nullopt);
+
+    uint32_t GetImmediateConstantSize() const;
+
+    void SetImmediateMaskForTesting(ImmediateConstantMask immediateConstantMask);
 
   protected:
     PipelineBase(DeviceBase* device,
                  PipelineLayoutBase* layout,
-                 const char* label,
+                 StringView label,
                  std::vector<StageAndDescriptor> stages);
-    PipelineBase(DeviceBase* device, ObjectBase::ErrorTag tag, const char* label);
+    PipelineBase(DeviceBase* device, ObjectBase::ErrorTag tag, StringView label);
+
+    ImmediateConstantMask mImmediateMask = ImmediateConstantMask(0);
 
   private:
     MaybeError ValidateGetBindGroupLayout(BindGroupIndex group);
+
+    virtual MaybeError InitializeImpl() = 0;
 
     wgpu::ShaderStage mStageMask = wgpu::ShaderStage::None;
     PerStage<ProgrammableStage> mStages;

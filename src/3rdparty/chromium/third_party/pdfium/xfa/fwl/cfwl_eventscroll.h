@@ -9,6 +9,8 @@
 
 #include "xfa/fwl/cfwl_event.h"
 
+namespace pdfium {
+
 class CFWL_EventScroll final : public CFWL_Event {
  public:
   enum class Code {
@@ -27,12 +29,17 @@ class CFWL_EventScroll final : public CFWL_Event {
   CFWL_EventScroll(CFWL_Widget* pSrcTarget, Code code, float pos);
   ~CFWL_EventScroll() override;
 
-  Code GetScrollCode() const { return m_iScrollCode; }
-  float GetPos() const { return m_fPos; }
+  Code GetScrollCode() const { return scroll_code_; }
+  float GetPos() const { return pos_; }
 
  private:
-  const Code m_iScrollCode;
-  const float m_fPos;
+  const Code scroll_code_;
+  const float pos_;
 };
+
+}  // namespace pdfium
+
+// TODO(crbug.com/42271761): Remove.
+using pdfium::CFWL_EventScroll;
 
 #endif  // XFA_FWL_CFWL_EVENTSCROLL_H_

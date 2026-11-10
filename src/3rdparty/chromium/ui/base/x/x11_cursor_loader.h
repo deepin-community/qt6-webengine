@@ -5,7 +5,7 @@
 #ifndef UI_BASE_X_X11_CURSOR_LOADER_H_
 #define UI_BASE_X_X11_CURSOR_LOADER_H_
 
-#include <unordered_map>
+#include <string_view>
 
 #include "base/component_export.h"
 #include "base/functional/callback.h"
@@ -59,7 +59,7 @@ class COMPONENT_EXPORT(UI_BASE_X) XCursorLoader {
 
   // Populate the |rm_*| variables from the value of the RESOURCE_MANAGER
   // property on the root window.
-  void ParseXResources(base::StringPiece resources);
+  void ParseXResources(std::string_view resources);
 
   uint16_t CursorNamesToChar(const std::vector<std::string>& names) const;
 
@@ -83,12 +83,13 @@ class COMPONENT_EXPORT(UI_BASE_X) XCursorLoader {
   unsigned int rm_xcursor_size_ = 0;
   unsigned int rm_xft_dpi_ = 0;
 
-  std::unordered_map<std::string, uint16_t> cursor_name_to_char_;
-
   SEQUENCE_CHECKER(sequence_checker_);
 
   base::WeakPtrFactory<XCursorLoader> weak_factory_{this};
 };
+
+COMPONENT_EXPORT(UI_BASE_X)
+bool IsValidCursorThemeNameForTesting(const std::string& theme);
 
 COMPONENT_EXPORT(UI_BASE_X)
 std::vector<XCursorLoader::Image> ParseCursorFile(

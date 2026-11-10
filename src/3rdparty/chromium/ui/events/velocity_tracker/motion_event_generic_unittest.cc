@@ -4,9 +4,9 @@
 
 #include "ui/events/velocity_tracker/motion_event_generic.h"
 
+#include <numbers>
 #include <utility>
 
-#include "base/numerics/math_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/test/motion_event_test_utils.h"
@@ -124,6 +124,43 @@ TEST(MotionEventGenericTest, Cancel) {
   EXPECT_EQ(test::ToString(event), test::ToString(*cancel));
 }
 
+TEST(MotionEventGenericTest, CancelPointerUp) {
+  base::TimeTicks event_time = base::TimeTicks::Now();
+  PointerProperties pointer0;
+  pointer0.id = 7;
+  MotionEventGeneric pointer_up_event(MotionEvent::Action::POINTER_UP,
+                                      event_time, pointer0);
+
+  PointerProperties pointer1;
+  pointer1.id = 8;
+  pointer_up_event.PushPointer(pointer1);
+
+  PointerProperties pointer2;
+  pointer2.id = 9;
+  pointer_up_event.PushPointer(pointer2);
+
+  pointer_up_event.set_action_index(0);
+
+  std::unique_ptr<MotionEvent> cancel_event = pointer_up_event.Cancel();
+  ASSERT_TRUE(cancel_event);
+  EXPECT_EQ(cancel_event->GetPointerCount(), 2U);
+  EXPECT_NE(cancel_event->GetPointerId(0), 7);
+  EXPECT_NE(cancel_event->GetPointerId(1), 7);
+}
+
+TEST(MotionEventGenericTest, CancelDown) {
+  base::TimeTicks event_time = base::TimeTicks::Now();
+  PointerProperties pointer0;
+  pointer0.id = 7;
+  MotionEventGeneric down_event(MotionEvent::Action::DOWN, event_time,
+                                pointer0);
+
+  std::unique_ptr<MotionEvent> cancel_event = down_event.Cancel();
+  ASSERT_TRUE(cancel_event);
+  EXPECT_EQ(cancel_event->GetPointerCount(), 1U);
+  EXPECT_EQ(cancel_event->GetAction(), MotionEvent::Action::CANCEL);
+}
+
 TEST(MotionEventGenericTest, FindPointerIndexOfId) {
   base::TimeTicks event_time = base::TimeTicks::Now();
   PointerProperties pointer;
@@ -186,7 +223,7 @@ TEST(MotionEventGenericTest, AxisAndOrientation) {
     properties.SetAxesAndOrientation(radius_x, radius_y, rotation_angle_deg);
     EXPECT_EQ(20, properties.touch_major);
     EXPECT_EQ(10, properties.touch_minor);
-    EXPECT_NEAR(-base::kPiDouble / 2, properties.orientation, 0.001);
+    EXPECT_NEAR(-std::numbers::pi / 2, properties.orientation, 0.001);
   }
   {
     PointerProperties properties;
@@ -206,7 +243,7 @@ TEST(MotionEventGenericTest, AxisAndOrientation) {
     properties.SetAxesAndOrientation(radius_x, radius_y, rotation_angle_deg);
     EXPECT_EQ(20, properties.touch_major);
     EXPECT_EQ(10, properties.touch_minor);
-    EXPECT_NEAR(base::kPiDouble / 2, properties.orientation, 0.001);
+    EXPECT_NEAR(std::numbers::pi / 2, properties.orientation, 0.001);
   }
   {
     PointerProperties properties;

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <iterator>
 
+#include "base/check.h"
 #include "base/observer_list.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
@@ -37,18 +38,30 @@ LayerAnimationSequence::LayerAnimationSequence(
 }
 
 LayerAnimationSequence::~LayerAnimationSequence() {
-  for (auto& observer : observers_)
-    observer.DetachedFromSequence(this, true);
+  observers_.Notify(&LayerAnimationObserver::DetachedFromSequence, this, true);
 }
 
 void LayerAnimationSequence::Start(LayerAnimationDelegate* delegate) {
   DCHECK(start_time_ != base::TimeTicks());
+
   last_progressed_fraction_ = 0.0;
   if (elements_.empty())
     return;
 
+  // TODO(b/352744702): Convert to CHECK after https://crrev.com/c/5713998
+  // has rolled out and any cases like this have been removed.
+  DUMP_WILL_BE_CHECK(
+      !(is_repeating_ && GetTotalDurationOfAllElements().is_zero()))
+      << "A repeating animation with zero duration is not a supported "
+         "combination. It unnecessarily consumes CPU resources for an "
+         "indefinite amount of time without any actual animated content";
+
   elements_[0]->set_requested_start_time(start_time_);
+  base::WeakPtr<LayerAnimationSequence> alive(AsWeakPtr());
   elements_[0]->Start(delegate, animation_group_id_);
+  if (!alive) {
+    return;
+  }
 
   NotifyStarted();
 
@@ -66,10 +79,21 @@ void LayerAnimationSequence::Progress(base::TimeTicks now,
   if (last_element_ == 0)
     last_start_ = start_time_;
 
+  base::WeakPtr<LayerAnimationSequence> alive(AsWeakPtr());
+
+  const base::TimeDelta total_duration = GetTotalDurationOfAllElements();
+  const auto animation_should_progress = [this, total_duration]() {
+    // A repeating animation with zero total duration results in an infinite
+    // `while` loop below, so this corner case must be checked explicitly.
+    // In this case, the ui should immediately render the properties' target
+    // values.
+    return (is_repeating_ && !total_duration.is_zero()) ||
+           last_element_ < elements_.size();
+  };
   size_t current_index = last_element_ % elements_.size();
-  bool just_completed_sequence = false;
   base::TimeDelta element_duration;
-  while (is_repeating_ || last_element_ < elements_.size()) {
+  bool just_completed_sequence = total_duration.is_zero();
+  while (animation_should_progress()) {
     elements_[current_index]->set_requested_start_time(last_start_);
     if (!elements_[current_index]->IsFinished(now, &element_duration))
       break;
@@ -77,6 +101,11 @@ void LayerAnimationSequence::Progress(base::TimeTicks now,
     // Let the element we're passing finish.
     if (elements_[current_index]->ProgressToEnd(delegate))
       redraw_required = true;
+
+    if (!alive) {
+      return;
+    }
+
     last_start_ += element_duration;
     ++last_element_;
     last_progressed_fraction_ =
@@ -86,20 +115,27 @@ void LayerAnimationSequence::Progress(base::TimeTicks now,
     just_completed_sequence = current_index == 0;
   }
 
-  if (is_repeating_ || last_element_ < elements_.size()) {
+  if (animation_should_progress()) {
     if (!elements_[current_index]->Started()) {
       animation_group_id_ = cc::AnimationIdProvider::NextGroupId();
       elements_[current_index]->Start(delegate, animation_group_id_);
     }
-    base::WeakPtr<LayerAnimationSequence> alive(AsWeakPtr());
-    if (elements_[current_index]->Progress(now, delegate))
-      redraw_required = true;
-    if (!alive)
+
+    if (!alive) {
       return;
+    }
+
+    if (elements_[current_index]->Progress(now, delegate)) {
+      redraw_required = true;
+    }
+
+    if (!alive) {
+      return;
+    }
+
     last_progressed_fraction_ =
         elements_[current_index]->last_progressed_fraction();
   }
-
   // Since the delegate may be deleted due to the notifications below, it is
   // important that we schedule a draw before sending them.
   if (redraw_required)
@@ -148,10 +184,17 @@ void LayerAnimationSequence::ProgressToEnd(LayerAnimationDelegate* delegate) {
   if (elements_.empty())
     return;
 
+  base::WeakPtr<LayerAnimationSequence> alive(AsWeakPtr());
+
   size_t current_index = last_element_ % elements_.size();
   while (current_index < elements_.size()) {
     if (elements_[current_index]->ProgressToEnd(delegate))
       redraw_required = true;
+
+    if (!alive) {
+      return;
+    }
+
     last_progressed_fraction_ =
         elements_[current_index]->last_progressed_fraction();
     ++current_index;
@@ -181,9 +224,13 @@ void LayerAnimationSequence::GetTargetValue(
 }
 
 void LayerAnimationSequence::Abort(LayerAnimationDelegate* delegate) {
+  base::WeakPtr<LayerAnimationSequence> alive(AsWeakPtr());
   size_t current_index = last_element_ % elements_.size();
   while (current_index < elements_.size()) {
     elements_[current_index]->Abort(delegate);
+    if (!alive) {
+      return;
+    }
     ++current_index;
   }
   last_element_ = 0;
@@ -254,13 +301,11 @@ void LayerAnimationSequence::OnAnimatorDestroyed() {
 
 void LayerAnimationSequence::OnAnimatorAttached(
     LayerAnimationDelegate* delegate) {
-  for (LayerAnimationObserver& observer : observers_)
-    observer.OnAnimatorAttachedToTimeline();
+  observers_.Notify(&LayerAnimationObserver::OnAnimatorAttachedToTimeline);
 }
 
 void LayerAnimationSequence::OnAnimatorDetached() {
-  for (LayerAnimationObserver& observer : observers_)
-    observer.OnAnimatorDetachedFromTimeline();
+  observers_.Notify(&LayerAnimationObserver::OnAnimatorDetachedFromTimeline);
 }
 
 size_t LayerAnimationSequence::size() const {
@@ -276,28 +321,23 @@ LayerAnimationElement* LayerAnimationSequence::FirstElement() const {
 }
 
 void LayerAnimationSequence::NotifyScheduled() {
-  for (auto& observer : observers_)
-    observer.OnLayerAnimationScheduled(this);
+  observers_.Notify(&LayerAnimationObserver::OnLayerAnimationScheduled, this);
 }
 
 void LayerAnimationSequence::NotifyStarted() {
-  for (auto& observer : observers_)
-    observer.OnLayerAnimationStarted(this);
+  observers_.Notify(&LayerAnimationObserver::OnLayerAnimationStarted, this);
 }
 
 void LayerAnimationSequence::NotifyEnded() {
-  for (auto& observer : observers_)
-    observer.OnLayerAnimationEnded(this);
+  observers_.Notify(&LayerAnimationObserver::OnLayerAnimationEnded, this);
 }
 
 void LayerAnimationSequence::NotifyWillRepeat() {
-  for (auto& observer : observers_)
-    observer.OnLayerAnimationWillRepeat(this);
+  observers_.Notify(&LayerAnimationObserver::OnLayerAnimationWillRepeat, this);
 }
 
 void LayerAnimationSequence::NotifyAborted() {
-  for (auto& observer : observers_)
-    observer.OnLayerAnimationAborted(this);
+  observers_.Notify(&LayerAnimationObserver::OnLayerAnimationAborted, this);
 }
 
 LayerAnimationElement* LayerAnimationSequence::CurrentElement() const {
@@ -306,6 +346,14 @@ LayerAnimationElement* LayerAnimationSequence::CurrentElement() const {
 
   size_t current_index = last_element_ % elements_.size();
   return elements_[current_index].get();
+}
+
+base::TimeDelta LayerAnimationSequence::GetTotalDurationOfAllElements() const {
+  base::TimeDelta total_duration;
+  for (const std::unique_ptr<LayerAnimationElement>& element : elements_) {
+    total_duration += element->duration();
+  }
+  return total_duration;
 }
 
 std::string LayerAnimationSequence::ElementsToString() const {

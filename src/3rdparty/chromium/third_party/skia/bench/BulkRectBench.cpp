@@ -10,7 +10,7 @@
 #include "include/core/SkCanvas.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkPaint.h"
-#include "include/gpu/GrDirectContext.h"
+#include "include/gpu/ganesh/GrDirectContext.h"
 #include "include/gpu/ganesh/SkImageGanesh.h"
 #include "src/base/SkRandom.h"
 #include "src/core/SkCanvasPriv.h"
@@ -55,7 +55,7 @@ public:
         if (kDrawMode == DrawMode::kBatch && kImageMode == ImageMode::kNone) {
             // Currently the bulk color quad API is only available on
             // skgpu::ganesh::SurfaceDrawContext
-            return backend == kGPU_Backend;
+            return backend == Backend::kGanesh;
         } else {
             return this->INHERITED::isSuitableFor(backend);
         }
@@ -63,7 +63,7 @@ public:
 
 protected:
     SkRect         fRects[kRectCount];
-    sk_sp<SkImage> fImages[kImageCount];
+    sk_sp<SkImage> fImages[kImageCount > 0 ? kImageCount : 1];
     SkColor4f      fColors[kRectCount];
     SkString       fName;
 
@@ -134,8 +134,7 @@ protected:
         SkASSERT(kImageMode == ImageMode::kNone);
         SkASSERT(kDrawMode == DrawMode::kBatch);
 
-        auto context = canvas->recordingContext();
-        SkASSERT(context);
+        SkASSERT(canvas->recordingContext());
 
         GrQuadSetEntry batch[kRectCount];
         for (int i = 0; i < kRectCount; ++i) {
@@ -153,7 +152,7 @@ protected:
         SkMatrix view = canvas->getLocalToDeviceAs3x3();
         SkSurfaceProps props;
         GrPaint grPaint;
-        SkPaintToGrPaint(context, sdc->colorInfo(), paint, view, props, &grPaint);
+        SkPaintToGrPaint(sdc, paint, view, &grPaint);
         sdc->drawQuadSet(nullptr, std::move(grPaint), view, batch, kRectCount);
     }
 

@@ -35,12 +35,13 @@
 #include "libavutil/emms.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/common.h"
+#include "libavutil/mem.h"
 #include "libavutil/mem_internal.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
+#include "filters.h"
 #include "gradfun.h"
-#include "internal.h"
 #include "video.h"
 
 DECLARE_ALIGNED(16, static const uint16_t, dither)[8][8] = {
@@ -92,7 +93,7 @@ static void filter(GradFunContext *ctx, uint8_t *dst, const uint8_t *src, int wi
     for (y = 0; y < r; y++)
         ctx->blur_line(dc, buf + y * bstride, buf + (y - 1) * bstride, src + 2 * y * src_linesize, src_linesize, width / 2);
     for (;;) {
-        if (y < height - r) {
+        if (y + 1 < height - r) {
             int mod = ((y + r) / 2) % r;
             uint16_t *buf0 = buf + mod * bstride;
             uint16_t *buf1 = buf + (mod ? mod - 1 : r - 1) * bstride;
@@ -236,15 +237,15 @@ static const AVFilterPad avfilter_vf_gradfun_inputs[] = {
     },
 };
 
-const AVFilter ff_vf_gradfun = {
-    .name          = "gradfun",
-    .description   = NULL_IF_CONFIG_SMALL("Debands video quickly using gradients."),
+const FFFilter ff_vf_gradfun = {
+    .p.name        = "gradfun",
+    .p.description = NULL_IF_CONFIG_SMALL("Debands video quickly using gradients."),
+    .p.priv_class  = &gradfun_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
     .priv_size     = sizeof(GradFunContext),
-    .priv_class    = &gradfun_class,
     .init          = init,
     .uninit        = uninit,
     FILTER_INPUTS(avfilter_vf_gradfun_inputs),
     FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
 };

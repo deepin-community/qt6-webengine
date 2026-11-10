@@ -13,9 +13,6 @@
 #include "ipc/ipc_message_macros.h"
 #include "services/network/public/cpp/network_ipc_param_traits.h"
 #include "ui/base/page_transition_types.h"
-#include "ui/gfx/geometry/transform.h"
-#include "ui/gfx/ipc/geometry/gfx_param_traits.h"
-#include "ui/gfx/ipc/gfx_param_traits.h"
 
 #if BUILDFLAG(IS_MAC)
 #include "content/public/common/drop_data.h"
@@ -41,6 +38,12 @@ IPC_ENUM_TRAITS_MAX_VALUE(content::DropData::Kind,
 IPC_STRUCT_TRAITS_BEGIN(ui::FileInfo)
   IPC_STRUCT_TRAITS_MEMBER(path)
   IPC_STRUCT_TRAITS_MEMBER(display_name)
+IPC_STRUCT_TRAITS_END()
+
+IPC_STRUCT_TRAITS_BEGIN(content::DownloadUrlMetadata)
+  IPC_STRUCT_TRAITS_MEMBER(mime_type)
+  IPC_STRUCT_TRAITS_MEMBER(suggested_file_name)
+  IPC_STRUCT_TRAITS_MEMBER(url)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(content::DropData)

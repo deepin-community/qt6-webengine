@@ -30,14 +30,7 @@ bool ScopeToPrefName(ChromeSettingScope scope, std::string* result) {
       break;
   }
   NOTREACHED();
-  return false;
 }
-
-const char kPrefPreferences[] = "preferences";
-const char kPrefIncognitoPreferences[] = "incognito_preferences";
-const char kPrefRegularOnlyPreferences[] = "regular_only_preferences";
-const char kPrefContentSettings[] = "content_settings";
-const char kPrefIncognitoContentSettings[] = "incognito_content_settings";
 
 }  // namespace pref_names
 }  // namespace extensions

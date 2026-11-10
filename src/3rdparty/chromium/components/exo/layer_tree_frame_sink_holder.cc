@@ -6,6 +6,7 @@
 
 #include "base/containers/contains.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/trace_event/typed_macros.h"
 #include "cc/mojo_embedder/async_layer_tree_frame_sink.h"
 #include "components/exo/surface_tree_host.h"
 #include "components/viz/common/frame_timing_details.h"
@@ -24,14 +25,6 @@ constexpr int32_t kPauseBeginFrameThreshold = 5;
 
 }  // namespace
 
-BASE_FEATURE(kExoReactiveFrameSubmission,
-             "ExoReactiveFrameSubmission",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-BASE_FEATURE(kExoAutoNeedsBeginFrame,
-             "ExoAutoNeedsBeginFrame",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
 ////////////////////////////////////////////////////////////////////////////////
 // LayerTreeFrameSinkHolder, public:
 
@@ -39,13 +32,8 @@ LayerTreeFrameSinkHolder::LayerTreeFrameSinkHolder(
     SurfaceTreeHost* surface_tree_host,
     std::unique_ptr<cc::mojo_embedder::AsyncLayerTreeFrameSink> frame_sink)
     : surface_tree_host_(surface_tree_host),
-      frame_sink_(std::move(frame_sink)),
-      reactive_frame_submission_(
-          base::FeatureList::IsEnabled(kExoReactiveFrameSubmission)) {
-  if (reactive_frame_submission_) {
-    frame_timing_history_.emplace();
-  }
-
+      frame_sink_(std::move(frame_sink)) {
+  frame_timing_history_.emplace();
   frame_sink_->BindToClient(this);
 }
 
@@ -112,15 +100,7 @@ void LayerTreeFrameSinkHolder::DeleteWhenLastResourceHasBeenReclaimed(
 
 void LayerTreeFrameSinkHolder::SubmitCompositorFrame(viz::CompositorFrame frame,
                                                      bool submit_now) {
-  if (!reactive_frame_submission_) {
-    SubmitCompositorFrameToRemote(&frame);
-    return;
-  }
-
-  frame_timing_history_->MayRecordDidNotProduceToFrameArrvial(/*valid=*/true);
-
   DiscardCachedFrame(&frame);
-
   ObserveBeginFrameSource(true);
 
   if (!ShouldSubmitFrameNow() && !submit_now) {
@@ -153,10 +133,6 @@ const gfx::Size& LayerTreeFrameSinkHolder::LastSizeInPixels() const {
 
 void LayerTreeFrameSinkHolder::SetBeginFrameSource(
     viz::BeginFrameSource* source) {
-  if (!reactive_frame_submission_) {
-    return;
-  }
-
   ObserveBeginFrameSource(false);
 
   begin_frame_source_ = source;
@@ -173,7 +149,7 @@ void LayerTreeFrameSinkHolder::SetBeginFrameSource(
   }
 }
 
-absl::optional<viz::HitTestRegionList>
+std::optional<viz::HitTestRegionList>
 LayerTreeFrameSinkHolder::BuildHitTestData() {
   return {};
 }
@@ -183,9 +159,9 @@ void LayerTreeFrameSinkHolder::ReclaimResources(
   for (auto& resource : resources) {
     // Skip resources that are also in last frame. This can happen if
     // the frame sink id changed.
-    // TODO(crbug/1448681): if viz reclaims the resources b/c the viz::Surface
-    // never gets embedded, this prevents clients from receiving release
-    // callbacks. This needs to be addressed.
+    // TODO(crbug.com/40269434): if viz reclaims the resources b/c the
+    // viz::Surface never gets embedded, this prevents clients from receiving
+    // release callbacks. This needs to be addressed.
     if (base::Contains(last_frame_resources_, resource.id)) {
       continue;
     }
@@ -213,10 +189,6 @@ void LayerTreeFrameSinkHolder::DidReceiveCompositorFrameAck() {
 
   if (surface_tree_host_)
     surface_tree_host_->DidReceiveCompositorFrameAck();
-
-  if (!reactive_frame_submission_) {
-    return;
-  }
 
   if (pending_submit_frames_ == 0) {
     while (!pending_discarded_frame_notifications_.empty()) {
@@ -260,8 +232,14 @@ void LayerTreeFrameSinkHolder::DidLoseLayerTreeFrameSink() {
   resource_manager_.ClearAllCallbacks();
   is_lost_ = true;
 
-  if (lifetime_manager_)
+  if (surface_tree_host_) {
+    CHECK(!lifetime_manager_);
+    surface_tree_host_->OnFrameSinkLost();
+  }
+  if (lifetime_manager_) {
+    CHECK(!surface_tree_host_);
     ScheduleDelete();
+  }
 }
 
 void LayerTreeFrameSinkHolder::ClearPendingBeginFramesForTesting() {
@@ -295,9 +273,10 @@ void LayerTreeFrameSinkHolder::OnDestroyed() {
 
 bool LayerTreeFrameSinkHolder::OnBeginFrameDerivedImpl(
     const viz::BeginFrameArgs& args) {
-  DCHECK(reactive_frame_submission_);
-
-  frame_timing_history_->MayRecordDidNotProduceToFrameArrvial(/*valid=*/false);
+  base::TimeDelta timing_estimate = base::Milliseconds(0);
+  if (frame_timing_history_) {
+    timing_estimate = frame_timing_history_->GetFrameTransferDurationEstimate();
+  }
 
   pending_begin_frames_.emplace();
   pending_begin_frames_.back().begin_frame_ack =
@@ -305,7 +284,7 @@ bool LayerTreeFrameSinkHolder::OnBeginFrameDerivedImpl(
   pending_begin_frames_.back().send_deadline_estimate =
       args.deadline -
       viz::BeginFrameArgs::DefaultEstimatedDisplayDrawTime(args.interval) -
-      frame_timing_history_->GetFrameTransferDurationEstimate();
+      timing_estimate;
 
   if (pending_begin_frames_.size() > 1) {
     return true;
@@ -331,8 +310,8 @@ void LayerTreeFrameSinkHolder::SubmitCompositorFrameToRemote(
   DCHECK(!is_lost_);
 
   if (frame_timing_history_) {
-    frame_timing_history_->FrameSubmitted(frame->metadata.frame_token,
-                                          base::TimeTicks::Now());
+    frame_timing_history_->FrameSubmitted(
+        frame->metadata.begin_frame_ack.frame_id, frame->metadata.frame_token);
   }
 
   last_frame_resources_.clear();
@@ -343,7 +322,7 @@ void LayerTreeFrameSinkHolder::SubmitCompositorFrameToRemote(
   frame_sink_->SubmitCompositorFrame(std::move(*frame),
                                      /*hit_test_data_changed=*/true);
 
-  // TODO(crbug.com/1473386): Push an object to
+  // TODO(crbug.com/40278992): Push an object to
   // `pending_discarded_frame_notifications_` instead of using the counter here,
   // s.t. we don't have to wait until this counter drop to zero before
   // `SendDiscardedFrameNotifications()`, and frame_acks are properly ordered.
@@ -355,8 +334,6 @@ void LayerTreeFrameSinkHolder::DiscardCachedFrame(
   if (!cached_frame_) {
     return;
   }
-
-  DCHECK(reactive_frame_submission_);
 
   for (const auto& resource : cached_frame_->resource_list) {
     // Skip if the resource is still in use by the remote side.
@@ -387,9 +364,21 @@ void LayerTreeFrameSinkHolder::DiscardCachedFrame(
         cached_frame_->metadata.frame_token);
   }
 
+  const int64_t client_frame_trace_id =
+      cached_frame_->metadata.begin_frame_ack.trace_id;
+  if (client_frame_trace_id != -1) {
+    TRACE_EVENT_INSTANT(
+        "viz,benchmark,graphics.pipeline", "Graphics.Pipeline",
+        perfetto::Flow::Global(client_frame_trace_id),
+        [client_frame_trace_id](perfetto::EventContext ctx) {
+          auto* event = ctx.event<perfetto::protos::pbzero::ChromeTrackEvent>();
+          auto* data = event->set_chrome_graphics_pipeline();
+          data->set_step(perfetto::protos::pbzero::ChromeGraphicsPipeline::
+                             StepName::STEP_EXO_DISCARD_COMPOSITOR_FRAME);
+          data->set_display_trace_id(client_frame_trace_id);
+        });
+  }
   cached_frame_.reset();
-
-  frame_timing_history_->FrameDiscarded();
 }
 
 void LayerTreeFrameSinkHolder::SendDiscardedFrameNotifications(
@@ -410,7 +399,7 @@ void LayerTreeFrameSinkHolder::StopProcessingPendingFrames() {
 }
 
 void LayerTreeFrameSinkHolder::OnSendDeadlineExpired(bool update_timer) {
-  DCHECK(!is_lost_ && reactive_frame_submission_);
+  CHECK(!is_lost_);
 
   if (pending_begin_frames_.empty()) {
     return;
@@ -426,19 +415,19 @@ void LayerTreeFrameSinkHolder::OnSendDeadlineExpired(bool update_timer) {
     frame_sink_->DidNotProduceFrame(pending_begin_frame.begin_frame_ack,
                                     cc::FrameSkippedReason::kNoDamage);
 
-    pending_begin_frames_.pop();
+    if (frame_timing_history_) {
+      frame_timing_history_->FrameDidNotProduce(
+          pending_begin_frame.begin_frame_ack.frame_id);
+    }
 
-    frame_timing_history_->FrameDidNotProduce();
+    pending_begin_frames_.pop();
 
     bool should_pause_begin_frame =
         frame_sink_->auto_needs_begin_frame() &&
-        frame_timing_history_->consecutive_did_not_produce_count() >=
-            kPauseBeginFrameThreshold;
-
-    if (!pending_begin_frames_.empty() || should_pause_begin_frame) {
-      frame_timing_history_->MayRecordDidNotProduceToFrameArrvial(
-          /*valid=*/false);
-    }
+        (frame_timing_history_
+             ? (frame_timing_history_->consecutive_did_not_produce_count() >=
+                kPauseBeginFrameThreshold)
+             : false);
 
     if (should_pause_begin_frame) {
       ObserveBeginFrameSource(false);
@@ -470,23 +459,42 @@ void LayerTreeFrameSinkHolder::UpdateSubmitFrameTimer() {
 
 void LayerTreeFrameSinkHolder::ProcessFirstPendingBeginFrame(
     viz::CompositorFrame* frame) {
+  // The client-side frame trace ID, if available, is temporarily stored in
+  // the frame's BeginFrameAck struct. Extract it before populating
+  // BeginFrameAck.
+  const int64_t client_frame_trace_id =
+      frame->metadata.begin_frame_ack.trace_id;
+
   // If there are not-yet-handled BeginFrames requests from the remote side,
   // use `frame` as response to the earliest one.
   if (!pending_begin_frames_.empty()) {
     frame->metadata.begin_frame_ack =
         pending_begin_frames_.front().begin_frame_ack;
     pending_begin_frames_.pop();
-    return;
+  } else {
+    // Submit an unsolicited frame.
+    frame->metadata.begin_frame_ack =
+        viz::BeginFrameAck::CreateManualAckWithDamage();
   }
 
-  // Submit an unsolicited frame.
-  frame->metadata.begin_frame_ack =
-      viz::BeginFrameAck::CreateManualAckWithDamage();
+  if (client_frame_trace_id != -1) {
+    // Use both the ID from the client-side frame submission and the ID from the
+    // BeginFrame request to connect the two flows.
+    TRACE_EVENT_INSTANT(
+        "viz,benchmark,graphics.pipeline", "Graphics.Pipeline",
+        perfetto::Flow::Global(client_frame_trace_id),
+        perfetto::Flow::Global(frame->metadata.begin_frame_ack.trace_id),
+        [client_frame_trace_id](perfetto::EventContext ctx) {
+          auto* event = ctx.event<perfetto::protos::pbzero::ChromeTrackEvent>();
+          auto* data = event->set_chrome_graphics_pipeline();
+          data->set_step(perfetto::protos::pbzero::ChromeGraphicsPipeline::
+                             StepName::STEP_EXO_SUBMIT_COMPOSITOR_FRAME);
+          data->set_display_trace_id(client_frame_trace_id);
+        });
+  }
 }
 
 bool LayerTreeFrameSinkHolder::ShouldSubmitFrameNow() const {
-  DCHECK(reactive_frame_submission_);
-
   return (!pending_begin_frames_.empty() || UnsolicitedFrameAllowed()) &&
          pending_submit_frames_ == 0;
 }
@@ -512,8 +520,6 @@ void LayerTreeFrameSinkHolder::ObserveBeginFrameSource(bool start) {
 }
 
 bool LayerTreeFrameSinkHolder::UnsolicitedFrameAllowed() const {
-  DCHECK(reactive_frame_submission_);
-
   // `frame_sink_->needs_begin_frames()` being false means the remote side is
   // currently not configured to send us BeginFrames. In this case, an
   // unsolicited frame should be allowed.

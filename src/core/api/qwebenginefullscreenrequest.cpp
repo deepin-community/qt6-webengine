@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "qwebenginefullscreenrequest.h"
 
@@ -33,7 +34,7 @@ QT_BEGIN_NAMESPACE
     the user wants to leave the full screen mode (that is, through the
     QWebEnginePage::ExitFullScreen context menu action). In this case,
     toggleOn() will return \c false, and the signal handler again needs to
-    accept() or reject() the request. If it is accepted, the applicaton needs to
+    accept() or reject() the request. If it is accepted, the application needs to
     make sure that the global window state is restored.
 */
 
@@ -66,6 +67,9 @@ public:
 
 QWebEngineFullScreenRequest::QWebEngineFullScreenRequest(const QUrl &origin, bool toggleOn, const std::function<void (bool)> &setFullScreenCallback)
     : d_ptr(new QWebEngineFullScreenRequestPrivate(origin, toggleOn, setFullScreenCallback)) { }
+
+QWebEngineFullScreenRequest::QWebEngineFullScreenRequest()
+    : d_ptr(new QWebEngineFullScreenRequestPrivate(QUrl(), false, {})) { }
 
 QWebEngineFullScreenRequest::QWebEngineFullScreenRequest(const QWebEngineFullScreenRequest &other) = default;
 QWebEngineFullScreenRequest& QWebEngineFullScreenRequest::operator=(const QWebEngineFullScreenRequest &other) = default;

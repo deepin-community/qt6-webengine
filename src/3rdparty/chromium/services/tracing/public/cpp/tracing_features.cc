@@ -20,6 +20,14 @@
 
 namespace features {
 
+namespace {
+
+BASE_FEATURE(kPerfettoBackendParams,
+             "kPerfettoBackendParams",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+}  // namespace
+
 // Runs the tracing service as an in-process browser service.
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CASTOS)
 BASE_FEATURE(kTracingServiceInProcess,
@@ -34,13 +42,32 @@ BASE_FEATURE(kTracingServiceInProcess,
 #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_FUCHSIA)
 BASE_FEATURE(kEnablePerfettoSystemTracing,
              "EnablePerfettoSystemTracing",
-             // TODO(crbug.com/1364196): Read from structured config on Fuchsia.
-             base::FEATURE_ENABLED_BY_DEFAULT);
+             // TODO(crbug.com/42050521): Read from structured config on Fuchsia.
+             base::FEATURE_ENABLED_BY_DEFAULT
 #else
 BASE_FEATURE(kEnablePerfettoSystemTracing,
              "EnablePerfettoSystemTracing",
              base::FEATURE_DISABLED_BY_DEFAULT);
 #endif
+
+BASE_FEATURE(kEnablePerfettoSystemBackgroundTracing,
+             "EnablePerfettoSystemBackgroundTracing",
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Controls the preferred size of each page in the shmem buffer.
+BASE_FEATURE_PARAM(int,
+                   kPerfettoSMBPageSizeBytes,
+                   &kPerfettoBackendParams,
+                   "page_size_bytes",
+                   tracing::kDefaultSMBPageSizeBytes);
+
+// Controls the size of the shared memory buffer between the current process and
+// the service backend(s)
+BASE_FEATURE_PARAM(int,
+                   kPerfettoSharedMemorySizeBytes,
+                   &kPerfettoBackendParams,
+                   "shared_memory_size_bytes",
+                   tracing::kDefaultSharedMemorySizeBytes);
 
 }  // namespace features
 
@@ -57,6 +84,12 @@ bool ShouldSetupSystemTracing() {
   }
   return features::kEnablePerfettoSystemTracing.default_state ==
          base::FEATURE_ENABLED_BY_DEFAULT;
+}
+
+bool SystemBackgroundTracingEnabled() {
+  return ShouldSetupSystemTracing() &&
+         base::FeatureList::IsEnabled(
+             features::kEnablePerfettoSystemBackgroundTracing);
 }
 
 }  // namespace tracing

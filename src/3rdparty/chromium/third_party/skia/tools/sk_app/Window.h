@@ -14,23 +14,24 @@
 #include "tools/skui/InputState.h"
 #include "tools/skui/Key.h"
 #include "tools/skui/ModifierKey.h"
-#include "tools/window/DisplayParams.h"
 
 #include <functional>
+#include <memory>
 
 class GrDirectContext;
 class SkCanvas;
+class SkRecorder;
+class SkString;
 class SkSurface;
 class SkSurfaceProps;
-class SkString;
 
 namespace skgpu::graphite {
 class Context;
+class Recorder;
 }
 
-using skwindow::DisplayParams;
-
 namespace skwindow {
+class DisplayParams;
 class WindowContext;
 }
 
@@ -38,8 +39,6 @@ namespace sk_app {
 
 class Window {
 public:
-    static Window* CreateNativeWindow(void* platformData);
-
     virtual ~Window();
 
     virtual void setTitle(const char*) = 0;
@@ -60,38 +59,15 @@ public:
     virtual bool scaleContentToFit() const { return false; }
 
     enum BackendType {
-#ifdef SK_GL
         kNativeGL_BackendType,
-#endif
-#if SK_ANGLE && (defined(SK_BUILD_FOR_WIN) || defined(SK_BUILD_FOR_MAC))
         kANGLE_BackendType,
-#endif
-#ifdef SK_DAWN
-#if defined(SK_GRAPHITE)
         kGraphiteDawn_BackendType,
-#endif
-#endif
-#ifdef SK_VULKAN
         kVulkan_BackendType,
-#if defined(SK_GRAPHITE)
         kGraphiteVulkan_BackendType,
-#endif
-#endif
-#ifdef SK_METAL
         kMetal_BackendType,
-#if defined(SK_GRAPHITE)
         kGraphiteMetal_BackendType,
-#endif
-#endif
-#ifdef SK_DIRECT3D
         kDirect3D_BackendType,
-#endif
         kRaster_BackendType,
-
-        kLast_BackendType = kRaster_BackendType
-    };
-    enum {
-        kBackendTypeCount = kLast_BackendType + 1
     };
 
     virtual bool attach(BackendType) = 0;
@@ -151,8 +127,11 @@ public:
     int height() const;
     virtual float scaleFactor() const { return 1.0f; }
 
-    virtual const DisplayParams& getRequestedDisplayParams() { return fRequestedDisplayParams; }
-    virtual void setRequestedDisplayParams(const DisplayParams&, bool allowReattach = true);
+    const skwindow::DisplayParams* getRequestedDisplayParams() {
+        return fRequestedDisplayParams.get();
+    }
+    virtual void setRequestedDisplayParams(std::unique_ptr<const skwindow::DisplayParams>,
+                                           bool allowReattach = true);
 
     // Actual parameters in effect, obtained from the native window.
     int sampleCount() const;
@@ -161,13 +140,24 @@ public:
     // Returns null if there is not a GPU backend or if the backend is not yet created.
     GrDirectContext* directContext() const;
     skgpu::graphite::Context* graphiteContext() const;
+    skgpu::graphite::Recorder* graphiteRecorder() const;
+    SkRecorder* baseRecorder() const;
+
+    using GpuTimerCallback = std::function<void(uint64_t ns)>;
+
+    // Does the backend of this window support GPU timers (for use with submitToGpu)?
+    bool supportsGpuTimer() const;
+
+    // Will snap a Recording and submit to the Context if using Graphite or flush and submit
+    // if using Ganesh.
+    void submitToGpu(GpuTimerCallback = {});
 
 protected:
     Window();
 
-    SkTDArray<Layer*>      fLayers;
-    DisplayParams          fRequestedDisplayParams;
-    bool                   fIsActive = true;
+    SkTDArray<Layer*> fLayers;
+    std::unique_ptr<const skwindow::DisplayParams> fRequestedDisplayParams;
+    bool fIsActive = true;
 
     std::unique_ptr<skwindow::WindowContext> fWindowContext;
 
@@ -181,6 +171,10 @@ protected:
     void visitLayers(const std::function<void(Layer*)>& visitor);
     bool signalLayers(const std::function<bool(Layer*)>& visitor);
 };
+
+namespace Windows {
+Window* CreateNativeWindow(void* platformData);
+}
 
 }   // namespace sk_app
 #endif

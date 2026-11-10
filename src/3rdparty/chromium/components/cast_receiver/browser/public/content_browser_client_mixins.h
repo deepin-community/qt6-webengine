@@ -11,6 +11,8 @@
 
 #include "base/functional/callback.h"
 #include "components/cast_receiver/browser/runtime_application_dispatcher_impl.h"
+#include "content/public/browser/frame_tree_node_id.h"
+#include "services/network/public/cpp/network_context_getter.h"
 
 namespace blink {
 class URLLoaderThrottle;
@@ -20,15 +22,10 @@ namespace content {
 class WebContents;
 }  // namespace content
 
-namespace network::mojom {
-class NetworkContext;
-}  // namespace network::mojom
-
 namespace cast_receiver {
 
 class ApplicationClient;
 class ApplicationStateObserver;
-class StreamingResolutionObserver;
 
 // This class is responsible for providing all factory methods required for
 // creating the classes responsible for management and control of cast
@@ -40,10 +37,8 @@ class ContentBrowserClientMixins {
   // The NetworkContext to use with the cast_streaming component for network
   // access to implement the Cast Streaming receiver. This NetworkContext is
   // eventually passed to the Open Screen library platform implementation.
-  using NetworkContextGetter =
-      base::RepeatingCallback<network::mojom::NetworkContext*()>;
   static std::unique_ptr<ContentBrowserClientMixins> Create(
-      NetworkContextGetter network_context_getter);
+      network::NetworkContextGetter network_context_getter);
 
   virtual ~ContentBrowserClientMixins() = default;
 
@@ -57,17 +52,6 @@ class ContentBrowserClientMixins {
   virtual void RemoveApplicationStateObserver(
       ApplicationStateObserver* observer) = 0;
 
-  // Adds or removes a StreamingResolutionObserver. |observer| must not yet have
-  // been added, must be non-null, and is expected to remain valid for the
-  // duration of this instance's lifetime or until the associated Remove method
-  // below is called for a call to AddStreamingResolutionObserver(), and must
-  // have been previously added for a call to
-  // RemoveStreamingResolutionObserver().
-  virtual void AddStreamingResolutionObserver(
-      StreamingResolutionObserver* observer) = 0;
-  virtual void RemoveStreamingResolutionObserver(
-      StreamingResolutionObserver* observer) = 0;
-
   // To be called for every new WebContents creation.
   virtual void OnWebContentsCreated(content::WebContents* web_contents) = 0;
 
@@ -77,7 +61,7 @@ class ContentBrowserClientMixins {
   virtual std::vector<std::unique_ptr<blink::URLLoaderThrottle>>
   CreateURLLoaderThrottles(
       const base::RepeatingCallback<content::WebContents*()>& wc_getter,
-      int frame_tree_node_id,
+      content::FrameTreeNodeId frame_tree_node_id,
       CorsExemptHeaderCallback is_cors_exempt_header_cb) = 0;
 
   // Creates a new RuntimeApplicationDispatcher.

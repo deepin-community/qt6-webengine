@@ -47,37 +47,25 @@
 #include "common/mac/dump_syms.h"
 #include "common/mac/arch_utilities.h"
 #include "common/mac/macho_utilities.h"
-#include "common/scoped_ptr.h"
 
 using google_breakpad::DumpSymbols;
 using google_breakpad::Module;
-using google_breakpad::scoped_ptr;
 using std::vector;
 
 struct Options {
-  Options()
-      : srcPath(),
-        dsymPath(),
-        arch(),
-        header_only(false),
-        cfi(true),
-        handle_inter_cu_refs(true),
-        handle_inlines(false),
-        enable_multiple(false),
-        module_name(),
-        prefer_extern_name(false) {}
+  Options() = default;
 
   string srcPath;
   string dsymPath;
   std::optional<ArchInfo> arch;
-  bool header_only;
-  bool cfi;
-  bool handle_inter_cu_refs;
-  bool handle_inlines;
-  bool enable_multiple;
+  bool header_only = false;
+  bool cfi = true;
+  bool handle_inter_cu_refs = true;
+  bool handle_inlines = false;
+  bool enable_multiple = false;
   string module_name;
-  bool prefer_extern_name;
-  bool report_warnings;
+  bool prefer_extern_name = false;
+  bool report_warnings = false;
 };
 
 static bool StackFrameEntryComparator(const Module::StackFrameEntry* a,
@@ -184,10 +172,10 @@ static bool Start(const Options& options) {
     return dump_symbols.WriteSymbolFileHeader(std::cout);
 
   // Read the primary file into a Breakpad Module.
-  Module* module = NULL;
+  Module* module = nullptr;
   if (!dump_symbols.ReadSymbolData(&module))
     return false;
-  scoped_ptr<Module> scoped_module(module);
+  std::unique_ptr<Module> scoped_module(module);
 
   // If this is a split module, read the secondary Mach-O file, from which the
   // CFI data will be extracted.
@@ -199,10 +187,10 @@ static bool Start(const Options& options) {
         !SetArchitecture(dump_symbols, *options.arch, options.srcPath)) {
       return false;
     }
-    Module* cfi_module = NULL;
+    Module* cfi_module = nullptr;
     if (!dump_symbols.ReadSymbolData(&cfi_module))
       return false;
-    scoped_ptr<Module> scoped_cfi_module(cfi_module);
+    std::unique_ptr<Module> scoped_cfi_module(cfi_module);
 
     bool name_matches;
     if (!options.module_name.empty()) {

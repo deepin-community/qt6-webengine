@@ -14,7 +14,6 @@
 #endif
 
 #include <sched.h>
-#include <sys/hwprobe.h>
 
 #include <cpuinfo/log.h>
 #include <riscv/api.h>
@@ -113,7 +112,7 @@ void cpuinfo_riscv_linux_decode_vendor_uarch_from_hwprobe(
 	 *
 	 * for more details.
 	 */
-	int ret = syscall(NR_riscv_hwprobe, pairs, pairs_count, cpu_set_size, (unsigned long*)cpu_set, 0 /* flags */);
+	int ret = syscall(NR_riscv_hwprobe, pairs, pairs_count, cpu_set_size, cpu_set, 0 /* flags */);
 #else
 	int ret = __riscv_hwprobe(pairs, pairs_count, cpu_set_size, (unsigned long*)cpu_set, 0 /* flags */);
 #endif

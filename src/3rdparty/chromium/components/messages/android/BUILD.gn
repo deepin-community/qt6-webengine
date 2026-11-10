@@ -23,7 +23,9 @@ android_library("java") {
   resources_package = "org.chromium.components.messages"
 
   deps = [
+    ":feature_flags_jni_headers_java",
     ":java_resources",
+    ":jni_headers_java",
     "//base:base_java",
     "//build/android:build_java",
     "//components/browser_ui/banners/android:java",
@@ -36,10 +38,7 @@ android_library("java") {
     "//ui/android:ui_java",
   ]
 
-  srcjar_deps = [
-    ":jni_headers",
-    ":message_enums_java",
-  ]
+  srcjar_deps = [ ":message_enums_java" ]
 }
 
 android_library("unit_device_javatests") {
@@ -54,7 +53,7 @@ android_library("unit_device_javatests") {
     "//content/public/test/android:content_java_test_support",
     "//third_party/androidx:androidx_core_core_java",
     "//third_party/androidx:androidx_test_runner_java",
-    "//third_party/junit:junit",
+    "//third_party/junit",
     "//third_party/mockito:mockito_java",
     "//ui/android:ui_java_test_support",
   ]
@@ -72,9 +71,13 @@ android_resources("java_resources") {
 generate_jni("jni_headers") {
   sources = [
     "java/src/org/chromium/components/messages/MessageDispatcherBridge.java",
-    "java/src/org/chromium/components/messages/MessageFeatureMap.java",
     "java/src/org/chromium/components/messages/MessageWrapper.java",
   ]
+}
+
+generate_jni("feature_flags_jni_headers") {
+  sources =
+      [ "java/src/org/chromium/components/messages/MessageFeatureMap.java" ]
 }
 
 static_library("android") {
@@ -84,13 +87,11 @@ static_library("android") {
     "message_enums.h",
     "message_wrapper.cc",
     "message_wrapper.h",
-    "throttler/domain_session_throttler.cc",
-    "throttler/domain_session_throttler.h",
   ]
   deps = [
     ":jni_headers",
     "//content/public/browser",
-    "//ui/android:android",
+    "//ui/android",
   ]
 
   public_deps = [
@@ -157,7 +158,7 @@ static_library("feature_flags") {
   ]
   deps = [
     "//base",
-    "//components/messages/android:jni_headers",
+    "//components/messages/android:feature_flags_jni_headers",
   ]
 }
 
@@ -166,6 +167,7 @@ robolectric_library("junit") {
       [ "java/src/org/chromium/components/messages/MessageWrapperTest.java" ]
   deps = [
     ":java",
+    ":jni_headers_java",
     "//base:base_java",
     "//base:base_java_test_support",
     "//base:base_junit_test_support",

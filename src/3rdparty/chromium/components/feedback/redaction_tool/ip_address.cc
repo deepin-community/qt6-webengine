@@ -11,12 +11,12 @@
 
 #include <algorithm>
 #include <climits>
+#include <string_view>
 
 #include "base/check_op.h"
+#include "base/compiler_specific.h"
 #include "base/notreached.h"
-#include "base/ranges/algorithm.h"
 #include "base/strings/strcat.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/memory_usage_estimator.h"
@@ -42,7 +42,7 @@ bool IPAddressPrefixCheck(const IPAddressBytes& ip_address,
   // Compare all the bytes that fall entirely within the prefix.
   size_t num_entire_bytes_in_prefix = prefix_length_in_bits / 8;
   for (size_t i = 0; i < num_entire_bytes_in_prefix; ++i) {
-    if (ip_address[i] != ip_prefix[i]) {
+    if (ip_address[i] != UNSAFE_TODO(ip_prefix[i])) {
       return false;
     }
   }
@@ -53,18 +53,17 @@ bool IPAddressPrefixCheck(const IPAddressBytes& ip_address,
   if (remaining_bits != 0) {
     uint8_t mask = 0xFF << (8 - remaining_bits);
     size_t i = num_entire_bytes_in_prefix;
-    if ((ip_address[i] & mask) != (ip_prefix[i] & mask)) {
+    if ((ip_address[i] & mask) != (UNSAFE_TODO(ip_prefix[i]) & mask)) {
       return false;
     }
   }
   return true;
 }
 
-bool ParseIPLiteralToBytes(base::StringPiece ip_literal,
-                           IPAddressBytes* bytes) {
+bool ParseIPLiteralToBytes(std::string_view ip_literal, IPAddressBytes* bytes) {
   // |ip_literal| could be either an IPv4 or an IPv6 literal. If it contains
   // a colon however, it must be an IPv6 address.
-  if (ip_literal.find(':') != base::StringPiece::npos) {
+  if (ip_literal.find(':') != std::string_view::npos) {
     // GURL expects IPv6 hostnames to be surrounded with brackets.
     std::string host_brackets = base::StrCat({"[", ip_literal, "]"});
     Component host_comp(0, host_brackets.size());
@@ -109,11 +108,7 @@ bool IPAddressBytes::operator<(const IPAddressBytes& other) const {
 }
 
 bool IPAddressBytes::operator==(const IPAddressBytes& other) const {
-  return base::ranges::equal(*this, other);
-}
-
-bool IPAddressBytes::operator!=(const IPAddressBytes& other) const {
-  return !(*this == other);
+  return std::ranges::equal(*this, other);
 }
 
 // static
@@ -186,7 +181,7 @@ bool IPAddress::IsIPv4MappedIPv6() const {
   return IsIPv6() && IPAddressStartsWith(*this, kIPv4MappedPrefix);
 }
 
-bool IPAddress::AssignFromIPLiteral(base::StringPiece ip_literal) {
+bool IPAddress::AssignFromIPLiteral(std::string_view ip_literal) {
   bool success = ParseIPLiteralToBytes(ip_literal, &ip_address_);
   if (!success) {
     ip_address_.Resize(0);
@@ -212,14 +207,6 @@ IPAddress IPAddress::IPv4AllZeros() {
 // static
 IPAddress IPAddress::IPv6AllZeros() {
   return AllZeros(kIPv6AddressSize);
-}
-
-bool IPAddress::operator==(const IPAddress& that) const {
-  return ip_address_ == that.ip_address_;
-}
-
-bool IPAddress::operator!=(const IPAddress& that) const {
-  return ip_address_ != that.ip_address_;
 }
 
 bool IPAddress::operator<(const IPAddress& that) const {
@@ -260,9 +247,10 @@ IPAddress ConvertIPv4MappedIPv6ToIPv4(const IPAddress& address) {
   DCHECK(address.IsIPv4MappedIPv6());
 
   absl::InlinedVector<uint8_t, 16> bytes;
-  bytes.insert(bytes.end(),
-               address.bytes().begin() + std::size(kIPv4MappedPrefix),
-               address.bytes().end());
+  bytes.insert(
+      bytes.end(),
+      UNSAFE_TODO(address.bytes().begin() + std::size(kIPv4MappedPrefix)),
+      address.bytes().end());
   return IPAddress(bytes.data(), bytes.size());
 }
 

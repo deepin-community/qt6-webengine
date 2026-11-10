@@ -17,7 +17,13 @@
 // It runs each micro-benchmark fuzz test in a child process and measures the
 // time and number of iterations it takes to find the exit condition.
 
-#include <filesystem>
+#include <sys/types.h>
+#include <unistd.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>  // NOLINT
+#include <iostream>
 #include <string>
 #include <vector>
 
@@ -35,8 +41,8 @@
 #include "./fuzztest/internal/subprocess.h"
 #include "re2/re2.h"
 
-// Mimic the open source google benchmark flags in order to work with benchmark
-// driver tools.
+// Mimic the open source google benchmark flags in order to work with
+// benchmark driver tools.
 ABSL_FLAG(std::string, benchmark_filter, "", "");
 ABSL_FLAG(bool, benchmark_list_tests, false, "");
 ABSL_FLAG(std::string, benchmark_format, "", "");
@@ -105,11 +111,11 @@ uint64_t ExtractNumber(absl::string_view output, absl::string_view name) {
 // We might want to pass a richer format later.
 Stats ParseStats(absl::string_view output) {
   return {
-      .nanos = ExtractTime(output),
-      .runs = ExtractNumber(output, "Total runs"),
-      .edges_covered = ExtractNumber(output, "Edges covered"),
-      .total_edges = ExtractNumber(output, "Total edges"),
-      .corpus_size = ExtractNumber(output, "Corpus size"),
+      /*nanos=*/ExtractTime(output),
+      /*runs=*/ExtractNumber(output, "Total runs"),
+      /*edges_covered=*/ExtractNumber(output, "Edges covered"),
+      /*total_edges=*/ExtractNumber(output, "Total edges"),
+      /*corpus_size=*/ExtractNumber(output, "Corpus size"),
   };
 }
 

@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/f16-vmulcaddc/fma3.c.in
 //   Generator: tools/xngen
@@ -8,23 +9,27 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
-
+#include <stddef.h>
+#include <stdint.h>
+    
 #include <immintrin.h>
 
-#include <xnnpack/intrinsics-polyfill.h>
-#include <xnnpack/math.h>
-#include <xnnpack/vmulcaddc.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/intrinsics-polyfill.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/microparams.h"
+#include "src/xnnpack/vmulcaddc.h"
 
 
 void xnn_f16_vmulcaddc_minmax_ukernel_c16__fma3_2x(
     size_t rows,
     size_t channels,
-    const void* restrict input,
+    const xnn_float16* restrict input,
     size_t input_stride,
-    const void* restrict weights,
-    void* restrict output,
+    const xnn_float16* restrict weights,
+    xnn_float16* restrict output,
     size_t output_stride,
-    const union xnn_f16_minmax_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    const struct xnn_f16_minmax_params* restrict params) XNN_OOB_READS
 {
   assert(rows != 0);
   assert(channels != 0);
@@ -38,8 +43,10 @@ void xnn_f16_vmulcaddc_minmax_ukernel_c16__fma3_2x(
   const size_t input_increment = input_stride * 2 - channels;
   const size_t output_increment = output_stride * 2 - channels;
 
-  const __m256 vmin = _mm256_load_ps(params->avx.min);
-  const __m256 vmax = _mm256_load_ps(params->avx.max);
+  const __m256 vmin = _mm256_cvtph_ps(_mm_set1_epi16(*(const uint16_t*) &params->scalar.min));
+  const __m256 vmax = _mm256_cvtph_ps(_mm_set1_epi16(*(const uint16_t*) &params->scalar.max));
+  XNN_FORCE_REALIZATION(vmin);
+  XNN_FORCE_REALIZATION(vmax);
   do {
     if XNN_UNPREDICTABLE(rows < 2) {
       i1 = i0;

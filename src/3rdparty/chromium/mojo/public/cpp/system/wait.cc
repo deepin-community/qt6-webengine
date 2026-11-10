@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/waitable_event.h"
@@ -132,7 +133,8 @@ MojoResult WaitMany(const Handle* handles,
     // successful. Otherwise balanced immediately below.
     contexts[i]->AddRef();
 
-    rv = MojoAddTrigger(trap.get().value(), handles[i].value(), signals[i],
+    rv = MojoAddTrigger(trap.get().value(), UNSAFE_TODO(handles[i]).value(),
+                        UNSAFE_TODO(signals[i]),
                         MOJO_TRIGGER_CONDITION_SIGNALS_SATISFIED,
                         contexts[i]->context_value(), nullptr);
     if (rv == MOJO_RESULT_INVALID_ARGUMENT) {
@@ -187,9 +189,10 @@ MojoResult WaitMany(const Handle* handles,
   if (signals_states) {
     for (size_t i = 0; i < num_handles; ++i) {
       if (i == index) {
-        signals_states[i] = ready_state;
+        UNSAFE_TODO(signals_states[i]) = ready_state;
       } else {
-        signals_states[i] = handles[i].QuerySignalsState();
+        UNSAFE_TODO(signals_states[i]) =
+            UNSAFE_TODO(handles[i]).QuerySignalsState();
       }
     }
   }

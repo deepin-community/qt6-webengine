@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 #include <optional>
+
+#include "base/debug/crash_logging.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/types/optional_util.h"
@@ -15,10 +17,14 @@
 #include "extensions/browser/api/messaging/message_service.h"
 #include "extensions/browser/bad_message.h"
 #include "extensions/browser/extension_util.h"
+#include "extensions/browser/process_map.h"
 #include "extensions/browser/script_injection_tracker.h"
+#include "extensions/common/constants.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/extension_features.h"
-#include "extensions/common/extension_messages.h"
 #include "extensions/common/trace_util.h"
+#include "ipc/constants.mojom.h"
+#include "url/origin_debug.h"
 
 using content::BrowserThread;
 using content::RenderProcessHost;
@@ -28,12 +34,53 @@ namespace extensions {
 
 namespace {
 
+// Returns true if `context` corresponds to a sandboxed extension frame. This
+// can only be true for extension *frames*: extension ServiceWorkers are never
+// sandboxed, since ServiceWorkers cannot be associated with an opaque origin,
+// and native contexts cannot be sandboxed since they do not originate from a
+// renderer process.
+bool IsPortContextSandboxed(RenderProcessHost& process,
+                            const PortContext& context) {
+  if (!context.is_for_render_frame()) {
+    return false;
+  }
+
+  content::RenderFrameHost* frame = content::RenderFrameHost::FromID(
+      process.GetDeprecatedID(), context.frame->routing_id);
+
+  if (!frame) {
+    // TODO(https://crbug.com/325410297): It should not be possible to reach
+    // this check when `context.is_for_render_frame()` is true, and yet there's
+    // no corresponding RenderFrameHost, since a PortContext for frames is
+    // always created with a non-null RenderFrameHost (e.g., in
+    // ExtensionFrameHost::OpenChannelToExtension()). Ensure there are no
+    // unexpected reports of this and then remove the early return here and also
+    // in IsValidSourceUrl().
+    DUMP_WILL_BE_NOTREACHED();
+    return false;
+  }
+
+  if (!frame->HasPolicyContainerHost()) {
+    // If the WebContents has not fully initialized the RenderFrameHost yet.
+    // TODO(crbug.com/346386726): Remove the HasPolicyContainerHost() call once
+    // RenderFrameHost initialization order is fixed.
+    SCOPED_CRASH_KEY_NUMBER("EMF_INVALID_RFH", "lifecycle_state",
+                            static_cast<size_t>(frame->GetLifecycleState()));
+    DUMP_WILL_BE_NOTREACHED();
+    return false;
+  }
+
+  return frame->IsSandboxed(network::mojom::WebSandboxFlags::kOrigin);
+}
+
 // Returns true if `source_endpoint` can be legitimately claimed/used by
 // `process`.  Otherwise reports a bad IPC message and returns false (expecting
 // the caller to not take any action based on the rejected, untrustworthy
-// `source_endpoint`).
+// `source_endpoint`). `source_context` provides additional information about
+// the source, such as whether it refers to a frame or a worker.
 bool IsValidMessagingSource(RenderProcessHost& process,
-                            const MessagingEndpoint& source_endpoint) {
+                            const MessagingEndpoint& source_endpoint,
+                            const PortContext& source_context) {
   switch (source_endpoint.type) {
     case MessagingEndpoint::Type::kNativeApp:
       // Requests for channels initiated by native applications don't originate
@@ -56,7 +103,8 @@ bool IsValidMessagingSource(RenderProcessHost& process,
         return false;
       }
       if (!util::CanRendererHostExtensionOrigin(
-              process.GetID(), source_endpoint.extension_id.value())) {
+              process.GetDeprecatedID(), source_endpoint.extension_id.value(),
+              IsPortContextSandboxed(process, source_context))) {
         bad_message::ReceivedBadMessage(
             &process,
             bad_message::EMF_INVALID_EXTENSION_ID_FOR_EXTENSION_SOURCE);
@@ -155,8 +203,9 @@ bool IsValidSourceContext(RenderProcessHost& process,
     // exists using ProcessManager::HasServiceWorker) might incorrectly return
     // false=invalid-IPC for IPCs from workers that were recently torn down /
     // made inactive.
-    if (!util::CanRendererHostExtensionOrigin(process.GetID(),
-                                              worker_context.extension_id)) {
+    if (!util::CanRendererHostExtensionOrigin(
+            process.GetDeprecatedID(), worker_context.extension_id,
+            IsPortContextSandboxed(process, source_context))) {
       bad_message::ReceivedBadMessage(
           &process, bad_message::EMF_INVALID_EXTENSION_ID_FOR_WORKER_CONTEXT);
       return false;
@@ -182,15 +231,10 @@ bool IsValidSourceContext(RenderProcessHost& process,
 bool IsValidSourceUrl(content::RenderProcessHost& process,
                       const GURL& source_url,
                       const PortContext& source_context) {
-  if (!base::FeatureList::IsEnabled(
-          extensions_features::kExtensionSourceUrlEnforcement)) {
-    return true;
-  }
-
   // Some scenarios may end up with an empty `source_url` (e.g. this may have
   // been triggered by the ExtensionApiTabTest.TabConnect test).
   //
-  // TODO(https://crbug.com/1370079): Remove this workaround once the bug is
+  // TODO(crbug.com/40240882): Remove this workaround once the bug is
   // fixed.
   if (source_url.is_empty()) {
     return true;
@@ -208,7 +252,7 @@ bool IsValidSourceUrl(content::RenderProcessHost& process,
   url::Origin base_origin;
   if (source_context.is_for_render_frame()) {
     content::RenderFrameHost* frame = content::RenderFrameHost::FromID(
-        process.GetID(), source_context.frame->routing_id);
+        process.GetDeprecatedID(), source_context.frame->routing_id);
     if (!frame) {
       // Not calling ReceivedBadMessage because it is possible that the frame
       // got deleted before the IPC arrived.
@@ -216,19 +260,6 @@ bool IsValidSourceUrl(content::RenderProcessHost& process,
       // is okay, because sending of the IPC was inherently racing with the
       // deletion of the frame.
       return false;
-    }
-
-    if (frame->GetLastCommittedURL() == source_url) {
-      // If the trustworthy, browser-side URL matches `source_url` from the IPC
-      // payload, then report that the IPC is valid.  If the URLs don't match
-      // then we can't assume that the IPC is malformed and `return false`,
-      // because the renderer-side and browser-side URLs may differ in some
-      // scenarios (e.g. see https://crbug.com/1197308 or `document.write`).  In
-      // such scenarios we want to fall back to `base_origin`-based /
-      // `source_url_origin``-based checks, but these checks are not 100%
-      // correct (see https://crbug.com/1449796), so `GetLastCommittedURL` is
-      // consulted first.
-      return true;
     }
 
     base_origin = frame->GetLastCommittedOrigin();
@@ -254,16 +285,52 @@ bool IsValidSourceUrl(content::RenderProcessHost& process,
     return false;
   }
 
-  // Verify `source_url` via CanAccessDataForOrigin.
+  url::SchemeHostPort precursor_origin =
+      base_origin.GetTupleOrPrecursorTupleIfOpaque();
+  if (precursor_origin.scheme() == kExtensionScheme &&
+      !ProcessMap::Get(process.GetBrowserContext())
+           ->Contains(precursor_origin.host(), process.GetID().value())) {
+    // The process isn't in the extension process map. This is legitimately
+    // possible for extension frames that are marked as sandboxed in their
+    // manifests. However, these frames do *not* have access to extension APIs,
+    // including messaging. As such, we consider this an invalid messaging
+    // attempt and kill the renderer.
+    bad_message::ReceivedBadMessage(
+        &process, bad_message::EMF_INVALID_MESSAGE_FROM_SANDBOXED_PROCESS);
+    return false;
+  }
+
+  // Verify `source_url` via ChildProcessSecurityPolicy::HostsOrigin.
   //
-  // TODO(https://crbug.com/1449796): Stop partially/not-100%-correctly
+  // TODO(crbug.com/40915015): Stop partially/not-100%-correctly
   // replicating checks from `RenderFrameHostImpl::CanCommitOriginAndUrl`.
   // The code below correctly handles URLs like `about:blank`, but may diverge
   // from //content checks in some cases (e.g. WebUI checks are not replicated
   // here;  MHTML divergence is avoided via GetLastCommittedURL() check above).
+  //
+  // Potentially scary: url::Origin::Resolve() will return the origin of
+  // `source_url` (and completely ignore `base_origin`) if `source_url` is a
+  // URL with a normal scheme (e.g., http[s] or chrome-extension). Thus, the
+  // `source_url_origin` is essentially renderer-controlled at this point. This
+  // is okay because:
+  // 1) We use this to check if the process can host the origin below, so if the
+  //    renderer indicated it was an origin it's not allowed to host, we'll kill
+  //    the process.
+  // 2) The only scenario in which the renderer is allowed to host an origin
+  //    but we *wouldn't* allow a message to be sent from a context like this
+  //    for extension pages sandboxed through the manifest, and those are
+  //    checked above.
   url::Origin source_url_origin = url::Origin::Resolve(source_url, base_origin);
+
+  if (IsPortContextSandboxed(process, source_context)) {
+    // If `source_url` came from a sandboxed extension, convert the origin to
+    // an opaque origin, since HostsOrigin() enforces that sandboxed processes
+    // can only access opaque origins. Note that `source_url`'s origin will be
+    // maintained in the precursor and also validated by HostsOrigin().
+    source_url_origin = source_url_origin.DeriveNewOpaqueOrigin();
+  }
   auto* policy = content::ChildProcessSecurityPolicy::GetInstance();
-  if (!policy->CanAccessDataForOrigin(process.GetID(), source_url_origin)) {
+  if (!policy->HostsOrigin(process.GetDeprecatedID(), source_url_origin)) {
     SCOPED_CRASH_KEY_STRING256(
         "EMF_INVALID_SOURCE_URL", "base_origin",
         base_origin.GetDebugString(false /* include_nonce */));
@@ -336,7 +403,7 @@ std::optional<ExtensionId> ValidateSourceContextAndExtractExtensionId(
 
   if (source_context.is_for_render_frame()) {
     content::RenderFrameHost* frame = content::RenderFrameHost::FromID(
-        process.GetID(), source_context.frame->routing_id);
+        process.GetDeprecatedID(), source_context.frame->routing_id);
     if (!frame) {
       // Not calling ReceivedBadMessage because it is possible that the frame
       // got deleted before the IPC arrived.
@@ -392,7 +459,8 @@ void MessageService::OpenChannelToExtension(
   ScopedExternalConnectionInfoCrashKeys info_crash_keys(info);
   debug::ScopedPortContextCrashKeys port_context_crash_keys(
       source.port_context());
-  if (!IsValidMessagingSource(*process, info.source_endpoint) ||
+  if (!IsValidMessagingSource(*process, info.source_endpoint,
+                              source.port_context()) ||
       !IsValidMessagingTarget(*process, info.source_endpoint, info.target_id) ||
       !IsValidSourceUrl(*process, info.source_url, source.port_context()) ||
       !IsValidSourceContext(*process, source.port_context())) {
@@ -477,7 +545,7 @@ void MessageService::OpenPort(RenderProcessHost* process,
   if (!IsValidSourceContext(*process, source)) {
     return;
   }
-  OpenPortImpl(port_id, process->GetID(), source);
+  OpenPortImpl(port_id, process->GetDeprecatedID(), source);
 }
 
 void MessageService::ClosePort(RenderProcessHost* process,
@@ -495,12 +563,12 @@ void MessageService::ClosePort(RenderProcessHost* process,
   if (!IsValidSourceContext(*process, port_context)) {
     return;
   }
-  int routing_id =
-      port_context.frame ? port_context.frame->routing_id : MSG_ROUTING_NONE;
+  int routing_id = port_context.frame ? port_context.frame->routing_id
+                                      : IPC::mojom::kRoutingIdNone;
   int worker_thread_id =
       port_context.worker ? port_context.worker->thread_id : kMainThreadId;
-  ClosePortImpl(port_id, process->GetID(), routing_id, worker_thread_id,
-                force_close, std::string());
+  ClosePortImpl(port_id, process->GetDeprecatedID(), routing_id,
+                worker_thread_id, force_close, std::string());
 }
 
 void MessageService::NotifyResponsePending(RenderProcessHost* process,

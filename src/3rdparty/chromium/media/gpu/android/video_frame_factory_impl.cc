@@ -37,18 +37,14 @@ gpu::TextureOwner::Mode GetTextureOwnerMode(
   switch (overlay_mode) {
     case VideoFrameFactory::OverlayMode::kDontRequestPromotionHints:
     case VideoFrameFactory::OverlayMode::kRequestPromotionHints:
-      return features::IsAImageReaderEnabled()
-                 ? gpu::TextureOwner::Mode::kAImageReaderInsecure
-                 : gpu::TextureOwner::Mode::kSurfaceTextureInsecure;
+      return gpu::TextureOwner::Mode::kAImageReaderInsecure;
     case VideoFrameFactory::OverlayMode::kSurfaceControlSecure:
-      DCHECK(features::IsAImageReaderEnabled());
       return gpu::TextureOwner::Mode::kAImageReaderSecureSurfaceControl;
     case VideoFrameFactory::OverlayMode::kSurfaceControlInsecure:
-      DCHECK(features::IsAImageReaderEnabled());
       return gpu::TextureOwner::Mode::kAImageReaderInsecureSurfaceControl;
   }
 
-  NOTREACHED_NORETURN();
+  NOTREACHED();
 }
 
 // Run on the GPU main thread to allocate the texture owner, and return it
@@ -63,9 +59,9 @@ static void AllocateTextureOwnerOnGpuThread(
     return;
   }
 
-  std::move(init_cb).Run(
-      gpu::TextureOwner::Create(GetTextureOwnerMode(overlay_mode),
-                                shared_context_state, std::move(drdc_lock)));
+  std::move(init_cb).Run(gpu::TextureOwner::Create(
+      GetTextureOwnerMode(overlay_mode), shared_context_state,
+      std::move(drdc_lock), gpu::TextureOwnerCodecType::kMediaCodec));
 }
 
 }  // namespace
@@ -239,8 +235,6 @@ void VideoFrameFactoryImpl::CreateVideoFrame_OnImageReady(
   if (!thiz)
     return;
 
-  gfx::ColorSpace color_space = output_buffer_renderer->color_space();
-
   // Initialize the CodecImage to use this output buffer.  Note that we're not
   // on the gpu main thread here, but it's okay since CodecImage is not being
   // used at this point.  Alternatively, we could post it, or hand it off to the
@@ -260,18 +254,11 @@ void VideoFrameFactoryImpl::CreateVideoFrame_OnImageReady(
   // record before we move it into |completion_cb|.
   auto codec_image_holder = std::move(record.codec_image_holder);
 
-  gpu::MailboxHolder mailbox_holders[VideoFrame::kMaxPlanes];
-  mailbox_holders[0] = gpu::MailboxHolder(record.mailbox, gpu::SyncToken(),
-                                          GL_TEXTURE_EXTERNAL_OES);
-
-  auto frame = VideoFrame::WrapNativeTextures(
-      pixel_format, mailbox_holders, VideoFrame::ReleaseMailboxCB(),
-      frame_info.coded_size, frame_info.visible_rect, natural_size, timestamp);
-
-  // For Vulkan.
-  frame->set_ycbcr_info(frame_info.ycbcr_info);
-
-  frame->set_color_space(color_space);
+  gfx::ColorSpace color_space = record.shared_image->color_space();
+  scoped_refptr<VideoFrame> frame = VideoFrame::WrapSharedImage(
+      pixel_format, std::move(record.shared_image), gpu::SyncToken(),
+      VideoFrame::ReleaseMailboxCB(), frame_info.coded_size,
+      frame_info.visible_rect, natural_size, timestamp);
 
   // If, for some reason, we failed to create a frame, then fail.  Note that we
   // don't need to call |release_cb|; dropping it is okay since the api says so.
@@ -280,6 +267,11 @@ void VideoFrameFactoryImpl::CreateVideoFrame_OnImageReady(
     std::move(output_cb).Run(nullptr);
     return;
   }
+
+  // For Vulkan.
+  frame->set_ycbcr_info(frame_info.ycbcr_info);
+
+  frame->set_color_space(color_space);
 
   frame->metadata().copy_required = video_frame_copy_required;
 
@@ -302,7 +294,7 @@ void VideoFrameFactoryImpl::CreateVideoFrame_OnImageReady(
 
   frame->metadata().allow_overlay = allow_overlay;
   frame->metadata().wants_promotion_hint = wants_promotion_hints;
-  frame->metadata().texture_owner = is_texture_owner_backed;
+  frame->metadata().in_surface_view = !is_texture_owner_backed;
 
   // TODO(liberato): if this is run via being dropped, then it would be nice
   // to find that out rather than treating the image as unused.  If the renderer

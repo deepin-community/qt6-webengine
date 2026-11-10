@@ -8,35 +8,38 @@
 
 ### Android
 
+ * [android-brya-kano-i5-8gb-perf](https://ci.chromium.org/p/chrome/builders/ci/android-brya-kano-i5-8gb-perf): Brya SKU kano_12th_Gen_IntelR_CoreTM_i5_1235U_8GB.
+ * [android-corsola-steelix-8gb-perf](https://ci.chromium.org/p/chrome/builders/ci/android-corsola-steelix-8gb-perf): Corsola SKU steelix_MT8186_8GB.
  * [android-go-wembley-perf](https://ci.chromium.org/p/chrome/builders/ci/android-go-wembley-perf): Android U.
  * [android-go-wembley_webview-perf](https://ci.chromium.org/p/chrome/builders/ci/android-go-wembley_webview-perf): Android U.
- * [android-pixel2-perf](https://ci.chromium.org/p/chrome/builders/ci/android-pixel2-perf): Android OPM1.171019.021.
- * [android-pixel2-perf-calibration](https://ci.chromium.org/p/chrome/builders/ci/android-pixel2-perf-calibration): Android OPM1.171019.021.
- * [android-pixel2_webview-perf](https://ci.chromium.org/p/chrome/builders/ci/android-pixel2_webview-perf): Android OPM1.171019.021.
+ * [android-nissa-uldren-8gb-perf](https://ci.chromium.org/p/chrome/builders/ci/android-nissa-uldren-8gb-perf): Nissa SKU uldren_99C4LZ/Q1XT/6W_8GB.
+ * [android-pixel-fold-perf](https://ci.chromium.org/p/chrome/builders/ci/android-pixel-fold-perf): Android U.
+ * [android-pixel-tangor-perf](https://ci.chromium.org/p/chrome/builders/ci/android-pixel-tangor-perf): Android U.
  * [android-pixel4-perf](https://ci.chromium.org/p/chrome/builders/ci/android-pixel4-perf): Android R.
  * [android-pixel4_webview-perf](https://ci.chromium.org/p/chrome/builders/ci/android-pixel4_webview-perf): Android R.
- * [android-pixel6-perf](https://ci.chromium.org/p/chrome/builders/ci/android-pixel6-perf): Android T.
- * [android-pixel6-perf-pgo](https://ci.chromium.org/p/chrome/builders/ci/android-pixel6-perf-pgo): Android T.
+ * [android-pixel4_webview-perf-pgo](https://ci.chromium.org/p/chrome/builders/ci/android-pixel4_webview-perf-pgo): Android R.
+ * [android-pixel6-perf](https://ci.chromium.org/p/chrome/builders/ci/android-pixel6-perf): Android U.
+ * [android-pixel6-perf-pgo](https://ci.chromium.org/p/chrome/builders/ci/android-pixel6-perf-pgo): Android U.
  * [android-pixel6-pro-perf](https://ci.chromium.org/p/chrome/builders/ci/android-pixel6-pro-perf): Android T.
-
-### Chromeos
-
- * [lacros-eve-perf](https://ci.chromium.org/p/chrome/builders/ci/lacros-eve-perf).
- * [lacros-x86-perf](https://ci.chromium.org/p/chrome/builders/ci/lacros-x86-perf).
+ * [android-pixel9-perf](https://ci.chromium.org/p/chrome/builders/ci/android-pixel9-perf): Android B.
+ * [android-pixel9-pro-perf](https://ci.chromium.org/p/chrome/builders/ci/android-pixel9-pro-perf): Android B.
+ * [android-pixel9-pro-xl-perf](https://ci.chromium.org/p/chrome/builders/ci/android-pixel9-pro-xl-perf): Android B.
 
 ### Linux
 
- * [linux-perf](https://ci.chromium.org/p/chrome/builders/ci/linux-perf): Ubuntu-18.04, 8 core, NVIDIA Quadro P400.
  * [linux-perf-calibration](https://ci.chromium.org/p/chrome/builders/ci/linux-perf-calibration): Ubuntu-18.04, 8 core, NVIDIA Quadro P400.
  * [linux-perf-rel](https://ci.chromium.org/p/chrome/builders/ci/linux-perf-rel): Ubuntu-18.04, 8 core, NVIDIA Quadro P400.
+ * [linux-r350-perf](https://ci.chromium.org/p/chrome/builders/ci/linux-r350-perf): Ubuntu-22.04, 16 core.
 
 ### Mac
 
- * [mac-laptop_high_end-perf](https://ci.chromium.org/p/chrome/builders/ci/mac-laptop_high_end-perf): MacBook Pro, Core i7 2.8 GHz, 16GB RAM, 256GB SSD, Radeon 55.
- * [mac-laptop_low_end-perf](https://ci.chromium.org/p/chrome/builders/ci/mac-laptop_low_end-perf): MacBook Air, Core i5 1.8 GHz, 8GB RAM, 128GB SSD, HD Graphics.
+ * [mac-intel-perf](https://ci.chromium.org/p/chrome/builders/ci/mac-intel-perf): Mac Mini 8,1, Core i7 3.2 GHz.
  * [mac-m1-pro-perf](https://ci.chromium.org/p/chrome/builders/ci/mac-m1-pro-perf): Mac M1 PRO 2020.
+ * [mac-m1_mini_2020-no-brp-perf](https://ci.chromium.org/p/chrome/builders/ci/mac-m1_mini_2020-no-brp-perf): Mac M1 Mini 2020 with BRP disabled.
  * [mac-m1_mini_2020-perf](https://ci.chromium.org/p/chrome/builders/ci/mac-m1_mini_2020-perf): Mac M1 Mini 2020.
  * [mac-m1_mini_2020-perf-pgo](https://ci.chromium.org/p/chrome/builders/ci/mac-m1_mini_2020-perf-pgo): Mac M1 Mini 2020.
+ * [mac-m2-pro-perf](https://ci.chromium.org/p/chrome/builders/ci/mac-m2-pro-perf): Mac M2 PRO Baremetal ARM.
+ * [mac-m3-pro-perf](https://ci.chromium.org/p/chrome/builders/ci/mac-m3-pro-perf): Mac M3 PRO ARM.
 
 ### Win
 
@@ -49,24 +52,12 @@
 
 ### Android
 
- * android-new-pixel-perf: Android T.
- * android-new-pixel-perf-pgo: Android T.
- * android-new-pixel-pro-perf: Android T.
- * android-new-pixel-pro-perf-pgo: Android T.
- * android-pixel2-perf-pgo: Android OPM1.171019.021.
- * android-pixel2_webview-perf-pgo: Android OPM1.171019.021.
  * android-pixel4-perf-pgo: Android R.
  * android-pixel6-pro-perf-pgo: Android T.
 
 ### Linux
 
  * linux-perf-pgo: Ubuntu-18.04, 8 core, NVIDIA Quadro P400.
-
-### Mac
-
- * mac-14-m1-pro-perf: Mac M1 PRO 2020 running MacOS 14.
- * mac-laptop_high_end-perf-pgo: MacBook Pro, Core i7 2.8 GHz, 16GB RAM, 256GB SSD, Radeon 55.
- * mac-laptop_low_end-perf-pgo: MacBook Air, Core i5 1.8 GHz, 8GB RAM, 128GB SSD, HD Graphics.
 
 ### Win
 
@@ -77,11 +68,6 @@
 
 ## FYI Platforms
 
-### Android
-
- * [android-pixel2-perf-aab-fyi](https://ci.chromium.org/p/chrome/builders/ci/android-pixel2-perf-aab-fyi): Android OPM1.171019.021.
- * [android-pixel2-perf-fyi](https://ci.chromium.org/p/chrome/builders/ci/android-pixel2-perf-fyi): Android OPM1.171019.021.
-
 ### Chromeos
 
  * [chromeos-kevin-perf-fyi](https://ci.chromium.org/p/chrome/builders/ci/chromeos-kevin-perf-fyi).
@@ -89,7 +75,9 @@
 ### Fuchsia
 
  * [fuchsia-perf-nsn](https://ci.chromium.org/p/chrome/builders/ci/fuchsia-perf-nsn).
+ * [fuchsia-perf-nsn-pgo](https://ci.chromium.org/p/chrome/builders/ci/fuchsia-perf-nsn-pgo).
  * [fuchsia-perf-shk](https://ci.chromium.org/p/chrome/builders/ci/fuchsia-perf-shk).
+ * [fuchsia-perf-shk-pgo](https://ci.chromium.org/p/chrome/builders/ci/fuchsia-perf-shk-pgo).
 
 ### Linux
 
@@ -98,4 +86,5 @@
 ### Win
 
  * [win-10_laptop_low_end-perf_HP-Candidate](https://ci.chromium.org/p/chrome/builders/ci/win-10_laptop_low_end-perf_HP-Candidate): HP 15-BS121NR Laptop Candidate.
+ * [win-arm64-snapdragon-plus-perf](https://ci.chromium.org/p/chrome/builders/ci/win-arm64-snapdragon-plus-perf): Windows Dell Snapdragon Plus.
 

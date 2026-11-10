@@ -11,6 +11,7 @@ component("power") {
 
   deps = [
     ":power_manager_proto",
+    "//ash/constants",
     "//base",
     "//chromeos/dbus/common",
     "//components/device_event_log",
@@ -29,7 +30,7 @@ component("power") {
   ]
 }
 
-source_set("test_support") {
+source_set("unit_tests") {
   testonly = true
   public_deps = [ ":power" ]
   deps = [

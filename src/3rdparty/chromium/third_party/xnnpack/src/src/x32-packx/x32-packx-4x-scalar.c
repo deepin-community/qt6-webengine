@@ -4,8 +4,10 @@
 // LICENSE file in the root directory of this source tree.
 
 #include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include <xnnpack/packx.h>
+#include "src/xnnpack/packx.h"
 
 
 void xnn_x32_packx_ukernel_4x__scalar(

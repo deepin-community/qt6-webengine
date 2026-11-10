@@ -18,7 +18,7 @@
 #include "include/core/SkString.h"
 #include "include/core/SkSurface.h"
 #include "include/effects/SkGradientShader.h"
-#include "include/gpu/GrDirectContext.h"
+#include "include/gpu/ganesh/GrDirectContext.h"
 #include "include/gpu/ganesh/SkMeshGanesh.h"
 #include "include/private/base/SkAssert.h"
 #include "src/base/SkRandom.h"
@@ -683,7 +683,11 @@ protected:
     using Attribute = SkMeshSpecification::Attribute;
     using Varying = SkMeshSpecification::Varying;
 
-    SkISize getISize() override { return {270, 490}; }
+    static constexpr int kWidth = 270;
+    static constexpr int kHeight = 490;
+    static constexpr int kVerticalPadding = 10;
+
+    SkISize getISize() override { return {kWidth, kHeight}; }
 
     void onOnceBeforeDraw() override {
         static const Attribute kAttributes[]{
@@ -726,6 +730,8 @@ protected:
 
     SkString getName() const override { return SkString("mesh_updates"); }
 
+    // The top 4 rows are CPU buffers - the bottom 4 rows are GPU buffers
+    // Within each set of 4, the top 3 rows are vertex updates while the 4th row is an index update.
     DrawResult onDraw(SkCanvas* canvas, SkString* error) override {
         canvas->clear(SK_ColorBLACK);
 
@@ -743,7 +749,7 @@ protected:
         SkPaint paint;
         paint.setShader(fShader);
 
-        SkRect r = SkRect::MakeXYWH(10.f, 10.f, 50.f, 50.f);
+        const SkRect r = SkRect::MakeXYWH(10.f, 10.f, 50.f, 50.f);
 
         // We test updating CPU and GPU buffers.
         for (bool gpuBuffer : {false, true}) {
@@ -768,9 +774,8 @@ protected:
                     bounds = p;
                 }
 
-                SkPoint t[4];
-                SkRect::MakeWH(2.f, 2.f).toQuad(t);
-                SkMatrix::RotateDeg(90.f*i, {1.f, 1.f}).mapPoints(t, std::size(t));
+                std::array<SkPoint, 4> t = SkRect::MakeWH(2.f, 2.f).toQuad();
+                SkMatrix::RotateDeg(90.f*i, {1.f, 1.f}).mapPoints(t);
 
                 Vertex vertices[6];
                 vertices[0] = {{p.left(), p.top()}, t[0]};
@@ -802,7 +807,7 @@ protected:
 
                 canvas->drawMesh(result.mesh, SkBlender::Mode(SkBlendMode::kDst), paint);
 
-                canvas->translate(0, r.height() + 10);
+                canvas->translate(0, r.height() + kVerticalPadding);
             }
 
             // Now test updating an IB.
@@ -817,18 +822,16 @@ protected:
             vb = make_vertex_buffer(ctx, /*data=*/nullptr, kNumIBUpdates * 4 * sizeof(Vertex));
             SkASSERT(vb);
             for (int i = 0; i < kNumIBUpdates; ++i) {
-                SkPoint p[4];
                 auto rect = r.makeOffset(100*i, 0);
-                rect.toQuad(p);
+                const std::array<SkPoint, 4> p = rect.toQuad();
                 if (i) {
                     bounds.join(rect);
                 } else {
                     bounds = rect;
                 }
 
-                SkPoint t[4];
-                SkRect::MakeWH(2.f, 2.f).toQuad(t);
-                SkMatrix::RotateDeg(90.f*i, {1.f, 1.f}).mapPoints(t, std::size(t));
+                std::array<SkPoint, 4> t = SkRect::MakeWH(2.f, 2.f).toQuad();
+                SkMatrix::RotateDeg(90.f*i, {1.f, 1.f}).mapPoints(t);
                 Vertex vertices[4]{{p[0], t[0]}, {p[1], t[1]}, {p[2], t[2]}, {p[3], t[3]}};
                 SkAssertResult(
                         vb->update(ctx, vertices, i*4*sizeof(Vertex), 4*sizeof(Vertex)));
@@ -867,7 +870,7 @@ protected:
 
                 canvas->drawMesh(result.mesh, SkBlender::Mode(SkBlendMode::kDst), paint);
             }
-            canvas->translate(0, r.height() + 10);
+            canvas->translate(0, r.height() + kVerticalPadding);
         }
 
         return DrawResult::kOk;
@@ -989,8 +992,7 @@ protected:
                 SkASSERT(ib);
                 SkAssertResult(ib->update(ctx, kTiIndices, indexUploadOffset, sizeof(kTiIndices)));
 
-                SkRect bounds;
-                bounds.setBounds(kTri, std::size(kTri));
+                const auto bounds = SkRect::BoundsOrEmpty(kTri);
                 auto result = SkMesh::MakeIndexed(spec,
                                                   SkMesh::Mode::kTriangles,
                                                   std::move(vb),

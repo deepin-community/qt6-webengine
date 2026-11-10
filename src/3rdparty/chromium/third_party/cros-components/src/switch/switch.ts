@@ -7,7 +7,7 @@
 import '@material/web/switch/switch.js';
 
 import {MdSwitch} from '@material/web/switch/switch.js';
-import {PropertyValues, css, CSSResultGroup, html, LitElement} from 'lit';
+import {css, CSSResultGroup, html, LitElement, nothing, PropertyValues} from 'lit';
 
 import {shouldProcessClick} from '../helpers/helpers';
 
@@ -47,6 +47,11 @@ export class Switch extends LitElement {
       --md-switch-selected-focus-handle-color: var(--cros-sys-on_primary);
       --md-switch-selected-pressed-handle-color: var(--cros-sys-on_primary);
 
+      --md-switch-selected-hover-state-layer-color: var(--cros-sys-hover_on_subtle);
+      --md-switch-selected-pressed-state-layer-color: var(--cros-sys-ripple_primary);
+      --md-switch-selected-hover-state-layer-opacity: 1;
+      --md-switch-selected-pressed-state-layer-opacity: 1;
+
       /* unselected */
       --md-switch-track-color: var(--cros-sys-secondary);
       --md-switch-hover-track-color: var(--cros-sys-secondary);
@@ -57,6 +62,11 @@ export class Switch extends LitElement {
       --md-switch-hover-handle-color: var(--cros-sys-on_secondary);
       --md-switch-focus-handle-color: var(--cros-sys-on_secondary);
       --md-switch-pressed-handle-color: var(--cros-sys-on_secondary);
+
+      --md-switch-hover-state-layer-color: var(--cros-sys-hover_on_subtle);
+      --md-switch-pressed-state-layer-color: var(--cros-sys-ripple_neutral_on_subtle);
+      --md-switch-hover-state-layer-opacity: 1;
+      --md-switch-pressed-state-layer-opacity: 1;
     }
 
     md-switch::part(focus-ring) {
@@ -79,9 +89,16 @@ export class Switch extends LitElement {
   `;
 
   /** @nocollapse */
+  static override shadowRootOptions = {
+    ...LitElement.shadowRootOptions,
+    delegatesFocus: true,
+  };
+
+  /** @nocollapse */
   static override properties = {
     selected: {type: Boolean, reflect: true},
     disabled: {type: Boolean, reflect: true},
+    ariaLabel: {type: String, reflect: true, attribute: 'aria-label'},
   };
 
   /** @nocollapse */
@@ -91,9 +108,9 @@ export class Switch extends LitElement {
   } as const;
 
   /** @export */
-  disabled: boolean;
+  declare disabled: boolean;
   /** @export */
-  selected: boolean;
+  declare selected: boolean;
 
   get mdSwitch(): MdSwitch|undefined|null {
     return this.shadowRoot!.querySelector('md-switch');
@@ -116,7 +133,8 @@ export class Switch extends LitElement {
       <md-switch
           ?disabled=${this.disabled}
           ?selected=${this.selected}
-          @change=${this.onChange}>
+          @change=${this.onChange}
+          aria-label=${this.ariaLabel ?? nothing}>
       </md-switch>
     `;
   }

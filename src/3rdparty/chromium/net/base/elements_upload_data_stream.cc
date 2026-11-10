@@ -8,6 +8,7 @@
 
 #include "base/check_op.h"
 #include "base/functional/bind.h"
+#include "base/numerics/checked_math.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/upload_bytes_element_reader.h"
@@ -24,12 +25,11 @@ ElementsUploadDataStream::ElementsUploadDataStream(
 ElementsUploadDataStream::~ElementsUploadDataStream() = default;
 
 std::unique_ptr<UploadDataStream> ElementsUploadDataStream::CreateWithReader(
-    std::unique_ptr<UploadElementReader> reader,
-    int64_t identifier) {
+    std::unique_ptr<UploadElementReader> reader) {
   std::vector<std::unique_ptr<UploadElementReader>> readers;
   readers.push_back(std::move(reader));
   return std::make_unique<ElementsUploadDataStream>(std::move(readers),
-                                                    identifier);
+                                                    /*identifier=*/0);
 }
 
 int ElementsUploadDataStream::InitInternal(const NetLogWithSource& net_log) {
@@ -77,11 +77,16 @@ int ElementsUploadDataStream::InitElements(size_t start_index) {
       return result;
   }
 
-  uint64_t total_size = 0;
+  base::CheckedNumeric<uint64_t> total_size = 0;
   for (const std::unique_ptr<UploadElementReader>& it : element_readers_) {
     total_size += it->GetContentLength();
   }
-  SetSize(total_size);
+
+  if (!total_size.IsValid()) {
+    return ERR_FILE_TOO_BIG;
+  }
+
+  SetSize(total_size.ValueOrDie());
   return OK;
 }
 
@@ -131,8 +136,12 @@ void ElementsUploadDataStream::OnReadElementCompleted(
   ProcessReadResult(buf, result);
 
   result = ReadElements(buf);
-  if (result != ERR_IO_PENDING)
+  if (result != ERR_IO_PENDING) {
+    if (result < ERR_IO_PENDING) {
+      LOG(ERROR) << "OnReadElementCompleted failed with Error: " << result;
+    }
     OnReadCompleted(result);
+  }
 }
 
 void ElementsUploadDataStream::ProcessReadResult(

@@ -5,6 +5,7 @@
 #include "components/unexportable_keys/unexportable_key_task_manager.h"
 
 #include <memory>
+#include <optional>
 
 #include "base/containers/span.h"
 #include "base/feature_list.h"
@@ -26,7 +27,6 @@
 #include "components/unexportable_keys/unexportable_key_tasks.h"
 #include "crypto/signature_verifier.h"
 #include "crypto/unexportable_key.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace unexportable_keys {
 
@@ -34,43 +34,36 @@ namespace {
 
 constexpr std::string_view kBaseTaskResultHistogramName =
     "Crypto.UnexportableKeys.BackgroundTaskResult";
-
-ServiceErrorOr<scoped_refptr<RefCountedUnexportableSigningKey>>
-MakeSigningKeyRefCounted(std::unique_ptr<crypto::UnexportableSigningKey> key) {
-  if (!key) {
-    return base::unexpected(ServiceError::kCryptoApiFailed);
-  }
-
-  return base::MakeRefCounted<RefCountedUnexportableSigningKey>(
-      std::move(key), UnexportableKeyId());
-}
-
-ServiceErrorOr<std::vector<uint8_t>> OptionalToServiceErrorOr(
-    absl::optional<std::vector<uint8_t>> result) {
-  if (!result) {
-    return base::unexpected(ServiceError::kCryptoApiFailed);
-  }
-
-  return result.value();
-}
+constexpr std::string_view kBaseTaskRetriesHistogramName =
+    "Crypto.UnexportableKeys.BackgroundTaskRetries";
 
 template <class CallbackReturnType>
 ServiceErrorOr<CallbackReturnType> ReportResultMetrics(
     BackgroundTaskType task_type,
-    ServiceErrorOr<CallbackReturnType> result) {
+    ServiceErrorOr<CallbackReturnType> result,
+    size_t retry_count) {
   ServiceError error_for_metrics =
       result.has_value() ? kNoServiceErrorForMetrics : result.error();
+  std::string_view task_type_suffix =
+      GetBackgroundTaskTypeSuffixForHistograms(task_type);
+  std::string_view success_suffix =
+      result.has_value() ? ".Success" : ".Failure";
+
   base::UmaHistogramEnumeration(
-      base::StrCat({kBaseTaskResultHistogramName,
-                    GetBackgroundTaskTypeSuffixForHistograms(task_type)}),
+      base::StrCat({kBaseTaskResultHistogramName, task_type_suffix}),
       error_for_metrics);
+  base::UmaHistogramExactLinear(
+      base::StrCat(
+          {kBaseTaskRetriesHistogramName, task_type_suffix, success_suffix}),
+      retry_count, /*exclusive_max=*/10);
+
   return result;
 }
 
 // Returns a new callback that reports result metrics and then invokes the
 // original `callback`.
 template <class CallbackReturnType>
-base::OnceCallback<void(ServiceErrorOr<CallbackReturnType>)>
+base::OnceCallback<void(ServiceErrorOr<CallbackReturnType>, size_t)>
 WrapCallbackWithMetrics(
     BackgroundTaskType task_type,
     base::OnceCallback<void(ServiceErrorOr<CallbackReturnType>)> callback) {
@@ -80,26 +73,29 @@ WrapCallbackWithMetrics(
 
 }  // namespace
 
-UnexportableKeyTaskManager::UnexportableKeyTaskManager()
+UnexportableKeyTaskManager::UnexportableKeyTaskManager(
+    crypto::UnexportableKeyProvider::Config config)
     : task_scheduler_(base::ThreadPool::CreateSingleThreadTaskRunner(
           {base::MayBlock(), base::TaskPriority::USER_BLOCKING,
            base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
           base::SingleThreadTaskRunnerThreadMode::
               DEDICATED  // Using a dedicated thread to run long and blocking
                          // TPM tasks.
-          )) {}
+          )),
+      config_(std::move(config)) {}
 
 UnexportableKeyTaskManager::~UnexportableKeyTaskManager() = default;
 
 // static
 std::unique_ptr<crypto::UnexportableKeyProvider>
-UnexportableKeyTaskManager::GetUnexportableKeyProvider() {
+UnexportableKeyTaskManager::GetUnexportableKeyProvider(
+    crypto::UnexportableKeyProvider::Config config) {
   if (base::FeatureList::IsEnabled(
           kEnableBoundSessionCredentialsSoftwareKeysForManualTesting)) {
     return crypto::GetSoftwareUnsecureUnexportableKeyProvider();
   }
 
-  return crypto::GetUnexportableKeyProvider();
+  return crypto::GetUnexportableKeyProvider(std::move(config));
 }
 
 void UnexportableKeyTaskManager::GenerateSigningKeySlowlyAsync(
@@ -113,24 +109,24 @@ void UnexportableKeyTaskManager::GenerateSigningKeySlowlyAsync(
       BackgroundTaskType::kGenerateKey, std::move(callback));
 
   std::unique_ptr<crypto::UnexportableKeyProvider> key_provider =
-      GetUnexportableKeyProvider();
+      GetUnexportableKeyProvider(config_);
 
   if (!key_provider) {
     std::move(callback_wrapper)
-        .Run(base::unexpected(ServiceError::kNoKeyProvider));
+        .Run(base::unexpected(ServiceError::kNoKeyProvider), /*retry_count=*/0);
     return;
   }
 
   if (!key_provider->SelectAlgorithm(acceptable_algorithms).has_value()) {
     std::move(callback_wrapper)
-        .Run(base::unexpected(ServiceError::kAlgorithmNotSupported));
+        .Run(base::unexpected(ServiceError::kAlgorithmNotSupported),
+             /*retry_count=*/0);
     return;
   }
 
-  auto task = std::make_unique<GenerateKeyTask>(
-      std::move(key_provider), acceptable_algorithms, priority,
-      base::BindOnce(&MakeSigningKeyRefCounted)
-          .Then(std::move(callback_wrapper)));
+  auto task = std::make_unique<GenerateKeyTask>(std::move(key_provider),
+                                                acceptable_algorithms, priority,
+                                                std::move(callback_wrapper));
   task_scheduler_.PostTask(std::move(task));
 }
 
@@ -144,18 +140,17 @@ void UnexportableKeyTaskManager::FromWrappedSigningKeySlowlyAsync(
       BackgroundTaskType::kFromWrappedKey, std::move(callback));
 
   std::unique_ptr<crypto::UnexportableKeyProvider> key_provider =
-      GetUnexportableKeyProvider();
+      GetUnexportableKeyProvider(config_);
 
   if (!key_provider) {
     std::move(callback_wrapper)
-        .Run(base::unexpected(ServiceError::kNoKeyProvider));
+        .Run(base::unexpected(ServiceError::kNoKeyProvider), /*retry_count=*/0);
     return;
   }
 
-  auto task = std::make_unique<FromWrappedKeyTask>(
-      std::move(key_provider), wrapped_key, priority,
-      base::BindOnce(&MakeSigningKeyRefCounted)
-          .Then(std::move(callback_wrapper)));
+  auto task = std::make_unique<FromWrappedKeyTask>(std::move(key_provider),
+                                                   wrapped_key, priority,
+                                                   std::move(callback_wrapper));
   task_scheduler_.PostTask(std::move(task));
 }
 
@@ -163,6 +158,7 @@ void UnexportableKeyTaskManager::SignSlowlyAsync(
     scoped_refptr<RefCountedUnexportableSigningKey> signing_key,
     base::span<const uint8_t> data,
     BackgroundTaskPriority priority,
+    size_t max_retries,
     base::OnceCallback<void(ServiceErrorOr<std::vector<uint8_t>>)> callback) {
   auto callback_wrapper =
       WrapCallbackWithMetrics(BackgroundTaskType::kSign, std::move(callback));
@@ -170,7 +166,7 @@ void UnexportableKeyTaskManager::SignSlowlyAsync(
   // TODO(alexilin): convert this to a CHECK().
   if (!signing_key) {
     std::move(callback_wrapper)
-        .Run(base::unexpected(ServiceError::kKeyNotFound));
+        .Run(base::unexpected(ServiceError::kKeyNotFound), /*retry_count=*/0);
     return;
   }
 
@@ -178,8 +174,7 @@ void UnexportableKeyTaskManager::SignSlowlyAsync(
   // TODO(b/263249728): implement a cache of recent signings.
   auto task =
       std::make_unique<SignTask>(std::move(signing_key), data, priority,
-                                 base::BindOnce(&OptionalToServiceErrorOr)
-                                     .Then(std::move(callback_wrapper)));
+                                 max_retries, std::move(callback_wrapper));
   task_scheduler_.PostTask(std::move(task));
 }
 

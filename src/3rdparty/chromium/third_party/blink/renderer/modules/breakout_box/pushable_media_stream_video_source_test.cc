@@ -8,6 +8,7 @@
 #include "base/run_loop.h"
 #include "base/task/bind_post_task.h"
 #include "base/time/time.h"
+#include "media/base/video_frame.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/mojom/mediastream/media_stream.mojom-blink.h"
 #include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
@@ -57,9 +58,9 @@ class FakeMediaStreamVideoSink : public MediaStreamVideoSink {
   }
 
  private:
-  const raw_ptr<base::TimeTicks, ExperimentalRenderer> capture_time_;
-  const raw_ptr<media::VideoFrameMetadata, ExperimentalRenderer> metadata_;
-  const raw_ptr<gfx::Size, ExperimentalRenderer> natural_size_;
+  const raw_ptr<base::TimeTicks> capture_time_;
+  const raw_ptr<media::VideoFrameMetadata> metadata_;
+  const raw_ptr<gfx::Size> natural_size_;
   base::OnceClosure got_frame_cb_;
 };
 

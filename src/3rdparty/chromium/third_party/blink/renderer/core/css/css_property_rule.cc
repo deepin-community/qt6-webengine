@@ -91,7 +91,6 @@ bool CSSPropertyRule::inherits() const {
         return false;
       default:
         NOTREACHED();
-        break;
     }
   }
   return false;

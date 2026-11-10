@@ -14,19 +14,14 @@
 #include <QtCore/QCommandLineOption>
 #include <QtCore/QLoggingCategory>
 
-static QUrl startupUrl()
+static QUrl startupUrl(const QCommandLineParser &parser)
 {
-    QUrl ret;
-    QStringList args(qApp->arguments());
-    args.takeFirst();
-    for (const QString &arg : qAsConst(args)) {
-        if (arg.startsWith(QLatin1Char('-')))
-             continue;
-        ret = Utils::fromUserInput(arg);
-        if (ret.isValid())
-            return ret;
+    if (!parser.positionalArguments().isEmpty()) {
+        const QUrl url = Utils::fromUserInput(parser.positionalArguments().constFirst());
+        if (url.isValid())
+            return url;
     }
-    return QUrl(QStringLiteral("chrome://qt"));
+    return QUrl(QStringLiteral("chrome://qt?example=Quick Nano Browser"));
 }
 
 int main(int argc, char **argv)
@@ -39,13 +34,14 @@ int main(int argc, char **argv)
     QGuiApplication app(argc, argv);
     QLoggingCategory::setFilterRules(QStringLiteral("qt.webenginecontext.debug=true"));
 
+    QCommandLineParser parser;
+    parser.addHelpOption();
+    parser.addVersionOption();
+    parser.addPositionalArgument("url", "The URL to open.");
+    parser.process(app);
+
     QQmlApplicationEngine appEngine;
-    appEngine.load(QUrl("qrc:/ApplicationRoot.qml"));
-    if (appEngine.rootObjects().isEmpty())
-        qFatal("Failed to load sources");
-
-    QMetaObject::invokeMethod(appEngine.rootObjects().constFirst(),
-                              "load", Q_ARG(QVariant, startupUrl()));
-
+    appEngine.setInitialProperties({ { "startupUrl", startupUrl(parser) } });
+    appEngine.loadFromModule("BrowserUtils", "ApplicationRoot");
     return app.exec();
 }

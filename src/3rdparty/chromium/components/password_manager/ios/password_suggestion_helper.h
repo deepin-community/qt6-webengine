@@ -6,11 +6,13 @@
 #define COMPONENTS_PASSWORD_MANAGER_IOS_PASSWORD_SUGGESTION_HELPER_H_
 
 #import <Foundation/Foundation.h>
-#include <memory>
 
-#include "components/autofill/core/common/unique_ids.h"
+#import <memory>
+
+#import "components/autofill/core/common/unique_ids.h"
 #import "components/autofill/ios/browser/form_suggestion_provider.h"
-#include "url/gurl.h"
+#import "components/password_manager/ios/account_select_fill_data.h"
+#import "url/origin.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -23,6 +25,7 @@ struct PasswordFormFillData;
 
 namespace password_manager {
 struct FillData;
+class PasswordManagerInterface;
 }  // namespace password_manager
 
 namespace web {
@@ -52,7 +55,7 @@ class WebState;
 // Processes and provides password suggestions for form fields across frames
 // within a specific web state. Also a hub for password filling signals (e.g.
 // track focus on field).
-// TODO(crbug.com/1097353): Consider folding this class into
+// TODO(crbug.com/40701292): Consider folding this class into
 // SharedPasswordController.
 @interface PasswordSuggestionHelper : NSObject
 
@@ -61,16 +64,14 @@ class WebState;
 
 // Creates a instance for the given |webState|.
 - (instancetype)initWithWebState:(web::WebState*)webState
-    NS_DESIGNATED_INITIALIZER;
+                 passwordManager:(password_manager::PasswordManagerInterface*)
+                                     passwordManager NS_DESIGNATED_INITIALIZER;
 
 - (instancetype)init NS_UNAVAILABLE;
 
-// Retrieves suggestions for a field within a form with `formIdentifier`.
-- (NSArray<FormSuggestion*>*)
-    retrieveSuggestionsWithFormID:(autofill::FormRendererId)formIdentifier
-                  fieldIdentifier:(autofill::FieldRendererId)fieldIdentifier
-                       forFrameId:(const std::string&)frameId
-                        fieldType:(NSString*)fieldType;
+// Retrieves suggestions for a field within a form from `formQuery`.
+- (NSArray<FormSuggestion*>*)retrieveSuggestionsWithForm:
+    (FormSuggestionProviderQuery*)formQuery;
 
 // Checks if suggestions are available for the field within a form targeted by
 // the provided |formQuery|. Calls |completion| on completion with a boolean
@@ -86,9 +87,23 @@ class WebState;
                              (SuggestionsAvailableCompletion)completion;
 
 // Retrieves password form fill data for `frameId` and `username`.
-- (std::unique_ptr<password_manager::FillData>)
+// `isBackupCredential` indicates whether the retrieved password should be the
+// backup or the main one.
+- (password_manager::FillDataRetrievalResult)
     passwordFillDataForUsername:(NSString*)username
+             isBackupCredential:(BOOL)isBackupCredential
                      forFrameId:(const std::string&)frameId;
+
+// Retrieves password form fill data for the corresponding `frameId`,
+// `username`, and contextual information. `isBackupCredential` indicates
+// whether the retrieved password should be the backup or the main one.
+- (password_manager::FillDataRetrievalResult)
+    passwordFillDataForUsername:(NSString*)username
+             isBackupCredential:(BOOL)isBackupCredential
+        likelyRealPasswordField:(bool)passwordField
+                 formIdentifier:(autofill::FormRendererId)formId
+                fieldIdentifier:(autofill::FieldRendererId)fieldId
+                        frameId:(const std::string&)frameId;
 
 // The following methods should be called to maintain the correct state along
 // with password forms.
@@ -105,7 +120,7 @@ class WebState;
             (const autofill::PasswordFormFillData&)formData
                              forFrameId:(const std::string&)frameId
                             isMainFrame:(BOOL)isMainFrame
-                      forSecurityOrigin:(const GURL&)origin;
+                      forSecurityOrigin:(const url::Origin&)origin;
 
 // Processes the case in which no saved credentials are available when
 // extracting forms in the renderer. Will complete the pending check query
@@ -113,6 +128,12 @@ class WebState;
 // asynchronous server suggestions that were processed in the meantime; between
 // the moment extraction started and completion).
 - (void)processWithNoSavedCredentialsWithFrameId:(const std::string&)frameId;
+
+// Returns NO if the field does not have the "password" field type or if the
+// field is confirmed to NOT be a password field by server predictions.
+// Returns YES otherwise.
+- (BOOL)isPasswordFieldOnForm:(FormSuggestionProviderQuery*)formQuery
+                     webFrame:(web::WebFrame*)webFrame;
 
 @end
 

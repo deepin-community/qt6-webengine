@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
+#include <string_view>
 #include <utility>
 
 #include "base/callback_list.h"
@@ -14,10 +16,8 @@
 #include "base/functional/callback.h"
 #include "base/scoped_observation.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "ui/actions/action_id.h"
 #include "ui/actions/actions.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -29,7 +29,8 @@
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/views/action_view_controller.h"
+#include "ui/views/accessibility/view_accessibility.h"
+#include "ui/views/actions/action_view_controller.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/button/md_text_button.h"
@@ -50,97 +51,6 @@
 #include "ui/views/view_class_properties.h"
 #include "ui/views/view_observer.h"
 #include "ui/views/view_utils.h"
-
-namespace views::examples {
-
-class ActionCheckbox : public Checkbox {
-  METADATA_HEADER(ActionCheckbox, Checkbox)
-
- public:
-  ActionCheckbox();
-  ActionCheckbox(const ActionCheckbox&) = delete;
-  ActionCheckbox& operator=(const ActionCheckbox&) = delete;
-  ~ActionCheckbox() override = default;
-  actions::ActionItem* GetActionItem() const;
-  void SetActionItem(actions::ActionItem* action_item);
-  std::u16string GetName() const;
-  void SetName(const std::u16string& name);
-
- private:
-  void ActionItemChanged();
-  void TriggerAction();
-  std::u16string name_;
-  raw_ptr<actions::ActionItem> action_item_ = nullptr;
-  base::CallbackListSubscription action_changed_subscription_;
-};
-
-ActionCheckbox::ActionCheckbox()
-    : Checkbox(std::u16string(),
-               base::BindRepeating(&ActionCheckbox::TriggerAction,
-                                   base::Unretained(this))) {}
-
-actions::ActionItem* ActionCheckbox::GetActionItem() const {
-  return action_item_.get();
-}
-
-void ActionCheckbox::SetActionItem(actions::ActionItem* action_item) {
-  if (action_item_.get() == action_item) {
-    return;
-  }
-  action_item_ = action_item;
-  action_changed_subscription_ = {};
-  if (action_item_) {
-    action_changed_subscription_ =
-        action_item_->AddActionChangedCallback(base::BindRepeating(
-            &ActionCheckbox::ActionItemChanged, base::Unretained(this)));
-    ActionItemChanged();
-  }
-  OnPropertyChanged(&action_item_,
-                    static_cast<PropertyEffects>(kPropertyEffectsLayout |
-                                                 kPropertyEffectsPaint));
-}
-
-std::u16string ActionCheckbox::GetName() const {
-  return name_;
-}
-
-void ActionCheckbox::SetName(const std::u16string& name) {
-  if (name_ == name) {
-    return;
-  }
-  name_ = name;
-  if (GetText().empty()) {
-    SetText(name_);
-  }
-  OnPropertyChanged(&name_, kPropertyEffectsNone);
-}
-
-void ActionCheckbox::ActionItemChanged() {
-  SetText(action_item_->GetText());
-  SetEnabled(action_item_->GetEnabled());
-  SetVisible(action_item_->GetVisible());
-  SetTooltipText(action_item_->GetTooltipText());
-  SetChecked(action_item_->GetChecked());
-}
-
-void ActionCheckbox::TriggerAction() {
-  if (action_item_) {
-    action_item_->SetChecked(GetChecked());
-    action_item_->InvokeAction();
-  }
-}
-
-BEGIN_METADATA(ActionCheckbox)
-END_METADATA
-
-BEGIN_VIEW_BUILDER(, ActionCheckbox, Checkbox)
-VIEW_BUILDER_PROPERTY(actions::ActionItem*, ActionItem)
-VIEW_BUILDER_PROPERTY(std::u16string, Name)
-END_VIEW_BUILDER
-
-}  // namespace views::examples
-
-DEFINE_VIEW_BUILDER(, views::examples::ActionCheckbox)
 
 namespace views::examples {
 
@@ -175,7 +85,7 @@ class ViewsComboboxModel : public ui::ComboboxModel, public ViewObserver {
   // ui::ComboboxModel overrides.
   size_t GetItemCount() const override;
   std::u16string GetItemAt(size_t index) const override;
-  absl::optional<size_t> GetDefaultIndex() const override;
+  std::optional<size_t> GetDefaultIndex() const override;
 
   View* GetViewItemAt(size_t index) const;
 
@@ -204,16 +114,18 @@ std::u16string ViewsComboboxModel::GetItemAt(size_t index) const {
     if (IsViewClass<MdTextButton>(view)) {
       std::stringstream ss;
       ss << index;
-      return base::ASCIIToUTF16(base::StringPiece("Button: " + ss.str()));
+      return base::ASCIIToUTF16(std::string_view("Button: " + ss.str()));
     }
-    if (IsViewClass<ActionCheckbox>(view)) {
-      return AsViewClass<ActionCheckbox>(view)->GetName();
+    if (IsViewClass<Checkbox>(view)) {
+      std::stringstream ss;
+      ss << index;
+      return base::ASCIIToUTF16(std::string_view("Checkbox: " + ss.str()));
     }
   }
   return u"<Unknown>";
 }
 
-absl::optional<size_t> ViewsComboboxModel::GetDefaultIndex() const {
+std::optional<size_t> ViewsComboboxModel::GetDefaultIndex() const {
   return {0};
 }
 
@@ -258,7 +170,7 @@ size_t ActionItemComboboxModel::GetItemCount() const {
 }
 
 std::u16string ActionItemComboboxModel::GetItemAt(size_t index) const {
-  return GetActionItemAt(index)->GetText();
+  return std::u16string(GetActionItemAt(index)->GetText());
 }
 
 actions::ActionItem* ActionItemComboboxModel::GetActionItemAt(
@@ -290,7 +202,6 @@ std::u16string ControlTypeComboboxModel::GetItemAt(size_t index) const {
       return u"Checkbox";
     default:
       NOTREACHED();
-      return u"";
   }
 }
 
@@ -314,7 +225,7 @@ ProposedLayout FlowLayout::CalculateProposedLayout(
   int max_height = 0;
   for (views::View* view : host_view()->children()) {
     bool view_visible = view->GetVisible();
-    gfx::Size preferred_size = view->GetPreferredSize();
+    gfx::Size preferred_size = view->GetPreferredSize(size_bounds);
     if (view_visible) {
       max_height = std::max(max_height, preferred_size.height());
       if (x > 0 && (x + preferred_size.width() > size_bounds.width())) {
@@ -356,7 +267,7 @@ void ActionsExample::CreateExampleView(View* container) {
                   Builder<View>()
                       .CopyAddressTo(&action_panel_)
                       .SetLayoutManager(std::make_unique<FlowLayout>())
-                      .SetBorder(CreateThemedSolidBorder(
+                      .SetBorder(CreateSolidBorder(
                           1, ui::kColorFocusableBorderUnfocused)),
                   Builder<BoxLayoutView>()
                       .CopyAddressTo(&control_panel_)
@@ -398,7 +309,7 @@ void ActionsExample::CreateExampleView(View* container) {
             Builder<Combobox>(std::make_unique<Combobox>(std::move(model)))
                 .CopyAddressTo(&combobox))
         .BuildChildren();
-    combobox->SetAccessibleName(label->GetText());
+    combobox->GetViewAccessibility().SetName(std::u16string(label->GetText()));
     return {row, combobox};
   };
 
@@ -451,7 +362,9 @@ void ActionsExample::CreateExampleView(View* container) {
         .AfterBuild(base::BindOnce(
             [](Textfield** textfield, Label** label, BoxLayoutView* row) {
               row->SetFlexForView(*textfield, 1);
-              (*textfield)->SetAccessibleName((*label)->GetText());
+              (*textfield)
+                  ->GetViewAccessibility()
+                  .SetName(std::u16string((*label)->GetText()));
             },
             &textfield, &label))
         .BuildChildren();
@@ -548,7 +461,7 @@ void ActionsExample::ActionInvoked(actions::ActionItem* action,
   auto bool_to_string = [](bool value) {
     return value ? kBoolStrings[1] : kBoolStrings[0];
   };
-  std::u16string text = actions_trigger_info_->GetText();
+  std::u16string text(actions_trigger_info_->GetText());
   if (!text.empty()) {
     text.append(u"\n");
   }
@@ -589,9 +502,9 @@ void ActionsExample::AssignAction(actions::ActionItem* action,
   if (IsViewClass<MdTextButton>(view)) {
     action_view_controller_.CreateActionViewRelationship(
         static_cast<MdTextButton*>(view), GetSelectedAction()->GetAsWeakPtr());
-  } else if (IsViewClass<ActionCheckbox>(view)) {
-    ActionCheckbox* checkbox = AsViewClass<ActionCheckbox>(view);
-    checkbox->SetActionItem(GetSelectedAction());
+  } else if (IsViewClass<Checkbox>(view)) {
+    action_view_controller_.CreateActionViewRelationship(
+        static_cast<Checkbox*>(view), GetSelectedAction()->GetAsWeakPtr());
   }
 }
 
@@ -599,7 +512,7 @@ void ActionsExample::CreateControl(actions::ActionItem* action,
                                    actions::ActionInvocationContext context) {
   static int control_num = 0;
   std::unique_ptr<View> new_view;
-  const absl::optional<size_t> selected_index =
+  const std::optional<size_t> selected_index =
       available_controls_->GetSelectedIndex();
   switch (selected_index.value_or(0)) {
     case 0:
@@ -609,8 +522,8 @@ void ActionsExample::CreateControl(actions::ActionItem* action,
       break;
     case 1:
       new_view =
-          Builder<ActionCheckbox>()
-              .SetName(u"Checkbox " + base::NumberToString16(control_num))
+          Builder<Checkbox>()
+              .SetText(u"Checkbox " + base::NumberToString16(control_num))
               .Build();
       break;
     default:

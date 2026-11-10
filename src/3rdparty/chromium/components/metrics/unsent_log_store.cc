@@ -7,6 +7,7 @@
 #include <cmath>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "base/base64.h"
@@ -14,6 +15,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/strings/string_view_util.h"
 #include "base/timer/elapsed_timer.h"
 #include "components/metrics/metrics_features.h"
 #include "components/metrics/unsent_log_store_metrics.h"
@@ -102,7 +104,7 @@ class LogsPrefWriter {
     std::reverse(list_value_->begin(), list_value_->end());
   }
 
-  base::HistogramBase::Count unsent_samples_count() const {
+  base::HistogramBase::Count32 unsent_samples_count() const {
     return unsent_samples_count_;
   }
 
@@ -118,7 +120,7 @@ class LogsPrefWriter {
   bool finished_ = false;
 
   // The total number of histogram samples written so far.
-  base::HistogramBase::Count unsent_samples_count_ = 0;
+  base::HistogramBase::Count32 unsent_samples_count_ = 0;
 
   // The total size of logs written so far.
   size_t unsent_persisted_size_ = 0;
@@ -128,7 +130,7 @@ class LogsPrefWriter {
 };
 
 bool GetString(const base::Value::Dict& dict,
-               base::StringPiece key,
+               std::string_view key,
                std::string& out) {
   const std::string* value = dict.FindString(key);
   if (!value)
@@ -149,18 +151,15 @@ void UnsentLogStore::LogInfo::Init(const std::string& log_data,
   DCHECK(!log_data.empty());
 
   if (!compression::GzipCompress(log_data, &compressed_log_data)) {
-    NOTREACHED();
+    DUMP_WILL_BE_NOTREACHED();
     return;
   }
 
   hash = base::SHA1HashString(log_data);
-
-  if (!ComputeHMACForLog(log_data, signing_key, &signature)) {
-    NOTREACHED() << "HMAC signing failed";
-  }
+  signature = ComputeHMACForLog(log_data, signing_key);
 
   timestamp = log_timestamp;
-  this->log_metadata = optional_log_metadata;
+  log_metadata = optional_log_metadata;
 }
 
 void UnsentLogStore::LogInfo::Init(const std::string& log_data,
@@ -227,7 +226,7 @@ const std::string& UnsentLogStore::staged_log_timestamp() const {
 }
 
 // Returns the user id of the current staged log.
-absl::optional<uint64_t> UnsentLogStore::staged_log_user_id() const {
+std::optional<uint64_t> UnsentLogStore::staged_log_user_id() const {
   DCHECK(has_staged_log());
   return list_[staged_log_index_]->log_metadata.user_id;
 }
@@ -238,15 +237,13 @@ const LogMetadata UnsentLogStore::staged_log_metadata() const {
 }
 
 // static
-bool UnsentLogStore::ComputeHMACForLog(const std::string& log_data,
-                                       const std::string& signing_key,
-                                       std::string* signature) {
-  crypto::HMAC hmac(crypto::HMAC::SHA256);
-  const size_t digest_length = hmac.DigestLength();
-  unsigned char* hmac_data = reinterpret_cast<unsigned char*>(
-      base::WriteInto(signature, digest_length + 1));
-  return hmac.Init(signing_key) &&
-         hmac.Sign(log_data, hmac_data, digest_length);
+std::string UnsentLogStore::ComputeHMACForLog(std::string_view log_data,
+                                              std::string_view signing_key) {
+  auto data = base::as_byte_span(log_data);
+  auto key = base::as_byte_span(signing_key);
+  std::array<uint8_t, crypto::hash::kSha256Size> hmac =
+      crypto::hmac::SignSha256(key, data);
+  return std::string(base::as_string_view(hmac));
 }
 
 void UnsentLogStore::StageNextLog() {
@@ -260,7 +257,7 @@ void UnsentLogStore::StageNextLog() {
   DCHECK(has_staged_log());
 }
 
-void UnsentLogStore::DiscardStagedLog(base::StringPiece reason) {
+void UnsentLogStore::DiscardStagedLog(std::string_view reason) {
   DCHECK(has_staged_log());
   DCHECK_LT(static_cast<size_t>(staged_log_index_), list_.size());
   NotifyLogEvent(MetricsLogsEventManager::LogEvent::kLogDiscarded,
@@ -291,7 +288,7 @@ void UnsentLogStore::TrimAndPersistUnsentLogs(bool overwrite_in_memory_store) {
   // log, which may or may not get trimmed. We want to keep track of the new
   // position of the staged log after trimming so that we can update
   // |staged_log_index_|.
-  absl::optional<size_t> staged_index_distance;
+  std::optional<size_t> staged_index_distance;
 
   const bool trimming_enabled =
       base::FeatureList::IsEnabled(features::kMetricsLogTrimming);
@@ -306,8 +303,7 @@ void UnsentLogStore::TrimAndPersistUnsentLogs(bool overwrite_in_memory_store) {
           writer.unsent_logs_count() >= log_store_limits_.min_log_count) {
         // The rest of the logs (including the current one) are trimmed.
         if (overwrite_in_memory_store) {
-          NotifyLogsEvent(base::span<std::unique_ptr<LogInfo>>(
-                              list_.begin(), list_.begin() + i + 1),
+          NotifyLogsEvent(base::span(list_).first(static_cast<size_t>(i + 1)),
                           MetricsLogsEventManager::LogEvent::kLogTrimmed);
         }
         break;
@@ -419,8 +415,8 @@ std::string UnsentLogStore::ReplaceLogAtIndex(size_t index,
   metrics_->RecordCompressionRatio(info->compressed_log_data.size(),
                                    new_log_data.size());
 
-  // TODO(crbug/1363747): Pass a message to make it clear that the new log is
-  // replacing the old log.
+  // TODO(crbug.com/40238818): Pass a message to make it clear that the new log
+  // is replacing the old log.
   NotifyLogEvent(MetricsLogsEventManager::LogEvent::kLogDiscarded, old_hash);
   NotifyLogCreated(*info, MetricsLogsEventManager::CreateReason::kUnknown);
   list_[index] = std::move(info);
@@ -481,7 +477,7 @@ void UnsentLogStore::ReadLogsFromPrefList(const base::Value::List& list_value) {
     info->signature = DecodeFromBase64(info->signature);
     // timestamp doesn't need to be decoded.
 
-    absl::optional<int> log_source_type = dict->FindInt(kLogSourceType);
+    std::optional<int> log_source_type = dict->FindInt(kLogSourceType);
     if (log_source_type.has_value()) {
       info->log_metadata.log_source_type =
           static_cast<UkmLogSourceType>(log_source_type.value());
@@ -510,8 +506,8 @@ void UnsentLogStore::ReadLogsFromPrefList(const base::Value::List& list_value) {
 }
 
 void UnsentLogStore::WriteToMetricsPref(
-    base::HistogramBase::Count unsent_samples_count,
-    base::HistogramBase::Count sent_samples_count,
+    base::HistogramBase::Count32 unsent_samples_count,
+    base::HistogramBase::Count32 sent_samples_count,
     size_t unsent_persisted_size) const {
   if (metadata_pref_name_ == nullptr)
     return;
@@ -564,8 +560,8 @@ void UnsentLogStore::NotifyLogsCreated(
 }
 
 void UnsentLogStore::NotifyLogEvent(MetricsLogsEventManager::LogEvent event,
-                                    base::StringPiece log_hash,
-                                    base::StringPiece message) {
+                                    std::string_view log_hash,
+                                    std::string_view message) {
   if (!logs_event_manager_)
     return;
   logs_event_manager_->NotifyLogEvent(event, log_hash, message);
@@ -573,7 +569,7 @@ void UnsentLogStore::NotifyLogEvent(MetricsLogsEventManager::LogEvent event,
 
 void UnsentLogStore::NotifyLogsEvent(base::span<std::unique_ptr<LogInfo>> logs,
                                      MetricsLogsEventManager::LogEvent event,
-                                     base::StringPiece message) {
+                                     std::string_view message) {
   if (!logs_event_manager_)
     return;
   for (const std::unique_ptr<LogInfo>& info : logs) {

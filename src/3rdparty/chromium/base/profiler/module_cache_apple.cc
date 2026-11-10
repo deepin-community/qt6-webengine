@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "base/profiler/module_cache.h"
 
 #include <dlfcn.h>
@@ -9,6 +14,8 @@
 #include <string.h>
 #include <uuid/uuid.h>
 
+#include "base/check.h"
+#include "base/check_op.h"
 #include "base/strings/string_number_conversions.h"
 #include "build/build_config.h"
 

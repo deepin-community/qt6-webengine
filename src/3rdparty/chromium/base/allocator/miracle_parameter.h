@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef BASE_ALLOCATOR_MIRACLE_PARAMETER_H_
 #define BASE_ALLOCATOR_MIRACLE_PARAMETER_H_
 
@@ -14,7 +19,7 @@
 // dependency cycle of (base->miracle_parameter->base).
 // Eventually the miracle_parameter component will have a public interface in
 // //base/ and this could be removed.
-// TODO(crbug.com/1475915): remove miracle_parameter from
+// TODO(crbug.com/40279826): remove miracle_parameter from
 // //base/allocator/.
 
 namespace base {
@@ -166,7 +171,7 @@ Enum GetMiracleParameterAsEnum(
                                    default_value, type, options)            \
   type function_name() {                                                    \
     static const type value = miracle_parameter::GetMiracleParameterAsEnum( \
-        feature, param_name, default_value, base::make_span(options));      \
+        feature, param_name, default_value, base::span(options));           \
     return value;                                                           \
   }
 

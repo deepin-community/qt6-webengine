@@ -4,20 +4,23 @@
 
 #include "quiche/quic/core/http/quic_spdy_client_session_base.h"
 
+#include <limits>
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "quiche/quic/core/quic_utils.h"
 #include "quiche/quic/platform/api/quic_flags.h"
 #include "quiche/quic/platform/api/quic_logging.h"
 
-using spdy::Http2HeaderBlock;
-
 namespace quic {
 
 QuicSpdyClientSessionBase::QuicSpdyClientSessionBase(
     QuicConnection* connection, QuicSession::Visitor* visitor,
-    const QuicConfig& config, const ParsedQuicVersionVector& supported_versions)
-    : QuicSpdySession(connection, visitor, config, supported_versions) {}
+    const QuicConfig& config, const ParsedQuicVersionVector& supported_versions,
+    QuicPriorityType priority_type)
+    : QuicSpdySession(connection, visitor, config, supported_versions,
+                      priority_type) {}
 
 QuicSpdyClientSessionBase::~QuicSpdyClientSessionBase() {
   DeleteConnection();

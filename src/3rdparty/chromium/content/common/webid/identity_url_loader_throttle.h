@@ -6,6 +6,7 @@
 #define CONTENT_COMMON_WEBID_IDENTITY_URL_LOADER_THROTTLE_H_
 
 #include <memory>
+#include <string_view>
 
 #include "base/functional/callback.h"
 #include "base/gtest_prod_util.h"
@@ -14,6 +15,7 @@
 #include "content/public/common/web_identity.h"
 #include "third_party/blink/public/common/loader/url_loader_throttle.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace net {
 class HttpResponseHeaders;
@@ -54,10 +56,11 @@ class CONTENT_EXPORT IdentityUrlLoaderThrottle
       const network::mojom::URLResponseHead& response_head);
 
   static bool HeaderHasToken(const net::HttpResponseHeaders& headers,
-                             base::StringPiece header_name,
-                             base::StringPiece token);
+                             std::string_view header_name,
+                             std::string_view token);
 
   GURL request_url_;
+  std::optional<url::Origin> request_initiator_;
   SetIdpStatusCallback set_idp_status_cb_;
   bool has_user_gesture_ = false;
 

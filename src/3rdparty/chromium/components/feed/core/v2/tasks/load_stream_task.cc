@@ -33,9 +33,7 @@
 #include "components/feed/core/v2/types.h"
 #include "components/feed/core/v2/view_demotion.h"
 #include "components/feed/feed_feature_list.h"
-#include "components/supervised_user/core/browser/proto/get_discover_feed_request.pb.h"
 #include "net/base/net_errors.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace feed {
 namespace {
@@ -59,7 +57,6 @@ feedwire::FeedQuery::RequestReason GetRequestReason(
       return feedwire::FeedQuery::APP_CLOSE_REFRESH;
     case LoadType::kLoadMore:
       NOTREACHED();
-      return feedwire::FeedQuery::MANUAL_REFRESH;
   }
 }
 
@@ -76,7 +73,8 @@ Result& Result::operator=(Result&&) = default;
 LaunchResult LoadStreamTask::LaunchResultFromNetworkInfo(
     const NetworkResponseInfo& response_info,
     bool has_parsed_body) {
-  if (response_info.status_code == 200) {
+  int status_code = response_info.status_code;
+  if (status_code == 200) {
     if (has_parsed_body) {
       // Success.
       return {LoadStreamStatus::kNoStatus,
@@ -108,6 +106,13 @@ LaunchResult LoadStreamTask::LaunchResultFromNetworkInfo(
       return {
           LoadStreamStatus::kAccountTokenFetchTimedOut,
           feedwire::DiscoverLaunchResult::NO_CARDS_FAILED_TO_GET_AUTH_TOKEN};
+  }
+  if (status_code == net::ERR_INTERNET_DISCONNECTED ||
+      status_code == net::ERR_NAME_NOT_RESOLVED ||
+      status_code == net::ERR_ADDRESS_UNREACHABLE ||
+      status_code == net::ERR_PROXY_CONNECTION_FAILED) {
+    return {LoadStreamStatus::kCannotLoadFromNetworkOffline,
+            feedwire::DiscoverLaunchResult::NO_CARDS_REQUEST_ERROR_NO_INTERNET};
   }
   return {LoadStreamStatus::kNetworkFetchFailed,
           feedwire::DiscoverLaunchResult::NO_CARDS_RESPONSE_ERROR_NON_200};
@@ -330,14 +335,7 @@ void LoadStreamTask::SendFeedQueryRequest() {
 
   FeedNetwork& network = stream_->GetNetwork();
   const bool force_feed_query = GetFeedConfig().use_feed_query_requests;
-  if (options_.stream_type.IsForSupervisedUser()) {
-    // TODO(b/295472540): Update parameters required for request.
-    supervised_user::GetDiscoverFeedRequest kid_friendly_request;
-    network.SendKidFriendlyApiRequest(
-        kid_friendly_request, account_info,
-        base::BindOnce(&LoadStreamTask::KidFriendlyRequestComplete,
-                       GetWeakPtr()));
-  } else if (!force_feed_query && options_.stream_type.IsWebFeed()) {
+  if (!force_feed_query && options_.stream_type.IsWebFeed()) {
     // Special case: web feed that is not using Feed Query requests go to
     // WebFeedListContentsDiscoverApi.
     network.SendApiRequest<WebFeedListContentsDiscoverApi>(
@@ -371,7 +369,6 @@ void LoadStreamTask::SendFeedQueryRequest() {
         break;
       case LoadType::kLoadMore:
         NOTREACHED();
-        break;
     }
   } else {
     // Other requests use GWS.
@@ -379,12 +376,6 @@ void LoadStreamTask::SendFeedQueryRequest() {
         NetworkRequestType::kFeedQuery, request, account_info,
         base::BindOnce(&LoadStreamTask::QueryRequestComplete, GetWeakPtr()));
   }
-}
-
-void LoadStreamTask::KidFriendlyRequestComplete(
-    FeedNetwork::KidFriendlyQueryRequestResult result) {
-  ProcessNetworkResponse<supervised_user::GetDiscoverFeedResponse>(
-      std::move(result.response_body), std::move(result.response_info));
 }
 
 void LoadStreamTask::QueryRequestComplete(
@@ -432,9 +423,17 @@ void LoadStreamTask::ProcessNetworkResponse(
          feedwire::DiscoverLaunchResult::NO_CARDS_REQUEST_ERROR_OTHER});
   }
 
-  loaded_new_content_from_network_ = true;
   content_ids_ =
       feedstore::GetContentIds(response_data.model_update_request->stream_data);
+
+  // Bail out if no card is received.
+  if (content_ids_.IsEmpty()) {
+    return RequestFinished(
+        {LoadStreamStatus::kNoCardReceived,
+         feedwire::DiscoverLaunchResult::NO_CARDS_RESPONSE_ERROR_ZERO_CARDS});
+  }
+
+  loaded_new_content_from_network_ = true;
 
   stream_->GetStore().OverwriteStream(
       options_.stream_type,
@@ -462,6 +461,10 @@ void LoadStreamTask::ProcessNetworkResponse(
   if (response_data.content_lifetime) {
     feedstore::SetContentLifetime(updated_metadata, options_.stream_type,
                                   *response_data.content_lifetime);
+  }
+  if (response_data.feed_launch_cui_metadata) {
+    updated_metadata.set_feed_launch_cui_metadata(
+        *response_data.feed_launch_cui_metadata);
   }
   stream_->SetMetadata(std::move(updated_metadata));
   if (response_data.experiments)

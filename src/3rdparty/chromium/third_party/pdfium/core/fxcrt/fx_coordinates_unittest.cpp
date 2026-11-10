@@ -7,6 +7,7 @@
 #include <limits>
 #include <vector>
 
+#include "core/fxcrt/fx_coordinates_test_support.h"
 #include "core/fxcrt/fx_system.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -20,7 +21,7 @@ constexpr float kMaxIntAsFloat = static_cast<float>(kMaxInt);
 
 }  // namespace
 
-TEST(CFX_FloatRect, FromFXRect) {
+TEST(CFXFloatRectTest, FromFXRect) {
   FX_RECT downwards(10, 20, 30, 40);
   CFX_FloatRect rect(downwards);
   EXPECT_FLOAT_EQ(rect.left, 10.0f);
@@ -29,7 +30,7 @@ TEST(CFX_FloatRect, FromFXRect) {
   EXPECT_FLOAT_EQ(rect.top, 40.0f);
 }
 
-TEST(CFX_FloatRect, GetBBox) {
+TEST(CFXFloatRectTest, GetBBox) {
   CFX_FloatRect rect = CFX_FloatRect::GetBBox({});
   EXPECT_FLOAT_EQ(0.0f, rect.left);
   EXPECT_FLOAT_EQ(0.0f, rect.bottom);
@@ -38,7 +39,7 @@ TEST(CFX_FloatRect, GetBBox) {
 
   std::vector<CFX_PointF> data;
   data.emplace_back(0.0f, 0.0f);
-  rect = CFX_FloatRect::GetBBox(pdfium::make_span(data).first(0));
+  rect = CFX_FloatRect::GetBBox(pdfium::span(data).first(0u));
   EXPECT_FLOAT_EQ(0.0f, rect.left);
   EXPECT_FLOAT_EQ(0.0f, rect.bottom);
   EXPECT_FLOAT_EQ(0.0f, rect.right);
@@ -51,7 +52,7 @@ TEST(CFX_FloatRect, GetBBox) {
 
   data.emplace_back(2.5f, 6.2f);
   data.emplace_back(1.5f, 6.2f);
-  rect = CFX_FloatRect::GetBBox(pdfium::make_span(data).first(2));
+  rect = CFX_FloatRect::GetBBox(pdfium::span(data).first(2u));
   EXPECT_FLOAT_EQ(0.0f, rect.left);
   EXPECT_FLOAT_EQ(0.0f, rect.bottom);
   EXPECT_FLOAT_EQ(2.5f, rect.right);
@@ -85,7 +86,7 @@ TEST(CFX_FloatRect, GetBBox) {
   EXPECT_FLOAT_EQ(6.3f, rect.top);
 }
 
-TEST(CFX_FloatRect, GetInnerRect) {
+TEST(CFXFloatRectTest, GetInnerRect) {
   FX_RECT inner_rect;
   CFX_FloatRect rect;
 
@@ -139,7 +140,7 @@ TEST(CFX_FloatRect, GetInnerRect) {
   EXPECT_EQ(kMinInt, inner_rect.top);
 }
 
-TEST(CFX_FloatRect, GetOuterRect) {
+TEST(CFXFloatRectTest, GetOuterRect) {
   FX_RECT outer_rect;
   CFX_FloatRect rect;
 
@@ -191,7 +192,7 @@ TEST(CFX_FloatRect, GetOuterRect) {
   EXPECT_EQ(kMinInt, outer_rect.top);
 }
 
-TEST(CFX_FloatRect, Normalize) {
+TEST(CFXFloatRectTest, Normalize) {
   CFX_FloatRect rect;
   rect.Normalize();
   EXPECT_FLOAT_EQ(0.0f, rect.left);
@@ -213,7 +214,7 @@ TEST(CFX_FloatRect, Normalize) {
   EXPECT_FLOAT_EQ(3.0f, rect.top);
 }
 
-TEST(CFX_FloatRect, Scale) {
+TEST(CFXFloatRectTest, Scale) {
   CFX_FloatRect rect(-1.0f, -3.0f, 4.5f, 3.2f);
   rect.Scale(1.0f);
   EXPECT_FLOAT_EQ(-1.0f, rect.left);
@@ -242,7 +243,7 @@ TEST(CFX_FloatRect, Scale) {
   EXPECT_FLOAT_EQ(0.0f, rect.top);
 }
 
-TEST(CFX_FloatRect, ScaleEmpty) {
+TEST(CFXFloatRectTest, ScaleEmpty) {
   CFX_FloatRect rect;
   rect.Scale(1.0f);
   EXPECT_FLOAT_EQ(0.0f, rect.left);
@@ -266,7 +267,7 @@ TEST(CFX_FloatRect, ScaleEmpty) {
   EXPECT_FLOAT_EQ(0.0f, rect.top);
 }
 
-TEST(CFX_FloatRect, ScaleFromCenterPoint) {
+TEST(CFXFloatRectTest, ScaleFromCenterPoint) {
   CFX_FloatRect rect(-1.0f, -3.0f, 4.5f, 3.2f);
   rect.ScaleFromCenterPoint(1.0f);
   EXPECT_FLOAT_EQ(-1.0f, rect.left);
@@ -295,7 +296,7 @@ TEST(CFX_FloatRect, ScaleFromCenterPoint) {
   EXPECT_NEAR(0.1f, rect.top, 0.001f);
 }
 
-TEST(CFX_FloatRect, ScaleFromCenterPointEmpty) {
+TEST(CFXFloatRectTest, ScaleFromCenterPointEmpty) {
   CFX_FloatRect rect;
   rect.ScaleFromCenterPoint(1.0f);
   EXPECT_FLOAT_EQ(0.0f, rect.left);
@@ -319,43 +320,41 @@ TEST(CFX_FloatRect, ScaleFromCenterPointEmpty) {
   EXPECT_FLOAT_EQ(0.0f, rect.top);
 }
 
-#ifndef NDEBUG
-TEST(CFX_FloatRect, Print) {
+TEST(CFXFloatRectTest, Print) {
   std::ostringstream os;
   CFX_FloatRect rect;
   os << rect;
-  EXPECT_STREQ("rect[w 0 x h 0 (left 0, bot 0)]", os.str().c_str());
+  EXPECT_EQ("rect[w 0 x h 0 (left 0, bot 0)]", os.str());
 
   os.str("");
   rect = CFX_FloatRect(10, 20, 14, 23);
   os << rect;
-  EXPECT_STREQ("rect[w 4 x h 3 (left 10, bot 20)]", os.str().c_str());
+  EXPECT_EQ("rect[w 4 x h 3 (left 10, bot 20)]", os.str());
 
   os.str("");
   rect = CFX_FloatRect(10.5, 20.5, 14.75, 23.75);
   os << rect;
-  EXPECT_STREQ("rect[w 4.25 x h 3.25 (left 10.5, bot 20.5)]", os.str().c_str());
+  EXPECT_EQ("rect[w 4.25 x h 3.25 (left 10.5, bot 20.5)]", os.str());
 }
 
-TEST(CFX_RectF, Print) {
+TEST(CFXRectFTest, Print) {
   std::ostringstream os;
   CFX_RectF rect;
   os << rect;
-  EXPECT_STREQ("rect[w 0 x h 0 (left 0, top 0)]", os.str().c_str());
+  EXPECT_EQ("rect[w 0 x h 0 (left 0, top 0)]", os.str());
 
   os.str("");
   rect = CFX_RectF(10, 20, 4, 3);
   os << rect;
-  EXPECT_STREQ("rect[w 4 x h 3 (left 10, top 20)]", os.str().c_str());
+  EXPECT_EQ("rect[w 4 x h 3 (left 10, top 20)]", os.str());
 
   os.str("");
   rect = CFX_RectF(10.5, 20.5, 4.25, 3.25);
   os << rect;
-  EXPECT_STREQ("rect[w 4.25 x h 3.25 (left 10.5, top 20.5)]", os.str().c_str());
+  EXPECT_EQ("rect[w 4.25 x h 3.25 (left 10.5, top 20.5)]", os.str());
 }
-#endif  // NDEBUG
 
-TEST(CFX_Matrix, ReverseIdentity) {
+TEST(CFXMatrixTest, ReverseIdentity) {
   CFX_Matrix rev = CFX_Matrix().GetInverse();
 
   EXPECT_FLOAT_EQ(1.0, rev.a);
@@ -371,7 +370,7 @@ TEST(CFX_Matrix, ReverseIdentity) {
   EXPECT_FLOAT_EQ(expected.y, result.y);
 }
 
-TEST(CFX_Matrix, SetIdentity) {
+TEST(CFXMatrixTest, SetIdentity) {
   CFX_Matrix m;
   EXPECT_FLOAT_EQ(1.0f, m.a);
   EXPECT_FLOAT_EQ(0.0f, m.b);
@@ -394,9 +393,8 @@ TEST(CFX_Matrix, SetIdentity) {
   EXPECT_TRUE(m.IsIdentity());
 }
 
-TEST(CFX_Matrix, GetInverse) {
-  static constexpr float data[6] = {3, 0, 2, 3, 1, 4};
-  CFX_Matrix m(data);
+TEST(CFXMatrixTest, GetInverse) {
+  static constexpr CFX_Matrix m(3, 0, 2, 3, 1, 4);
   CFX_Matrix rev = m.GetInverse();
 
   EXPECT_FLOAT_EQ(0.33333334f, rev.a);
@@ -413,11 +411,10 @@ TEST(CFX_Matrix, GetInverse) {
 }
 
 // Note, I think these are a bug and the matrix should be the identity.
-TEST(CFX_Matrix, GetInverseCR702041) {
+TEST(CFXMatrixTest, GetInverseCR702041) {
   // The determinate is < std::numeric_limits<float>::epsilon()
-  static constexpr float data[6] = {0.947368443f, -0.108947366f, -0.923076928f,
-                                    0.106153846f, 18.0f,         787.929993f};
-  CFX_Matrix m(data);
+  static constexpr CFX_Matrix m(0.947368443f, -0.108947366f, -0.923076928f,
+                                0.106153846f, 18.0f, 787.929993f);
   CFX_Matrix rev = m.GetInverse();
 
   EXPECT_FLOAT_EQ(14247728.0f, rev.a);
@@ -434,11 +431,10 @@ TEST(CFX_Matrix, GetInverseCR702041) {
   EXPECT_FLOAT_EQ(expected.y, result.y);
 }
 
-TEST(CFX_Matrix, GetInverseCR714187) {
+TEST(CFXMatrixTest, GetInverseCR714187) {
   // The determinate is < std::numeric_limits<float>::epsilon()
-  static constexpr float data[6] = {0.000037f,  0.0f,        0.0f,
-                                    -0.000037f, 182.413101f, 136.977646f};
-  CFX_Matrix m(data);
+  static constexpr CFX_Matrix m(0.000037f, 0.0f, 0.0f, -0.000037f, 182.413101f,
+                                136.977646f);
   CFX_Matrix rev = m.GetInverse();
 
   EXPECT_FLOAT_EQ(27027.025f, rev.a);
@@ -457,7 +453,7 @@ TEST(CFX_Matrix, GetInverseCR714187) {
 
 #define EXPECT_NEAR_FIVE_PLACES(a, b) EXPECT_NEAR((a), (b), 1e-5)
 
-TEST(CFX_Matrix, ComposeTransformations) {
+TEST(CFXMatrixTest, ComposeTransformations) {
   // sin(FXSYS_PI/2) and cos(FXSYS_PI/2) have a tiny error and are not
   // exactly 1.0f and 0.0f. The rotation matrix is thus not perfect.
 
@@ -584,7 +580,7 @@ TEST(CFX_Matrix, ComposeTransformations) {
   EXPECT_FLOAT_EQ(73.0f, p_10_20_transformed.y);
 }
 
-TEST(CFX_Matrix, TransformRectForRectF) {
+TEST(CFXMatrixTest, TransformRectForRectF) {
   CFX_Matrix rotate_90;
   rotate_90.Rotate(FXSYS_PI / 2);
 
@@ -605,7 +601,7 @@ TEST(CFX_Matrix, TransformRectForRectF) {
   EXPECT_FLOAT_EQ(55.25f, rect.Height());
 }
 
-TEST(CFX_Matrix, TransformRectForFloatRect) {
+TEST(CFXMatrixTest, TransformRectForFloatRect) {
   CFX_Matrix rotate_90;
   rotate_90.Rotate(FXSYS_PI / 2);
 

@@ -10,6 +10,7 @@
 #include <ostream>
 #include <string>
 #include <vector>
+
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
 #include "base/scoped_observation.h"
@@ -27,6 +28,10 @@ namespace content {
 class BrowserContext;
 }  // namespace content
 
+namespace net {
+class HttpResponseHeaders;
+}  // namespace net
+
 namespace extensions {
 
 class Extension;
@@ -34,6 +39,7 @@ class Extension;
 namespace declarative_net_request {
 
 class FileBackedRulesetSource;
+struct RequestParams;
 class RulesetMatcher;
 struct RuleCounts;
 struct TestRule;
@@ -70,8 +76,8 @@ bool AreAllIndexedStaticRulesetsValid(
     content::BrowserContext* browser_context,
     FileBackedRulesetSource::RulesetFilter ruleset_filter);
 
-// Helper to create a verified ruleset matcher. Populates |matcher| and
-// |expected_checksum|. Returns true on success.
+// Helper to create a verified ruleset matcher. Populates `matcher` and
+// `expected_checksum`. Returns true on success.
 bool CreateVerifiedMatcher(const std::vector<TestRule>& rules,
                            const FileBackedRulesetSource& source,
                            std::unique_ptr<RulesetMatcher>* matcher,
@@ -86,7 +92,11 @@ FileBackedRulesetSource CreateTemporarySource(
 api::declarative_net_request::ModifyHeaderInfo CreateModifyHeaderInfo(
     api::declarative_net_request::HeaderOperation operation,
     std::string header,
-    std::optional<std::string> value);
+    std::optional<std::string> value,
+    std::optional<std::string> regex_filter = std::nullopt,
+    std::optional<std::string> regex_substitution = std::nullopt,
+    std::optional<api::declarative_net_request::HeaderRegexOptions>
+        regex_options = std::nullopt);
 
 bool EqualsForTesting(
     const api::declarative_net_request::ModifyHeaderInfo& lhs,
@@ -111,7 +121,7 @@ class RulesetManagerObserver : public RulesetManager::TestObserver {
   // function.
   std::vector<GURL> GetAndResetRequestSeen();
 
-  // Waits for the number of rulesets to change to |count|. Note |count| is the
+  // Waits for the number of rulesets to change to `count`. Note `count` is the
   // number of extensions with rulesets or the number of active
   // CompositeMatchers.
   void WaitForExtensionsWithRulesetsCount(size_t count);
@@ -158,6 +168,10 @@ base::flat_set<int> GetDisabledRuleIdsFromMatcherForTesting(
     const RulesetManager& ruleset_manager,
     const Extension& extension,
     const std::string& ruleset_id_string);
+
+RequestParams CreateRequestWithResponseHeaders(
+    const GURL& url,
+    const net::HttpResponseHeaders* headers);
 
 }  // namespace declarative_net_request
 }  // namespace extensions

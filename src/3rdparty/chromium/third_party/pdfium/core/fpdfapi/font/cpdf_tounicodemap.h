@@ -8,13 +8,13 @@
 #define CORE_FPDFAPI_FONT_CPDF_TOUNICODEMAP_H_
 
 #include <map>
+#include <optional>
 #include <set>
 #include <vector>
 
 #include "core/fxcrt/fx_string.h"
 #include "core/fxcrt/retain_ptr.h"
 #include "core/fxcrt/unowned_ptr.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 class CPDF_CID2UnicodeMap;
 class CPDF_SimpleParser;
@@ -31,25 +31,31 @@ class CPDF_ToUnicodeMap {
   size_t GetUnicodeCountByCharcodeForTesting(uint32_t charcode) const;
 
  private:
-  friend class cpdf_tounicodemap_StringToCode_Test;
-  friend class cpdf_tounicodemap_StringToWideString_Test;
+  friend class CPDFToUnicodeMapTest_StringToCode_Test;
+  friend class CPDFToUnicodeMapTest_StringToWideString_Test;
 
-  static absl::optional<uint32_t> StringToCode(ByteStringView input);
+  static std::optional<uint32_t> StringToCode(ByteStringView str);
   static WideString StringToWideString(ByteStringView str);
 
   void Load(RetainPtr<const CPDF_Stream> pStream);
-  void HandleBeginBFChar(CPDF_SimpleParser* pParser);
-  void HandleBeginBFRange(CPDF_SimpleParser* pParser);
+
+  // `previous_word` is the most recent word that `parser` returned.
+  // Returns the last word `parser` encountered.
+  ByteStringView HandleBeginBFChar(CPDF_SimpleParser& parser,
+                                   ByteStringView previous_word);
+  ByteStringView HandleBeginBFRange(CPDF_SimpleParser& parser,
+                                    ByteStringView previous_word);
+
   uint32_t GetMultiCharIndexIndicator() const;
   void SetCode(uint32_t srccode, WideString destcode);
 
-  // Inserts a new entry which hasn't not been inserted into `m_Multimap`
+  // Inserts a new entry which hasn't not been inserted into `multimap_`
   // before.
   void InsertIntoMultimap(uint32_t code, uint32_t destcode);
 
-  std::map<uint32_t, std::set<uint32_t>> m_Multimap;
-  UnownedPtr<const CPDF_CID2UnicodeMap> m_pBaseMap;
-  std::vector<WideString> m_MultiCharVec;
+  std::map<uint32_t, std::set<uint32_t>> multimap_;
+  UnownedPtr<const CPDF_CID2UnicodeMap> base_map_;
+  std::vector<WideString> multi_char_vec_;
 };
 
 #endif  // CORE_FPDFAPI_FONT_CPDF_TOUNICODEMAP_H_

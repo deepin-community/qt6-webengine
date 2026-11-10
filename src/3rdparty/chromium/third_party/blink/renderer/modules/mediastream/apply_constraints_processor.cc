@@ -9,6 +9,7 @@
 #include "base/location.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/trace_event.h"
+#include "build/build_config.h"
 #include "third_party/blink/public/mojom/mediastream/media_devices.mojom-blink.h"
 #include "third_party/blink/public/platform/modules/mediastream/web_media_stream_track.h"
 #include "third_party/blink/public/platform/web_string.h"
@@ -39,10 +40,6 @@ void RequestSucceeded(blink::ApplyConstraintsRequest* request) {
 }
 
 }  // namespace
-
-BASE_FEATURE(kApplyConstraintsRestartsVideoContentSources,
-             "ApplyConstraintsRestartsVideoContentSources",
-             base::FEATURE_ENABLED_BY_DEFAULT);
 
 ApplyConstraintsProcessor::ApplyConstraintsProcessor(
     LocalFrame* frame,
@@ -121,16 +118,20 @@ void ApplyConstraintsProcessor::ProcessVideoRequest() {
   const blink::MediaStreamDevice& device_info = video_source_->device();
   if (device_info.type == blink::mojom::MediaStreamType::DEVICE_VIDEO_CAPTURE) {
     ProcessVideoDeviceRequest();
-  } else if (base::FeatureList::IsEnabled(
-                 kApplyConstraintsRestartsVideoContentSources) &&
-             video_source_->GetSubCaptureTargetVersion() == 0 &&
+  } else if (video_source_->GetSubCaptureTargetVersion() == 0 &&
              (device_info.type ==
                   mojom::blink::MediaStreamType::GUM_DESKTOP_VIDEO_CAPTURE ||
               device_info.type ==
                   mojom::blink::MediaStreamType::DISPLAY_VIDEO_CAPTURE ||
               device_info.type == mojom::blink::MediaStreamType::
                                       DISPLAY_VIDEO_CAPTURE_THIS_TAB)) {
+#if BUILDFLAG(IS_ANDROID)
+    // On Android, we cannot restart the capture due to OS constraints.
+    // TODO(crbug.com/436623747): Support reconfiguring the capture stream.
+    FinalizeVideoRequest();
+#else
     ProcessVideoContentRequest();
+#endif  // BUILDFLAG(IS_ANDROID)
   } else {
     FinalizeVideoRequest();
   }

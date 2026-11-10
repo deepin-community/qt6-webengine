@@ -30,6 +30,7 @@
 #include <cstring>
 #include <iomanip>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <sstream>
 
@@ -47,19 +48,24 @@
 
 namespace dawn::native::utils {
 
-ResultOrError<Ref<ShaderModuleBase>> CreateShaderModule(DeviceBase* device, const char* source) {
-    ShaderModuleWGSLDescriptor wgslDesc;
+ResultOrError<Ref<ShaderModuleBase>> CreateShaderModule(
+    DeviceBase* device,
+    const char* source,
+    const std::vector<tint::wgsl::Extension>& internalExtensions) {
+    ShaderSourceWGSL wgslDesc;
     wgslDesc.code = source;
     ShaderModuleDescriptor descriptor;
     descriptor.nextInChain = &wgslDesc;
-    return device->CreateShaderModule(&descriptor);
+    return device->CreateShaderModule(&descriptor, internalExtensions);
 }
 
 ResultOrError<Ref<BufferBase>> CreateBufferFromData(DeviceBase* device,
+                                                    std::string_view label,
                                                     wgpu::BufferUsage usage,
                                                     const void* data,
                                                     uint64_t size) {
     BufferDescriptor descriptor;
+    descriptor.label = label;
     descriptor.size = size;
     descriptor.usage = usage;
     descriptor.mappedAtCreation = true;
@@ -204,8 +210,32 @@ ResultOrError<Ref<BindGroupBase>> MakeBindGroup(
     return device->CreateBindGroup(&descriptor, mode);
 }
 
-const char* GetLabelForTrace(const char* label) {
-    return (label == nullptr || strlen(label) == 0) ? "None" : label;
+const char* GetLabelForTrace(const std::string& label) {
+    if (label.length() == 0) {
+        return "None";
+    }
+    return label.c_str();
+}
+
+TraceLabel GetLabelForTrace(StringView label) {
+    if (label.data == nullptr) {
+        return {{}, {}, "None"};
+    }
+    if (label.length == WGPU_STRLEN) {
+        return {{}, {}, label.data};
+    }
+
+    TraceLabel result;
+    result.storage = {label.data, label.length};
+    result.label = result.storage.c_str();
+    return result;
+}
+
+std::string_view NormalizeMessageString(StringView in) {
+    if (in.IsUndefined()) {
+        return {};
+    }
+    return std::string_view(in.data, strnlen(in.data, in.length));
 }
 
 }  // namespace dawn::native::utils

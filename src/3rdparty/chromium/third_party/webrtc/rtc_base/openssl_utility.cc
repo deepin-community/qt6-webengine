@@ -10,30 +10,28 @@
 
 #include "rtc_base/openssl_utility.h"
 
-#include "absl/strings/string_view.h"
-#if defined(WEBRTC_WIN)
-// Must be included first before openssl headers.
-#include "rtc_base/win32.h"  // NOLINT
-#endif                       // WEBRTC_WIN
-
-#ifdef OPENSSL_IS_BORINGSSL
-#include <openssl/pool.h>
-#endif
 #include <openssl/err.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
-#include <stddef.h>
 
-#include "rtc_base/arraysize.h"
+#include <cstddef>
+#include <cstdint>
+
+#include "absl/strings/string_view.h"
 #include "rtc_base/logging.h"
 #include "rtc_base/numerics/safe_conversions.h"
 #include "rtc_base/openssl.h"
 #include "rtc_base/ssl_identity.h"
+
+#ifdef OPENSSL_IS_BORINGSSL
+#include <openssl/pool.h>
+#endif
+
 #ifndef WEBRTC_EXCLUDE_BUILT_IN_SSL_ROOT_CERTS
 #include "rtc_base/ssl_roots.h"
 #endif  // WEBRTC_EXCLUDE_BUILT_IN_SSL_ROOT_CERTS
 
-namespace rtc {
+namespace webrtc {
 namespace openssl {
 
 // Holds various helper methods.
@@ -42,7 +40,8 @@ namespace {
 // TODO(crbug.com/webrtc/11710): When OS certificate verification is available,
 // and we don't need VerifyPeerCertMatchesHost, don't compile this in order to
 // avoid a dependency on OpenSSL X509 objects (see crbug.com/webrtc/11410).
-void LogCertificates(SSL* ssl, X509* certificate) {
+void LogCertificates([[maybe_unused]] SSL* ssl,
+                     [[maybe_unused]] X509* certificate) {
 // Logging certificates is extremely verbose. So it is disabled by default.
 #ifdef LOG_CERTIFICATES
   BIO* mem = BIO_new(BIO_s_mem());
@@ -244,7 +243,7 @@ void LogSSLErrors(absl::string_view prefix) {
 #ifndef WEBRTC_EXCLUDE_BUILT_IN_SSL_ROOT_CERTS
 bool LoadBuiltinSSLRootCertificates(SSL_CTX* ctx) {
   int count_of_added_certs = 0;
-  for (size_t i = 0; i < arraysize(kSSLCertCertificateList); i++) {
+  for (size_t i = 0; i < std::size(kSSLCertCertificateList); i++) {
     const unsigned char* cert_buffer = kSSLCertCertificateList[i];
     size_t cert_buffer_len = kSSLCertCertificateSizeList[i];
     X509* cert = d2i_X509(nullptr, &cert_buffer,
@@ -271,4 +270,4 @@ CRYPTO_BUFFER_POOL* GetBufferPool() {
 #endif
 
 }  // namespace openssl
-}  // namespace rtc
+}  // namespace webrtc

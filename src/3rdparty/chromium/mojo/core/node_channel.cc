@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "mojo/core/node_channel.h"
 
 #include <cstring>
@@ -18,6 +23,7 @@
 #include "mojo/core/channel.h"
 #include "mojo/core/configuration.h"
 #include "mojo/core/core.h"
+#include "mojo/core/ipcz_driver/envelope.h"
 #include "mojo/core/request_context.h"
 
 namespace mojo {
@@ -52,6 +58,8 @@ enum class MessageType : uint32_t {
 struct alignas(8) Header {
   MessageType type;
 };
+
+static_assert(sizeof(Header) == kNodeChannelHeaderSize);
 
 static_assert(IsAlignedForChannelMessage(sizeof(Header)),
               "Invalid header size.");
@@ -253,13 +261,9 @@ scoped_refptr<NodeChannel> NodeChannel::Create(
     Channel::HandlePolicy channel_handle_policy,
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
     const ProcessErrorCallback& process_error_callback) {
-#if BUILDFLAG(IS_NACL)
-  LOG(FATAL) << "Multi-process not yet supported on NaCl-SFI";
-#else
   return new NodeChannel(delegate, std::move(connection_params),
                          channel_handle_policy, io_task_runner,
                          process_error_callback);
-#endif
 }
 
 // static
@@ -474,7 +478,7 @@ void NodeChannel::Broadcast(Channel::MessagePtr message) {
 }
 
 void NodeChannel::BindBrokerHost(PlatformHandle broker_host_handle) {
-#if !BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_NACL) && !BUILDFLAG(IS_FUCHSIA)
+#if !BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_FUCHSIA)
   DCHECK(broker_host_handle.is_valid());
   BindBrokerHostData* data;
   std::vector<PlatformHandle> handles;
@@ -507,7 +511,7 @@ void NodeChannel::RelayEventMessage(const ports::NodeName& destination,
   // will leak, but that means something else has probably broken and the
   // sending process won't likely be around much longer.
   //
-  // TODO(https://crbug.com/813112): We would like to be able to violate the
+  // TODO(crbug.com/40563346): We would like to be able to violate the
   // above stated assumption. We should not leak handles in cases where we
   // outlive the broker, as we may continue existing and eventually accept a new
   // broker invitation.
@@ -542,15 +546,11 @@ NodeChannel::NodeChannel(
     const ProcessErrorCallback& process_error_callback)
     : base::RefCountedDeleteOnSequence<NodeChannel>(io_task_runner),
       delegate_(delegate),
-      process_error_callback_(process_error_callback)
-#if !BUILDFLAG(IS_NACL)
-      ,
+      process_error_callback_(process_error_callback),
       channel_(Channel::Create(this,
                                std::move(connection_params),
                                channel_handle_policy,
-                               std::move(io_task_runner)))
-#endif
-{
+                               std::move(io_task_runner))) {
   InitializeLocalCapabilities();
 }
 
@@ -560,7 +560,7 @@ NodeChannel::~NodeChannel() {
 
 void NodeChannel::CreateAndBindLocalBrokerHost(
     PlatformHandle broker_host_handle) {
-#if !BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_NACL) && !BUILDFLAG(IS_FUCHSIA)
+#if !BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_FUCHSIA)
   // Self-owned.
   ConnectionParams connection_params(
       PlatformChannelEndpoint(std::move(broker_host_handle)));
@@ -569,9 +569,11 @@ void NodeChannel::CreateAndBindLocalBrokerHost(
 #endif
 }
 
-void NodeChannel::OnChannelMessage(const void* payload,
-                                   size_t payload_size,
-                                   std::vector<PlatformHandle> handles) {
+void NodeChannel::OnChannelMessage(
+    const void* payload,
+    size_t payload_size,
+    std::vector<PlatformHandle> handles,
+    scoped_refptr<ipcz_driver::Envelope> envelope) {
   DCHECK(owning_task_runner()->RunsTasksInCurrentSequence());
 
   RequestContext request_context(RequestContext::Source::SYSTEM);
@@ -749,11 +751,17 @@ void NodeChannel::OnChannelMessage(const void* payload,
         if (payload_size <= sizeof(Header) + sizeof(data))
           break;
 
+        Channel::HandlePolicy handle_policy;
+        {
+          base::AutoLock lock(channel_lock_);
+          handle_policy = channel_->handle_policy();
+        }
+
         const void* message_start = reinterpret_cast<const uint8_t*>(payload) +
                                     sizeof(Header) + sizeof(data);
         Channel::MessagePtr message = Channel::Message::Deserialize(
             message_start, payload_size - sizeof(Header) - sizeof(data),
-            Channel::HandlePolicy::kAcceptHandles, from_process);
+            handle_policy, from_process);
         if (!message) {
           DLOG(ERROR) << "Dropping invalid relay message.";
           break;
@@ -864,10 +872,8 @@ void NodeChannel::WriteChannelMessage(Channel::MessagePtr message) {
 }
 
 void NodeChannel::OfferChannelUpgrade() {
-#if !BUILDFLAG(IS_NACL)
   base::AutoLock lock(channel_lock_);
   channel_->OfferChannelUpgrade();
-#endif
 }
 
 uint64_t NodeChannel::RemoteCapabilities() const {

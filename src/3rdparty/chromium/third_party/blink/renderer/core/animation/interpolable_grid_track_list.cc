@@ -6,7 +6,6 @@
 
 #include <memory>
 #include "third_party/blink/renderer/core/animation/interpolable_grid_track_repeater.h"
-#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -18,7 +17,8 @@ InterpolableGridTrackList::InterpolableGridTrackList(InterpolableList* values,
 
 // static
 InterpolableGridTrackList* InterpolableGridTrackList::MaybeCreate(
-    const NGGridTrackList& track_list,
+    const GridTrackList& track_list,
+    const CSSProperty& property,
     float zoom) {
   // Subgrids do not have sizes stored on their track list to interpolate.
   if (track_list.HasAutoRepeater() || track_list.IsSubgriddedAxis()) {
@@ -34,22 +34,21 @@ InterpolableGridTrackList* InterpolableGridTrackList::MaybeCreate(
     for (wtf_size_t j = 0; j < track_list.RepeatSize(i); ++j)
       repeater_track_sizes.push_back(track_list.RepeatTrackSize(i, j));
 
-    const NGGridTrackRepeater repeater(
+    const GridTrackRepeater repeater(
         track_list.RepeatIndex(i), track_list.RepeatSize(i),
-        track_list.RepeatCount(i, 0), track_list.LineNameIndicesCount(i),
-        track_list.RepeatType(i));
+        track_list.RepeatCount(i, 0), track_list.RepeatType(i));
     InterpolableGridTrackRepeater* result =
         InterpolableGridTrackRepeater::Create(repeater, repeater_track_sizes,
-                                              zoom);
+                                              property, zoom);
     DCHECK(result);
     values->Set(i, result);
   }
   return MakeGarbageCollected<InterpolableGridTrackList>(values, 0);
 }
 
-NGGridTrackList InterpolableGridTrackList::CreateNGGridTrackList(
+GridTrackList InterpolableGridTrackList::CreateGridTrackList(
     const CSSToLengthConversionData& conversion_data) const {
-  NGGridTrackList new_track_list;
+  GridTrackList new_track_list;
   for (wtf_size_t i = 0; i < values_->length(); ++i) {
     const InterpolableGridTrackRepeater& repeater =
         To<InterpolableGridTrackRepeater>(*values_->Get(i));
@@ -60,14 +59,13 @@ NGGridTrackList InterpolableGridTrackList::CreateNGGridTrackList(
 }
 
 InterpolableGridTrackList* InterpolableGridTrackList::RawClone() const {
-  InterpolableList* values(DynamicTo<InterpolableList>(values_->Clone()));
+  InterpolableList* values(values_->Clone());
   return MakeGarbageCollected<InterpolableGridTrackList>(std::move(values),
                                                          progress_);
 }
 
 InterpolableGridTrackList* InterpolableGridTrackList::RawCloneAndZero() const {
-  InterpolableList* values(
-      DynamicTo<InterpolableList>(values_->CloneAndZero()));
+  InterpolableList* values(values_->CloneAndZero());
   return MakeGarbageCollected<InterpolableGridTrackList>(std::move(values),
                                                          progress_);
 }

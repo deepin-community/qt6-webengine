@@ -58,7 +58,7 @@ void WebAuthenticationProxyAPI::OnListenerRemoved(
     return;
   }
   auto it = session_state_change_notifiers_.find(details.extension_id);
-  DCHECK(it != session_state_change_notifiers_.end());
+  CHECK(it != session_state_change_notifiers_.end());
   session_state_change_notifiers_.erase(it);
 }
 

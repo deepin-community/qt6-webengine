@@ -1,5 +1,6 @@
 // Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "native_skia_output_device_direct3d11.h"
 
@@ -21,11 +22,13 @@ NativeSkiaOutputDeviceDirect3D11::NativeSkiaOutputDeviceDirect3D11(
                              shared_image_factory, shared_image_representation_factory,
                              didSwapBufferCompleteCallback)
 {
+    qCDebug(lcWebEngineCompositor, "Native Skia Output Device: Direct3D11");
+
     SkColorType skColorType = kRGBA_8888_SkColorType;
-    capabilities_.sk_color_types[static_cast<int>(gfx::BufferFormat::RGBA_8888)] = skColorType;
-    capabilities_.sk_color_types[static_cast<int>(gfx::BufferFormat::RGBX_8888)] = skColorType;
-    capabilities_.sk_color_types[static_cast<int>(gfx::BufferFormat::BGRA_8888)] = skColorType;
-    capabilities_.sk_color_types[static_cast<int>(gfx::BufferFormat::BGRX_8888)] = skColorType;
+    capabilities_.sk_color_type_map[viz::SinglePlaneFormat::kRGBA_8888] = skColorType;
+    capabilities_.sk_color_type_map[viz::SinglePlaneFormat::kRGBX_8888] = skColorType;
+    capabilities_.sk_color_type_map[viz::SinglePlaneFormat::kBGRA_8888] = skColorType;
+    capabilities_.sk_color_type_map[viz::SinglePlaneFormat::kBGRX_8888] = skColorType;
 }
 
 NativeSkiaOutputDeviceDirect3D11::~NativeSkiaOutputDeviceDirect3D11() { }
@@ -35,14 +38,16 @@ QSGTexture *NativeSkiaOutputDeviceDirect3D11::texture(QQuickWindow *win, uint32_
     if (!m_frontBuffer || !m_readyWithTexture)
         return nullptr;
 
-    absl::optional<gl::DCLayerOverlayImage> overlayImage = m_frontBuffer->overlayImage();
+    std::optional<gl::DCLayerOverlayImage> overlayImage = m_frontBuffer->overlayImage();
     if (!overlayImage) {
         qWarning("D3D: No overlay image.");
         return nullptr;
     }
 
-    Q_ASSERT(overlayImage->type() == gl::DCLayerOverlayType::kNV12Texture);
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> chromeTexture = overlayImage->nv12_texture();
+    qCDebug(lcWebEngineCompositor, "D3D: Importing DXGI Resource into D3D11 Texture.");
+
+    Q_ASSERT(overlayImage->type() == gl::DCLayerOverlayType::kD3D11Texture);
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> chromeTexture = overlayImage->d3d11_video_texture();
     if (!chromeTexture) {
         qWarning("D3D: No D3D texture.");
         return nullptr;
@@ -64,7 +69,11 @@ QSGTexture *NativeSkiaOutputDeviceDirect3D11::texture(QQuickWindow *win, uint32_
     QSGRendererInterface *ri = win->rendererInterface();
     ID3D11Device *device = static_cast<ID3D11Device *>(
             ri->getResource(win, QSGRendererInterface::DeviceResource));
-    Q_ASSERT(device);
+    if (!device) {
+        qWarning("D3D: No D3D device.");
+        ::CloseHandle(sharedHandle);
+        return nullptr;
+    }
 
     Microsoft::WRL::ComPtr<ID3D11Device1> device1;
     hr = device->QueryInterface(IID_PPV_ARGS(&device1));
@@ -73,9 +82,9 @@ QSGTexture *NativeSkiaOutputDeviceDirect3D11::texture(QQuickWindow *win, uint32_
     ID3D11Texture2D *qtTexture = nullptr;
     hr = device1->OpenSharedResource1(sharedHandle, IID_PPV_ARGS(&qtTexture));
     if (FAILED(hr)) {
-        qWarning("D3D: Failed to share D3D11 texture (%s). This will result in failed rendering. "
-                 "Report the bug, and try restarting with QTWEBENGINE_CHROMIUM_FLAGS=--disble-gpu",
-                 qPrintable(QSystemError::windowsComString(hr)));
+        qWarning("D3D: Failed to share D3D11 texture (%ls). This will result in failed rendering. "
+                 "Report the bug, and try restarting with QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu",
+                 qUtf16Printable(QSystemError::windowsComString(hr)));
         ::CloseHandle(sharedHandle);
         return nullptr;
     }

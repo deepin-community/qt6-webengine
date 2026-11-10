@@ -18,11 +18,13 @@ executable("tag_exe") {
     "//base",
     "//chrome/updater:tagging",
   ]
+  assert_no_deps = [ "//third_party/libaom" ]
 }
 
 copy("tag") {
   # For arm64 builds, we need to create an x86_64 tag executable.
-  if (current_cpu != "x64" && is_win) {
+  if (current_cpu != "x64" && is_win && !is_msvc) {
+    # TODO: remove fixed clang toolchain
     tag_tool = ":tag_exe(//build/toolchain/win:win_clang_x64)"
   } else {
     tag_tool = ":tag_exe"
@@ -46,6 +48,7 @@ if (is_mac) {
     ]
 
     frameworks = [ "Foundation.framework" ]
+    assert_no_deps = [ "//third_party/libaom" ]
   }
 }
 
@@ -53,20 +56,17 @@ executable("${updater_product_full_name}Util") {
   sources = [ "updater_util.cc" ]
   deps = [
     "//base",
-    "//chrome/updater:base",
-    "//chrome/updater:constants_prod",
-    "//chrome/updater:external_constants",
-  ]
-}
-
-executable("dm_policy_dump") {
-  sources = [ "dm_policy_dump.cc" ]
-  deps = [
-    "//base",
+    "//chrome/enterprise_companion/device_management_storage",
     "//chrome/updater:base",
     "//chrome/updater:constants_prod",
     "//chrome/updater:external_constants",
     "//chrome/updater/protos:omaha_proto",
+    "//components/crx_file",
     "//components/policy/proto",
+    "//components/update_client",
+    "//components/update_client:in_process_unzipper",
   ]
+  if (!is_component_build) {
+    assert_no_deps = [ "//third_party/libaom" ]
+  }
 }

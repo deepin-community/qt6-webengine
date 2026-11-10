@@ -12,7 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {allUnique, arrayEquals, range} from './array_utils';
+import {
+  allUnique,
+  arrayEquals,
+  removeFalsyValues,
+  range,
+  moveArrayItem,
+} from './array_utils';
 
 describe('range', () => {
   it('returns array of elements in range [0; n)', () => {
@@ -62,4 +68,32 @@ describe('arrayEquals', () => {
   it('returns false when arrays have differing lengths', () => {
     expect(arrayEquals(['a', 'b', 'c'], ['a'])).toBeFalsy();
   });
+});
+
+test('removeFalsyValues', () => {
+  const input = [
+    'a',
+    false,
+    undefined,
+    null,
+    '',
+    123,
+    123n,
+    true,
+    {foo: 'bar'},
+  ];
+  const expected = ['a', 123, 123n, true, {foo: 'bar'}];
+  expect(removeFalsyValues(input)).toEqual(expected);
+});
+
+test('moveArrayItem.moveForward', () => {
+  const input = range(3);
+  moveArrayItem(input, 0, 2);
+  expect(input).toEqual([1, 0, 2]);
+});
+
+test('moveArrayItem.moveBackward', () => {
+  const input = range(3);
+  moveArrayItem(input, 2, 0);
+  expect(input).toEqual([2, 0, 1]);
 });

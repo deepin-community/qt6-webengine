@@ -8,17 +8,18 @@
 #include <stddef.h>
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "base/containers/circular_deque.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/timer/elapsed_timer.h"
+#include "components/viz/common/resources/shared_image_format.h"
+#include "components/viz/service/display/render_pass_alpha_type.h"
 #include "components/viz/service/viz_service_export.h"
 #include "gpu/command_buffer/common/mailbox.h"
 #include "gpu/ipc/common/surface_handle.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-#include "ui/gfx/buffer_types.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
@@ -39,7 +40,8 @@ class VIZ_SERVICE_EXPORT BufferQueue {
   // |supports_dynamic_frame_buffer_allocation| capability is true.
   BufferQueue(SkiaOutputSurface* skia_output_surface,
               gpu::SurfaceHandle surface_handle,
-              size_t number_of_buffers);
+              size_t number_of_buffers,
+              bool is_protected = false);
 
   BufferQueue(const BufferQueue&) = delete;
   BufferQueue& operator=(const BufferQueue&) = delete;
@@ -70,10 +72,11 @@ class VIZ_SERVICE_EXPORT BufferQueue {
 
   // Called by the user of this object to indicate that a previous request to
   // swap buffers has completed. This allows us to correctly keep track of the
-  // state of the buffers: the buffer currently marked as being displayed will
-  // now marked as available, and the next buffer marked as in-flight will now
-  // be marked as displayed.
-  void SwapBuffersComplete();
+  // state of the buffers. If `did_present` was true, the buffer currently
+  // marked as being displayed will now marked as available, and the next buffer
+  // marked as in-flight will now be marked as displayed. Otherwise, next
+  // in-flight will be marked as available and displayed will be unchanged.
+  void SwapBuffersComplete(bool did_present);
 
   // Called when SwapBuffers is skipped this frame. Damages allocated buffers,
   // but does not advance |in_flight_buffers_| or |current_buffer_|. We don't
@@ -86,9 +89,8 @@ class VIZ_SERVICE_EXPORT BufferQueue {
   // a no-op. Returns true if there was a change of state, false otherwise.
   bool Reshape(const gfx::Size& size,
                const gfx::ColorSpace& color_space,
-               gfx::BufferFormat format);
-
-  gfx::BufferFormat buffer_format() const { return *format_; }
+               RenderPassAlphaType alpha_type,
+               SharedImageFormat format);
 
   // Sets the number of frame buffers to use when
   // |supports_dynamic_frame_buffer_allocation| is true, and allocates those
@@ -171,9 +173,11 @@ class VIZ_SERVICE_EXPORT BufferQueue {
   gfx::Size size_;
   // The color space of all allocated buffers.
   gfx::ColorSpace color_space_;
+  // The alpha type of all allocated buffers.
+  RenderPassAlphaType alpha_type_ = RenderPassAlphaType::kPremul;
   // The format of all allocated buffers. The |format_| is optional to prevent
   // use of uninitialized values.
-  absl::optional<gfx::BufferFormat> format_;
+  std::optional<SharedImageFormat> format_;
 
   // This buffer is currently bound. This may be nullptr if no buffer has
   // been bound.
@@ -199,7 +203,9 @@ class VIZ_SERVICE_EXPORT BufferQueue {
   // reporting.
   // Used to see how often we destroy buffers and recreate them very soon, which
   // we want to be rare.
-  absl::optional<base::ElapsedTimer> destroyed_timer_;
+  std::optional<base::ElapsedTimer> destroyed_timer_;
+  // Whether or not to allocate these buffers as protected buffers.
+  bool is_protected_ = false;
 };
 
 }  // namespace viz

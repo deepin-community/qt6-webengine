@@ -13,6 +13,9 @@
 #include "base/check_op.h"
 #include "base/compiler_specific.h"
 #include "base/memory/raw_ptr_exclusion.h"
+#include "base/memory/raw_ref.h"
+#include "base/synchronization/lock.h"
+#include "base/thread_annotations.h"
 
 namespace base {
 
@@ -44,21 +47,40 @@ namespace base {
 // N-1: {*}--> {keyM,*}--> NULL
 class BASE_EXPORT LockFreeAddressHashSet {
  public:
-  explicit LockFreeAddressHashSet(size_t buckets_count);
+  // Stats about the hash set's buckets, for metrics.
+  struct BASE_EXPORT BucketStats {
+    BucketStats(std::vector<size_t> lengths, double chi_squared);
+    ~BucketStats();
+
+    BucketStats(const BucketStats&);
+    BucketStats& operator=(const BucketStats&);
+
+    // Length of each bucket (ie. number of key slots that must be searched).
+    std::vector<size_t> lengths;
+
+    // Result of a chi-squared test that measures uniformity of bucket usage.
+    double chi_squared = 0.0;
+  };
+
+  // Creates a hash set with `buckets_count` buckets. `lock` is a lock that
+  // must be held by callers of |Insert|, |Remove| and |Copy|. |Contains| is
+  // lock-free.
+  LockFreeAddressHashSet(size_t buckets_count, Lock& lock);
+
   ~LockFreeAddressHashSet();
 
-  // Checks if the |key| is in the set. Can be executed concurrently with
-  // |Insert|, |Remove|, and |Contains| operations.
+  // Checks if the |key|, which must not be nullptr, is in the set. Can be
+  // executed concurrently with |Insert|, |Remove|, and |Contains| operations.
   ALWAYS_INLINE bool Contains(void* key) const;
 
-  // Removes the |key| from the set. The key must be present in the set before
-  // the invocation.
-  // Concurrent execution of |Insert|, |Remove|, or |Copy| is not supported.
+  // Removes the |key|, which must not be nullptr, from the set. The key must be
+  // present in the set before the invocation. Concurrent execution of |Insert|,
+  // |Remove|, or |Copy| is not supported.
   ALWAYS_INLINE void Remove(void* key);
 
-  // Inserts the |key| into the set. The key must not be present in the set
-  // before the invocation.
-  // Concurrent execution of |Insert|, |Remove|, or |Copy| is not supported.
+  // Inserts the |key|, which must not be nullptr, into the set. The key must
+  // not be present in the set before the invocation. Concurrent execution of
+  // |Insert|, |Remove|, or |Copy| is not supported.
   void Insert(void* key);
 
   // Copies contents of |other| set into the current set. The current set
@@ -66,40 +88,62 @@ class BASE_EXPORT LockFreeAddressHashSet {
   // Concurrent execution of |Insert|, |Remove|, or |Copy| is not supported.
   void Copy(const LockFreeAddressHashSet& other);
 
-  size_t buckets_count() const { return buckets_.size(); }
-  size_t size() const { return size_; }
+  size_t buckets_count() const {
+    // `buckets_` should never be resized.
+    DCHECK_EQ(buckets_.size(), bucket_mask_ + 1);
+    return buckets_.size();
+  }
+
+  size_t size() const {
+    lock_->AssertAcquired();
+    return size_;
+  }
 
   // Returns the average bucket utilization.
-  float load_factor() const { return 1.f * size() / buckets_.size(); }
+  float load_factor() const {
+    lock_->AssertAcquired();
+    return 1.f * size() / buckets_.size();
+  }
+
+  // Returns stats about the buckets. Must not be called concurrently with
+  // |Insert|, |Remove| or |Copy|.
+  BucketStats GetBucketStats() const;
 
  private:
   friend class LockFreeAddressHashSetTest;
 
   struct Node {
-    ALWAYS_INLINE Node(void* key, Node* next);
+    ALWAYS_INLINE Node(void* k, Node* next) : next(next) {
+      key.store(k, std::memory_order_relaxed);
+    }
+
     std::atomic<void*> key;
+
     // This field is not a raw_ptr<> to avoid out-of-line destructor.
     RAW_PTR_EXCLUSION Node* next;
   };
 
+  // Returns the node containing `key` (which must not be null), or nullptr if
+  // it's not in the hash set.
+  ALWAYS_INLINE Node* FindNode(void* key);
+  ALWAYS_INLINE const Node* FindNode(void* key) const;
+
+  // Returns the hash of `key`.
   ALWAYS_INLINE static uint32_t Hash(void* key);
-  ALWAYS_INLINE Node* FindNode(void* key) const;
+
+  raw_ref<Lock> lock_;
 
   std::vector<std::atomic<Node*>> buckets_;
-  size_t size_ = 0;
+  size_t size_ GUARDED_BY(lock_) = 0;
   const size_t bucket_mask_;
 };
-
-ALWAYS_INLINE LockFreeAddressHashSet::Node::Node(void* key, Node* next)
-    : next(next) {
-  this->key.store(key, std::memory_order_relaxed);
-}
 
 ALWAYS_INLINE bool LockFreeAddressHashSet::Contains(void* key) const {
   return FindNode(key) != nullptr;
 }
 
 ALWAYS_INLINE void LockFreeAddressHashSet::Remove(void* key) {
+  lock_->AssertAcquired();
   Node* node = FindNode(key);
   DCHECK_NE(node, nullptr);
   // We can never delete the node, nor detach it from the current bucket
@@ -110,20 +154,34 @@ ALWAYS_INLINE void LockFreeAddressHashSet::Remove(void* key) {
 }
 
 ALWAYS_INLINE LockFreeAddressHashSet::Node* LockFreeAddressHashSet::FindNode(
-    void* key) const {
+    void* key) {
   DCHECK_NE(key, nullptr);
   const std::atomic<Node*>& bucket = buckets_[Hash(key) & bucket_mask_];
   // It's enough to use std::memory_order_consume ordering here, as the
-  // node->next->...->next loads form dependency chain.
-  // However std::memory_order_consume is temporary deprecated in C++17.
+  // node->next->...->next loads form a dependency chain.
+  // However std::memory_order_consume is temporarily deprecated in C++17.
   // See https://isocpp.org/files/papers/p0636r0.html#removed
   // Make use of more strong std::memory_order_acquire for now.
+  //
+  // Update 2024-12-13: According to
+  // https://en.cppreference.com/w/cpp/atomic/memory_order, C++20 changed the
+  // semantics of a "consume operation" - see the definitions of
+  // "Dependency-ordered before", "Simply happens-before" and "Strongly
+  // happens-before" - but "Release-Consume ordering" still carries the note
+  // that it's "temporarily discouraged" so it's unclear if it's now safe to use
+  // here.
   for (Node* node = bucket.load(std::memory_order_acquire); node != nullptr;
        node = node->next) {
-    if (node->key.load(std::memory_order_relaxed) == key)
+    if (node->key.load(std::memory_order_relaxed) == key) {
       return node;
+    }
   }
   return nullptr;
+}
+
+ALWAYS_INLINE const LockFreeAddressHashSet::Node*
+LockFreeAddressHashSet::FindNode(void* key) const {
+  return const_cast<LockFreeAddressHashSet*>(this)->FindNode(key);
 }
 
 // static

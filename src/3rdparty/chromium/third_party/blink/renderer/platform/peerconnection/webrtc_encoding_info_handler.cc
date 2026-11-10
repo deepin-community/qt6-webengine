@@ -39,7 +39,7 @@ WebrtcEncodingInfoHandler::WebrtcEncodingInfoHandler()
 
 WebrtcEncodingInfoHandler::WebrtcEncodingInfoHandler(
     std::unique_ptr<webrtc::VideoEncoderFactory> video_encoder_factory,
-    rtc::scoped_refptr<webrtc::AudioEncoderFactory> audio_encoder_factory)
+    webrtc::scoped_refptr<webrtc::AudioEncoderFactory> audio_encoder_factory)
     : video_encoder_factory_(std::move(video_encoder_factory)),
       audio_encoder_factory_(std::move(audio_encoder_factory)) {
   std::vector<webrtc::AudioCodecSpec> supported_audio_specs =
@@ -53,9 +53,9 @@ WebrtcEncodingInfoHandler::WebrtcEncodingInfoHandler(
 WebrtcEncodingInfoHandler::~WebrtcEncodingInfoHandler() = default;
 
 void WebrtcEncodingInfoHandler::EncodingInfo(
-    const absl::optional<webrtc::SdpAudioFormat> sdp_audio_format,
-    const absl::optional<webrtc::SdpVideoFormat> sdp_video_format,
-    const absl::optional<String> video_scalability_mode,
+    const std::optional<webrtc::SdpAudioFormat> sdp_audio_format,
+    const std::optional<webrtc::SdpVideoFormat> sdp_video_format,
+    const String video_scalability_mode,
     OnMediaCapabilitiesEncodingInfoCallback callback) const {
   DCHECK(sdp_audio_format || sdp_video_format);
 
@@ -76,10 +76,10 @@ void WebrtcEncodingInfoHandler::EncodingInfo(
   // Only check video configuration if the audio configuration was supported (or
   // not specified).
   if (sdp_video_format && supported) {
-    absl::optional<std::string> scalability_mode =
-        video_scalability_mode
-            ? absl::make_optional(video_scalability_mode->Utf8())
-            : absl::nullopt;
+    std::optional<std::string> scalability_mode =
+        !video_scalability_mode.IsNull()
+            ? std::make_optional(video_scalability_mode.Utf8())
+            : std::nullopt;
     webrtc::VideoEncoderFactory::CodecSupport support =
         video_encoder_factory_->QueryCodecSupport(*sdp_video_format,
                                                   scalability_mode);

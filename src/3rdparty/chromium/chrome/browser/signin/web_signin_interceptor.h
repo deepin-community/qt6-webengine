@@ -13,7 +13,6 @@
 #include "base/functional/callback_forward.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
-#include "base/scoped_observation.h"
 #include "base/time/time.h"
 #include "chrome/browser/ui/webui/signin/signin_utils.h"
 #include "components/keyed_service/core/keyed_service.h"
@@ -93,6 +92,11 @@ enum class SigninInterceptionHeuristicOutcome {
   kMaxValue = kAbortNotFirstAccountButNoPrimaryAccount,
 };
 
+// Returns whether the heuristic outcome is a success (the signin should be
+// intercepted).
+bool SigninInterceptionHeuristicOutcomeIsSuccess(
+    SigninInterceptionHeuristicOutcome outcome);
+
 // User selection in the interception bubble.
 enum class SigninInterceptionUserChoice { kAccept, kDecline };
 
@@ -102,6 +106,8 @@ enum class SigninInterceptionUserChoice { kAccept, kDecline };
 enum class SigninInterceptionResult {
   kAccepted = 0,
   kDeclined = 1,
+  // The user did not interact with the intercept. This will be recoreded if the
+  // browser was closed without any interaction for example.
   kIgnored = 2,
 
   // Used when the bubble was not shown because it's not implemented.
@@ -111,7 +117,25 @@ enum class SigninInterceptionResult {
 
   kAcceptedWithExistingProfile = 5,
 
-  kMaxValue = kAcceptedWithExistingProfile,
+  // The user dismissed the intercept without an explicit Accept or Decline
+  // event, for example by pressing the Escape key.
+  kDismissed = 6,
+
+  kMaxValue = kDismissed,
+};
+
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class SigninInterceptionDismissReason {
+  kEscKey = 0,
+  kIdentityPillPressed = 1,
+
+  // The user is no longer eligible for the interception. This can happen for
+  // example if the user signs out of the account while the interception is in
+  // progress.
+  kUserNotEligible = 2,
+
+  kMaxValue = kUserNotEligible,
 };
 
 // The ScopedWebSigninInterceptionBubbleHandle closes the signin intercept
@@ -121,11 +145,6 @@ class ScopedWebSigninInterceptionBubbleHandle {
  public:
   virtual ~ScopedWebSigninInterceptionBubbleHandle() = 0;
 };
-
-// Returns whether the heuristic outcome is a success (the signin should be
-// intercepted).
-bool SigninInterceptionHeuristicOutcomeIsSuccess(
-    SigninInterceptionHeuristicOutcome outcome);
 
 class WebSigninInterceptor {
  public:
@@ -137,6 +156,7 @@ class WebSigninInterceptor {
     kEnterpriseAcceptManagement,
     kProfileSwitchForced,
     kChromeSignin,
+    kEnterpriseOIDC
   };
 
   // Delegate class responsible for showing the various interception UIs.
@@ -185,6 +205,14 @@ class WebSigninInterceptor {
         content::WebContents* web_contents,
         const BubbleParameters& bubble_parameters,
         base::OnceCallback<void(SigninInterceptionResult)> callback) = 0;
+
+    virtual std::unique_ptr<ScopedWebSigninInterceptionBubbleHandle>
+    ShowOidcInterceptionDialog(
+        content::WebContents* web_contents,
+        const BubbleParameters& bubble_parameters,
+        signin::SigninChoiceWithConfirmAndRetryCallback callback,
+        base::OnceClosure dialog_closed_closure,
+        base::RepeatingClosure retry_callback) = 0;
 
     // Shows the first run experience for `account_id` in `browser` opened for
     // a newly created profile.

@@ -36,26 +36,8 @@ def root_path():
 def third_party_path():
     return path.join(root_path(), 'third_party')
 
-def which(cmd):
-    pathenv = os.getenv('PATH')
-    for p in pathenv.split(path.pathsep):
-        p = path.join(p, cmd)
-        if path.exists(p) and os.access(p, os.X_OK):
-            return p
-    return None
-
 # This points to the node binary downloaded as part of the checkout.
 def node_path():
-    # Qt WebEngine: Expect node.js to be installed in path.
-    if sys.platform == 'win32':
-        return 'node.exe'
-    else:
-        nodejs = which('nodejs')
-        if nodejs:
-            return nodejs
-        nodejs = which('node')
-        if nodejs:
-            return nodejs
     try:
         old_sys_path = sys.path[:]
         sys.path.append(path.join(third_party_path(), 'node'))
@@ -78,7 +60,7 @@ def eslint_path():
 
 
 def mocha_path():
-    return path.join(node_modules_path(), 'mocha', 'bin', 'mocha')
+    return path.join(node_modules_path(), 'mocha', 'bin', 'mocha.js')
 
 
 def karma_path():
@@ -90,11 +72,21 @@ def typescript_compiler_path():
 
 
 def hosted_mode_script_path():
-    return path.join(devtools_root_path(), 'scripts', 'hosted_mode', 'server.js')
+    return path.join(devtools_root_path(), 'scripts', 'hosted_mode',
+                     'server.js')
 
 
 def esbuild_path():
-    return path.join(devtools_root_path(), 'third_party', 'esbuild', 'esbuild')
+    # Qt WebEngine: Expect esbuild to be installed in path.
+    if sys.platform == 'win32':
+        return 'esbuild.exe'
+    return 'esbuild'
+#    return path.join(devtools_root_path(), 'third_party', 'esbuild', 'esbuild')
+
+
+def autoninja_path():
+    return path.join(devtools_root_path(), 'third_party', 'depot_tools',
+                     'autoninja')
 
 
 def downloaded_chrome_binary_path():
@@ -112,13 +104,15 @@ def downloaded_chrome_binary_path():
 
 
 def license_checker_path():
-    return path.join(node_modules_path(), 'license-checker', 'bin', 'license-checker')
+    return path.join(node_modules_path(), 'license-checker', 'bin',
+                     'license-checker')
 
 
 def rollup_path():
     return path.join(
         node_modules_path(),
-        'rollup',
+        '@rollup',
+        'wasm-node',
         'dist',
         'bin',
         'rollup',
@@ -134,4 +128,9 @@ def package_json_path():
 
 
 def browser_protocol_path():
-    return path.join(third_party_path(), 'blink', 'public', 'devtools_protocol', 'browser_protocol.pdl')
+    return path.join(third_party_path(), 'blink', 'public',
+                     'devtools_protocol', 'browser_protocol.pdl')
+
+
+def custom_devtools_frontend_path(target):
+    return path.join(root_path(), 'out', target, 'gen', 'front_end')

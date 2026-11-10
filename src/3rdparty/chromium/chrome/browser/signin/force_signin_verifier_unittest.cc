@@ -129,7 +129,6 @@ void ConfigureNetworkConnectionTracker(NetworkConnectionType connection_type,
     switch (connection_type) {
       case NetworkConnectionType::Undecided:
         NOTREACHED();
-        break;
 
       case NetworkConnectionType::ConnectionNone:
         mojom_connection_type = network::mojom::ConnectionType::CONNECTION_NONE;

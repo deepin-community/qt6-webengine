@@ -15,12 +15,12 @@
 #include "core/fpdfapi/render/cpdf_docrenderdata.h"
 #include "core/fxcrt/fx_safe_types.h"
 #include "core/fxcrt/fx_stream.h"
+#include "core/fxcrt/numerics/safe_conversions.h"
 #include "core/fxcrt/retain_ptr.h"
 #include "core/fxcrt/unowned_ptr.h"
 #include "core/fxcrt/unowned_ptr_exclusion.h"
 #include "fpdfsdk/cpdfsdk_helpers.h"
 #include "public/fpdf_formfill.h"
-#include "third_party/base/numerics/safe_conversions.h"
 
 #ifdef PDF_ENABLE_XFA
 #include "fpdfsdk/fpdfxfa/cpdfxfa_context.h"
@@ -60,8 +60,8 @@ class FPDF_FileAvailContext final : public CPDF_DataAvail::FileAvail {
 
   // CPDF_DataAvail::FileAvail:
   bool IsDataAvail(FX_FILESIZE offset, size_t size) override {
-    return !!avail_->IsDataAvail(
-        avail_, pdfium::base::checked_cast<size_t>(offset), size);
+    return !!avail_->IsDataAvail(avail_, pdfium::checked_cast<size_t>(offset),
+                                 size);
   }
 
  private:
@@ -78,19 +78,21 @@ class FPDF_FileAccessContext final : public IFX_SeekableReadStream {
 
   bool ReadBlockAtOffset(pdfium::span<uint8_t> buffer,
                          FX_FILESIZE offset) override {
-    if (buffer.empty() || offset < 0)
+    if (buffer.empty() || offset < 0) {
       return false;
+    }
 
-    if (!pdfium::base::IsValueInRangeForNumericType<FX_FILESIZE>(buffer.size()))
+    if (!pdfium::IsValueInRangeForNumericType<FX_FILESIZE>(buffer.size())) {
       return false;
+    }
 
     FX_SAFE_FILESIZE new_pos = buffer.size();
     new_pos += offset;
     return new_pos.IsValid() && new_pos.ValueOrDie() <= GetSize() &&
            file_->m_GetBlock(
-               file_->m_Param,
-               pdfium::base::checked_cast<unsigned long>(offset), buffer.data(),
-               pdfium::base::checked_cast<unsigned long>(buffer.size()));
+               file_->m_Param, pdfium::checked_cast<unsigned long>(offset),
+               buffer.data(),
+               pdfium::checked_cast<unsigned long>(buffer.size()));
   }
 
  private:
@@ -104,19 +106,19 @@ class FPDF_FileAccessContext final : public IFX_SeekableReadStream {
 class FPDF_DownloadHintsContext final : public CPDF_DataAvail::DownloadHints {
  public:
   explicit FPDF_DownloadHintsContext(FX_DOWNLOADHINTS* pDownloadHints)
-      : m_pDownloadHints(pDownloadHints) {}
+      : download_hints_(pDownloadHints) {}
   ~FPDF_DownloadHintsContext() override = default;
 
   // IFX_DownloadHints
   void AddSegment(FX_FILESIZE offset, size_t size) override {
-    if (m_pDownloadHints) {
-      m_pDownloadHints->AddSegment(m_pDownloadHints,
-                                   static_cast<size_t>(offset), size);
+    if (download_hints_) {
+      download_hints_->AddSegment(download_hints_, static_cast<size_t>(offset),
+                                  size);
     }
   }
 
  private:
-  UnownedPtr<FX_DOWNLOADHINTS> m_pDownloadHints;
+  UnownedPtr<FX_DOWNLOADHINTS> download_hints_;
 };
 
 class FPDF_AvailContext {
@@ -162,8 +164,9 @@ FPDF_EXPORT void FPDF_CALLCONV FPDFAvail_Destroy(FPDF_AVAIL avail) {
 FPDF_EXPORT int FPDF_CALLCONV FPDFAvail_IsDocAvail(FPDF_AVAIL avail,
                                                    FX_DOWNLOADHINTS* hints) {
   auto* avail_context = FPDFAvailContextFromFPDFAvail(avail);
-  if (!avail_context)
+  if (!avail_context) {
     return PDF_DATA_ERROR;
+  }
   FPDF_DownloadHintsContext hints_context(hints);
   return avail_context->data_avail()->IsDocAvail(&hints_context);
 }
@@ -171,11 +174,11 @@ FPDF_EXPORT int FPDF_CALLCONV FPDFAvail_IsDocAvail(FPDF_AVAIL avail,
 FPDF_EXPORT FPDF_DOCUMENT FPDF_CALLCONV
 FPDFAvail_GetDocument(FPDF_AVAIL avail, FPDF_BYTESTRING password) {
   auto* avail_context = FPDFAvailContextFromFPDFAvail(avail);
-  if (!avail_context)
+  if (!avail_context) {
     return nullptr;
-  CPDF_Parser::Error error;
-  std::unique_ptr<CPDF_Document> document;
-  std::tie(error, document) = avail_context->data_avail()->ParseDocument(
+  }
+
+  auto [error, document] = avail_context->data_avail()->ParseDocument(
       std::make_unique<CPDF_DocRenderData>(),
       std::make_unique<CPDF_DocPageData>(), password);
   if (error != CPDF_Parser::SUCCESS) {
@@ -188,18 +191,20 @@ FPDFAvail_GetDocument(FPDF_AVAIL avail, FPDF_BYTESTRING password) {
 }
 
 FPDF_EXPORT int FPDF_CALLCONV FPDFAvail_GetFirstPageNum(FPDF_DOCUMENT doc) {
-  CPDF_Document* pDoc = CPDFDocumentFromFPDFDocument(doc);
-  return pDoc ? pDoc->GetParser()->GetFirstPageNo() : 0;
+  CPDF_Document* document = CPDFDocumentFromFPDFDocument(doc);
+  return document ? document->GetParser()->GetFirstPageNo() : 0;
 }
 
 FPDF_EXPORT int FPDF_CALLCONV FPDFAvail_IsPageAvail(FPDF_AVAIL avail,
                                                     int page_index,
                                                     FX_DOWNLOADHINTS* hints) {
   auto* avail_context = FPDFAvailContextFromFPDFAvail(avail);
-  if (!avail_context)
+  if (!avail_context) {
     return PDF_DATA_ERROR;
-  if (page_index < 0)
+  }
+  if (page_index < 0) {
     return PDF_DATA_NOTAVAIL;
+  }
   FPDF_DownloadHintsContext hints_context(hints);
   return avail_context->data_avail()->IsPageAvail(page_index, &hints_context);
 }
@@ -207,15 +212,17 @@ FPDF_EXPORT int FPDF_CALLCONV FPDFAvail_IsPageAvail(FPDF_AVAIL avail,
 FPDF_EXPORT int FPDF_CALLCONV FPDFAvail_IsFormAvail(FPDF_AVAIL avail,
                                                     FX_DOWNLOADHINTS* hints) {
   auto* avail_context = FPDFAvailContextFromFPDFAvail(avail);
-  if (!avail_context)
+  if (!avail_context) {
     return PDF_FORM_ERROR;
+  }
   FPDF_DownloadHintsContext hints_context(hints);
   return avail_context->data_avail()->IsFormAvail(&hints_context);
 }
 
 FPDF_EXPORT int FPDF_CALLCONV FPDFAvail_IsLinearized(FPDF_AVAIL avail) {
   auto* avail_context = FPDFAvailContextFromFPDFAvail(avail);
-  if (!avail_context)
+  if (!avail_context) {
     return PDF_LINEARIZATION_UNKNOWN;
+  }
   return avail_context->data_avail()->IsLinearizedPDF();
 }

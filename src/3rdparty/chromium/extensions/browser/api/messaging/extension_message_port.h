@@ -11,6 +11,7 @@
 #include <set>
 #include <string>
 #include <vector>
+
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -18,10 +19,12 @@
 #include "base/uuid.h"
 #include "content/public/browser/global_routing_id.h"
 #include "extensions/browser/api/messaging/message_port.h"
+#include "extensions/browser/message_tracker.h"
 #include "extensions/browser/service_worker/worker_id.h"
 #include "extensions/common/api/messaging/port_id.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/mojom/message_port.mojom.h"
+#include "mojo/public/cpp/bindings/associated_remote.h"
 #include "url/origin.h"
 
 class GURL;
@@ -46,18 +49,19 @@ struct PortContext;
 class ExtensionMessagePort : public MessagePort {
  public:
   // Create a port that is tied to frame(s) in a single tab.
-  ExtensionMessagePort(base::WeakPtr<ChannelDelegate> channel_delegate,
-                       const PortId& port_id,
-                       const std::string& extension_id,
-                       content::RenderFrameHost* render_frame_host,
-                       bool include_child_frames);
+  static std::unique_ptr<ExtensionMessagePort> CreateForTab(
+      base::WeakPtr<ChannelDelegate> channel_delegate,
+      const PortId& port_id,
+      const ExtensionId& extension_id,
+      content::RenderFrameHost* render_frame_host,
+      bool include_child_frames);
 
   // Create a port that is tied to all frames and service workers of an
   // extension. Should only be used for a receiver port.
   static std::unique_ptr<ExtensionMessagePort> CreateForExtension(
       base::WeakPtr<ChannelDelegate> channel_delegate,
       const PortId& port_id,
-      const std::string& extension_id,
+      const ExtensionId& extension_id,
       content::BrowserContext* browser_context);
 
   // Creates a port for any ChannelEndpoint which can be for a render frame or
@@ -65,7 +69,7 @@ class ExtensionMessagePort : public MessagePort {
   static std::unique_ptr<ExtensionMessagePort> CreateForEndpoint(
       base::WeakPtr<ChannelDelegate> channel_delegate,
       const PortId& port_id,
-      const std::string& extension_id,
+      const ExtensionId& extension_id,
       const ChannelEndpoint& endpoint,
       mojo::PendingAssociatedRemote<extensions::mojom::MessagePort> port,
       mojo::PendingAssociatedReceiver<extensions::mojom::MessagePortHost>
@@ -97,7 +101,9 @@ class ExtensionMessagePort : public MessagePort {
                          const MessagingEndpoint& source_endpoint,
                          const std::string& target_extension_id,
                          const GURL& source_url,
-                         std::optional<url::Origin> source_origin) override;
+                         std::optional<url::Origin> source_origin,
+                         const std::set<base::UnguessableToken>&
+                             open_channel_tracking_ids) override;
   void DispatchOnDisconnect(const std::string& error_message) override;
   void DispatchOnMessage(const Message& message) override;
   void IncrementLazyKeepaliveCount(Activity::Type activity_type) override;
@@ -107,7 +113,7 @@ class ExtensionMessagePort : public MessagePort {
   void NotifyResponsePending() override;
 
  private:
-  class FrameTracker;
+  class ContextTracker;
   struct IPCTarget;
 
   // Registers a frame as a receiver / sender.
@@ -122,7 +128,9 @@ class ExtensionMessagePort : public MessagePort {
   // there are no registered frames any more, the port closes via
   // CloseChannel().
   // It returns if the port and the associated channel is closed.
-  bool UnregisterFramesUnderMainFrame(content::RenderFrameHost* main_frame);
+  bool UnregisterFramesUnderMainFrame(
+      content::RenderFrameHost* main_frame,
+      std::optional<std::string> error_message = std::nullopt);
 
   // Methods to register/unregister a Service Worker endpoint for this port.
   void RegisterWorker(const WorkerId& worker_id);
@@ -130,39 +138,10 @@ class ExtensionMessagePort : public MessagePort {
   void UnregisterWorker(int render_process_id, int worker_thread_id);
 
   // Immediately close the port and its associated channel.
-  void CloseChannel();
+  void CloseChannel(std::optional<std::string> error_message = std::nullopt);
 
-#if BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
-  // Sends IPC messages to the renderer for all registered frames and/or service
-  // workers.
-  using IPCBuilderCallback =
-      base::RepeatingCallback<std::unique_ptr<IPC::Message>(const IPCTarget&)>;
-  void SendToPort(IPCBuilderCallback ipc_builder);
-  void SendToIPCTarget(const IPCTarget& target,
-                       std::unique_ptr<IPC::Message> message);
-
-  // Builds specific IPCs for a port, with correct frame or worker identifiers.
-  std::unique_ptr<IPC::Message> BuildDispatchOnConnectIPC(
-      mojom::ChannelType channel_type,
-      const std::string& channel_name,
-      const base::Value::Dict* source_tab,
-      const ExtensionApiFrameIdMap::FrameData& source_frame,
-      int guest_process_id,
-      int guest_render_frame_routing_id,
-      const MessagingEndpoint& source_endpoint,
-      const std::string& target_extension_id,
-      const GURL& source_url,
-      std::optional<url::Origin> source_origin,
-      const IPCTarget& target);
-  std::unique_ptr<IPC::Message> BuildDispatchOnDisconnectIPC(
-      const std::string& error_message,
-      const IPCTarget& target);
-  std::unique_ptr<IPC::Message> BuildDeliverMessageIPC(const Message& message,
-                                                       const IPCTarget& target);
-#else
   using SendCallback = base::RepeatingCallback<void(mojom::MessagePort*)>;
   void SendToPort(SendCallback send_callback);
-#endif
 
   // Check if this activity of this type on this port would keep servicer worker
   // alive.
@@ -170,10 +149,19 @@ class ExtensionMessagePort : public MessagePort {
 
   bool ShouldSkipFrameForBFCache(content::RenderFrameHost* render_frame_host);
 
-#if !BUILDFLAG(ENABLE_EXTENSIONS_LEGACY_IPC)
-  void OnConnectResponse(bool success);
-  void Prune();
-#endif
+  void OnConnectResponse(
+      const PortContext& port_context,
+      const base::UnguessableToken& connect_dispatch_tracking_id,
+      bool success);
+  void Prune(const PortContext& port_context,
+             const base::UnguessableToken& connect_dispatch_tracking_id);
+
+  void ReportOpenChannelResult(
+      MessageTracker::OpenChannelMessagePipelineResult emit_value);
+
+  void ReportOpenChannelConnectDispatchResult(
+      const base::UnguessableToken& tracking_id,
+      MessageTracker::OpenChannelMessagePipelineResult emit_value);
 
   ExtensionId extension_id_;
   raw_ptr<content::BrowserContext> browser_context_ = nullptr;
@@ -220,7 +208,18 @@ class ExtensionMessagePort : public MessagePort {
 
   // Used in IncrementLazyKeepaliveCount
   raw_ptr<ExtensionHost, DanglingUntriaged> background_host_ptr_ = nullptr;
-  std::unique_ptr<FrameTracker> frame_tracker_;
+  std::unique_ptr<ContextTracker> context_tracker_;
+
+  // The set of PortContexts for which we're waiting on a response to
+  // OnConnectResponse().
+  std::set<PortContext> pending_contexts_to_respond_;
+  // Tracking ID to every metric to emit once the result of the channel opening
+  // is determined.
+  std::set<base::UnguessableToken> pending_open_channel_tracking_ids_;
+  // Tracking ID to every metric to emit if the channel (this class) closes
+  // (destructs) before each port has responded to DispatchOnConnect IPC.
+  std::set<base::UnguessableToken>
+      pending_open_channel_connect_dispatch_tracking_ids_;
 
   base::WeakPtrFactory<ExtensionMessagePort> weak_ptr_factory_{this};
 };

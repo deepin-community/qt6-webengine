@@ -2,12 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import './strings.m.js';
+import '/strings.m.js';
 
 import {CustomElement} from 'chrome://resources/js/custom_element.js';
 
 import {getTemplate} from './connectors_tabs.html.js';
+// <if expr="not is_android">
 import {DeviceTrustConnectorElement} from './device_trust_connector.js';
+import {ManagedClientCertificateElement} from './managed_client_certificate.js';
+// </if>
+import {SignalsReportingElement} from './signals_reporting.js';
 
 interface ConnectorTab {
   // Title used as the tab button's text.
@@ -24,11 +28,26 @@ interface ConnectorTab {
 
 // Set of all connector tabs. Adding a new entry here will make it automatically
 // show in the UI.
-const connectorTabs: ConnectorTab[] = [{
-  title: 'Device Trust',
-  directive: DeviceTrustConnectorElement.is,
-  isEnabled: true,
-}];
+const connectorTabs: ConnectorTab[] = [
+  // Device Trust Connector and Client Certificates are not supported on Android
+  // <if expr="not is_android">
+  {
+    title: 'Device Trust',
+    directive: DeviceTrustConnectorElement.is,
+    isEnabled: true,
+  },
+  {
+    title: 'Managed Client Certificate',
+    directive: ManagedClientCertificateElement.is,
+    isEnabled: true,
+  },
+  // </if>
+  {
+    title: 'Signals Reporting',
+    directive: SignalsReportingElement.is,
+    isEnabled: true,
+  },
+];
 
 class ConnectorsTabsElement extends CustomElement {
   static get is() {
@@ -39,16 +58,16 @@ class ConnectorsTabsElement extends CustomElement {
     return getTemplate();
   }
 
-  private get tabHeaders(): NodeList {
+  private get tabHeaders() {
     return this.$all('.tabs > button');
   }
 
-  private get tabContents(): NodeList {
-    return this.$all('.content > div');
+  private get tabContents() {
+    return this.$all<HTMLElement>('.content > div');
   }
 
   private get noConnectorsMessage(): HTMLElement {
-    return this.$('#no-connectors-message') as HTMLElement;
+    return this.getRequiredElement('#no-connectors-message');
   }
 
   private readonly enabledTabs: ConnectorTab[] =
@@ -110,11 +129,11 @@ class ConnectorsTabsElement extends CustomElement {
       return;
     }
 
-    this.tabHeaders.forEach(h => (h as Element).classList.remove('active'));
-    (this.tabHeaders.item(index) as Element).classList.add('active');
+    this.tabHeaders.forEach(h => h.classList.remove('active'));
+    this.tabHeaders.item(index).classList.add('active');
 
-    this.tabContents.forEach(c => this.hideElement(c as HTMLElement));
-    this.showElement(this.tabContents.item(index) as HTMLElement);
+    this.tabContents.forEach(c => this.hideElement(c));
+    this.showElement(this.tabContents.item(index));
   }
 
   private addTab(

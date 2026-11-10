@@ -51,7 +51,9 @@ class DeviceImpl : public mojom::UsbDevice, public device::UsbDevice::Observer {
 
   // Checks interface permissions for control transfers.
   bool HasControlTransferPermission(
+      mojom::UsbControlTransferType type,
       mojom::UsbControlTransferRecipient recipient,
+      uint8_t request,
       uint16_t index);
 
   // Handles completion of an open request.
@@ -106,8 +108,37 @@ class DeviceImpl : public mojom::UsbDevice, public device::UsbDevice::Observer {
   // device::UsbDevice::Observer implementation:
   void OnDeviceRemoved(scoped_refptr<device::UsbDevice> device) override;
 
-  void OnInterfaceClaimed(ClaimInterfaceCallback callback, bool success);
+  void OnInterfaceClaimed(ClaimInterfaceCallback callback,
+                          uint8_t interface_number,
+                          bool success);
+  void OnInterfaceReleased(ReleaseInterfaceCallback callback,
+                           uint8_t interface_number,
+                           bool success);
+  void OnSetInterfaceAlternateSettingComplete(
+      SetInterfaceAlternateSettingCallback callback,
+      uint8_t interface_number,
+      bool success);
+  void OnSetConfigurationComplete(SetConfigurationCallback callback,
+                                  bool success);
+  void OnResetComplete(ResetCallback callback, bool success);
   void OnClientConnectionError();
+
+  // Reject and report bad mojo messaage if `length` exceeds limit.
+  bool ShouldRejectUsbTransferLengthAndReportBadMessage(size_t length);
+
+  // Returns whether the endpoint is ready for a transfer.
+  // A transfer is allowed if the device is open, the target interface is
+  // claimed, and neither a device-wide state change nor an interface-specific
+  // state change for the target interface is in progress.
+  // This is used for non-control transfers (Generic and Isochronous) and
+  // ClearHalt.
+  bool IsEndpointReadyForTransfer(uint8_t endpoint_address);
+
+  bool IsInterfaceStateChangeInProgress(uint8_t interface_number) const;
+  bool any_interface_state_change_in_progress() const;
+  bool any_state_change_in_progress() const;
+  void SetInterfaceStateChangeInProgress(uint8_t interface_number,
+                                         bool in_progress);
 
   const scoped_refptr<device::UsbDevice> device_;
   base::ScopedObservation<device::UsbDevice, device::UsbDevice::Observer>
@@ -118,6 +149,8 @@ class DeviceImpl : public mojom::UsbDevice, public device::UsbDevice::Observer {
   // in progress.
   bool opening_ = false;
   scoped_refptr<UsbDeviceHandle> device_handle_;
+
+  base::flat_set<uint8_t> interface_state_changes_in_progress_;
 
   const base::flat_set<uint8_t> blocked_interface_classes_;
   const bool allow_security_key_requests_;

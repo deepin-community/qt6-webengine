@@ -5,7 +5,6 @@
 #include "third_party/blink/renderer/core/layout/svg/transform_helper.h"
 
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-blink.h"
-#include "third_party/blink/renderer/core/dom/node_computed_style.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_resources.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
@@ -78,33 +77,14 @@ bool TransformHelper::DependsOnReferenceBox(const ComputedStyle& style) {
   return false;
 }
 
-bool TransformHelper::UpdateReferenceBoxDependency(
-    LayoutObject& layout_object) {
-  const bool transform_uses_reference_box =
-      DependsOnReferenceBox(layout_object.StyleRef());
-  UpdateReferenceBoxDependency(layout_object, transform_uses_reference_box);
-  return transform_uses_reference_box;
-}
-
-void TransformHelper::UpdateReferenceBoxDependency(
-    LayoutObject& layout_object,
-    bool transform_uses_reference_box) {
-  if (transform_uses_reference_box &&
-      layout_object.StyleRef().TransformBox() == ETransformBox::kViewBox) {
-    layout_object.SetSVGSelfOrDescendantHasViewportDependency();
-  } else {
-    layout_object.ClearSVGSelfOrDescendantHasViewportDependency();
-  }
-}
-
 bool TransformHelper::CheckReferenceBoxDependencies(
     const ComputedStyle& old_style,
     const ComputedStyle& style) {
-  ETransformBox transform_box = style.TransformBox();
+  const ETransformBox transform_box =
+      style.UsedTransformBox(ComputedStyle::TransformBoxContext::kSvg);
   // Changes to fill-box and view-box are handled by the
   // `CheckForImplicitTransformChange()` implementations.
-  if (transform_box != ETransformBox::kStrokeBox &&
-      transform_box != ETransformBox::kBorderBox) {
+  if (transform_box != ETransformBox::kStrokeBox) {
     return false;
   }
   return StrokeBoundingBoxMayHaveChanged(old_style, style);
@@ -114,13 +94,11 @@ gfx::RectF TransformHelper::ComputeReferenceBox(
     const LayoutObject& layout_object) {
   const ComputedStyle& style = layout_object.StyleRef();
   gfx::RectF reference_box;
-  switch (style.TransformBox()) {
+  switch (style.UsedTransformBox(ComputedStyle::TransformBoxContext::kSvg)) {
     case ETransformBox::kFillBox:
-    case ETransformBox::kContentBox:
       reference_box = layout_object.ObjectBoundingBox();
       break;
     case ETransformBox::kStrokeBox:
-    case ETransformBox::kBorderBox:
       reference_box = layout_object.StrokeBoundingBox();
       break;
     case ETransformBox::kViewBox: {
@@ -128,6 +106,9 @@ gfx::RectF TransformHelper::ComputeReferenceBox(
       reference_box.set_size(viewport_resolver.ResolveViewport());
       break;
     }
+    case ETransformBox::kContentBox:
+    case ETransformBox::kBorderBox:
+      NOTREACHED();
   }
   const float zoom = style.EffectiveZoom();
   if (zoom != 1)

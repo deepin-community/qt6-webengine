@@ -48,14 +48,6 @@ inline constexpr char kPrivacySandboxM1AdMeasurementEnabled[] =
 inline constexpr char kPrivacySandboxM1Restricted[] =
     "privacy_sandbox.m1.restricted";
 
-// Synced boolean pref. Privacy Sandbox APIs may only be enabled when this is
-// enabled, but each API will respect its own enabling logic if this pref is
-// true. When this pref is false ALL Privacy Sandbox APIs are disabled.
-// TODO(crbug.com/1292898): Deprecate this preference once all users have been
-// migrated to the V2 pref.
-inline constexpr char kPrivacySandboxApisEnabled[] =
-    "privacy_sandbox.apis_enabled";
-
 // The point in time from which history is eligible to be used when calculating
 // a user's Topics API topics.
 inline constexpr char kPrivacySandboxTopicsDataAccessibleSince[] =
@@ -114,12 +106,14 @@ inline constexpr char kPrivacySandboxNoConfirmationManuallyControlled[] =
 inline constexpr char kPrivacySandboxDisabledInsufficientConfirmation[] =
     "privacy_sandbox.disabled_insufficient_confirmation";
 
-// Boolean that indicates the user's FPS data access preference has been init,
+// Boolean that indicates the user's RWS data access preference has been init,
 // so named because of the user intent it intends to represent. Currently there
-// is no distinction between FPS for data access, and FPS for other purposes, so
+// is no distinction between RWS for data access, and RWS for other purposes, so
 // this init is applied to the "privacy_sandbox.first_party_sets_enabled" pref.
+// "first_party_sets" in the string name is kept for historic reasons to avoid
+// migration of a synced Pref.
 inline constexpr char
-    kPrivacySandboxFirstPartySetsDataAccessAllowedInitialized[] =
+    kPrivacySandboxRelatedWebsiteSetsDataAccessAllowedInitialized[] =
         "privacy_sandbox.first_party_sets_data_access_allowed_initialized";
 
 // Boolean that indicates whether Related Website Sets is enabled. Exposed to
@@ -150,6 +144,14 @@ inline constexpr char kPrivacySandboxTopicsConsentLastUpdateReason[] =
 // resulted in the current Topics consent state.
 inline constexpr char kPrivacySandboxTopicsConsentTextAtLastUpdate[] =
     "privacy_sandbox.topics_consent.text_at_last_update";
+
+// Pref which contains a list of the activity type from recent chrome launches.
+// Version 2 after enum values changed.
+inline constexpr char kPrivacySandboxActivityTypeRecord2[] =
+    "privacy_sandbox.activity_type.record2";
+
+inline constexpr char kPrivacySandboxAllowNoticeFor3PCBlockedTrial[] =
+    "privacy_sandbox.allow_notice_for_3PC_blocked_trial";
 
 }  // namespace prefs
 

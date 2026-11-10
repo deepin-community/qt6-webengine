@@ -5,12 +5,16 @@
 #ifndef MEDIA_BASE_CHANNEL_LAYOUT_H_
 #define MEDIA_BASE_CHANNEL_LAYOUT_H_
 
-#include "media/base/media_shmem_export.h"
+#include <stdint.h>
+
+#include "media/base/media_export.h"
 
 namespace media {
 
 // Enumerates the various representations of the ordering of audio channels.
 // Logged to UMA, so never reuse a value, always add new/greater ones!
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.media
+// GENERATED_JAVA_PREFIX_TO_STRIP: CHANNEL_
 enum ChannelLayout {
   CHANNEL_LAYOUT_NONE = 0,
   CHANNEL_LAYOUT_UNSUPPORTED = 1,
@@ -48,13 +52,13 @@ enum ChannelLayout {
   // Front L, Front R, Front C, LFE, Back L, Back R
   CHANNEL_LAYOUT_5_1_BACK = 12,
 
-  // Front L, Front R, Front C, Side L, Side R, Back L, Back R
+  // Front L, Front R, Front C, Back L, Back R, Side L, Side R
   CHANNEL_LAYOUT_7_0 = 13,
 
-  // Front L, Front R, Front C, LFE, Side L, Side R, Back L, Back R
+  // Front L, Front R, Front C, LFE, Back L, Back R, Side L, Side R
   CHANNEL_LAYOUT_7_1 = 14,
 
-  // Front L, Front R, Front C, LFE, Side L, Side R, Front LofC, Front RofC
+  // Front L, Front R, Front C, LFE, Front LofC, Front RofC, Side L, Side R
   CHANNEL_LAYOUT_7_1_WIDE = 15,
 
   // Front L, Front R
@@ -66,34 +70,34 @@ enum ChannelLayout {
   // Front L, Front R, Front C, LFE
   CHANNEL_LAYOUT_3_1 = 18,
 
-  // Front L, Front R, Front C, Rear C, LFE
+  // Front L, Front R, Front C, LFE, Back C
   CHANNEL_LAYOUT_4_1 = 19,
 
-  // Front L, Front R, Front C, Side L, Side R, Back C
+  // Front L, Front R, Front C, Back C, Side L, Side R
   CHANNEL_LAYOUT_6_0 = 20,
 
-  // Front L, Front R, Side L, Side R, Front LofC, Front RofC
+  // Front L, Front R, Front LofC, Front RofC, Side L, Side R
   CHANNEL_LAYOUT_6_0_FRONT = 21,
 
-  // Front L, Front R, Front C, Rear L, Rear R, Rear C
+  // Front L, Front R, Front C, Back L, Back R, Back C
   CHANNEL_LAYOUT_HEXAGONAL = 22,
 
-  // Front L, Front R, Front C, LFE, Side L, Side R, Rear Center
+  // Front L, Front R, Front C, LFE, Back C, Side L, Side R
   CHANNEL_LAYOUT_6_1 = 23,
 
-  // Front L, Front R, Front C, LFE, Back L, Back R, Rear Center
+  // Front L, Front R, Front C, LFE, Back L, Back R, Back C
   CHANNEL_LAYOUT_6_1_BACK = 24,
 
-  // Front L, Front R, Side L, Side R, Front LofC, Front RofC, LFE
+  // Front L, Front R, LFE, Front LofC, Front RofC, Side L, Side R
   CHANNEL_LAYOUT_6_1_FRONT = 25,
 
-  // Front L, Front R, Front C, Side L, Side R, Front LofC, Front RofC
+  // Front L, Front R, Front C, Front LofC, Front RofC, Side L, Side R
   CHANNEL_LAYOUT_7_0_FRONT = 26,
 
   // Front L, Front R, Front C, LFE, Back L, Back R, Front LofC, Front RofC
   CHANNEL_LAYOUT_7_1_WIDE_BACK = 27,
 
-  // Front L, Front R, Front C, Side L, Side R, Rear L, Back R, Back C.
+  // Front L, Front R, Front C, Back L, Back R, Back C, Side L, Side R
   CHANNEL_LAYOUT_OCTAGONAL = 28,
 
   // Channels are not explicitly mapped to speakers.
@@ -106,7 +110,7 @@ enum ChannelLayout {
   // of that.
   CHANNEL_LAYOUT_STEREO_AND_KEYBOARD_MIC = 30,
 
-  // Front L, Front R, Side L, Side R, LFE
+  // Front L, Front R, LFE, Side L, Side R
   CHANNEL_LAYOUT_4_1_QUAD_SIDE = 31,
 
   // Actual channel layout is specified in the bitstream and the actual channel
@@ -120,25 +124,40 @@ enum ChannelLayout {
   // kMaxConcurrentChannels
   CHANNEL_LAYOUT_5_1_4_DOWNMIX = 33,
 
+  // Front C, LFE
+  CHANNEL_LAYOUT_1_1 = 34,
+
+  // Front L, Front R, LFE, Back C
+  CHANNEL_LAYOUT_3_1_BACK = 35,
+
   // Max value, must always equal the largest entry ever logged.
-  CHANNEL_LAYOUT_MAX = CHANNEL_LAYOUT_5_1_4_DOWNMIX
+  CHANNEL_LAYOUT_MAX = CHANNEL_LAYOUT_3_1_BACK
 };
 
+// The channel order matches the order of the bitmask in the Windows
+// WAVEFORMATEXTENSIBLE format. The value of the enum corresponds to the bit
+// position in the mask (e.g. LEFT is bit 0, RIGHT is bit 1, etc.).
+//
+// This standard is used by Windows (WASAPI), FFmpeg (legacy layouts), and
+// SMPTE.
+//
 // Note: Do not reorder or reassign these values; other code depends on their
-// ordering to operate correctly. E.g., CoreAudio channel layout computations.
+// ordering to operate correctly. E.g., CoreAudio channel layout computations
+// and ChannelMaskToLayout().
 enum Channels {
   LEFT = 0,
-  RIGHT,
-  CENTER,
-  LFE,
-  BACK_LEFT,
-  BACK_RIGHT,
-  LEFT_OF_CENTER,
-  RIGHT_OF_CENTER,
-  BACK_CENTER,
-  SIDE_LEFT,
-  SIDE_RIGHT,
-  CHANNELS_MAX = SIDE_RIGHT, // Must always equal the largest value ever logged.
+  RIGHT = 1,
+  CENTER = 2,
+  LFE = 3,
+  BACK_LEFT = 4,
+  BACK_RIGHT = 5,
+  LEFT_OF_CENTER = 6,
+  RIGHT_OF_CENTER = 7,
+  BACK_CENTER = 8,
+  SIDE_LEFT = 9,
+  SIDE_RIGHT = 10,
+  CHANNELS_MAX =
+      SIDE_RIGHT,  // Must always equal the largest value ever logged.
 };
 
 // The maximum number of concurrently active channels for all possible layouts.
@@ -148,7 +167,7 @@ constexpr int kMaxConcurrentChannels = 8;
 // Returns the expected channel position in an interleaved stream.  Values of -1
 // mean the channel at that index is not used for that layout.  Values range
 // from 0 to ChannelLayoutToChannelCount(layout) - 1.
-MEDIA_SHMEM_EXPORT int ChannelOrder(ChannelLayout layout, Channels channel);
+MEDIA_EXPORT int ChannelOrder(ChannelLayout layout, Channels channel);
 
 // Returns the number of channels in a given ChannelLayout or 0 if the
 // channel layout can't be mapped to a valid value. Currently, 0
@@ -156,14 +175,23 @@ MEDIA_SHMEM_EXPORT int ChannelOrder(ChannelLayout layout, Channels channel);
 // CHANNEL_LAYOUT_DISCRETE, and CHANNEL_LAYOUT_BITSTREAM. For these cases,
 // additional steps must be taken to manually figure out the corresponding
 // number of channels.
-MEDIA_SHMEM_EXPORT int ChannelLayoutToChannelCount(ChannelLayout layout);
+MEDIA_EXPORT int ChannelLayoutToChannelCount(ChannelLayout layout);
 
 // Given the number of channels, return the best layout,
 // or return CHANNEL_LAYOUT_UNSUPPORTED if there is no good match.
-MEDIA_SHMEM_EXPORT ChannelLayout GuessChannelLayout(int channels);
+MEDIA_EXPORT ChannelLayout GuessChannelLayout(int channels);
+
+// Returns the channel layout for a given channel mask. This code assumes that
+// the mask uses the Channels enum as the position of each channel, e.g.
+// a `LEFT` channel would be represented as `1 << Channels::LEFT` or `0b1`.
+//
+// Returns CHANNEL_LAYOUT_DISCRETE if the bitmask does not match any known
+// channel layout.
+using ChannelMask = uint32_t;
+MEDIA_EXPORT ChannelLayout ChannelMaskToLayout(ChannelMask channel_mask);
 
 // Returns a string representation of the channel layout.
-MEDIA_SHMEM_EXPORT const char* ChannelLayoutToString(ChannelLayout layout);
+MEDIA_EXPORT const char* ChannelLayoutToString(ChannelLayout layout);
 
 }  // namespace media
 

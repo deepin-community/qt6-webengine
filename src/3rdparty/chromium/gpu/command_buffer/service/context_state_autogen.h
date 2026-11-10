@@ -199,7 +199,6 @@ inline void SetDeviceCapabilityState(GLenum cap, bool enable) {
       break;
     default:
       NOTREACHED();
-      return;
   }
   if (enable)
     api()->glEnableFn(cap);

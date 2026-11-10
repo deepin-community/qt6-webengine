@@ -21,14 +21,14 @@
 #include <stack>
 
 #include "perfetto/base/status.h"
-#include "src/trace_processor/perfetto_sql/engine/function_util.h"
+#include "perfetto/ext/base/status_macros.h"
 #include "src/trace_processor/perfetto_sql/engine/perfetto_sql_engine.h"
+#include "src/trace_processor/perfetto_sql/parser/function_util.h"
 #include "src/trace_processor/sqlite/scoped_db.h"
 #include "src/trace_processor/sqlite/sql_source.h"
 #include "src/trace_processor/sqlite/sqlite_engine.h"
 #include "src/trace_processor/sqlite/sqlite_utils.h"
 #include "src/trace_processor/tp_metatrace.h"
-#include "src/trace_processor/util/status_macros.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -75,7 +75,7 @@ base::StatusOr<SqlValue> EvaluateScalarStatement(
   }
 
   SqlValue result =
-      sqlite_utils::SqliteValueToSqlValue(sqlite3_column_value(stmt, 0));
+      sqlite::utils::SqliteValueToSqlValue(sqlite3_column_value(stmt, 0));
 
   // If we return a bytes type but have a null pointer, SQLite will convert this
   // to an SQL null. However, for proto build functions, we actively want to
@@ -109,7 +109,7 @@ struct StoredSqlValue {
   // the destructors run correctly for non-trivial members of the
   // union.
   using Data =
-      std::variant<int64_t, double, OwnedString, OwnedBytes, nullptr_t>;
+      std::variant<int64_t, double, OwnedString, OwnedBytes, std::nullptr_t>;
 
   StoredSqlValue(SqlValue value) {
     switch (value.type) {
@@ -134,7 +134,7 @@ struct StoredSqlValue {
   }
 
   SqlValue AsSqlValue() {
-    if (std::holds_alternative<nullptr_t>(data)) {
+    if (std::holds_alternative<std::nullptr_t>(data)) {
       return SqlValue();
     } else if (std::holds_alternative<int64_t>(data)) {
       return SqlValue::Long(std::get<int64_t>(data));
@@ -205,7 +205,7 @@ class Memoizer {
     if (argc != 1) {
       return std::nullopt;
     }
-    SqlValue arg = sqlite_utils::SqliteValueToSqlValue(argv[0]);
+    SqlValue arg = sqlite::utils::SqliteValueToSqlValue(argv[0]);
     if (arg.type != SqlValue::Type::kLong) {
       return std::nullopt;
     }
@@ -611,7 +611,7 @@ base::Status CreatedFunction::Run(CreatedFunction::Context* ctx,
   for (size_t i = 0; i < argc; ++i) {
     sqlite3_value* arg = argv[i];
     sql_argument::Type type = state->prototype().arguments[i].type();
-    base::Status status = sqlite_utils::TypeCheckSqliteValue(
+    base::Status status = sqlite::utils::TypeCheckSqliteValue(
         arg, sql_argument::TypeToSqlValueType(type),
         sql_argument::TypeToHumanFriendlyString(type));
     if (!status.ok()) {

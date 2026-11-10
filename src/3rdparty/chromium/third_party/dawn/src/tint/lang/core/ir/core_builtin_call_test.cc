@@ -26,7 +26,6 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "gmock/gmock.h"
-#include "gtest/gtest-spi.h"
 #include "src/tint/lang/core/ir/block_param.h"
 #include "src/tint/lang/core/ir/ir_helper_test.h"
 
@@ -35,14 +34,15 @@ namespace {
 
 using namespace tint::core::number_suffixes;  // NOLINT
 using IR_CoreBuiltinCallTest = IRTestHelper;
+using IR_CoreBuiltinCallDeathTest = IR_CoreBuiltinCallTest;
 
 TEST_F(IR_CoreBuiltinCallTest, Usage) {
     auto* arg1 = b.Constant(1_u);
     auto* arg2 = b.Constant(2_u);
     auto* builtin = b.Call(mod.Types().f32(), core::BuiltinFn::kAbs, arg1, arg2);
 
-    EXPECT_THAT(arg1->Usages(), testing::UnorderedElementsAre(Usage{builtin, 0u}));
-    EXPECT_THAT(arg2->Usages(), testing::UnorderedElementsAre(Usage{builtin, 1u}));
+    EXPECT_THAT(arg1->UsagesUnsorted(), testing::UnorderedElementsAre(Usage{builtin, 0u}));
+    EXPECT_THAT(arg2->UsagesUnsorted(), testing::UnorderedElementsAre(Usage{builtin, 1u}));
 }
 
 TEST_F(IR_CoreBuiltinCallTest, Result) {
@@ -51,28 +51,28 @@ TEST_F(IR_CoreBuiltinCallTest, Result) {
     auto* builtin = b.Call(mod.Types().f32(), core::BuiltinFn::kAbs, arg1, arg2);
 
     EXPECT_EQ(builtin->Results().Length(), 1u);
-    EXPECT_TRUE(builtin->Result(0)->Is<InstructionResult>());
-    EXPECT_EQ(builtin->Result(0)->Instruction(), builtin);
+    EXPECT_TRUE(builtin->Result()->Is<InstructionResult>());
+    EXPECT_EQ(builtin->Result()->Instruction(), builtin);
 }
 
-TEST_F(IR_CoreBuiltinCallTest, Fail_NullType) {
-    EXPECT_FATAL_FAILURE(
+TEST_F(IR_CoreBuiltinCallDeathTest, Fail_NullType) {
+    EXPECT_DEATH_IF_SUPPORTED(
         {
             Module mod;
             Builder b{mod};
             b.Call(static_cast<type::Type*>(nullptr), core::BuiltinFn::kAbs);
         },
-        "");
+        "internal compiler error");
 }
 
-TEST_F(IR_CoreBuiltinCallTest, Fail_NoneFunction) {
-    EXPECT_FATAL_FAILURE(
+TEST_F(IR_CoreBuiltinCallDeathTest, Fail_NoneFunction) {
+    EXPECT_DEATH_IF_SUPPORTED(
         {
             Module mod;
             Builder b{mod};
             b.Call(mod.Types().f32(), core::BuiltinFn::kNone);
         },
-        "");
+        "internal compiler error");
 }
 
 TEST_F(IR_CoreBuiltinCallTest, Clone) {
@@ -81,8 +81,8 @@ TEST_F(IR_CoreBuiltinCallTest, Clone) {
     auto* new_b = clone_ctx.Clone(builtin);
 
     EXPECT_NE(builtin, new_b);
-    EXPECT_NE(builtin->Result(0), new_b->Result(0));
-    EXPECT_EQ(mod.Types().f32(), new_b->Result(0)->Type());
+    EXPECT_NE(builtin->Result(), new_b->Result());
+    EXPECT_EQ(mod.Types().f32(), new_b->Result()->Type());
 
     EXPECT_EQ(core::BuiltinFn::kAbs, new_b->Func());
 
@@ -100,8 +100,8 @@ TEST_F(IR_CoreBuiltinCallTest, CloneNoArgs) {
     auto* builtin = b.Call(mod.Types().f32(), core::BuiltinFn::kAbs);
 
     auto* new_b = clone_ctx.Clone(builtin);
-    EXPECT_NE(builtin->Result(0), new_b->Result(0));
-    EXPECT_EQ(mod.Types().f32(), new_b->Result(0)->Type());
+    EXPECT_NE(builtin->Result(), new_b->Result());
+    EXPECT_EQ(mod.Types().f32(), new_b->Result()->Type());
 
     EXPECT_EQ(core::BuiltinFn::kAbs, new_b->Func());
 

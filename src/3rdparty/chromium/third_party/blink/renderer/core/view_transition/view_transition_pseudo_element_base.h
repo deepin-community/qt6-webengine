@@ -20,6 +20,7 @@ class CORE_EXPORT ViewTransitionPseudoElementBase : public PseudoElement {
       Element* parent,
       PseudoId,
       const AtomicString& view_transition_name,
+      bool is_generated_name,
       const ViewTransitionStyleTracker* style_tracker);
   ~ViewTransitionPseudoElementBase() override = default;
 
@@ -28,7 +29,18 @@ class CORE_EXPORT ViewTransitionPseudoElementBase : public PseudoElement {
       const StyleRecalcContext&) override;
   void Trace(Visitor* visitor) const override;
 
+  const Vector<AtomicString>& ViewTransitionClassList() const;
+
+  // Returns true if this pseudo-element is bound to a transition using
+  // `tracker`.
+  bool IsBoundTo(const blink::ViewTransitionStyleTracker* tracker) const;
+
+  const Vector<AtomicString>& GetViewTransitionNames() const;
+
+  const Vector<AtomicString> GetContainedViewTransitionNames() const;
+
  protected:
+  Vector<AtomicString> view_transition_class_;
   Member<const ViewTransitionStyleTracker> style_tracker_;
 };
 

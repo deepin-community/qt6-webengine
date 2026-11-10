@@ -4,6 +4,7 @@
 
 #include "components/history/core/browser/visit_tracker.h"
 
+#include "base/compiler_specific.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace history {
@@ -42,7 +43,7 @@ void AddVisitToTracker(const VisitToTest& test_data, VisitTracker* tracker) {
 
 void RunTest(VisitTracker* tracker, VisitToTest* test, int test_count) {
   for (int i = 0; i < test_count; i++)
-    AddVisitToTracker(test[i], tracker);
+    AddVisitToTracker(UNSAFE_TODO(test[i]), tracker);
 }
 
 }  // namespace

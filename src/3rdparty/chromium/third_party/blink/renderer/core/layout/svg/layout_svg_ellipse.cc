@@ -26,7 +26,7 @@
 
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_ellipse.h"
 
-#include <cmath>
+#include "third_party/blink/renderer/core/layout/hit_test_location.h"
 #include "third_party/blink/renderer/core/svg/svg_circle_element.h"
 #include "third_party/blink/renderer/core/svg/svg_ellipse_element.h"
 #include "third_party/blink/renderer/core/svg/svg_length_functions.h"
@@ -40,6 +40,17 @@ bool GeometryPropertiesChanged(const ComputedStyle& old_style,
   return old_style.Rx() != new_style.Rx() || old_style.Ry() != new_style.Ry() ||
          old_style.Cx() != new_style.Cx() || old_style.Cy() != new_style.Cy() ||
          old_style.R() != new_style.R();
+}
+
+bool TreatAsAuto(const Length& dimension, float resolved_value) {
+  if (dimension.IsAuto()) {
+    return true;
+  }
+  if (resolved_value < 0 &&
+      RuntimeEnabledFeatures::SvgIgnoreNegativeEllipseRadiiEnabled()) {
+    return true;
+  }
+  return false;
 }
 
 }  // namespace
@@ -59,12 +70,24 @@ void LayoutSVGEllipse::StyleDidChange(StyleDifference diff,
   }
 }
 
+bool LayoutSVGEllipse::CalculateGeometryDependsOnViewport() const {
+  const ComputedStyle& style = StyleRef();
+  if (style.Cx().HasPercent() || style.Cy().HasPercent()) {
+    return true;
+  }
+  if (IsA<SVGCircleElement>(*GetElement())) {
+    return style.R().HasPercent();
+  }
+  return style.Rx().HasPercent() || style.Ry().HasPercent();
+}
+
 gfx::RectF LayoutSVGEllipse::UpdateShapeFromElement() {
   NOT_DESTROYED();
 
   // Reset shape state.
   ClearPath();
   SetGeometryType(GeometryType::kEmpty);
+  SetGeometryDependsOnViewport(CalculateGeometryDependsOnViewport());
 
   // This will always update/reset |center_| and |radii_|.
   CalculateRadiiAndCenter();
@@ -96,14 +119,15 @@ void LayoutSVGEllipse::CalculateRadiiAndCenter() {
         VectorForLengthPair(style.Rx(), style.Ry(), viewport_resolver, style);
     radius_x_ = radii.x();
     radius_y_ = radii.y();
-    if (style.Rx().IsAuto())
+    if (TreatAsAuto(style.Rx(), radius_x_)) {
       radius_x_ = radius_y_;
-    else if (style.Ry().IsAuto())
+    } else if (TreatAsAuto(style.Ry(), radius_y_)) {
       radius_y_ = radius_x_;
+    }
   }
 
-  // Spec: "A negative value is an error. A value of zero disables rendering of
-  // the element."
+  // "Clamp any remaining negative values to zero to disable rendering. This
+  // shouldn't happen, but we still allow negative values to be parsed."
   radius_x_ = std::max(radius_x_, 0.f);
   radius_y_ = std::max(radius_y_, 0.f);
 }
@@ -130,11 +154,7 @@ bool LayoutSVGEllipse::ShapeDependentStrokeContains(
     EnsurePath();
     return LayoutSVGShape::ShapeDependentStrokeContains(location);
   }
-
-  const gfx::PointF& point = location.TransformedPoint();
-  const gfx::Vector2dF center_offset = center_ - point;
-  const float half_stroke_width = StrokeWidth() / 2;
-  return std::abs(center_offset.Length() - radius_x_) <= half_stroke_width;
+  return location.IntersectsCircleStroke(center_, radius_x_, StrokeWidth());
 }
 
 bool LayoutSVGEllipse::ShapeDependentFillContains(
@@ -145,21 +165,12 @@ bool LayoutSVGEllipse::ShapeDependentFillContains(
   DCHECK_GE(radius_y_, 0);
   if (!radius_x_ || !radius_y_)
     return false;
-
-  const gfx::PointF& point = location.TransformedPoint();
-  const gfx::PointF center =
-      gfx::PointF(center_.x() - point.x(), center_.y() - point.y());
-
-  // This works by checking if the point satisfies the ellipse equation.
-  // (x/rX)^2 + (y/rY)^2 <= 1
-  const float xr_x = center.x() / radius_x_;
-  const float yr_y = center.y() / radius_y_;
-  return xr_x * xr_x + yr_y * yr_y <= 1.0;
+  return location.IntersectsEllipse(center_, gfx::SizeF(radius_x_, radius_y_));
 }
 
 bool LayoutSVGEllipse::HasContinuousStroke() const {
   NOT_DESTROYED();
-  return !StyleRef().HasDashArray();
+  return !StyleRef().StrokeDashArray();
 }
 
 }  // namespace blink

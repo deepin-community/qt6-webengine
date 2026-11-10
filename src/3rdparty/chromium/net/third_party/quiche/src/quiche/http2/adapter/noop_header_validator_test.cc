@@ -1,5 +1,6 @@
 #include "quiche/http2/adapter/noop_header_validator.h"
 
+#include <limits>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -10,8 +11,6 @@
 namespace http2 {
 namespace adapter {
 namespace test {
-
-using ::testing::Optional;
 
 using Header = std::pair<absl::string_view, absl::string_view>;
 constexpr Header kSampleRequestPseudoheaders[] = {{":authority", "www.foo.com"},

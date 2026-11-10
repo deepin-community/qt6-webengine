@@ -30,7 +30,6 @@ const char* GinJavaBridgeErrorToString(mojom::GinJavaBridgeError error) {
       return "RenderFrame has been deleted";
   }
   NOTREACHED();
-  return "Unknown error";
 }
 
 }  // namespace content

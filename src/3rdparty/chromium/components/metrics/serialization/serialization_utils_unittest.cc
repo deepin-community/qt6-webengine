@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include "base/check.h"
+#include "base/containers/span.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
@@ -188,11 +189,8 @@ TEST_F(SerializationUtilsTest, IllegalNameAreFilteredTest) {
       SerializationUtils::WriteMetricToFile(*sample1.get(), filename()));
   EXPECT_FALSE(
       SerializationUtils::WriteMetricToFile(*sample2.get(), filename()));
-  int64_t size = 0;
 
-  ASSERT_TRUE(!PathExists(filepath()) || base::GetFileSize(filepath(), &size));
-
-  EXPECT_EQ(0, size);
+  ASSERT_FALSE(base::PathExists(filepath()));
 }
 
 TEST_F(SerializationUtilsTest, BadInputIsCaughtTest) {
@@ -206,8 +204,9 @@ TEST_F(SerializationUtilsTest, MessageSeparatedByZero) {
       MetricSample::CrashSample("mycrash", /*num_samples=*/10);
 
   SerializationUtils::WriteMetricToFile(*crash.get(), filename());
-  int64_t size = 0;
-  ASSERT_TRUE(base::GetFileSize(filepath(), &size));
+  std::optional<int64_t> size = base::GetFileSize(filepath());
+
+  ASSERT_TRUE(size.has_value());
   // 4 bytes for the size
   // 5 bytes for crash
   // 1 byte for \0
@@ -215,7 +214,7 @@ TEST_F(SerializationUtilsTest, MessageSeparatedByZero) {
   // 3 bytes for " 10"
   // 1 byte for \0
   // -> total of 21
-  EXPECT_EQ(size, 21);
+  EXPECT_EQ(size.value(), 21);
 }
 
 TEST_F(SerializationUtilsTest, MessagesTooLongAreDiscardedTest) {
@@ -227,9 +226,10 @@ TEST_F(SerializationUtilsTest, MessagesTooLongAreDiscardedTest) {
   std::unique_ptr<MetricSample> crash =
       MetricSample::CrashSample(name, /*num_samples=*/10);
   EXPECT_FALSE(SerializationUtils::WriteMetricToFile(*crash.get(), filename()));
-  int64_t size = 0;
-  ASSERT_TRUE(base::GetFileSize(filepath(), &size));
-  EXPECT_EQ(0, size);
+
+  std::optional<int64_t> size = base::GetFileSize(filepath());
+  ASSERT_TRUE(size.has_value());
+  EXPECT_EQ(0, size.value());
 }
 
 TEST_F(SerializationUtilsTest, ReadLongMessageTest) {
@@ -238,9 +238,8 @@ TEST_F(SerializationUtilsTest, ReadLongMessageTest) {
   std::string message(SerializationUtils::kMessageMaxLength + 1, 'c');
 
   int32_t message_size = message.length() + sizeof(int32_t);
-  test_file.WriteAtCurrentPos(reinterpret_cast<const char*>(&message_size),
-                              sizeof(message_size));
-  test_file.WriteAtCurrentPos(message.c_str(), message.length());
+  test_file.WriteAtCurrentPos(base::byte_span_from_ref(message_size));
+  test_file.WriteAtCurrentPos(base::as_byte_span(message));
   test_file.Close();
 
   std::unique_ptr<MetricSample> crash =
@@ -290,14 +289,14 @@ TEST_F(SerializationUtilsTest, NegativeLengthTest) {
       0xff,
       0xff,
   };
-  ASSERT_TRUE(base::WriteFile(filepath(), base::make_span(kInput)));
+  ASSERT_TRUE(base::WriteFile(filepath(), base::span(kInput)));
 
   std::vector<std::unique_ptr<MetricSample>> samples;
   SerializationUtils::ReadAndTruncateMetricsFromFile(filename(), &samples);
   ASSERT_EQ(0U, samples.size());
 }
 
-TEST_F(SerializationUtilsTest, WriteReadTest) {
+TEST_F(SerializationUtilsTest, WriteReadTest_TruncateFile) {
   std::unique_ptr<MetricSample> hist = MetricSample::HistogramSample(
       "myhist", /*sample=*/1, /*min=*/2, /*max=*/3, /*bucket_count=*/4,
       /*num_samples=*/5);
@@ -328,9 +327,43 @@ TEST_F(SerializationUtilsTest, WriteReadTest) {
   EXPECT_TRUE(shist->IsEqual(*vect[3]));
   EXPECT_TRUE(action->IsEqual(*vect[4]));
 
-  int64_t size = 0;
-  ASSERT_TRUE(base::GetFileSize(filepath(), &size));
-  ASSERT_EQ(0, size);
+  std::optional<int64_t> size = base::GetFileSize(filepath());
+  ASSERT_TRUE(size.has_value());
+  ASSERT_EQ(0, size.value());
+}
+
+TEST_F(SerializationUtilsTest, WriteReadTest_DeleteFile) {
+  std::unique_ptr<MetricSample> hist = MetricSample::HistogramSample(
+      "myhist", /*sample=*/1, /*min=*/2, /*max=*/3, /*bucket_count=*/4,
+      /*num_samples=*/5);
+  std::unique_ptr<MetricSample> crash =
+      MetricSample::CrashSample("mycrash", /*num_samples=*/10);
+  std::unique_ptr<MetricSample> lhist = MetricSample::LinearHistogramSample(
+      "linear", /*sample=*/1, /*max=*/10, /*num_samples=*/10);
+  std::unique_ptr<MetricSample> shist = MetricSample::SparseHistogramSample(
+      "mysparse", /*sample=*/30, /*num_samples=*/10);
+  std::unique_ptr<MetricSample> action =
+      MetricSample::UserActionSample("myaction", /*num_samples=*/1);
+
+  SerializationUtils::WriteMetricToFile(*hist.get(), filename());
+  SerializationUtils::WriteMetricToFile(*crash.get(), filename());
+  SerializationUtils::WriteMetricToFile(*lhist.get(), filename());
+  SerializationUtils::WriteMetricToFile(*shist.get(), filename());
+  SerializationUtils::WriteMetricToFile(*action.get(), filename());
+  std::vector<std::unique_ptr<MetricSample>> vect;
+  SerializationUtils::ReadAndDeleteMetricsFromFile(filename(), &vect);
+  // NOTE: Should *not* have an entry for each repeated sample.
+  ASSERT_EQ(vect.size(), size_t(5));
+  for (auto& sample : vect) {
+    ASSERT_NE(nullptr, sample.get());
+  }
+  EXPECT_TRUE(hist->IsEqual(*vect[0]));
+  EXPECT_TRUE(crash->IsEqual(*vect[1]));
+  EXPECT_TRUE(lhist->IsEqual(*vect[2]));
+  EXPECT_TRUE(shist->IsEqual(*vect[3]));
+  EXPECT_TRUE(action->IsEqual(*vect[4]));
+
+  EXPECT_FALSE(base::PathExists(filepath()));
 }
 
 TEST_F(SerializationUtilsTest, TooManyMessagesTest) {
@@ -353,9 +386,9 @@ TEST_F(SerializationUtilsTest, TooManyMessagesTest) {
     EXPECT_TRUE(hist->IsEqual(*sample));
   }
 
-  int64_t size = 0;
-  ASSERT_TRUE(base::GetFileSize(filepath(), &size));
-  ASSERT_EQ(0, size);
+  std::optional<int64_t> size = base::GetFileSize(filepath());
+  ASSERT_TRUE(size.has_value());
+  ASSERT_EQ(0, size.value());
 }
 
 TEST_F(SerializationUtilsTest, ReadEmptyFile) {

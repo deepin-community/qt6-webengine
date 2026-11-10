@@ -6,14 +6,15 @@
 #define BASE_THREADING_SCOPED_THREAD_PRIORITY_H_
 
 #include <atomic>
+#include <optional>
 
 #include "base/base_export.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
 #include "base/macros/uniquify.h"
 #include "base/memory/raw_ptr.h"
+#include "base/task/task_observer.h"
 #include "build/build_config.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace base {
 
@@ -31,11 +32,11 @@ enum class ThreadType : int;
 //   }
 //   Bar();
 //
-// The macro raises the thread priority to NORMAL for the scope if no other
-// thread has completed the current scope already (multiple threads can racily
-// begin the initialization and will all be boosted for it). On Windows, loading
-// a DLL on a background thread can lead to a priority inversion on the loader
-// lock and cause huge janks.
+// The macro raises the thread priority to match ThreadType::kDefault for the
+// scope if no other thread has completed the current scope already (multiple
+// threads can racily begin the initialization and will all be boosted for it).
+// On Windows, loading a DLL on a background thread can lead to a priority
+// inversion on the loader lock and cause huge janks.
 #define SCOPED_MAY_LOAD_LIBRARY_AT_BACKGROUND_PRIORITY()                  \
   static std::atomic_bool BASE_UNIQUIFY(already_loaded){false};           \
   base::internal::ScopedMayLoadLibraryAtBackgroundPriority BASE_UNIQUIFY( \
@@ -51,7 +52,9 @@ enum class ThreadType : int;
       scoped_may_load_library_at_background_priority)(FROM_HERE, nullptr);
 
 // Boosts the current thread's priority to match the priority of threads of
-// |target_thread_type| in this scope.
+// `target_thread_type` in this scope. `target_thread_type` must be lower
+// priority than kRealtimeAudio, since realtime priority should only be used by
+// dedicated media threads.
 class BASE_EXPORT ScopedBoostPriority {
  public:
   explicit ScopedBoostPriority(ThreadType target_thread_type);
@@ -61,15 +64,40 @@ class BASE_EXPORT ScopedBoostPriority {
   ScopedBoostPriority& operator=(const ScopedBoostPriority&) = delete;
 
  private:
-  absl::optional<ThreadType> original_thread_type_;
+  std::optional<ThreadType> original_thread_type_;
+};
+
+// This wraps ScopedBoostPriority with a callback to determine whether
+// the priority should be boosted or not before every task execution.
+class BASE_EXPORT TaskMonitoringScopedBoostPriority : public TaskObserver {
+ public:
+  explicit TaskMonitoringScopedBoostPriority(
+      ThreadType target_thread_type,
+      RepeatingCallback<bool()> should_boost_callback);
+  ~TaskMonitoringScopedBoostPriority() override;
+
+  TaskMonitoringScopedBoostPriority(const TaskMonitoringScopedBoostPriority&) =
+      delete;
+  TaskMonitoringScopedBoostPriority& operator=(
+      const TaskMonitoringScopedBoostPriority&) = delete;
+
+  // TaskObserver implementation:
+  void WillProcessTask(const PendingTask& pending_task,
+                       bool was_blocked_or_low_priority) override;
+  void DidProcessTask(const PendingTask& pending_task) override {}
+
+ private:
+  std::optional<ScopedBoostPriority> scoped_boost_priority_;
+  ThreadType target_thread_type_;
+  RepeatingCallback<bool()> should_boost_callback_;
 };
 
 namespace internal {
 
 class BASE_EXPORT ScopedMayLoadLibraryAtBackgroundPriority {
  public:
-  // Boosts thread priority to NORMAL within its scope if |already_loaded| is
-  // nullptr or set to false.
+  // Boosts thread priority to match ThreadType::kDefault within its scope if
+  // `already_loaded` is nullptr or set to false.
   explicit ScopedMayLoadLibraryAtBackgroundPriority(
       const Location& from_here,
       std::atomic_bool* already_loaded);
@@ -84,7 +112,7 @@ class BASE_EXPORT ScopedMayLoadLibraryAtBackgroundPriority {
  private:
 #if BUILDFLAG(IS_WIN)
   // The original priority when invoking entering the scope().
-  absl::optional<ThreadType> original_thread_type_;
+  std::optional<ThreadType> original_thread_type_;
   const raw_ptr<std::atomic_bool> already_loaded_;
 #endif
 };

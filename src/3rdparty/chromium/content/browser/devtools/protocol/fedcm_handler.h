@@ -7,17 +7,25 @@
 
 #include <memory>
 
+#include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
 #include "content/browser/devtools/protocol/devtools_domain_handler.h"
 #include "content/browser/devtools/protocol/fed_cm.h"
 #include "content/common/content_export.h"
+#include "url/origin.h"
 
 namespace content {
+class DevToolsAgentHostImpl;
 class FederatedAuthRequestImpl;
 class FederatedAuthRequestPageData;
 class FederatedIdentityApiPermissionContextDelegate;
-struct IdentityProviderData;
+class IdentityProviderData;
+class IdentityRequestAccount;
 }  // namespace content
+
+using IdentityProviderDataPtr = scoped_refptr<content::IdentityProviderData>;
+using IdentityRequestAccountPtr =
+    scoped_refptr<content::IdentityRequestAccount>;
 
 namespace content::protocol {
 
@@ -52,7 +60,8 @@ class FedCmHandler : public DevToolsDomainHandler, public FedCm::Backend {
   void Wire(UberDispatcher* dispatcher) override;
 
   // FedCm::Backend
-  DispatchResponse Enable(Maybe<bool> in_disableRejectionDelay) override;
+  DispatchResponse Enable(
+      std::optional<bool> in_disableRejectionDelay) override;
   DispatchResponse Disable() override;
   DispatchResponse SelectAccount(const String& in_dialogId,
                                  int in_accountIndex) override;
@@ -63,19 +72,22 @@ class FedCmHandler : public DevToolsDomainHandler, public FedCm::Backend {
   DispatchResponse ClickDialogButton(
       const String& in_dialogId,
       const FedCm::DialogButton& in_dialogButton) override;
-  DispatchResponse DismissDialog(const String& in_dialogId,
-                                 Maybe<bool> in_triggerCooldown) override;
+  DispatchResponse DismissDialog(
+      const String& in_dialogId,
+      std::optional<bool> in_triggerCooldown) override;
   DispatchResponse ResetCooldown() override;
 
   url::Origin GetEmbeddingOrigin();
 
   FederatedAuthRequestPageData* GetPageData();
   FederatedAuthRequestImpl* GetFederatedAuthRequest();
-  const std::vector<IdentityProviderData>* GetIdentityProviderData(
+  const std::vector<IdentityProviderDataPtr>* GetIdentityProviderData(
+      FederatedAuthRequestImpl* auth_request);
+  const std::vector<IdentityRequestAccountPtr>* GetAccounts(
       FederatedAuthRequestImpl* auth_request);
   FederatedIdentityApiPermissionContextDelegate* GetApiPermissionContext();
 
-  RenderFrameHostImpl* frame_host_ = nullptr;
+  raw_ptr<RenderFrameHostImpl> frame_host_ = nullptr;
   std::unique_ptr<FedCm::Frontend> frontend_;
   std::string dialog_id_;
   bool enabled_ = false;

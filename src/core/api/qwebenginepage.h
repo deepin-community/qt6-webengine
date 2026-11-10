@@ -1,5 +1,6 @@
 // Copyright (C) 2021 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #ifndef QWEBENGINEPAGE_H
 #define QWEBENGINEPAGE_H
@@ -285,8 +286,43 @@ public:
     QPointF scrollPosition() const;
     QSizeF contentsSize() const;
 
+    void runJavaScript(const QString &scriptSource, quint32 worldId = 0)
+    {
+        runJavaScriptImpl(scriptSource, worldId, nullptr);
+    }
+    template<typename Functor, QtWebEnginePrivate::if_callback_with_arg_t<Functor, const QVariant &> = true>
+    void runJavaScript(const QString &script, Functor &&resultCallback)
+    {
+        runJavaScript(script, 0, std::forward<Functor>(resultCallback));
+    }
+    template<typename Functor, QtWebEnginePrivate::if_callback_with_arg_t<Functor, const QVariant &> = true>
+    void runJavaScript(const QString &script, quint32 worldId, Functor &&resultCallback)
+    {
+        if constexpr (std::is_constructible_v<bool, Functor>) {
+            if (!resultCallback)
+                return runJavaScriptImpl(script, worldId, nullptr);
+        }
+        runJavaScriptImpl(script, worldId,
+                          QtPrivate::makeCallableObject<void(*)(const QVariant &)>(std::forward<Functor>(resultCallback)));
+    }
+
+#if QT_DEPRECATED_SINCE(6, 15)
+    QT_DEPRECATED_VERSION_X_6_15("Use version without callback instead of a nullptr callback")
+    void runJavaScript(const QString &script, std::nullptr_t)
+    {
+        return runJavaScriptImpl(script, 0, nullptr);
+    }
+    QT_DEPRECATED_VERSION_X_6_15("Use version without callback instead of a nullptr callback")
+    void runJavaScript(const QString &script, quint32 worldId, std::nullptr_t)
+    {
+        return runJavaScriptImpl(script, worldId, nullptr);
+    }
+#endif
+
+#if QT_WEBENGINECORE_REMOVED_SINCE(6, 12)
     void runJavaScript(const QString &scriptSource, const std::function<void(const QVariant &)> &resultCallback);
-    void runJavaScript(const QString &scriptSource, quint32 worldId = 0, const std::function<void(const QVariant &)> &resultCallback = {});
+    void runJavaScript(const QString &scriptSource, quint32 worldId, const std::function<void(const QVariant &)> &resultCallback);
+#endif
     QWebEngineScriptCollection &scripts();
     QWebEngineSettings *settings() const;
 
@@ -306,9 +342,44 @@ public:
     void printToPdf(const QString &filePath,
                     const QPageLayout &layout = QPageLayout(QPageSize(QPageSize::A4), QPageLayout::Portrait, QMarginsF()),
                     const QPageRanges &ranges = {});
+    template<typename Functor, QtWebEnginePrivate::if_callback_with_arg_t<Functor, const QByteArray &> = true>
+    void printToPdf(Functor &&resultCallback,
+                    const QPageLayout &layout = QPageLayout(QPageSize(QPageSize::A4), QPageLayout::Portrait, QMarginsF()),
+                    const QPageRanges &ranges = {})
+    {
+        auto wrappedCallback = [myCallback = std::forward<Functor>(resultCallback)](std::shared_ptr<QByteArray> result) mutable {
+            if constexpr (std::is_convertible_v<Functor, bool>) {
+                if (myCallback) {
+                    if (result)
+                        myCallback(*result);
+                    else
+                        myCallback(QByteArray());
+                }
+            } else {
+                if (result)
+                    myCallback(*result);
+                else
+                    myCallback(QByteArray());
+            }
+        };
+        auto *callback =
+                QtPrivate::makeCallableObject<void(*)(std::shared_ptr<QByteArray>)>(std::move(wrappedCallback));
+        printToPdfImpl(callback, layout, ranges);
+
+    }
+#if QT_DEPRECATED_SINCE(6, 12)
+    void printToPdf(std::nullptr_t,
+                    const QPageLayout &layout = QPageLayout(QPageSize(QPageSize::A4), QPageLayout::Portrait, QMarginsF()),
+                    const QPageRanges &ranges = {})
+    {
+        printToPdfImpl(nullptr, layout, ranges);
+    }
+#endif
+#if QT_WEBENGINECORE_REMOVED_SINCE(6, 12)
     void printToPdf(const std::function<void(const QByteArray&)> &resultCallback,
                     const QPageLayout &layout = QPageLayout(QPageSize(QPageSize::A4), QPageLayout::Portrait, QMarginsF()),
                     const QPageRanges &ranges = {});
+#endif
 
     void setInspectedPage(QWebEnginePage *page);
     QWebEnginePage *inspectedPage() const;
@@ -419,6 +490,8 @@ private:
 #if QT_CONFIG(action)
     Q_PRIVATE_SLOT(d_func(), void _q_webActionTriggered(bool checked))
 #endif
+    void runJavaScriptImpl(const QString &scriptSource, quint32 worldId, QtPrivate::QSlotObjectBase *callback);
+    void printToPdfImpl(QtPrivate::QSlotObjectBase *callback, const QPageLayout &layout, const QPageRanges &ranges);
 
     friend class QContextMenuBuilder;
     friend class QWebEngineView;

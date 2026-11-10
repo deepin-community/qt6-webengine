@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "services/proxy_resolver_win/windows_system_proxy_resolver_impl.h"
 
 #include <cwchar>
@@ -11,6 +16,7 @@
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
@@ -28,7 +34,7 @@ namespace {
 bool GetProxyChainFromWinHttpResultEntry(
     const WINHTTP_PROXY_RESULT_ENTRY& result_entry,
     net::ProxyChain* out_proxy_chain) {
-  // TODO(https://crbug.com/1032820): Include net logs for proxy bypass
+  // TODO(crbug.com/40111093): Include net logs for proxy bypass
   if (!result_entry.fProxy) {
     *out_proxy_chain = net::ProxyChain::Direct();
     return true;
@@ -164,7 +170,7 @@ WindowsSystemProxyResolverImpl::Request::~Request() {
 bool WindowsSystemProxyResolverImpl::Request::Start(const GURL& url) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  // TODO(https://crbug.com/1032820): Use better/distinct net errors.
+  // TODO(crbug.com/40111093): Use better/distinct net errors.
   net::WinHttpStatus winhttp_status = parent_->EnsureInitialized();
   if (winhttp_status != net::WinHttpStatus::kOk) {
     const int error = GetLastError();
@@ -260,7 +266,7 @@ void WindowsSystemProxyResolverImpl::Request::DoWinHttpStatusCallback(
         GetProxyResultForCallback();
         break;
       case WINHTTP_CALLBACK_STATUS_REQUEST_ERROR:
-        // TODO(https://crbug.com/1032820): Use a better/distinct net error.
+        // TODO(crbug.com/40111093): Use a better/distinct net error.
         ReportResult(net::ProxyList(),
                      net::WinHttpStatus::kStatusCallbackFailed, windows_error);
         break;
@@ -285,7 +291,7 @@ void WindowsSystemProxyResolverImpl::Request::DoWinHttpStatusCallback(
 
   // Now, it's finally safe to delete this object.
   auto it = parent_->requests_.find(this);
-  DCHECK(it != parent_->requests_.end());
+  CHECK(it != parent_->requests_.end());
   parent_->requests_.erase(it);
 
   // DO NOT ADD ANYTHING BELOW THIS LINE, THE OBJECT HAS NOW BEEN DESTROYED.
@@ -293,7 +299,7 @@ void WindowsSystemProxyResolverImpl::Request::DoWinHttpStatusCallback(
 
 void WindowsSystemProxyResolverImpl::Request::GetProxyResultForCallback() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  // TODO(https://crbug.com/1032820): Use better/distinct net errors.
+  // TODO(crbug.com/40111093): Use better/distinct net errors.
   WINHTTP_PROXY_RESULT proxy_result = {0};
   if (!winhttp_api_wrapper()->CallWinHttpGetProxyResult(resolver_handle_,
                                                         &proxy_result)) {
@@ -371,16 +377,10 @@ void WindowsSystemProxyResolverImpl::GetProxyForUrl(
 
 net::WinHttpStatus WindowsSystemProxyResolverImpl::EnsureInitialized() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (initialized_)
+  if (initialized_) {
     return net::WinHttpStatus::kOk;
+  }
 
-  // TODO(https://crbug.com/1032820): Limit the number of times this can
-  // fail to initialize.
-
-  // The `winhttp_api_wrapper_` is intended to only get set when initialization
-  // is successful. However, it may have been pre-populated via
-  // SetCreateWinHttpAPIWrapperForTesting(). In those cases, use that object
-  // instead of creating a new one.
   std::unique_ptr<WinHttpAPIWrapper> uninitialized_winhttp_api_wrapper;
   if (winhttp_api_wrapper_) {
     uninitialized_winhttp_api_wrapper = std::move(winhttp_api_wrapper_);
@@ -390,8 +390,23 @@ net::WinHttpStatus WindowsSystemProxyResolverImpl::EnsureInitialized() {
         std::make_unique<WinHttpAPIWrapperImpl>();
   }
 
-  if (!uninitialized_winhttp_api_wrapper->CallWinHttpOpen())
+  const auto status =
+      InitializeWinHttpSession(uninitialized_winhttp_api_wrapper.get());
+  base::UmaHistogramEnumeration(
+      "Net.HttpProxy.ProxyResolverWin.HttpSessionInitializationState", status);
+  if (status == net::WinHttpStatus::kOk) {
+    initialized_ = true;
+    winhttp_api_wrapper_ = std::move(uninitialized_winhttp_api_wrapper);
+  }
+
+  return status;
+}
+
+net::WinHttpStatus WindowsSystemProxyResolverImpl::InitializeWinHttpSession(
+    WinHttpAPIWrapper* uninitialized_winhttp_api_wrapper) {
+  if (!uninitialized_winhttp_api_wrapper->CallWinHttpOpen()) {
     return net::WinHttpStatus::kWinHttpOpenFailed;
+  }
 
   // Since this session handle will never be used for WinHTTP connections,
   // these timeouts don't really mean much individually.  However, WinHTTP's
@@ -409,8 +424,6 @@ net::WinHttpStatus WindowsSystemProxyResolverImpl::EnsureInitialized() {
     return net::WinHttpStatus::kWinHttpSetStatusCallbackFailed;
   }
 
-  initialized_ = true;
-  winhttp_api_wrapper_ = std::move(uninitialized_winhttp_api_wrapper);
   return net::WinHttpStatus::kOk;
 }
 

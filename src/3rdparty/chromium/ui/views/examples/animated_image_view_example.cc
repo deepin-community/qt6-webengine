@@ -64,7 +64,7 @@ class AnimationGallery : public BoxLayoutView, public TextfieldController {
                 .AddChild(
                     Builder<AnimatedImageView>()
                         .CopyAddressTo(&animated_image_view_)
-                        .SetBorder(CreateThemedSolidBorder(
+                        .SetBorder(CreateSolidBorder(
                             1, ExamplesColorIds::
                                    kColorAnimatedImageViewExampleBorder))),
             Builder<BoxLayoutView>()
@@ -111,7 +111,7 @@ class AnimationGallery : public BoxLayoutView, public TextfieldController {
     base::FilePath path(base::UTF16ToWide(file_chooser_->GetText()));
 #endif  // BUILDFLAG(IS_POSIX)
     if (base::ReadFileToString(path, &json)) {
-      auto skottie = cc::SkottieWrapper::CreateSerializable(
+      auto skottie = cc::SkottieWrapper::UnsafeCreateSerializable(
           std::vector<uint8_t>(json.begin(), json.end()));
       animated_image_view_->SetAnimatedImage(
           std::make_unique<lottie::Animation>(skottie));
@@ -122,10 +122,11 @@ class AnimationGallery : public BoxLayoutView, public TextfieldController {
 
  private:
   void Update() {
-    if (size_ > 24)
+    if (size_ > 24) {
       animated_image_view_->SetImageSize(gfx::Size(size_, size_));
-    else
+    } else {
       animated_image_view_->ResetImageSize();
+    }
     InvalidateLayout();
   }
 

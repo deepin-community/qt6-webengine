@@ -39,15 +39,13 @@
 #include "quiche/quic/test_tools/quic_stream_peer.h"
 #include "quiche/quic/test_tools/quic_test_utils.h"
 #include "quiche/quic/test_tools/simple_session_cache.h"
-#include "quiche/spdy/core/http2_header_block.h"
+#include "quiche/common/http/http_header_block.h"
 
-using spdy::Http2HeaderBlock;
 using ::testing::_;
 using ::testing::AnyNumber;
 using ::testing::AtLeast;
 using ::testing::AtMost;
 using ::testing::Invoke;
-using ::testing::StrictMock;
 using ::testing::Truly;
 
 namespace quic {
@@ -107,8 +105,7 @@ class QuicSpdyClientSessionTest : public QuicTestWithParam<ParsedQuicVersion> {
         SupportedVersions(GetParam()));
     session_ = std::make_unique<TestQuicSpdyClientSession>(
         DefaultQuicConfig(), SupportedVersions(GetParam()), connection_,
-        QuicServerId(kServerHostname, kPort, false),
-        client_crypto_config_.get());
+        QuicServerId(kServerHostname, kPort), client_crypto_config_.get());
     session_->Initialize();
     connection_->SetEncrypter(
         ENCRYPTION_FORWARD_SECURE,
@@ -172,8 +169,7 @@ class QuicSpdyClientSessionTest : public QuicTestWithParam<ParsedQuicVersion> {
     connection_->AdvanceTime(QuicTime::Delta::FromSeconds(1));
     session_ = std::make_unique<TestQuicSpdyClientSession>(
         DefaultQuicConfig(), SupportedVersions(GetParam()), connection_,
-        QuicServerId(kServerHostname, kPort, false),
-        client_crypto_config_.get());
+        QuicServerId(kServerHostname, kPort), client_crypto_config_.get());
     session_->Initialize();
     crypto_stream_ = static_cast<QuicCryptoClientStream*>(
         session_->GetMutableCryptoStream());
@@ -210,6 +206,11 @@ std::string ParamNameFormatter(
 INSTANTIATE_TEST_SUITE_P(Tests, QuicSpdyClientSessionTest,
                          ::testing::ValuesIn(AllSupportedVersions()),
                          ParamNameFormatter);
+
+TEST_P(QuicSpdyClientSessionTest, GetSSLConfig) {
+  EXPECT_EQ(session_->QuicSpdyClientSessionBase::GetSSLConfig(),
+            QuicSSLConfig());
+}
 
 TEST_P(QuicSpdyClientSessionTest, CryptoConnect) { CompleteCryptoHandshake(); }
 
@@ -351,7 +352,6 @@ TEST_P(QuicSpdyClientSessionTest, ResetAndTrailers) {
   // ways that a peer can signal the end of a stream (the others being RST,
   // stream data + FIN).
   QuicHeaderList trailers;
-  trailers.OnHeaderBlockStart();
   trailers.OnHeader(kFinalOffsetHeaderKey, "0");
   trailers.OnHeaderBlockEnd(0, 0);
   session_->OnStreamHeaderList(stream_id, /*fin=*/false, 0, trailers);
@@ -396,7 +396,6 @@ TEST_P(QuicSpdyClientSessionTest, ReceivedMalformedTrailersAfterSendingRst) {
   // The stream receives trailers with final byte offset, but the header value
   // is non-numeric and should be treated as malformed.
   QuicHeaderList trailers;
-  trailers.OnHeaderBlockStart();
   trailers.OnHeader(kFinalOffsetHeaderKey, "invalid non-numeric value");
   trailers.OnHeaderBlockEnd(0, 0);
 
@@ -409,7 +408,6 @@ TEST_P(QuicSpdyClientSessionTest, OnStreamHeaderListWithStaticStream) {
   CompleteCryptoHandshake();
 
   QuicHeaderList trailers;
-  trailers.OnHeaderBlockStart();
   trailers.OnHeader(kFinalOffsetHeaderKey, "0");
   trailers.OnHeaderBlockEnd(0, 0);
 
@@ -478,8 +476,6 @@ TEST_P(QuicSpdyClientSessionTest, InvalidPacketReceived) {
   session_->ProcessUdpPacket(client_address, server_address, valid_packet);
 
   // Verify that a non-decryptable packet doesn't close the connection.
-  QuicFramerPeer::SetLastSerializedServerConnectionId(
-      QuicConnectionPeer::GetFramer(connection_), connection_id);
   ParsedQuicVersionVector versions = SupportedVersions(GetParam());
   QuicConnectionId destination_connection_id = EmptyQuicConnectionId();
   QuicConnectionId source_connection_id = connection_id;
@@ -521,8 +517,6 @@ TEST_P(QuicSpdyClientSessionTest, InvalidFramedPacketReceived) {
   QuicConnectionId destination_connection_id =
       session_->connection()->connection_id();
   QuicConnectionId source_connection_id = destination_connection_id;
-  QuicFramerPeer::SetLastSerializedServerConnectionId(
-      QuicConnectionPeer::GetFramer(connection_), destination_connection_id);
   bool version_flag = true;
   QuicConnectionIdIncluded scid_included = CONNECTION_ID_PRESENT;
   std::unique_ptr<QuicEncryptedPacket> packet(ConstructMisFramedEncryptedPacket(
@@ -580,7 +574,7 @@ TEST_P(QuicSpdyClientSessionTest, OnSettingsFrame) {
                             std::end(application_state));
   session_->OnSettingsFrame(settings);
   EXPECT_EQ(expected, *client_session_cache_
-                           ->Lookup(QuicServerId(kServerHostname, kPort, false),
+                           ->Lookup(QuicServerId(kServerHostname, kPort),
                                     session_->GetClock()->WallNow(), nullptr)
                            ->application_state);
 }

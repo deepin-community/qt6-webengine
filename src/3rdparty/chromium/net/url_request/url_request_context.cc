@@ -12,10 +12,10 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notreached.h"
 #include "base/strings/string_util.h"
 #include "base/types/pass_key.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 #include "net/base/http_user_agent_settings.h"
 #include "net/base/network_delegate.h"
 #include "net/base/proxy_delegate.h"
@@ -40,7 +40,7 @@
 #include "net/ssl/ssl_config_service.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_job_factory.h"
-#include "net/url_request/url_request_throttler_manager.h"
+#include "url/gurl_debug.h"
 
 #if BUILDFLAG(ENABLE_REPORTING)
 #include "net/network_error_logging/network_error_logging_service.h"
@@ -48,11 +48,17 @@
 #include "net/reporting/reporting_service.h"
 #endif  // BUILDFLAG(ENABLE_REPORTING)
 
+#if BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
+#include "net/device_bound_sessions/session_service.h"
+#include "net/device_bound_sessions/session_store.h"
+#endif  // BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
+
 namespace net {
 
 URLRequestContext::URLRequestContext(
     base::PassKey<URLRequestContextBuilder> pass_key)
-    : url_requests_(std::make_unique<std::set<const URLRequest*>>()),
+    : url_requests_(std::make_unique<
+                    std::set<raw_ptr<const URLRequest, SetExperimental>>>()),
       bound_network_(handles::kInvalidNetworkHandle) {}
 
 URLRequestContext::~URLRequestContext() {
@@ -89,6 +95,14 @@ URLRequestContext::~URLRequestContext() {
   DCHECK(host_resolver());
   host_resolver()->OnShutdown();
 
+#if BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
+  if (device_bound_session_service_) {
+    // The SessionService may have pending URLRequests that use this
+    // context.
+    device_bound_session_service_.reset();
+  }
+#endif  // BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
+
   AssertNoURLRequests();
 }
 
@@ -114,10 +128,7 @@ const HttpNetworkSessionContext* URLRequestContext::GetNetworkSessionContext()
   return &network_session->context();
 }
 
-// TODO(crbug.com/1052397): Revisit once build flag switch of lacros-chrome is
-// complete.
-#if !BUILDFLAG(IS_WIN) && \
-    !(BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS_LACROS))
+#if !BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_LINUX)
 std::unique_ptr<URLRequest> URLRequestContext::CreateRequest(
     const GURL& url,
     RequestPriority priority,
@@ -133,7 +144,7 @@ std::unique_ptr<URLRequest> URLRequestContext::CreateRequest(
     URLRequest::Delegate* delegate,
     NetworkTrafficAnnotationTag traffic_annotation,
     bool is_for_websockets,
-    const absl::optional<net::NetLogSource> net_log_source) const {
+    const std::optional<net::NetLogSource> net_log_source) const {
   return std::make_unique<URLRequest>(
       base::PassKey<URLRequestContext>(), url, priority, delegate, this,
       traffic_annotation, is_for_websockets, net_log_source);
@@ -149,7 +160,7 @@ void URLRequestContext::AssertNoURLRequests() const {
     DEBUG_ALIAS_FOR_GURL(url_buf, request->url());
     base::debug::Alias(&num_requests);
     base::debug::Alias(&load_flags);
-    CHECK(false) << "Leaked " << num_requests << " URLRequest(s). First URL: "
+    NOTREACHED() << "Leaked " << num_requests << " URLRequest(s). First URL: "
                  << request->url().spec().c_str() << ".";
   }
 }
@@ -215,10 +226,6 @@ void URLRequestContext::set_job_factory(
   job_factory_storage_ = std::move(job_factory);
   job_factory_ = job_factory_storage_.get();
 }
-void URLRequestContext::set_throttler_manager(
-    std::unique_ptr<URLRequestThrottlerManager> throttler_manager) {
-  throttler_manager_ = std::move(throttler_manager);
-}
 void URLRequestContext::set_quic_context(
     std::unique_ptr<QuicContext> quic_context) {
   quic_context_ = std::move(quic_context);
@@ -256,5 +263,18 @@ void URLRequestContext::set_transport_security_persister(
     std::unique_ptr<TransportSecurityPersister> transport_security_persister) {
   transport_security_persister_ = std::move(transport_security_persister);
 }
+
+#if BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
+void URLRequestContext::set_device_bound_session_service(
+    std::unique_ptr<device_bound_sessions::SessionService>
+        device_bound_session_service) {
+  device_bound_session_service_ = std::move(device_bound_session_service);
+}
+void URLRequestContext::set_device_bound_session_store(
+    std::unique_ptr<device_bound_sessions::SessionStore>
+        device_bound_session_store) {
+  device_bound_session_store_ = std::move(device_bound_session_store);
+}
+#endif  // BUILDFLAG(ENABLE_DEVICE_BOUND_SESSIONS)
 
 }  // namespace net

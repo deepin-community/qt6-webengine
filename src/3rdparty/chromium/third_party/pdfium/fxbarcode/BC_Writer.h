@@ -15,7 +15,6 @@ class CBC_Writer {
   CBC_Writer();
   virtual ~CBC_Writer();
 
-  void SetCharEncoding(BC_CHAR_ENCODING encoding);
   bool SetModuleHeight(int32_t moduleHeight);
   bool SetModuleWidth(int32_t moduleWidth);
   void SetHeight(int32_t height);
@@ -31,12 +30,10 @@ class CBC_Writer {
   static const FX_ARGB kBarColor = 0xff000000;
   static const FX_ARGB kBackgroundColor = 0xffffffff;
 
-  int32_t m_ModuleHeight = 1;
-  int32_t m_ModuleWidth = 1;
-  int32_t m_Height = 320;
-  int32_t m_Width = 640;
-  FXDIB_Format m_colorSpace = FXDIB_Format::kArgb;
-  BC_CHAR_ENCODING m_CharEncoding = BC_CHAR_ENCODING::kUTF8;
+  int32_t module_height_ = 1;
+  int32_t module_width_ = 1;
+  int32_t height_ = 320;
+  int32_t width_ = 640;
 };
 
 #endif  // FXBARCODE_BC_WRITER_H_

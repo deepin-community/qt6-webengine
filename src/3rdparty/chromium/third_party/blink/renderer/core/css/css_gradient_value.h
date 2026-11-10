@@ -99,7 +99,7 @@ class CSSGradientValue : public CSSImageGeneratorValue {
   using ContainerSizes = CSSToLengthConversionData::ContainerSizes;
 
   scoped_refptr<Image> GetImage(const ImageResourceObserver&,
-                                const Document&,
+                                const Node&,
                                 const ComputedStyle& style,
                                 const ContainerSizes&,
                                 const gfx::SizeF&) const;
@@ -117,7 +117,8 @@ class CSSGradientValue : public CSSImageGeneratorValue {
 
   bool KnownToBeOpaque(const Document&, const ComputedStyle&) const;
   CSSGradientValue* ComputedCSSValue(const ComputedStyle&,
-                                     bool allow_visited_style) const;
+                                     bool allow_visited_style,
+                                     CSSValuePhase value_phase) const;
 
   Vector<Color> GetStopColors(const Document&, const ComputedStyle&) const;
 
@@ -148,10 +149,12 @@ class CSSGradientValue : public CSSImageGeneratorValue {
                 const ComputedStyle&) const;
   void AddDeprecatedStops(GradientDesc&,
                           const Document&,
-                          const ComputedStyle&) const;
+                          const ComputedStyle&,
+                          const CSSToLengthConversionData&) const;
   void AddComputedStops(const ComputedStyle&,
                         bool allow_visited_style,
-                        const HeapVector<CSSGradientColorStop, 2>& stops);
+                        const HeapVector<CSSGradientColorStop, 1>& stops,
+                        CSSValuePhase value_phase);
 
   void AppendCSSTextForColorStops(StringBuilder&,
                                   bool requires_separator) const;
@@ -160,7 +163,7 @@ class CSSGradientValue : public CSSImageGeneratorValue {
   bool Equals(const CSSGradientValue&) const;
 
   // Stops
-  HeapVector<CSSGradientColorStop, 2> stops_;
+  HeapVector<CSSGradientColorStop, 1> stops_;
   CSSGradientType gradient_type_;
   bool repeating_ : 1;
   bool is_cacheable_ : 1;
@@ -196,7 +199,8 @@ class CSSLinearGradientValue final : public CSSGradientValue {
   bool Equals(const CSSLinearGradientValue&) const;
 
   CSSLinearGradientValue* ComputedCSSValue(const ComputedStyle&,
-                                           bool allow_visited_style) const;
+                                           bool allow_visited_style,
+                                           CSSValuePhase value_phase) const;
 
   bool IsUsingCurrentColor() const;
   bool IsUsingContainerRelativeUnits() const;
@@ -297,7 +301,8 @@ class CORE_EXPORT CSSRadialGradientValue final : public CSSGradientValue {
   bool Equals(const CSSRadialGradientValue&) const;
 
   CSSRadialGradientValue* ComputedCSSValue(const ComputedStyle&,
-                                           bool allow_visited_style) const;
+                                           bool allow_visited_style,
+                                           CSSValuePhase value_phase) const;
 
   bool IsUsingCurrentColor() const;
   bool IsUsingContainerRelativeUnits() const;
@@ -346,7 +351,8 @@ class CSSConicGradientValue final : public CSSGradientValue {
   bool Equals(const CSSConicGradientValue&) const;
 
   CSSConicGradientValue* ComputedCSSValue(const ComputedStyle&,
-                                          bool allow_visited_style) const;
+                                          bool allow_visited_style,
+                                          CSSValuePhase value_phase) const;
 
   bool IsUsingCurrentColor() const;
   bool IsUsingContainerRelativeUnits() const;
@@ -384,7 +390,8 @@ class CSSConstantGradientValue final : public CSSGradientValue {
   bool KnownToBeOpaque(const Document&, const ComputedStyle&) const;
   bool Equals(const CSSConstantGradientValue&) const;
   CSSConstantGradientValue* ComputedCSSValue(const ComputedStyle&,
-                                             bool allow_visited_style) const;
+                                             bool allow_visited_style,
+                                             CSSValuePhase value_phase) const;
 
   void TraceAfterDispatch(blink::Visitor*) const;
 

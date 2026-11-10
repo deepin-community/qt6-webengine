@@ -39,11 +39,25 @@ default_args = {
   angle_build_tests = false
   angle_has_rapidjson = false
   angle_use_wayland = false
-  angle_vulkan_headers_dir = "//third_party/vulkan-deps/vulkan-headers/src"
-  angle_vulkan_loader_dir = "//third_party/vulkan-deps/vulkan-loader/src"
-  angle_vulkan_tools_dir = "//third_party/vulkan-deps/vulkan-tools/src"
+  angle_vulkan_headers_dir = "//third_party/vulkan-headers/src"
+  angle_vulkan_loader_dir = "//third_party/vulkan-loader/src"
+  angle_vulkan_tools_dir = "//third_party/vulkan-tools/src"
   angle_vulkan_validation_layers_dir =
-      "//third_party/vulkan-deps/vulkan-validation-layers/src"
+      "//third_party/vulkan-validation-layers/src"
 
-  vma_vulkan_headers_dir = "//third_party/vulkan-deps/vulkan-headers/src"
+  vma_vulkan_headers_dir = "//third_party/vulkan-headers/src"
+  use_fuzztest_wrapper = false
+  use_sysroot = true
+  enable_js_protobuf = false
+
+  # Needed only for std::atomic_ref<T> for large Ts http://crbug.com/402171653
+  # Disable it to avoid the need to add the compiler-rt third_party dependency.
+  use_llvm_libatomic = false
+
+  # Chromium defaults to minimum 15 at least.
+  mac_sdk_min = "12"
 }
+
+# Export compile_commands.json to build dir for all generated targets.
+# Useful for editors that parse the compilation database for symbol lookup.
+export_compile_commands = [ "*" ]

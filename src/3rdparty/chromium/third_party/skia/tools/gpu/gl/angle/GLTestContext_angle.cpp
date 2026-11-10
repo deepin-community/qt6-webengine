@@ -7,13 +7,13 @@
 
 #include "tools/gpu/gl/angle/GLTestContext_angle.h"
 
-#include "include/gpu/gl/GrGLAssembleInterface.h"
-#include "include/gpu/gl/GrGLInterface.h"
+#include "include/gpu/ganesh/gl/GrGLAssembleInterface.h"
+#include "include/gpu/ganesh/gl/GrGLInterface.h"
 #include "src/base/SkTime.h"
 #include "src/core/SkTraceEvent.h"
 #include "src/gpu/ganesh/gl/GrGLDefines.h"
 #include "src/gpu/ganesh/gl/GrGLUtil.h"
-#include "src/ports/SkOSLibrary.h"
+#include "tools/library/LoadDynamicLibrary.h"
 #include "third_party/externals/angle2/include/platform/PlatformMethods.h"
 
 #include <vector>
@@ -476,13 +476,13 @@ void ANGLEGLContext::destroyGLContext() {
 
 void ANGLEGLContext::onPlatformMakeNotCurrent() const {
     if (!eglMakeCurrent(fDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT)) {
-        SkDebugf("Could not reset the context 0x%x.\n", eglGetError());
+        SkDebugf("Could not reset the context 0x%x.\n", unsigned(eglGetError()));
     }
 }
 
 void ANGLEGLContext::onPlatformMakeCurrent() const {
     if (!eglMakeCurrent(fDisplay, fSurface, fSurface, fContext)) {
-        SkDebugf("Could not set the context 0x%x.\n", eglGetError());
+        SkDebugf("Could not set the context 0x%x.\n", unsigned(eglGetError()));
     }
 }
 

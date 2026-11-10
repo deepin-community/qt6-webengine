@@ -2,14 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "components/webauthn/json/value_conversions.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/json/json_string_value_serializer.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "device/fido/authenticator_selection_criteria.h"
@@ -24,7 +30,6 @@
 #include "device/fido/public_key_credential_user_entity.h"
 #include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/blink/public/mojom/webauthn/authenticator.mojom.h"
 
 namespace webauthn {
@@ -59,12 +64,16 @@ void PrintJava(const char* name, base::span<const uint8_t> data) {
     if (i) {
       fprintf(stderr, ", ");
     }
-    fprintf(stderr, "%d", byte < 128 ? byte : byte - 0x80);
+    if (byte < 0x80) {
+      fprintf(stderr, "%d", byte);
+    } else {
+      fprintf(stderr, "%d", static_cast<int16_t>(byte) - 0x100);
+    }
   }
   fprintf(stderr, "};\n");
 }
 
-std::vector<uint8_t> ToByteVector(base::StringPiece in) {
+std::vector<uint8_t> ToByteVector(std::string_view in) {
   const uint8_t* in_ptr = reinterpret_cast<const uint8_t*>(in.data());
   return std::vector<uint8_t>(in_ptr, in_ptr + in.size());
 }
@@ -102,7 +111,7 @@ TEST(WebAuthenticationJSONConversionTest,
      PublicKeyCredentialCreationOptionsToValue) {
   // Exercise all supported fields.
   auto prf_values = blink::mojom::PRFValues::New(
-      absl::nullopt, std::vector<uint8_t>({1, 2, 3, 4}),
+      std::nullopt, std::vector<uint8_t>({1, 2, 3, 4}),
       std::vector<uint8_t>{5, 6, 7, 8});
   auto options = PublicKeyCredentialCreationOptions::New(
       device::PublicKeyCredentialRpEntity(kRpId, kRpName),
@@ -114,7 +123,12 @@ TEST(WebAuthenticationJSONConversionTest,
           device::AuthenticatorAttachment::kPlatform,
           device::ResidentKeyRequirement::kRequired,
           device::UserVerificationRequirement::kRequired),
-      /*hints=*/std::vector<blink::mojom::Hint>(),
+      /*hints=*/
+      std::vector<blink::mojom::Hint>({
+          blink::mojom::Hint::SECURITY_KEY,
+          blink::mojom::Hint::CLIENT_DEVICE,
+          blink::mojom::Hint::HYBRID,
+      }),
       device::AttestationConveyancePreference::kDirect,
       /*hmac_create_secret=*/true,
       /*prf_enable=*/true,
@@ -133,7 +147,9 @@ TEST(WebAuthenticationJSONConversionTest,
           /*device_scope_requested=*/true,
           /*provider_scope_requested=*/true,
           device::AttestationConveyancePreference::kDirect,
-          std::vector<std::string>({"a", "b", "c"})));
+          std::vector<std::string>({"a", "b", "c"})),
+      /*payment_browser_bound_key_parameters=*/std::nullopt,
+      std::vector<std::string>{"attfmt1", "attfmt2"}, /*is_conditional=*/false);
 
   base::Value value = ToValue(options);
   std::string json;
@@ -141,23 +157,28 @@ TEST(WebAuthenticationJSONConversionTest,
   ASSERT_TRUE(serializer.Serialize(value));
   EXPECT_EQ(
       json,
-      R"({"attestation":"direct","authenticatorSelection":{"authenticatorAttachment":"platform","residentKey":"required","userVerification":"required"},"challenge":"dGVzdCBjaGFsbGVuZ2U","excludeCredentials":[{"id":"FBUW","transports":["usb"],"type":"public-key"},{"id":"Hh8g","type":"public-key"}],"extensions":{"appIdExclude":"https://example.test/appid.json","credBlob":"dGVzdCBjcmVkIGJsb2I","credProps":true,"credentialProtectionPolicy":"userVerificationRequired","enforceCredentialProtectionPolicy":true,"hmacCreateSecret":true,"largeBlob":{"support":"required"},"minPinLength":true,"payment":{"isPayment":true},"prf":{"eval":{"first":"AQIDBA","second":"BQYHCA"}},"remoteDesktopClientOverride":{"origin":"https://login.example.test","sameOriginWithAncestors":true},"supplementalPubKeys":{"attestation":"direct","attestationFormats":["a","b","c"],"scopes":["device","provider"]}},"pubKeyCredParams":[{"alg":-7,"type":"public-key"},{"alg":-257,"type":"public-key"}],"rp":{"id":"example.test","name":"Example LLC"},"user":{"displayName":"Example User","id":"dGVzdCB1c2VyIGlk","name":"user@example.test"}})");
+      R"({"attestation":"direct","attestationFormats":["attfmt1","attfmt2"],"authenticatorSelection":{"authenticatorAttachment":"platform","residentKey":"required","userVerification":"required"},"challenge":"dGVzdCBjaGFsbGVuZ2U","excludeCredentials":[{"id":"FBUW","transports":["usb"],"type":"public-key"},{"id":"Hh8g","type":"public-key"}],"extensions":{"appIdExclude":"https://example.test/appid.json","credBlob":"dGVzdCBjcmVkIGJsb2I","credProps":true,"credentialProtectionPolicy":"userVerificationRequired","enforceCredentialProtectionPolicy":true,"hmacCreateSecret":true,"largeBlob":{"support":"required"},"minPinLength":true,"payment":{"isPayment":true},"prf":{"eval":{"first":"AQIDBA","second":"BQYHCA"}},"remoteDesktopClientOverride":{"origin":"https://login.example.test","sameOriginWithAncestors":true},"supplementalPubKeys":{"attestation":"direct","attestationFormats":["a","b","c"],"scopes":["device","provider"]}},"hints":["security-key","client-device","hybrid"],"pubKeyCredParams":[{"alg":-7,"type":"public-key"},{"alg":-257,"type":"public-key"}],"rp":{"id":"example.test","name":"Example LLC"},"user":{"displayName":"Example User","id":"dGVzdCB1c2VyIGlk","name":"user@example.test"}})");
 }
 
 TEST(WebAuthenticationJSONConversionTest,
      PublicKeyCredentialRequestOptionsToValue) {
   std::vector<blink::mojom::PRFValuesPtr> prf_values;
   prf_values.emplace_back(blink::mojom::PRFValues::New(
-      absl::nullopt, std::vector<uint8_t>({1, 2, 3, 4}), absl::nullopt));
+      std::nullopt, std::vector<uint8_t>({1, 2, 3, 4}), std::nullopt));
   prf_values.emplace_back(blink::mojom::PRFValues::New(
       std::vector<uint8_t>({1, 2, 3}), std::vector<uint8_t>({4, 5, 6}),
       std::vector<uint8_t>({7, 8, 9})));
 
   // Exercise all supported fields.
   auto options = PublicKeyCredentialRequestOptions::New(
-      /*is_conditional=*/false, kChallenge, kTimeout, kRpId,
-      GetCredentialList(),
-      /*hints=*/std::vector<blink::mojom::Hint>(),
+      blink::mojom::Mediation::MODAL, /*requested_credential_type_flags=*/0,
+      kChallenge, std::nullopt, kTimeout, kRpId, GetCredentialList(),
+      /*hints=*/
+      std::vector<blink::mojom::Hint>({
+          blink::mojom::Hint::SECURITY_KEY,
+          blink::mojom::Hint::CLIENT_DEVICE,
+          blink::mojom::Hint::HYBRID,
+      }),
       device::UserVerificationRequirement::kRequired,
       AuthenticationExtensionsClientInputs::New(
           kAppId,
@@ -168,7 +189,6 @@ TEST(WebAuthenticationJSONConversionTest,
           /*user_verification_methods=*/false,
 #endif
           /*prf=*/true, std::move(prf_values),
-          /*prf_inputs_hashed=*/false,
           /*large_blob_read=*/true,
           /*large_blob_write=*/std::vector<uint8_t>{8, 9, 10},
           /*get_cred_blob=*/true,
@@ -179,7 +199,8 @@ TEST(WebAuthenticationJSONConversionTest,
               /*device_scope_requested=*/true,
               /*provider_scope_requested=*/true,
               device::AttestationConveyancePreference::kDirect,
-              std::vector<std::string>({"a", "b", "c"}))));
+              std::vector<std::string>({"a", "b", "c"})),
+          std::vector<device::PublicKeyCredentialParams::CredentialInfo>()));
 
   base::Value value = ToValue(options);
   std::string json;
@@ -187,7 +208,7 @@ TEST(WebAuthenticationJSONConversionTest,
   ASSERT_TRUE(serializer.Serialize(value));
   EXPECT_EQ(
       json,
-      R"({"allowCredentials":[{"id":"FBUW","transports":["usb"],"type":"public-key"},{"id":"Hh8g","type":"public-key"}],"challenge":"dGVzdCBjaGFsbGVuZ2U","extensions":{"appid":"https://example.test/appid.json","cableAuthentication":[{"authenticatorEid":"AAAAAAAAAAAAAAAAAAAAAA","clientEid":"AAAAAAAAAAAAAAAAAAAAAA","sessionPreKey":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","version":1}],"getCredBlob":true,"largeBlob":{"read":true,"write":"CAkK"},"prf":{"eval":{"first":"AQIDBA"},"evalByCredential":{"AQID":{"first":"BAUG","second":"BwgJ"}}},"remoteDesktopClientOverride":{"origin":"https://login.example.test","sameOriginWithAncestors":true},"supplementalPubKeys":{"attestation":"direct","attestationFormats":["a","b","c"],"scopes":["device","provider"]}},"rpId":"example.test","userVerification":"required"})");
+      R"({"allowCredentials":[{"id":"FBUW","transports":["usb"],"type":"public-key"},{"id":"Hh8g","type":"public-key"}],"challenge":"dGVzdCBjaGFsbGVuZ2U","extensions":{"appid":"https://example.test/appid.json","cableAuthentication":[{"authenticatorEid":"AAAAAAAAAAAAAAAAAAAAAA","clientEid":"AAAAAAAAAAAAAAAAAAAAAA","sessionPreKey":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","version":1}],"getCredBlob":true,"largeBlob":{"read":true,"write":"CAkK"},"prf":{"eval":{"first":"AQIDBA"},"evalByCredential":{"AQID":{"first":"BAUG","second":"BwgJ"}}},"remoteDesktopClientOverride":{"origin":"https://login.example.test","sameOriginWithAncestors":true},"supplementalPubKeys":{"attestation":"direct","attestationFormats":["a","b","c"],"scopes":["device","provider"]}},"hints":["security-key","client-device","hybrid"],"rpId":"example.test","userVerification":"required"})");
 }
 
 TEST(WebAuthenticationJSONConversionTest,
@@ -280,8 +301,7 @@ TEST(WebAuthenticationJSONConversionTest,
       deserializer.Deserialize(/*error_code=*/nullptr, &deserialize_error);
   ASSERT_TRUE(value) << deserialize_error;
 
-  auto [response, error] =
-      MakeCredentialResponseFromValue(*value, JSONUser::kAndroid);
+  auto [response, error] = MakeCredentialResponseFromValue(*value);
   ASSERT_TRUE(response) << error;
 
   if (kUpdateRobolectricTests) {
@@ -291,7 +311,7 @@ TEST(WebAuthenticationJSONConversionTest,
   }
 
   auto prf_values = blink::mojom::PRFValues::New(
-      absl::nullopt,
+      std::nullopt,
       std::vector<uint8_t>({
           0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
           0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -316,7 +336,8 @@ TEST(WebAuthenticationJSONConversionTest,
       /*supports_large_blob=*/true,
       /*supplemental_pub_keys=*/
       blink::mojom::SupplementalPubKeysResponse::New(
-          std::vector<std::vector<uint8_t>>({{0, 16, 131}, {16, 81, 135}})));
+          std::vector<std::vector<uint8_t>>({{0, 16, 131}, {16, 81, 135}})),
+      /*payment=*/nullptr);
 
   EXPECT_EQ(response->info, expected->info);
   EXPECT_EQ(response->authenticator_attachment,
@@ -344,147 +365,6 @@ TEST(WebAuthenticationJSONConversionTest,
 }
 
 TEST(WebAuthenticationJSONConversionTest,
-     AuthenticatorAttestationResponseOptionalFields) {
-  // TODO(https://crbug.com/1454841): Remove this.
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndDisableFeature(
-      device::kWebAuthnRequireUpToDateJSONForRemoteDesktop);
-
-  // Test both that `null` is an error, and that omitting the field works, for
-  // the sole optional field, `authenticatorAttachment`.
-  constexpr char kJsonWithNull[] = R"({
-  "authenticatorAttachment": null,
-  "clientExtensionResults": {
-    "credBlob": true,
-    "credProps": { "rk": true },
-    "hmacCreateSecret": true,
-    "largeBlob": { "supported": true }
-  },
-  "id": "dGVzdCBpZA",
-  "rawId": "dGVzdCBpZA",
-  "response": {
-    "attestationObject": "o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YVikJr1yeL5GN2Hx-qGxCrTE-CZwJpxBDHJqH9bgWFXhm0ZdAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAQnqQEo7oPQjy-pupOzL3-bqCFjsQklxGpULfOrnG6WpQECAyYgASFYIJZF8F3hN5jYY05Slr0X96-zXsT0Za1-ZXjoRO69uRL1Ilgg8ZOMJTagPCfl8zZ1n36qxA8lIOOGvZrn1CahB9G-DAI",
-    "clientDataJSON": "dGVzdCBjbGllbnQgZGF0YSBqc29u",
-    "transports": [ "usb", "unknowntransport" ],
-    "authenticatorData": "Jr1yeL5GN2Hx-qGxCrTE-CZwJpxBDHJqH9bgWFXhm0ZdAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAQnqQEo7oPQjy-pupOzL3-bqCFjsQklxGpULfOrnG6WpQECAyYgASFYIJZF8F3hN5jYY05Slr0X96-zXsT0Za1-ZXjoRO69uRL1Ilgg8ZOMJTagPCfl8zZ1n36qxA8lIOOGvZrn1CahB9G-DAI",
-    "publicKeyAlgorithm": -7,
-    "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAElkXwXeE3mNhjTlKWvRf3r7NexPRlrX5leOhE7r25EvXxk4wlNqA8J-XzNnWffqrEDyUg44a9mufUJqEH0b4MAg"
-  },
-  "type": "public-key"
-})";
-
-  JSONStringValueDeserializer deserializer(kJsonWithNull);
-  std::string deserialize_error;
-  std::unique_ptr<base::Value> value =
-      deserializer.Deserialize(/*error_code=*/nullptr, &deserialize_error);
-  ASSERT_TRUE(value) << deserialize_error;
-
-  {
-    // Should fail because of null.
-    auto [response, error] =
-        MakeCredentialResponseFromValue(*value, JSONUser::kAndroid);
-    ASSERT_FALSE(response);
-  }
-
-  {
-    // But null is acceptable in the remote-desktop case.
-    auto [response, error] =
-        MakeCredentialResponseFromValue(*value, JSONUser::kRemoteDesktop);
-    ASSERT_TRUE(response) << error;
-  }
-
-  {
-    base::Value json = value->Clone();
-    EXPECT_TRUE(json.GetIfDict()->Remove("authenticatorAttachment"));
-    auto [response, error] =
-        MakeCredentialResponseFromValue(json, JSONUser::kAndroid);
-    ASSERT_TRUE(response) << error;
-    EXPECT_EQ(response->authenticator_attachment,
-              device::AuthenticatorAttachment::kAny);
-  }
-}
-
-TEST(WebAuthenticationJSONConversionTest,
-     AuthenticatorAttestationResponseEasyAccessorFields) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndDisableFeature(
-      device::kWebAuthnRequireUpToDateJSONForRemoteDesktop);
-
-  constexpr char kJson[] = R"({
-    "rawId":"Lnc6JGTv2WBS05AsZB6xdg",
-    "authenticatorAttachment":"platform",
-    "type":"public-key",
-    "id":"Lnc6JGTv2WBS05AsZB6xdg",
-    "response":{
-      "clientDataJSON":"PGludmFsaWQ-",
-      "attestationObject":"o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViUdKbqkhPJnC90siSSsyDPQCYqlMGpUKA5fyklC2CEHvBdAAAAAAAAAAAAAAAAAAAAAAAAAAAAEC53OiRk79lgUtOQLGQesXalAQIDJiABIVggGzGid-lRsaFEuVdvIQ6BNDZVvRa7fwPcZIWjSD9LfsYiWCA8-TGiZ5izq8-c17pwPrYVq9kC0M9vzkO2TrZnMyUQyg",
-      "transports":["internal", "hybrid"],
-      "authenticatorData":"dKbqkhPJnC90siSSsyDPQCYqlMGpUKA5fyklC2CEHvBdAAAAAAAAAAAAAAAAAAAAAAAAAAAAEC53OiRk79lgUtOQLGQesXalAQIDJiABIVggGzGid-lRsaFEuVdvIQ6BNDZVvRa7fwPcZIWjSD9LfsYiWCA8-TGiZ5izq8-c17pwPrYVq9kC0M9vzkO2TrZnMyUQyg",
-      "publicKeyAlgorithm":-7,
-      "publicKey":"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEGzGid-lRsaFEuVdvIQ6BNDZVvRa7fwPcZIWjSD9LfsY8-TGiZ5izq8-c17pwPrYVq9kC0M9vzkO2TrZnMyUQyg"},
-      "clientExtensionResults":{"credProps":{"rk":true}}})";
-
-  JSONStringValueDeserializer deserializer(kJson);
-  std::string deserialize_error;
-  std::unique_ptr<base::Value> value =
-      deserializer.Deserialize(/*error_code=*/nullptr, &deserialize_error);
-  ASSERT_TRUE(value) << deserialize_error;
-
-  {
-    auto [response, error] =
-        MakeCredentialResponseFromValue(*value, JSONUser::kAndroid);
-    EXPECT_TRUE(response) << error;
-  }
-
-  // All three easy-accessor fields are required for P-256 (algorithm -7).
-  for (const std::string key :
-       {"publicKeyAlgorithm", "publicKey", "authenticatorData"}) {
-    base::Value corrupted = value->Clone();
-    EXPECT_TRUE(corrupted.GetIfDict()->FindDict("response")->Remove(key));
-    auto [response, error] =
-        MakeCredentialResponseFromValue(corrupted, JSONUser::kAndroid);
-    EXPECT_FALSE(response);
-  }
-
-  // It's an error if they are present with the wrong value.
-  {
-    base::Value corrupted = value->Clone();
-    corrupted.GetIfDict()->FindDict("response")->Set("publicKeyAlgorithm", -8);
-    auto [response, error] =
-        MakeCredentialResponseFromValue(corrupted, JSONUser::kAndroid);
-    EXPECT_FALSE(response);
-  }
-
-  {
-    base::Value corrupted = value->Clone();
-    corrupted.GetIfDict()->FindDict("response")->Set("publicKey", "MTIzNA");
-    auto [response, error] =
-        MakeCredentialResponseFromValue(corrupted, JSONUser::kAndroid);
-    EXPECT_FALSE(response);
-  }
-
-  {
-    base::Value corrupted = value->Clone();
-    corrupted.GetIfDict()
-        ->FindDict("response")
-        ->Set("authenticatorData", "MTIzNA");
-    auto [response, error] =
-        MakeCredentialResponseFromValue(corrupted, JSONUser::kAndroid);
-    EXPECT_FALSE(response);
-  }
-
-  // The field are optional in the remote-desktop case until we can fix that.
-  for (const std::string key :
-       {"publicKeyAlgorithm", "authenticatorData", "publicKey"}) {
-    base::Value corrupted = value->Clone();
-    EXPECT_TRUE(corrupted.GetIfDict()->FindDict("response")->Remove(key));
-    auto [response, error] =
-        MakeCredentialResponseFromValue(corrupted, JSONUser::kRemoteDesktop);
-    EXPECT_TRUE(response);
-  }
-}
-
-TEST(WebAuthenticationJSONConversionTest,
      AuthenticatorAttestationResponseOmittedPublicKey) {
   // COSE algorithm -1 is not typical and so the publicKey field can be omitted.
   constexpr char kJson[] = R"({
@@ -507,8 +387,37 @@ TEST(WebAuthenticationJSONConversionTest,
   ASSERT_TRUE(value) << deserialize_error;
 
   {
-    auto [response, error] =
-        MakeCredentialResponseFromValue(*value, JSONUser::kAndroid);
+    auto [response, error] = MakeCredentialResponseFromValue(*value);
+    EXPECT_TRUE(response) << error;
+  }
+}
+
+TEST(WebAuthenticationJSONConversionTest,
+     AuthenticatorAttestationResponseCompoundAttestation) {
+  // A "compound" attestation has an attestation statement that is a CBOR array
+  // rather than a CBOR map. We previously didn't support this.
+  // (crbug.com/332755827).
+  constexpr char kJson[] = R"({
+    "rawId":"Lnc6JGTv2WBS05AsZB6xdg",
+    "authenticatorAttachment":"platform",
+    "type":"public-key",
+    "id":"Lnc6JGTv2WBS05AsZB6xdg",
+    "response":{
+      "clientDataJSON":"PGludmFsaWQ-",
+      "attestationObject":"o2NmbXRkbm9uZWdhdHRTdG10oGhhdXRoRGF0YViUdKbqkhPJnC90siSSsyDPQCYqlMGpUKA5fyklC2CEHvBdAAAAAAAAAAAAAAAAAAAAAAAAAAAAEC53OiRk79lgUtOQLGQesXalAQIDICABIVggGzGid-lRsaFEuVdvIQ6BNDZVvRa7fwPcZIWjSD9LfsYiWCA8-TGiZ5izq8-c17pwPrYVq9kC0M9vzkO2TrZnMyUQyg",
+      "transports":["internal"],
+      "authenticatorData":"dKbqkhPJnC90siSSsyDPQCYqlMGpUKA5fyklC2CEHvBdAAAAAAAAAAAAAAAAAAAAAAAAAAAAEC53OiRk79lgUtOQLGQesXalAQIDICABIVggGzGid-lRsaFEuVdvIQ6BNDZVvRa7fwPcZIWjSD9LfsYiWCA8-TGiZ5izq8-c17pwPrYVq9kC0M9vzkO2TrZnMyUQyg",
+      "publicKeyAlgorithm":-1},
+      "clientExtensionResults":{"credProps":{"rk":true}}})";
+
+  JSONStringValueDeserializer deserializer(kJson);
+  std::string deserialize_error;
+  std::unique_ptr<base::Value> value =
+      deserializer.Deserialize(/*error_code=*/nullptr, &deserialize_error);
+  ASSERT_TRUE(value) << deserialize_error;
+
+  {
+    auto [response, error] = MakeCredentialResponseFromValue(*value);
     EXPECT_TRUE(response) << error;
   }
 }
@@ -566,8 +475,7 @@ TEST(WebAuthenticationJSONConversionTest,
       deserializer.Deserialize(/*error_code=*/nullptr, &deserialize_error);
   ASSERT_TRUE(value) << deserialize_error;
 
-  auto [response, error] =
-      GetAssertionResponseFromValue(*value, JSONUser::kAndroid);
+  auto [response, error] = GetAssertionResponseFromValue(*value);
   ASSERT_TRUE(response) << error;
 
   if (kUpdateRobolectricTests) {
@@ -584,7 +492,7 @@ TEST(WebAuthenticationJSONConversionTest,
           /*echo_appid_extension=*/true, /*appid_extension=*/true,
 #if BUILDFLAG(IS_ANDROID)
           /*echo_user_verification_methods=*/false,
-          /*user_verification_methods=*/absl::nullopt,
+          /*user_verification_methods=*/std::nullopt,
 #endif
           /*echo_prf=*/true, /*prf_results=*/nullptr,
           /*prf_not_evaluated=*/false,
@@ -594,8 +502,8 @@ TEST(WebAuthenticationJSONConversionTest,
           /*get_cred_blob=*/kCredBlob,
           /*supplemental_pub_keys=*/
           blink::mojom::SupplementalPubKeysResponse::New(
-              std::vector<std::vector<uint8_t>>(
-                  {{0, 16, 131}, {16, 81, 135}}))));
+              std::vector<std::vector<uint8_t>>({{0, 16, 131}, {16, 81, 135}})),
+          /*payment=*/nullptr));
   static const uint8_t expected_prf_first[32] = {
       0x99, 0x9d, 0x30, 0x29, 0x7b, 0xc5, 0x03, 0x7b, 0xa5, 0x7b, 0x81,
       0xbc, 0xf8, 0x27, 0xb3, 0x47, 0x1b, 0xe8, 0x3f, 0x80, 0x67, 0xf6,
@@ -618,11 +526,11 @@ TEST(WebAuthenticationJSONConversionTest,
             expected->extensions->appid_extension);
   EXPECT_EQ(response->extensions->echo_prf, expected->extensions->echo_prf);
   ASSERT_TRUE(response->extensions->prf_results);
-  EXPECT_TRUE(base::ranges::equal(response->extensions->prf_results->first,
-                                  expected_prf_first));
+  EXPECT_TRUE(std::ranges::equal(response->extensions->prf_results->first,
+                                 expected_prf_first));
   ASSERT_TRUE(response->extensions->prf_results->second);
-  EXPECT_TRUE(base::ranges::equal(*response->extensions->prf_results->second,
-                                  expected_prf_second));
+  EXPECT_TRUE(std::ranges::equal(*response->extensions->prf_results->second,
+                                 expected_prf_second));
   EXPECT_EQ(response->extensions->prf_not_evaluated,
             expected->extensions->prf_not_evaluated);
   EXPECT_EQ(response->extensions->echo_large_blob,
@@ -674,32 +582,15 @@ TEST(WebAuthenticationJSONConversionTest,
 
   {
     // Should fail because of null authenticatorAttachment.
-    auto [response, error] =
-        GetAssertionResponseFromValue(*value, JSONUser::kAndroid);
+    auto [response, error] = GetAssertionResponseFromValue(*value);
     EXPECT_FALSE(response);
-  }
-
-  {
-    // TODO(https://crbug.com/1454841): Remove this.
-    base::test::ScopedFeatureList scoped_feature_list;
-    scoped_feature_list.InitAndDisableFeature(
-        device::kWebAuthnRequireUpToDateJSONForRemoteDesktop);
-
-    // ... but not for remote-desktop
-    auto [response, error] =
-        GetAssertionResponseFromValue(*value, JSONUser::kRemoteDesktop);
-    EXPECT_TRUE(response) << error;
-    EXPECT_EQ(response->authenticator_attachment,
-              device::AuthenticatorAttachment::kAny);
-    EXPECT_FALSE(response->user_handle);
   }
 
   {
     // Should still fail because `userHandle` is null.
     base::Value json = value->Clone();
     EXPECT_TRUE(json.GetIfDict()->Remove("authenticatorAttachment"));
-    auto [response, error] =
-        GetAssertionResponseFromValue(json, JSONUser::kAndroid);
+    auto [response, error] = GetAssertionResponseFromValue(json);
     EXPECT_FALSE(response);
   }
 
@@ -708,8 +599,7 @@ TEST(WebAuthenticationJSONConversionTest,
     base::Value json = value->Clone();
     EXPECT_TRUE(json.GetIfDict()->Remove("authenticatorAttachment"));
     EXPECT_TRUE(json.GetIfDict()->FindDict("response")->Remove("userHandle"));
-    auto [response, error] =
-        GetAssertionResponseFromValue(json, JSONUser::kAndroid);
+    auto [response, error] = GetAssertionResponseFromValue(json);
     ASSERT_TRUE(response) << error;
     EXPECT_EQ(response->authenticator_attachment,
               device::AuthenticatorAttachment::kAny);

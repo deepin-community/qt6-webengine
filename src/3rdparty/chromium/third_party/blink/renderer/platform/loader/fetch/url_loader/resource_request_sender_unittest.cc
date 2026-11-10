@@ -13,11 +13,16 @@
 #include <utility>
 #include <vector>
 
+#include "base/containers/span.h"
 #include "base/feature_list.h"
+#include "base/memory/ref_counted_memory.h"
+#include "base/notreached.h"
 #include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/thread_pool.h"
 #include "base/test/bind.h"
+#include "base/test/metrics/histogram_tester.h"
+#include "base/test/run_until.h"
 #include "base/test/task_environment.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -48,6 +53,7 @@
 #include "third_party/blink/renderer/platform/loader/fetch/code_cache_host.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/resource_request_client.h"
 #include "third_party/blink/renderer/platform/loader/fetch/url_loader/sync_load_response.h"
+#include "third_party/blink/renderer/platform/loader/testing/fake_url_loader_factory_for_background_thread.h"
 #include "third_party/blink/renderer/platform/testing/testing_platform_support.h"
 #include "third_party/blink/renderer/platform/weborigin/scheme_registry.h"
 #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
@@ -71,14 +77,15 @@ static constexpr char kTestData[] = "Hello world";
 constexpr size_t kDataPipeCapacity = 4096;
 
 std::string ReadOneChunk(mojo::ScopedDataPipeConsumerHandle* handle) {
-  char buffer[kDataPipeCapacity];
-  uint32_t read_bytes = kDataPipeCapacity;
-  MojoResult result =
-      (*handle)->ReadData(buffer, &read_bytes, MOJO_READ_DATA_FLAG_NONE);
+  std::string buffer(kDataPipeCapacity, '\0');
+  size_t actually_read_bytes = 0;
+  MojoResult result = (*handle)->ReadData(MOJO_READ_DATA_FLAG_NONE,
+                                          base::as_writable_byte_span(buffer),
+                                          actually_read_bytes);
   if (result != MOJO_RESULT_OK) {
     return "";
   }
-  return std::string(buffer, read_bytes);
+  return buffer.substr(0, actually_read_bytes);
 }
 
 // Returns a fake TimeTicks based on the given microsecond offset.
@@ -122,14 +129,17 @@ mojo::ScopedDataPipeConsumerHandle CreateDataPipeConsumerHandleFilledWithString(
 
 class TestPlatformForRedirects final : public TestingPlatformSupport {
  public:
-  bool IsRedirectSafe(const GURL& from_url, const GURL& to_url) override {
+  bool IsRedirectSafe(
+      const GURL& from_url,
+      const GURL& to_url,
+      const std::optional<url::Origin>& request_initiator) override {
     return true;
   }
 };
 
 void RegisterURLSchemeAsCodeCacheWithHashing() {
 #if DCHECK_IS_ON()
-  WTF::SetIsBeforeThreadCreatedForTest();  // Required for next operation:
+  SetIsBeforeThreadCreatedForTest();  // Required for next operation:
 #endif
   SchemeRegistry::RegisterURLSchemeAsCodeCacheWithHashing(
       "codecachewithhashing");
@@ -159,7 +169,7 @@ class MockRequestClient : public ResourceRequestClient {
   void OnReceivedResponse(
       network::mojom::URLResponseHeadPtr head,
       mojo::ScopedDataPipeConsumerHandle body,
-      absl::optional<mojo_base::BigBuffer> cached_metadata) override {
+      std::optional<mojo_base::BigBuffer> cached_metadata) override {
     last_load_timing_ = head->load_timing;
     cached_metadata_ = std::move(cached_metadata);
     received_response_ = true;
@@ -180,7 +190,7 @@ class MockRequestClient : public ResourceRequestClient {
   bool upload_progress_called() const { return upload_progress_called_; }
   bool redirected() const { return redirected_; }
   bool received_response() { return received_response_; }
-  const absl::optional<mojo_base::BigBuffer>& cached_metadata() const {
+  const std::optional<mojo_base::BigBuffer>& cached_metadata() const {
     return cached_metadata_;
   }
   bool transfer_size_updated_called() const {
@@ -209,7 +219,7 @@ class MockRequestClient : public ResourceRequestClient {
   bool redirected_ = false;
   bool transfer_size_updated_called_ = false;
   bool received_response_ = false;
-  absl::optional<mojo_base::BigBuffer> cached_metadata_;
+  std::optional<mojo_base::BigBuffer> cached_metadata_;
   bool complete_ = false;
   net::LoadTimingInfo last_load_timing_;
   network::URLLoaderCompletionStatus completion_status_;
@@ -234,15 +244,13 @@ class MockLoader : public network::mojom::URLLoader {
       const std::vector<std::string>& removed_headers,
       const net::HttpRequestHeaders& modified_headers,
       const net::HttpRequestHeaders& modified_cors_exempt_headers,
-      const absl::optional<GURL>& new_url) override {
+      const std::optional<GURL>& new_url) override {
     if (follow_redirect_callback_) {
       follow_redirect_callback_.Run(removed_headers, modified_headers);
     }
   }
   void SetPriority(net::RequestPriority priority,
                    int32_t intra_priority_value) override {}
-  void PauseReadingBodyFromNet() override {}
-  void ResumeReadingBodyFromNet() override {}
 
   void SetFollowRedirectCallback(RepeatingFollowRedirectCallback callback) {
     follow_redirect_callback_ = std::move(callback);
@@ -304,13 +312,15 @@ class DummyCodeCacheHost final : public mojom::blink::CodeCacheHost {
 };
 
 // Sets up the message sender override for the unit test.
-class ResourceRequestSenderTest : public testing::Test,
-                                  public network::mojom::URLLoaderFactory {
+class ResourceRequestSenderTestBase : public testing::Test,
+                                      public network::mojom::URLLoaderFactory {
  public:
-  explicit ResourceRequestSenderTest()
-      : resource_request_sender_(new ResourceRequestSender()) {}
+  explicit ResourceRequestSenderTestBase(
+      std::unique_ptr<base::test::TaskEnvironment> task_environment)
+      : task_environment_(std::move(task_environment)),
+        resource_request_sender_(new ResourceRequestSender()) {}
 
-  ~ResourceRequestSenderTest() override {
+  ~ResourceRequestSenderTestBase() override {
     resource_request_sender_.reset();
     base::RunLoop().RunUntilIdle();
   }
@@ -360,13 +370,20 @@ class ResourceRequestSenderTest : public testing::Test,
   std::vector<std::pair<mojo::PendingReceiver<network::mojom::URLLoader>,
                         mojo::PendingRemote<network::mojom::URLLoaderClient>>>
       loader_and_clients_;
-  base::test::SingleThreadTaskEnvironment task_environment_;
+  std::unique_ptr<base::test::TaskEnvironment> task_environment_;
   std::unique_ptr<ResourceRequestSender> resource_request_sender_;
 
   scoped_refptr<MockRequestClient> mock_client_;
 
  private:
   ScopedTestingPlatformSupport<TestPlatformForRedirects> platform_;
+};
+
+class ResourceRequestSenderTest : public ResourceRequestSenderTestBase {
+ public:
+  ResourceRequestSenderTest()
+      : ResourceRequestSenderTestBase(
+            std::make_unique<base::test::SingleThreadTaskEnvironment>()) {}
 };
 
 // Tests the generation of unique request ids.
@@ -417,8 +434,7 @@ TEST_F(ResourceRequestSenderTest, RedirectSyncFollow) {
                             network::mojom::URLResponseHead::New());
   run_loop_for_redirect.Run();
   client->OnReceiveResponse(network::mojom::URLResponseHead::New(),
-                            mojo::ScopedDataPipeConsumerHandle(),
-                            absl::nullopt);
+                            mojo::ScopedDataPipeConsumerHandle(), std::nullopt);
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(mock_client_->received_response());
 }
@@ -463,8 +479,7 @@ TEST_F(ResourceRequestSenderTest, RedirectSyncFollowWithRemovedHeaders) {
                             network::mojom::URLResponseHead::New());
   run_loop_for_redirect.Run();
   client->OnReceiveResponse(network::mojom::URLResponseHead::New(),
-                            mojo::ScopedDataPipeConsumerHandle(),
-                            absl::nullopt);
+                            mojo::ScopedDataPipeConsumerHandle(), std::nullopt);
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(mock_client_->received_response());
 }
@@ -513,8 +528,7 @@ TEST_F(ResourceRequestSenderTest, RedirectSyncFollowWithModifiedHeaders) {
                             network::mojom::URLResponseHead::New());
   run_loop_for_redirect.Run();
   client->OnReceiveResponse(network::mojom::URLResponseHead::New(),
-                            mojo::ScopedDataPipeConsumerHandle(),
-                            absl::nullopt);
+                            mojo::ScopedDataPipeConsumerHandle(), std::nullopt);
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(mock_client_->received_response());
 }
@@ -534,7 +548,7 @@ TEST_F(ResourceRequestSenderTest, RedirectSyncCancel) {
       base::BindRepeating([](const std::vector<std::string>& removed_headers,
                              const net::HttpRequestHeaders& modified_headers) {
         // FollowRedirect() must not be called.
-        CHECK(false);
+        NOTREACHED();
       }));
 
   mock_client_->SetOnReceivedRedirectCallback(base::BindLambdaForTesting(
@@ -575,7 +589,7 @@ TEST_F(ResourceRequestSenderTest, RedirectAsyncFollow) {
         run_loop_for_redirect.Quit();
       }));
 
-  absl::optional<net::RedirectInfo> received_redirect_info;
+  std::optional<net::RedirectInfo> received_redirect_info;
   ResourceRequestClient::FollowRedirectCallback follow_redirect_callback;
   mock_client_->SetOnReceivedRedirectCallback(base::BindLambdaForTesting(
       [&](const net::RedirectInfo& redirect_info,
@@ -597,8 +611,7 @@ TEST_F(ResourceRequestSenderTest, RedirectAsyncFollow) {
   std::move(follow_redirect_callback).Run({}, {});
   run_loop_for_redirect.Run();
   client->OnReceiveResponse(network::mojom::URLResponseHead::New(),
-                            mojo::ScopedDataPipeConsumerHandle(),
-                            absl::nullopt);
+                            mojo::ScopedDataPipeConsumerHandle(), std::nullopt);
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(mock_client_->received_response());
 }
@@ -626,7 +639,7 @@ TEST_F(ResourceRequestSenderTest, RedirectAsyncFollowWithRemovedHeaders) {
         run_loop_for_redirect.Quit();
       }));
 
-  absl::optional<net::RedirectInfo> received_redirect_info;
+  std::optional<net::RedirectInfo> received_redirect_info;
   ResourceRequestClient::FollowRedirectCallback follow_redirect_callback;
   mock_client_->SetOnReceivedRedirectCallback(base::BindLambdaForTesting(
       [&](const net::RedirectInfo& redirect_info,
@@ -649,8 +662,7 @@ TEST_F(ResourceRequestSenderTest, RedirectAsyncFollowWithRemovedHeaders) {
   std::move(follow_redirect_callback).Run({"Foo-Bar", "Hoge-Piyo"}, {});
   run_loop_for_redirect.Run();
   client->OnReceiveResponse(network::mojom::URLResponseHead::New(),
-                            mojo::ScopedDataPipeConsumerHandle(),
-                            absl::nullopt);
+                            mojo::ScopedDataPipeConsumerHandle(), std::nullopt);
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(mock_client_->received_response());
 }
@@ -679,7 +691,7 @@ TEST_F(ResourceRequestSenderTest, RedirectAsyncFollowWithModifiedHeaders) {
         run_loop_for_redirect.Quit();
       }));
 
-  absl::optional<net::RedirectInfo> received_redirect_info;
+  std::optional<net::RedirectInfo> received_redirect_info;
   ResourceRequestClient::FollowRedirectCallback follow_redirect_callback;
   mock_client_->SetOnReceivedRedirectCallback(base::BindLambdaForTesting(
       [&](const net::RedirectInfo& redirect_info,
@@ -705,8 +717,7 @@ TEST_F(ResourceRequestSenderTest, RedirectAsyncFollowWithModifiedHeaders) {
   std::move(follow_redirect_callback).Run({}, std::move(modified_headers));
   run_loop_for_redirect.Run();
   client->OnReceiveResponse(network::mojom::URLResponseHead::New(),
-                            mojo::ScopedDataPipeConsumerHandle(),
-                            absl::nullopt);
+                            mojo::ScopedDataPipeConsumerHandle(), std::nullopt);
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(mock_client_->received_response());
 }
@@ -726,13 +737,13 @@ TEST_F(ResourceRequestSenderTest, RedirectAsyncFollowAfterCancel) {
       base::BindRepeating([](const std::vector<std::string>& removed_headers,
                              const net::HttpRequestHeaders& modified_headers) {
         // FollowRedirect() must not be called.
-        CHECK(false);
+        NOTREACHED();
       }));
 
   net::RedirectInfo redirect_info;
   redirect_info.new_url = GURL(kRedirectedUrl);
 
-  absl::optional<net::RedirectInfo> received_redirect_info;
+  std::optional<net::RedirectInfo> received_redirect_info;
   ResourceRequestClient::FollowRedirectCallback follow_redirect_callback;
   mock_client_->SetOnReceivedRedirectCallback(base::BindLambdaForTesting(
       [&](const net::RedirectInfo& redirect_info,
@@ -766,8 +777,7 @@ TEST_F(ResourceRequestSenderTest, ReceiveResponseWithoutMetadata) {
 
   // Send a response without metadata.
   client->OnReceiveResponse(network::mojom::URLResponseHead::New(),
-                            mojo::ScopedDataPipeConsumerHandle(),
-                            absl::nullopt);
+                            mojo::ScopedDataPipeConsumerHandle(), std::nullopt);
 
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(mock_client_->received_response());
@@ -829,8 +839,7 @@ TEST_F(ResourceRequestSenderTest, EmptyCodeCacheThenReceiveResponse) {
 
   // Send a response without metadata.
   client->OnReceiveResponse(network::mojom::URLResponseHead::New(),
-                            mojo::ScopedDataPipeConsumerHandle(),
-                            absl::nullopt);
+                            mojo::ScopedDataPipeConsumerHandle(), std::nullopt);
 
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(mock_client_->received_response());
@@ -871,8 +880,8 @@ TEST_F(ResourceRequestSenderTest, ReceiveCodeCacheThenReceiveResponse) {
   base::RunLoop().RunUntilIdle();
 
   // Send a response without metadata.
-  client->OnReceiveResponse(
-      std::move(response), mojo::ScopedDataPipeConsumerHandle(), absl::nullopt);
+  client->OnReceiveResponse(std::move(response),
+                            mojo::ScopedDataPipeConsumerHandle(), std::nullopt);
 
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(mock_client_->received_response());
@@ -916,8 +925,8 @@ TEST_F(ResourceRequestSenderTest,
   base::RunLoop().RunUntilIdle();
 
   // Send a response without metadata.
-  client->OnReceiveResponse(
-      std::move(response), mojo::ScopedDataPipeConsumerHandle(), absl::nullopt);
+  client->OnReceiveResponse(std::move(response),
+                            mojo::ScopedDataPipeConsumerHandle(), std::nullopt);
   base::RunLoop().RunUntilIdle();
 
   EXPECT_TRUE(mock_client_->received_response());
@@ -1163,7 +1172,7 @@ TEST_F(ResourceRequestSenderTest, SlowCodeCache) {
                            base::BindLambdaForTesting([]() {}));
   client->OnReceiveResponse(
       std::move(response),
-      CreateDataPipeConsumerHandleFilledWithString(kTestData), absl::nullopt);
+      CreateDataPipeConsumerHandleFilledWithString(kTestData), std::nullopt);
   client->OnTransferSizeUpdated(100);
   client->OnComplete(network::URLLoaderCompletionStatus(net::Error::OK));
   base::RunLoop().RunUntilIdle();
@@ -1230,7 +1239,7 @@ TEST_F(ResourceRequestSenderTest, ReceiveCodeCacheWhileFrozen) {
                            base::BindLambdaForTesting([]() {}));
   client->OnReceiveResponse(
       std::move(response),
-      CreateDataPipeConsumerHandleFilledWithString(kTestData), absl::nullopt);
+      CreateDataPipeConsumerHandleFilledWithString(kTestData), std::nullopt);
   client->OnTransferSizeUpdated(100);
   client->OnComplete(network::URLLoaderCompletionStatus(net::Error::OK));
   base::RunLoop().RunUntilIdle();
@@ -1311,8 +1320,8 @@ TEST_F(ResourceRequestSenderTest,
   base::RunLoop().RunUntilIdle();
 
   // Send a response without metadata.
-  client->OnReceiveResponse(
-      std::move(response), mojo::ScopedDataPipeConsumerHandle(), absl::nullopt);
+  client->OnReceiveResponse(std::move(response),
+                            mojo::ScopedDataPipeConsumerHandle(), std::nullopt);
 
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(mock_client_->received_response());
@@ -1357,8 +1366,8 @@ TEST_F(ResourceRequestSenderTest,
   base::RunLoop().RunUntilIdle();
 
   // Send a response without metadata.
-  client->OnReceiveResponse(
-      std::move(response), mojo::ScopedDataPipeConsumerHandle(), absl::nullopt);
+  client->OnReceiveResponse(std::move(response),
+                            mojo::ScopedDataPipeConsumerHandle(), std::nullopt);
 
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(mock_client_->received_response());
@@ -1404,8 +1413,8 @@ TEST_F(ResourceRequestSenderTest,
   base::RunLoop().RunUntilIdle();
 
   // Send a response without metadata.
-  client->OnReceiveResponse(
-      std::move(response), mojo::ScopedDataPipeConsumerHandle(), absl::nullopt);
+  client->OnReceiveResponse(std::move(response),
+                            mojo::ScopedDataPipeConsumerHandle(), std::nullopt);
 
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(mock_client_->received_response());
@@ -1450,8 +1459,8 @@ TEST_F(ResourceRequestSenderTest,
   base::RunLoop().RunUntilIdle();
 
   // Send a response without metadata.
-  client->OnReceiveResponse(
-      std::move(response), mojo::ScopedDataPipeConsumerHandle(), absl::nullopt);
+  client->OnReceiveResponse(std::move(response),
+                            mojo::ScopedDataPipeConsumerHandle(), std::nullopt);
 
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(mock_client_->received_response());
@@ -1492,8 +1501,8 @@ TEST_F(ResourceRequestSenderTest, CodeCacheWithHashingEmptyCodeCache) {
   base::RunLoop().RunUntilIdle();
 
   // Send a response without metadata.
-  client->OnReceiveResponse(
-      CreateResponse(), mojo::ScopedDataPipeConsumerHandle(), absl::nullopt);
+  client->OnReceiveResponse(CreateResponse(),
+                            mojo::ScopedDataPipeConsumerHandle(), std::nullopt);
 
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(mock_client_->received_response());
@@ -1536,8 +1545,8 @@ TEST_F(ResourceRequestSenderTest, CodeCacheWithHashingWithCodeCache) {
   base::RunLoop().RunUntilIdle();
 
   // Send a response without metadata.
-  client->OnReceiveResponse(
-      CreateResponse(), mojo::ScopedDataPipeConsumerHandle(), absl::nullopt);
+  client->OnReceiveResponse(CreateResponse(),
+                            mojo::ScopedDataPipeConsumerHandle(), std::nullopt);
 
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(mock_client_->received_response());
@@ -1602,7 +1611,7 @@ TEST_F(ResourceRequestSenderTest,
 
   // Send a response without metadata.
   second_client->OnReceiveResponse(
-      CreateResponse(), mojo::ScopedDataPipeConsumerHandle(), absl::nullopt);
+      CreateResponse(), mojo::ScopedDataPipeConsumerHandle(), std::nullopt);
 
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(mock_client_->received_response());
@@ -1642,8 +1651,8 @@ TEST_F(ResourceRequestSenderTest, WebAssemblyCodeCacheRequest) {
       .Run(base::Time(), mojo_base::BigBuffer());
   base::RunLoop().RunUntilIdle();
 
-  client->OnReceiveResponse(
-      CreateResponse(), mojo::ScopedDataPipeConsumerHandle(), absl::nullopt);
+  client->OnReceiveResponse(CreateResponse(),
+                            mojo::ScopedDataPipeConsumerHandle(), std::nullopt);
 
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(mock_client_->received_response());
@@ -1661,7 +1670,7 @@ TEST_F(ResourceRequestSenderTest, KeepaliveRequest) {
       std::make_unique<DummyCodeCacheHost>(base::BindLambdaForTesting(
           [&](mojom::blink::CodeCacheType cache_type, const KURL& url,
               FetchCachedCodeCallback callback) {
-            CHECK(false) << "FetchCachedCode shouold not be called";
+            NOTREACHED() << "FetchCachedCode shouold not be called";
           }));
 
   StartAsync(std::move(request), mock_client_,
@@ -1670,80 +1679,12 @@ TEST_F(ResourceRequestSenderTest, KeepaliveRequest) {
   mojo::Remote<network::mojom::URLLoaderClient> client(
       std::move(loader_and_clients_[0].second));
 
-  client->OnReceiveResponse(
-      CreateResponse(), mojo::ScopedDataPipeConsumerHandle(), absl::nullopt);
+  client->OnReceiveResponse(CreateResponse(),
+                            mojo::ScopedDataPipeConsumerHandle(), std::nullopt);
 
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(mock_client_->received_response());
 }
-
-class BackgroundThreadURLLoaderFactory
-    : public network::SharedURLLoaderFactory {
- public:
-  using LoadStartCallback = base::OnceCallback<void(
-      mojo::PendingReceiver<network::mojom::URLLoader>,
-      mojo::PendingRemote<network::mojom::URLLoaderClient>)>;
-
-  // This SharedURLLoaderFactory is cloned and passed to the background thread
-  // via PendingFactory. `load_start_callback` will be called in the background
-  // thread.
-  explicit BackgroundThreadURLLoaderFactory(
-      LoadStartCallback load_start_callback)
-      : load_start_callback_(std::move(load_start_callback)) {}
-  BackgroundThreadURLLoaderFactory(const BackgroundThreadURLLoaderFactory&) =
-      delete;
-  BackgroundThreadURLLoaderFactory& operator=(
-      const BackgroundThreadURLLoaderFactory&) = delete;
-  ~BackgroundThreadURLLoaderFactory() override = default;
-
-  // network::SharedURLLoaderFactory:
-  void CreateLoaderAndStart(
-      mojo::PendingReceiver<network::mojom::URLLoader> loader,
-      int32_t request_id,
-      uint32_t options,
-      const network::ResourceRequest& request,
-      mojo::PendingRemote<network::mojom::URLLoaderClient> client,
-      const net::MutableNetworkTrafficAnnotationTag& traffic_annotation)
-      override {
-    CHECK(load_start_callback_);
-    std::move(load_start_callback_).Run(std::move(loader), std::move(client));
-  }
-  void Clone(mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver)
-      override {
-    // Pass |this| as the receiver context to make sure this object stays alive
-    // while it still has receivers.
-    receivers_.Add(this, std::move(receiver), this);
-  }
-  std::unique_ptr<network::PendingSharedURLLoaderFactory> Clone() override {
-    CHECK(load_start_callback_);
-    return std::make_unique<PendingFactory>(std::move(load_start_callback_));
-  }
-
- private:
-  class PendingFactory : public network::PendingSharedURLLoaderFactory {
-   public:
-    explicit PendingFactory(LoadStartCallback load_start_callback)
-        : load_start_callback_(std::move(load_start_callback)) {}
-    PendingFactory(const PendingFactory&) = delete;
-    PendingFactory& operator=(const PendingFactory&) = delete;
-    ~PendingFactory() override = default;
-
-   protected:
-    scoped_refptr<network::SharedURLLoaderFactory> CreateFactory() override {
-      CHECK(load_start_callback_);
-      return base::MakeRefCounted<BackgroundThreadURLLoaderFactory>(
-          std::move(load_start_callback_));
-    }
-
-   private:
-    LoadStartCallback load_start_callback_;
-  };
-
-  mojo::ReceiverSet<network::mojom::URLLoaderFactory,
-                    scoped_refptr<BackgroundThreadURLLoaderFactory>>
-      receivers_;
-  LoadStartCallback load_start_callback_;
-};
 
 class ResourceRequestSenderSyncTest : public testing::Test {
  public:
@@ -1785,7 +1726,8 @@ TEST_F(ResourceRequestSenderSyncTest, SendSyncRequest) {
   scoped_refptr<MockRequestClient> mock_client =
       base::MakeRefCounted<MockRequestClient>();
   auto loader_factory =
-      base::MakeRefCounted<BackgroundThreadURLLoaderFactory>(base::BindOnce(
+      base::MakeRefCounted<
+          FakeURLLoaderFactoryForBackgroundThread>(base::BindOnce(
           [](mojo::PendingReceiver<network::mojom::URLLoader> loader,
              mojo::PendingRemote<network::mojom::URLLoaderClient> client) {
             mojo::MakeSelfOwnedReceiver(std::make_unique<MockLoader>(),
@@ -1795,7 +1737,7 @@ TEST_F(ResourceRequestSenderSyncTest, SendSyncRequest) {
             loader_client->OnReceiveResponse(
                 network::mojom::URLResponseHead::New(),
                 CreateDataPipeConsumerHandleFilledWithString(kTestData),
-                absl::nullopt);
+                std::nullopt);
             loader_client->OnComplete(
                 network::URLLoaderCompletionStatus(net::Error::OK));
           }));
@@ -1819,10 +1761,10 @@ TEST_F(ResourceRequestSenderSyncTest, SendSyncRedirect) {
         std::move(callback).Run({}, {});
       }));
 
-  auto loader_factory = base::MakeRefCounted<BackgroundThreadURLLoaderFactory>(
-      base::BindOnce([](mojo::PendingReceiver<network::mojom::URLLoader> loader,
-                        mojo::PendingRemote<network::mojom::URLLoaderClient>
-                            client) {
+  auto loader_factory = base::MakeRefCounted<
+      FakeURLLoaderFactoryForBackgroundThread>(base::BindOnce(
+      [](mojo::PendingReceiver<network::mojom::URLLoader> loader,
+         mojo::PendingRemote<network::mojom::URLLoaderClient> client) {
         std::unique_ptr<MockLoader> mock_loader =
             std::make_unique<MockLoader>();
         MockLoader* mock_loader_prt = mock_loader.get();
@@ -1855,7 +1797,7 @@ TEST_F(ResourceRequestSenderSyncTest, SendSyncRedirect) {
               refcounted_client->data->OnReceiveResponse(
                   network::mojom::URLResponseHead::New(),
                   CreateDataPipeConsumerHandleFilledWithString(kTestData),
-                  absl::nullopt);
+                  std::nullopt);
 
               refcounted_client->data->OnComplete(
                   network::URLLoaderCompletionStatus(net::Error::OK));
@@ -1883,10 +1825,10 @@ TEST_F(ResourceRequestSenderSyncTest, SendSyncRedirectWithRemovedHeaders) {
         std::move(callback).Run({"Foo-Bar", "Hoge-Piyo"}, {});
       }));
 
-  auto loader_factory = base::MakeRefCounted<BackgroundThreadURLLoaderFactory>(
-      base::BindOnce([](mojo::PendingReceiver<network::mojom::URLLoader> loader,
-                        mojo::PendingRemote<network::mojom::URLLoaderClient>
-                            client) {
+  auto loader_factory = base::MakeRefCounted<
+      FakeURLLoaderFactoryForBackgroundThread>(base::BindOnce(
+      [](mojo::PendingReceiver<network::mojom::URLLoader> loader,
+         mojo::PendingRemote<network::mojom::URLLoaderClient> client) {
         std::unique_ptr<MockLoader> mock_loader =
             std::make_unique<MockLoader>();
         MockLoader* mock_loader_prt = mock_loader.get();
@@ -1920,7 +1862,7 @@ TEST_F(ResourceRequestSenderSyncTest, SendSyncRedirectWithRemovedHeaders) {
               refcounted_client->data->OnReceiveResponse(
                   network::mojom::URLResponseHead::New(),
                   CreateDataPipeConsumerHandleFilledWithString(kTestData),
-                  absl::nullopt);
+                  std::nullopt);
               refcounted_client->data->OnComplete(
                   network::URLLoaderCompletionStatus(net::Error::OK));
             },
@@ -1950,10 +1892,10 @@ TEST_F(ResourceRequestSenderSyncTest, SendSyncRedirectWithModifiedHeaders) {
         std::move(callback).Run({}, std::move(modified_headers));
       }));
 
-  auto loader_factory = base::MakeRefCounted<BackgroundThreadURLLoaderFactory>(
-      base::BindOnce([](mojo::PendingReceiver<network::mojom::URLLoader> loader,
-                        mojo::PendingRemote<network::mojom::URLLoaderClient>
-                            client) {
+  auto loader_factory = base::MakeRefCounted<
+      FakeURLLoaderFactoryForBackgroundThread>(base::BindOnce(
+      [](mojo::PendingReceiver<network::mojom::URLLoader> loader,
+         mojo::PendingRemote<network::mojom::URLLoaderClient> client) {
         std::unique_ptr<MockLoader> mock_loader =
             std::make_unique<MockLoader>();
         MockLoader* mock_loader_prt = mock_loader.get();
@@ -1989,7 +1931,7 @@ TEST_F(ResourceRequestSenderSyncTest, SendSyncRedirectWithModifiedHeaders) {
               refcounted_client->data->OnReceiveResponse(
                   network::mojom::URLResponseHead::New(),
                   CreateDataPipeConsumerHandleFilledWithString(kTestData),
-                  absl::nullopt);
+                  std::nullopt);
               refcounted_client->data->OnComplete(
                   network::URLLoaderCompletionStatus(net::Error::OK));
             },
@@ -2015,7 +1957,8 @@ TEST_F(ResourceRequestSenderSyncTest, SendSyncRedirectCancel) {
       }));
 
   auto loader_factory =
-      base::MakeRefCounted<BackgroundThreadURLLoaderFactory>(base::BindOnce(
+      base::MakeRefCounted<
+          FakeURLLoaderFactoryForBackgroundThread>(base::BindOnce(
           [](mojo::PendingReceiver<network::mojom::URLLoader> loader,
              mojo::PendingRemote<network::mojom::URLLoaderClient> client) {
             std::unique_ptr<MockLoader> mock_loader =
@@ -2042,7 +1985,7 @@ TEST_F(ResourceRequestSenderSyncTest, SendSyncRedirectCancel) {
                    const std::vector<std::string>& removed_headers,
                    const net::HttpRequestHeaders& modified_headers) {
                   // FollowRedirect() must not be called.
-                  CHECK(false);
+                  NOTREACHED();
                 },
                 std::move(refcounted_client)));
           }));
@@ -2065,7 +2008,7 @@ class TimeConversionTest : public ResourceRequestSenderTest {
     loader_and_clients_.clear();
     client->OnReceiveResponse(std::move(response_head),
                               mojo::ScopedDataPipeConsumerHandle(),
-                              absl::nullopt);
+                              std::nullopt);
     base::RunLoop().RunUntilIdle();
   }
   const net::LoadTimingInfo& received_load_timing() const {
@@ -2141,7 +2084,7 @@ class CompletionTimeConversionTest : public ResourceRequestSenderTest {
               MOJO_RESULT_OK);
 
     client->OnReceiveResponse(std::move(response_head),
-                              std::move(consumer_handle), absl::nullopt);
+                              std::move(consumer_handle), std::nullopt);
     producer_handle.reset();  // The response is empty.
 
     network::URLLoaderCompletionStatus status;
@@ -2197,6 +2140,142 @@ TEST_F(CompletionTimeConversionTest, Convert) {
               base::Milliseconds(15));
 
   EXPECT_EQ(completion_time(), request_start() + base::Milliseconds(3));
+}
+
+class TestingPlatformForWebUIBundledCodeCache : public TestingPlatformSupport {
+ public:
+  TestingPlatformForWebUIBundledCodeCache()
+      : resource_data_(base::MakeRefCounted<base::RefCountedBytes>(
+            std::vector<uint8_t>{1, 2, 3})) {}
+  ~TestingPlatformForWebUIBundledCodeCache() override = default;
+
+  // TestingPlatformSupport:
+  base::RefCountedMemory* GetDataResourceBytes(int resource_id) override {
+    return resource_data_.get();
+  }
+  std::optional<int> GetWebUIBundledCodeCacheResourceId(
+      const GURL& resource_url) override {
+    return resource_url == webui_bundled_code_cache_url_ ? std::optional<int>(1)
+                                                         : std::nullopt;
+  }
+
+  void set_webui_bundled_code_cache_url(
+      const GURL& webui_bundled_code_cache_url) {
+    webui_bundled_code_cache_url_ = webui_bundled_code_cache_url;
+  }
+  void reset_resource_data() { resource_data_ = nullptr; }
+
+ private:
+  GURL webui_bundled_code_cache_url_;
+  scoped_refptr<base::RefCountedMemory> resource_data_;
+};
+
+// Fixture to test the WebUI bundled code cache feature.
+class WebUIBundledCodeCacheResourceRequestSenderTest
+    : public ResourceRequestSenderTestBase {
+ public:
+  WebUIBundledCodeCacheResourceRequestSenderTest()
+      : ResourceRequestSenderTestBase(
+            std::make_unique<base::test::TaskEnvironment>(
+                base::test::TaskEnvironment::TimeSource::MOCK_TIME)) {}
+  ~WebUIBundledCodeCacheResourceRequestSenderTest() override = default;
+
+  // ResourceRequestSenderTestBase:
+  void SetUp() override {
+    ResourceRequestSenderTestBase::SetUp();
+#if DCHECK_IS_ON()
+    SetIsBeforeThreadCreatedForTest();
+#endif
+    SchemeRegistry::RegisterURLSchemeAsWebUIBundledBytecode("chrome");
+  }
+
+  void TearDown() override {
+#if DCHECK_IS_ON()
+    SetIsBeforeThreadCreatedForTest();
+#endif
+    SchemeRegistry::RemoveURLSchemeAsWebUIBundledBytecodeForTest("chrome");
+    ResourceRequestSenderTestBase::TearDown();
+  }
+
+  // Loads a resource and checks the status of the code cache.
+  void LoadResourceAndCheck(const GURL& resource_url, bool expect_code_cache) {
+    scoped_refptr<MockRequestClient> mock_client =
+        base::MakeRefCounted<MockRequestClient>();
+
+    std::unique_ptr<network::ResourceRequest> request = CreateResourceRequest();
+    request->url = resource_url;
+    request->destination = network::mojom::RequestDestination::kScript;
+
+    StartAsync(std::move(request), mock_client);
+    EXPECT_EQ(1u, loader_and_clients_.size());
+    mojo::Remote<network::mojom::URLLoaderClient> client(
+        std::move(loader_and_clients_[0].second));
+    loader_and_clients_.clear();
+
+    // Send a response and wait for acknowledgement.
+    client->OnReceiveResponse(
+        CreateResponse(), mojo::ScopedDataPipeConsumerHandle(), std::nullopt);
+    EXPECT_TRUE(base::test::RunUntil(
+        [&]() { return mock_client->received_response(); }));
+
+    // Check the code cache received by the client.
+    if (expect_code_cache) {
+      EXPECT_TRUE(mock_client->cached_metadata());
+      EXPECT_GT(mock_client->cached_metadata()->size(), 0u);
+    } else {
+      EXPECT_FALSE(mock_client->cached_metadata());
+    }
+  }
+
+ protected:
+  ScopedTestingPlatformSupport<TestingPlatformForWebUIBundledCodeCache>
+      platform_;
+};
+
+TEST_F(WebUIBundledCodeCacheResourceRequestSenderTest,
+       FetchesCodeCacheFromPlatformWhenAvailable) {
+  base::HistogramTester histogram_tester;
+
+  // Define URLs that support the webui bundled code cache.
+  const GURL test_url_1("chrome://example/script_1.js");
+  const GURL test_url_2("chrome://example/script_2.js");
+
+  // Configure the platform to serve webui code cache for only one of the test
+  // URLs.
+  platform_->set_webui_bundled_code_cache_url(test_url_1);
+  EXPECT_TRUE(platform_->GetWebUIBundledCodeCacheResourceId(test_url_1));
+  EXPECT_FALSE(platform_->GetWebUIBundledCodeCacheResourceId(test_url_2));
+
+  // Assert code cache is fetched for the URL for which the webui bundled code
+  // cache is available.
+  LoadResourceAndCheck(test_url_1, /*expect_code_cache=*/true);
+  LoadResourceAndCheck(test_url_2, /*expect_code_cache=*/false);
+  histogram_tester.ExpectUniqueSample(
+      "Blink.ResourceRequest.WebUIBundledCodeCacheFetcher.DidReceiveCachedCode",
+      true, 1);
+}
+
+TEST_F(WebUIBundledCodeCacheResourceRequestSenderTest,
+       HandlesMissingPlatformCodeCache) {
+  base::HistogramTester histogram_tester;
+
+  // Define a URL that supports the webui bundled code cache.
+  const GURL test_url("chrome://example/script.js");
+
+  // Configure the platform to serve webui code cache for the test URL.
+  platform_->set_webui_bundled_code_cache_url(test_url);
+  EXPECT_TRUE(platform_->GetWebUIBundledCodeCacheResourceId(test_url));
+
+  // Update the platform such that fetching the code cache resource metadata
+  // will fail.
+  platform_->reset_resource_data();
+
+  // Assert attempting to fetch the code cache is handled correctly and the
+  // client's code cache remains unset.
+  LoadResourceAndCheck(test_url, /*expect_code_cache=*/false);
+  histogram_tester.ExpectUniqueSample(
+      "Blink.ResourceRequest.WebUIBundledCodeCacheFetcher.DidReceiveCachedCode",
+      false, 1);
 }
 
 }  // namespace

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
+#pragma allow_unsafe_libc_calls
+#endif
+
 #include "chrome/common/chrome_content_client.h"
 
 #include <string>
@@ -17,7 +22,6 @@
 #include "content/public/common/origin_util.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/buildflags/buildflags.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "services/network/public/cpp/is_potentially_trustworthy.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"

@@ -38,7 +38,7 @@ class ContextNULL : public ContextImpl
                 AllocationTrackerNULL *allocationTracker);
     ~ContextNULL() override;
 
-    angle::Result initialize() override;
+    angle::Result initialize(const angle::ImageLoadContext &imageLoadContext) override;
 
     // Flush and finish.
     angle::Result flush(const gl::Context *context) override;
@@ -225,12 +225,13 @@ class ContextNULL : public ContextImpl
     BufferImpl *createBuffer(const gl::BufferState &state) override;
 
     // Vertex Array creation
-    VertexArrayImpl *createVertexArray(const gl::VertexArrayState &data) override;
+    VertexArrayImpl *createVertexArray(const gl::VertexArrayState &data,
+                                       const gl::VertexArrayBuffers &vertexArrayBuffers) override;
 
     // Query and Fence creation
     QueryImpl *createQuery(gl::QueryType type) override;
     FenceNVImpl *createFenceNV() override;
-    SyncImpl *createSync() override;
+    SyncImpl *createSync(const gl::Context *context) override;
 
     // Transform Feedback creation
     TransformFeedbackImpl *createTransformFeedback(

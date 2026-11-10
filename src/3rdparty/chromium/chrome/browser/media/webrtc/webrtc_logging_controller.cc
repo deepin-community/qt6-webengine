@@ -25,10 +25,11 @@
 #include "components/webrtc_logging/browser/text_log_list.h"
 #include "content/public/browser/render_process_host.h"
 
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
 #include "content/public/browser/child_process_security_policy.h"
 #include "storage/browser/file_system/isolated_context.h"
-#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) ||
+        // BUILDFLAG(IS_ANDROID)
 
 using webrtc_event_logging::WebRtcEventLogManager;
 
@@ -36,6 +37,22 @@ namespace {
 
 // Key used to attach the handler to the RenderProcessHost.
 constexpr char kRenderProcessHostKey[] = "kWebRtcLoggingControllerKey";
+
+std::string ToString(WebRtcTextLogHandler::LoggingState state) {
+  switch (state) {
+    case WebRtcTextLogHandler::LoggingState::CLOSED:
+      return "CLOSED";
+    case WebRtcTextLogHandler::LoggingState::STARTING:
+      return "STARTING";
+    case WebRtcTextLogHandler::LoggingState::STARTED:
+      return "STARTED";
+    case WebRtcTextLogHandler::LoggingState::STOPPING:
+      return "STOPPING";
+    case WebRtcTextLogHandler::LoggingState::STOPPED:
+      return "STOPPED";
+  }
+  NOTREACHED();
+}
 
 }  // namespace
 
@@ -45,7 +62,7 @@ void WebRtcLoggingController::AttachToRenderProcessHost(
   host->SetUserData(
       kRenderProcessHostKey,
       std::make_unique<base::UserDataAdapter<WebRtcLoggingController>>(
-          new WebRtcLoggingController(host->GetID(),
+          new WebRtcLoggingController(host->GetDeprecatedID(),
                                       host->GetBrowserContext())));
 }
 
@@ -303,7 +320,7 @@ void WebRtcLoggingController::StartEventLogging(
         web_app_id, callback);
 }
 
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_ANDROID)
 void WebRtcLoggingController::GetLogsDirectory(
     LogsDirectoryCallback callback,
     LogsDirectoryErrorCallback error_callback) {
@@ -351,11 +368,11 @@ void WebRtcLoggingController::GrantLogsDirectoryAccess(
       FROM_HERE,
       base::BindOnce(std::move(callback), file_system.id(), registered_name));
 }
-#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) ||
+        // BUILDFLAG(IS_ANDROID)
 
 void WebRtcLoggingController::OnRtpPacket(
-    std::unique_ptr<uint8_t[]> packet_header,
-    size_t header_length,
+    base::HeapArray<uint8_t> packet_header,
     size_t packet_length,
     bool incoming) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -363,7 +380,7 @@ void WebRtcLoggingController::OnRtpPacket(
   // |rtp_dump_handler_| could be null if we are waiting for the FILE thread to
   // create/ensure the log directory.
   if (rtp_dump_handler_) {
-    rtp_dump_handler_->OnRtpPacket(packet_header.get(), header_length,
+    rtp_dump_handler_->OnRtpPacket(packet_header.data(), packet_header.size(),
                                    packet_length, incoming);
   }
 }
@@ -382,12 +399,18 @@ void WebRtcLoggingController::OnAddMessages(
 void WebRtcLoggingController::OnStopped() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
+  if (text_log_handler_->GetChannelIsClosing()) {
+    return;
+  }
+
   if (text_log_handler_->GetState() != WebRtcTextLogHandler::STOPPING) {
     // If an out-of-order response is received, stop_callback_ may be invalid,
     // and must not be invoked.
-    DLOG(ERROR) << "OnStopped invoked in state "
-                << text_log_handler_->GetState();
-    receiver_.ReportBadMessage("WRLHH: OnStopped invoked in unexpected state.");
+    std::string error =
+        base::StrCat({"WRLHH: OnStopped invoked in unexpected state ",
+                      ToString(text_log_handler_->GetState())});
+    DLOG(ERROR) << error;
+    receiver_.ReportBadMessage(error);
     return;
   }
   text_log_handler_->StopDone();

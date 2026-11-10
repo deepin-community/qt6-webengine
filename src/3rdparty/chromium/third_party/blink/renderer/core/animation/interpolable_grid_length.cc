@@ -38,7 +38,6 @@ Length CreateContentSizedLength(
       return Length(Length::kMaxContent);
     default:
       NOTREACHED();
-      return Length(Length::kFixed);
   }
 }
 }  // namespace
@@ -50,14 +49,18 @@ InterpolableGridLength::InterpolableGridLength(InterpolableValue* value,
 }
 
 // static
-InterpolableGridLength* InterpolableGridLength::Create(const Length& length,
-                                                       float zoom) {
+InterpolableGridLength* InterpolableGridLength::Create(
+    const Length& length,
+    const CSSProperty& property,
+    float zoom) {
   InterpolableGridLengthType type = GetInterpolableGridLengthType(length);
   InterpolableValue* value = nullptr;
   if (length.IsFlex()) {
-    value = MakeGarbageCollected<InterpolableNumber>(length.GetFloatValue());
+    value = MakeGarbageCollected<InterpolableNumber>(length.Flex());
   } else {
-    value = InterpolableLength::MaybeConvertLength(length, zoom);
+    value = InterpolableLength::MaybeConvertLength(
+        length, property, zoom,
+        /*interpolate_size=*/std::nullopt);
   }
   return MakeGarbageCollected<InterpolableGridLength>(std::move(value), type);
 }
@@ -70,7 +73,7 @@ Length InterpolableGridLength::CreateGridLength(
 
   DCHECK(value_);
   if (type_ == kFlex) {
-    return Length::Flex(To<InterpolableNumber>(*value_).Value());
+    return Length::Flex(To<InterpolableNumber>(*value_).Value(conversion_data));
   }
   return To<InterpolableLength>(*value_).CreateLength(
       conversion_data, Length::ValueRange::kNonNegative);

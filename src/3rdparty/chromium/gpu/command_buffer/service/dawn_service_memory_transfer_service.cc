@@ -4,6 +4,7 @@
 
 #include "gpu/command_buffer/service/dawn_service_memory_transfer_service.h"
 
+#include "base/compiler_specific.h"
 #include "base/memory/raw_ptr.h"
 #include "gpu/command_buffer/common/dawn_memory_transfer_handle.h"
 #include "gpu/command_buffer/service/command_buffer_service.h"
@@ -31,7 +32,7 @@ class ReadHandleImpl
                            size_t offset,
                            size_t size,
                            void* serializePointer) override {
-    // TODO(crbug.com/1373314): A compromised renderer could have a shared
+    // TODO(crbug.com/40061304): A compromised renderer could have a shared
     // memory size not large enough to fit the GPU buffer contents. Instead of
     // DCHECK, do a CHECK here to crash the release build. The crash is fine
     // since it is not reachable from normal behavior. WebGPU post-V1 will have
@@ -41,7 +42,7 @@ class ReadHandleImpl
     // Copy the data into the shared memory allocation.
     // In the case of buffer mapping, this is the mapped GPU memory which we
     // copy into client-visible shared memory.
-    memcpy(static_cast<uint8_t*>(ptr_) + offset, data, size);
+    UNSAFE_TODO(memcpy(static_cast<uint8_t*>(ptr_) + offset, data, size));
   }
 
  private:
@@ -79,8 +80,8 @@ class WriteHandleImpl
     // Copy from shared memory into the target buffer.
     // mTargetData will always be the starting address
     // of the backing buffer after the dawn side change.
-    memcpy(static_cast<uint8_t*>(mTargetData) + offset,
-           static_cast<const uint8_t*>(ptr_) + offset, size);
+    UNSAFE_TODO(memcpy(static_cast<uint8_t*>(mTargetData) + offset,
+                       static_cast<const uint8_t*>(ptr_) + offset, size));
     return true;
   }
 

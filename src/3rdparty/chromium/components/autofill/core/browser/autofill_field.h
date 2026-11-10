@@ -7,16 +7,20 @@
 
 #include <stddef.h>
 
+#include <array>
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "base/types/optional_ref.h"
+#include "base/types/pass_key.h"
 #include "components/autofill/core/browser/autofill_type.h"
-#include "components/autofill/core/browser/data_model/autofill_profile.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/filling/filling_product.h"
 #include "components/autofill/core/browser/form_parsing/regex_patterns.h"
 #include "components/autofill/core/browser/heuristic_source.h"
 #include "components/autofill/core/browser/metrics/log_event.h"
@@ -27,35 +31,108 @@
 
 namespace autofill {
 
-using FieldTypeValidityStatesMap =
-    std::map<FieldType, std::vector<AutofillDataModel::ValidityState>>;
+class FormStructure;
 
-using FieldTypeValidityStateMap =
-    std::map<FieldType, AutofillDataModel::ValidityState>;
-
-// Specifies if the Username First Flow vote has intermediate values.
-enum class IsMostRecentSingleUsernameCandidate {
-  // Field is not part of Username First Flow.
-  kNotPartOfUsernameFirstFlow = 0,
-  // Field is candidate for username in Username First Flow and has no
-  // intermediate fields
-  kMostRecentCandidate = 1,
-  // Field is candidate for username in Username First Flow and has intermediate
-  // fields between candidate and password form.
-  kHasIntermediateValuesInBetween = 2,
+// Enum representing prediction sources that are recognized.
+enum class AutofillPredictionSource {
+  kServerCrowdsourcing = 0,
+  kServerOverride = 1,
+  kHeuristics = 2,
+  kAutocomplete = 3,
+  kRationalization = 4,
+  kMaxValue = kRationalization
 };
+
+std::string_view AutofillPredictionSourceToStringView(
+    AutofillPredictionSource source);
+
+// Stores information about the section of the field.
+class Section {
+ public:
+  struct Autocomplete {
+    friend auto operator<=>(const Autocomplete& lhs,
+                            const Autocomplete& rhs) = default;
+    friend bool operator==(const Autocomplete& lhs,
+                           const Autocomplete& rhs) = default;
+
+    std::string section;
+    HtmlFieldMode mode = HtmlFieldMode::kNone;
+  };
+
+  using Default = std::monostate;
+
+  struct FieldIdentifier {
+    FieldIdentifier() = default;
+    FieldIdentifier(std::string field_name,
+                    size_t local_frame_id,
+                    FieldRendererId field_renderer_id)
+        : field_name(std::move(field_name)),
+          local_frame_id(local_frame_id),
+          field_renderer_id(field_renderer_id) {}
+
+    friend auto operator<=>(const FieldIdentifier& lhs,
+                            const FieldIdentifier& rhs) = default;
+    friend bool operator==(const FieldIdentifier& lhs,
+                           const FieldIdentifier& rhs) = default;
+
+    std::string field_name;
+    size_t local_frame_id;
+    FieldRendererId field_renderer_id;
+  };
+
+  static Section FromAutocomplete(Autocomplete autocomplete);
+  static Section FromFieldIdentifier(
+      const FormFieldData& field,
+      base::flat_map<LocalFrameToken, size_t>& frame_token_ids);
+
+  Section();
+  Section(const Section& section);
+  Section& operator=(const Section& section);
+  Section(Section&& section);
+  Section& operator=(Section&& section);
+  ~Section();
+
+  friend auto operator<=>(const Section& lhs, const Section& rhs) = default;
+  friend bool operator==(const Section& lhs, const Section& rhs) = default;
+  explicit operator bool() const;
+
+  bool is_from_autocomplete() const;
+  bool is_from_fieldidentifier() const;
+  bool is_default() const;
+
+  // Reconstructs `this` to a string. The string representation of the section
+  // is used in the renderer.
+  // TODO(crbug.com/40200532): Remove when fixed.
+  std::string ToString() const;
+
+ private:
+  // Represents the section's origin:
+  //  - `Default` is the empty, initial value before running any sectioning
+  //     algorithm,
+  //  - `Autocomplete` represents a section derived from the autocomplete
+  //     attribute,
+  //  - `FieldIdentifier` represents a section generated based on the first
+  //     field in the section.
+  using SectionValue = std::variant<Default, Autocomplete, FieldIdentifier>;
+
+  SectionValue value_;
+};
+
+LogBuffer& operator<<(LogBuffer& buffer, const Section& section);
+std::ostream& operator<<(std::ostream& os, const Section& section);
 
 class AutofillField : public FormFieldData {
  public:
-  using FieldLogEventType = absl::variant<absl::monostate,
-                                          AskForValuesToFillFieldLogEvent,
-                                          TriggerFillFieldLogEvent,
-                                          FillFieldLogEvent,
-                                          TypingFieldLogEvent,
-                                          HeuristicPredictionFieldLogEvent,
-                                          AutocompleteAttributeFieldLogEvent,
-                                          ServerPredictionFieldLogEvent,
-                                          RationalizationFieldLogEvent>;
+  using FieldLogEventType = std::variant<std::monostate,
+                                         AskForValuesToFillFieldLogEvent,
+                                         TriggerFillFieldLogEvent,
+                                         FillFieldLogEvent,
+                                         TypingFieldLogEvent,
+                                         HeuristicPredictionFieldLogEvent,
+                                         AutocompleteAttributeFieldLogEvent,
+                                         ServerPredictionFieldLogEvent,
+                                         RationalizationFieldLogEvent,
+                                         AblationFieldLogEvent>;
 
   AutofillField();
   explicit AutofillField(const FormFieldData& field);
@@ -73,6 +150,11 @@ class AutofillField : public FormFieldData {
   static std::unique_ptr<AutofillField> CreateForPasswordManagerUpload(
       FieldSignature field_signature);
 
+  // The unique identifier of the section (e.g. billing vs. shipping address)
+  // of this field.
+  const Section& section() const { return section_; }
+  void set_section(Section section) { section_ = std::move(section); }
+
   FieldType heuristic_type() const;
   FieldType heuristic_type(HeuristicSource s) const;
   FieldType server_type() const;
@@ -82,46 +164,38 @@ class AutofillField : public FormFieldData {
   server_predictions() const {
     return server_predictions_;
   }
+
   const std::vector<
       AutofillQueryResponse::FormSuggestion::FieldSuggestion::FieldPrediction>&
   experimental_server_predictions() const {
     return experimental_server_predictions_;
   }
-  std::optional<bool> may_use_prefilled_placeholder() const {
-    return may_use_prefilled_placeholder_;
-  }
   HtmlFieldType html_type() const { return html_type_; }
   HtmlFieldMode html_mode() const { return html_mode_; }
   const FieldTypeSet& possible_types() const { return possible_types_; }
-  const FieldTypeValidityStatesMap& possible_types_validities() const {
-    return possible_types_validities_;
-  }
   bool previously_autofilled() const { return previously_autofilled_; }
   const std::u16string& parseable_name() const { return parseable_name_; }
   const std::u16string& parseable_label() const { return parseable_label_; }
   bool only_fill_when_focused() const { return only_fill_when_focused_; }
 
-  // Setters for the detected types.
   void set_heuristic_type(HeuristicSource s, FieldType t);
-  void add_possible_types_validities(
-      const FieldTypeValidityStateMap& possible_types_validities);
+
+  // Sets the server predictions to `predictions` after performing some
+  // filtering. If `predictions` is empty, it creates a `NO_SERVER_DATA`
+  // prediction.
   void set_server_predictions(
       std::vector<AutofillQueryResponse::FormSuggestion::FieldSuggestion::
                       FieldPrediction> predictions);
+  // Adds `prediction` to the back of the existing `server_predictions_` if
+  // the prediction's source passes various validity checks. If the only
+  // existing server prediction is an empty one, it replaces that one.
+  void MaybeAddServerPrediction(
+      AutofillQueryResponse::FormSuggestion::FieldSuggestion::FieldPrediction
+          prediction);
 
-  void set_may_use_prefilled_placeholder(
-      std::optional<bool> may_use_prefilled_placeholder) {
-    may_use_prefilled_placeholder_ = may_use_prefilled_placeholder;
-  }
   void set_possible_types(const FieldTypeSet& possible_types) {
     possible_types_ = possible_types;
   }
-  void set_possible_types_validities(
-      FieldTypeValidityStatesMap possible_types_validities) {
-    possible_types_validities_ = std::move(possible_types_validities);
-  }
-  std::vector<AutofillDataModel::ValidityState>
-      get_validities_for_possible_type(FieldType);
 
   void SetHtmlType(HtmlFieldType type, HtmlFieldMode mode);
 
@@ -139,29 +213,26 @@ class AutofillField : public FormFieldData {
     only_fill_when_focused_ = fill_when_focused;
   }
 
-  // Set the type of the field. This sets the value returned by |Type|.
+  // Set the type of the field. This sets the value returned by Type().
   // This function can be used to override the value that would be returned by
-  // |ComputedType|.
-  // As the |type| is expected to depend on |ComputedType|, the value will be
-  // reset to |ComputedType| if some internal value change (e.g. on call to
-  // (|set_heuristic_type|).
-  // |SetTypeTo| cannot be called with
-  // type.GetStoreableType() == NO_SERVER_DATA.
-  void SetTypeTo(const AutofillType& type);
+  // ComputedType().
+  // As the `type` is expected to depend on ComputedType(), the value will be
+  // reset to ComputedType() if some internal value change (e.g. on call to
+  // (set_heuristic_type()).
+  // SetTypeTo() must not be called with `type.GetTypes().empty()`.
+  void SetTypeTo(const AutofillType& type,
+                 std::optional<AutofillPredictionSource> source);
 
-  // This function returns |ComputedType| unless the value has been overriden
-  // by |SetTypeTo|.
-  // (i.e. overall_type_ != NO_SERVER_DATA ? overall_type_ : ComputedType())
+  // The type of `GetOverallPredictionResult()`.
   AutofillType Type() const;
 
-  // This function automatically chooses among the Autofill server, heuristic
-  // and html type, depending on the data available for this field alone. This
-  // type does not take into account the rationalization involving the
-  // surrounding fields.
-  AutofillType ComputedType() const;
+  // The prediction source of `GetOverallPredictionResult()`.
+  // Note that if no prediction was made by any source, PredictionSource will be
+  // std::nullopt. Type() would return UNKNOWN_TYPE in such a case.
+  std::optional<AutofillPredictionSource> PredictionSource() const;
 
-  // Returns true if the value of this field is empty.
-  bool IsEmpty() const;
+  // The type of `GetComputedPredictionResult()`.
+  AutofillType ComputedType() const;
 
   // The rank of a field is N iff this field is preceded by N other fields
   // in the frame-transcending form.
@@ -210,22 +281,47 @@ class AutofillField : public FormFieldData {
 
   // Address Autofill is disabled for fields with unrecognized autocomplete
   // attribute - except if the field has a server overwrite.
-  // Without `kAutofillPredictionsForAutocompleteUnrecognized`, this happens
-  // implicitly, since ac=unrecognized suppresses the predicted type. As of
-  // `kAutofillPredictionsForAutocompleteUnrecognized`, ac=unrecognized fields
-  // receive a predictions, but suggestions and filling are still suppressed.
-  // This function can be used to determine whether suggestions and filling
-  // should be suppressed for this field (independently of the predicted type).
+  // Fields with `autocomplete=unrecognized` receive a predictions, but
+  // suggestions and filling are suppressed on Desktop. This function can be
+  // used to determine whether suggestions and filling should be suppressed for
+  // this field (independently of the predicted type).
   bool ShouldSuppressSuggestionsAndFillingByDefault() const;
 
-  void set_initial_value_hash(uint32_t value) { initial_value_hash_ = value; }
-  std::optional<uint32_t> initial_value_hash() { return initial_value_hash_; }
+  // Returns the current value, formatted as desired for import:
+  // (1) If the field value hasn't changed since it was seen and the field is a
+  //     non-<select>, returns the empty string.
+  // (2) If the field has FormControlType::kSelect* and has a selected option,
+  //     returns that option's human-readable text.
+  // (3) Otherwise returns value().
+  //
+  // The motivation behind (1) is that unchanged values usually carry little
+  // value for importing. <select> fields are exempted because their default
+  // value is often correct (e.g., in ADDRESS_HOME_COUNTRY fields).
+  // TODO(crbug.com/40137859): Consider also exempting non-<select>
+  // ADDRESS_HOME_{STATE,COUNTRY} fields.
+  //
+  // The motivation behind (2) is that the human-readable text of an <option> is
+  // usually better suited for import than the its value. See the documentation
+  // of FormFieldData::value() and FormFieldData::selected_text() for further
+  // details.
+  const std::u16string& value_for_import() const;
 
-  void set_initial_value_changed(std::optional<bool> initial_value_changed) {
-    initial_value_changed_ = initial_value_changed;
-  }
-  std::optional<bool> initial_value_changed() const {
-    return initial_value_changed_;
+  // Returns the value the field had when it was first seen by the
+  // AutofillManager. For fields that exist on page load, this is typically the
+  // value on page load.
+  //
+  // There are some special cases where the above does not apply, such as:
+  // - When the field has moved to another form.
+  // - When the form has been extracted without the field. For example, this
+  //   could happen because the field was temporarily removed from the DOM.
+  //
+  // For the field's current value, see FormFieldData::value().
+  const std::u16string& initial_value() const { return initial_value_; }
+
+  // Sets the field's current value.
+  void set_initial_value(std::u16string initial_value,
+                         base::PassKey<FormStructure> pass_key) {
+    initial_value_ = std::move(initial_value);
   }
 
   void set_credit_card_number_offset(size_t position) {
@@ -235,73 +331,39 @@ class AutofillField : public FormFieldData {
     return credit_card_number_offset_;
   }
 
-  void set_generation_type(
-      AutofillUploadContents::Field::PasswordGenerationType type) {
-    generation_type_ = type;
-  }
-  AutofillUploadContents::Field::PasswordGenerationType generation_type()
-      const {
-    return generation_type_;
-  }
-
-  void set_generated_password_changed(bool generated_password_changed) {
-    generated_password_changed_ = generated_password_changed;
-  }
-  bool generated_password_changed() const {
-    return generated_password_changed_;
-  }
-
-  void set_vote_type(AutofillUploadContents::Field::VoteType type) {
-    vote_type_ = type;
-  }
-  AutofillUploadContents::Field::VoteType vote_type() const {
-    return vote_type_;
-  }
-
   void SetPasswordRequirements(PasswordRequirementsSpec spec);
   const std::optional<PasswordRequirementsSpec>& password_requirements() const {
     return password_requirements_;
   }
 
-  // Getter and Setter methods for |state_is_a_matching_type_|.
-  void set_state_is_a_matching_type(bool value = true) {
-    state_is_a_matching_type_ = value;
-  }
-  bool state_is_a_matching_type() const { return state_is_a_matching_type_; }
+  // The ordering ordering matters: higher values overrule lower values (e.g.,
+  // kServer overrules kHeuristics).
+  enum class FormatStringSource {
+    kUnset = 0,        // No format string set.
+    kHeuristics = 1,   // Set by local heuristics.
+    kModelResult = 2,  // Set by a direct model response
+    kServer = 3,       // Set by an (Autofill) server response.
+  };
 
-  void set_single_username_vote_type(
-      AutofillUploadContents::Field::SingleUsernameVoteType vote_type) {
-    single_username_vote_type_ = vote_type;
-  }
-  std::optional<AutofillUploadContents::Field::SingleUsernameVoteType>
-  single_username_vote_type() const {
-    return single_username_vote_type_;
-  }
+  // The format of the value expected by the web document. Currently, the
+  // following kinds of format stings are supported:
+  // - Affix format strings (see data_util::IsValidAffixFormat()).
+  // - Date format strings (data_util::IsValidDateFormat()).
+  //
+  // Only one format string is stored at a time: the one with the
+  // highest-ranking `FormatStringSource`.
+  base::optional_ref<const std::u16string> format_string() const LIFETIME_BOUND;
 
-  void set_is_most_recent_single_username_candidate(
-      IsMostRecentSingleUsernameCandidate
-          is_most_recent_single_username_candidate) {
-    is_most_recent_single_username_candidate_ =
-        is_most_recent_single_username_candidate;
-  }
-
-  IsMostRecentSingleUsernameCandidate is_most_recent_single_username_candidate()
-      const {
-    return is_most_recent_single_username_candidate_;
+  FormatStringSource format_string_source() const {
+    return format_string_source_;
   }
 
-  // For each type in |possible_types_| that's missing from
-  // |possible_types_validities_|, will add it to the
-  // |possible_types_validities_| and will set its validity to UNVALIDATED. This
-  // is to avoid inconsistencies between |possible_types_| and
-  // |possible_types_validities_|. Used especially when the server validity map
-  // is not available (is empty), and as a result the
-  // |possible_types_validities_| would also be empty.
-  void NormalizePossibleTypesValidities();
-
-  bool was_context_menu_shown() const { return was_context_menu_shown_; }
-  void set_was_context_menu_shown(bool was_context_menu_shown) {
-    was_context_menu_shown_ = was_context_menu_shown;
+  void set_format_string_unless_overruled(std::u16string format_string,
+                                          FormatStringSource source) {
+    if (format_string_source_ <= source) {
+      format_string_ = std::move(format_string);
+      format_string_source_ = source;
+    }
   }
 
   void set_field_log_events(const std::vector<FieldLogEventType>& events) {
@@ -309,14 +371,15 @@ class AutofillField : public FormFieldData {
   }
 
   const std::vector<FieldLogEventType>& field_log_events() const {
-    return field_log_events_;
+    static const std::vector<FieldLogEventType> empty_vector{};
+    return field_log_events_ ? *field_log_events_ : empty_vector;
   }
 
   // Avoid holding references to the return value. It is invalidated by
   // AppendLogEventIfNotRepeated().
   base::optional_ref<FieldLogEventType> last_field_log_event() {
-    if (!field_log_events_.empty()) {
-      return field_log_events_.back();
+    if (field_log_events_ && !field_log_events_->empty()) {
+      return field_log_events_->back();
     }
     return std::nullopt;
   }
@@ -326,7 +389,11 @@ class AutofillField : public FormFieldData {
   void AppendLogEventIfNotRepeated(const FieldLogEventType& log_event);
 
   // Clear all the log events for this field.
-  void ClearLogEvents() { field_log_events_.clear(); }
+  void ClearLogEvents() {
+    if (field_log_events_) {
+      field_log_events_->clear();
+    }
+  }
 
   void set_autofill_source_profile_guid(
       std::optional<std::string> autofill_profile_guid) {
@@ -341,13 +408,72 @@ class AutofillField : public FormFieldData {
   }
   std::optional<FieldType> autofilled_type() const { return autofilled_type_; }
 
+  void set_filling_product(FillingProduct filling_product) {
+    filling_product_ = filling_product;
+  }
+  FillingProduct filling_product() const { return filling_product_; }
+
   bool WasAutofilledWithFallback() const;
 
+  void set_did_trigger_suggestions(bool did_trigger_suggestions) {
+    did_trigger_suggestions_ = did_trigger_suggestions;
+  }
+  bool did_trigger_suggestions() const { return did_trigger_suggestions_; }
+
+  void set_was_focused(bool was_focused) { was_focused_ = was_focused; }
+  bool was_focused() const { return was_focused_; }
+
+  void set_ml_supported_types(const FieldTypeSet& s) {
+    ml_supported_types_ = s;
+  }
+
+  const std::optional<FieldTypeSet>& ml_supported_types() const {
+    return ml_supported_types_;
+  }
+
+#if defined(UNIT_TEST)
+  const std::array<FieldType,
+                   static_cast<size_t>(HeuristicSource::kMaxValue) + 1>&
+  local_type_predictions() const {
+    return local_type_predictions_;
+  }
+#endif
+
  private:
+  struct PredictionResult {
+    // The type may be a union type, i.e., hold multiple FieldTypes.
+    AutofillType type;
+    // The source of the primary FieldType in `type`: If there are multiple
+    // FieldTypes in `type`, the source only refers to the non-Autofill AI
+    // types.
+    // TODO(crbug.com/432645177): Make the FieldType to which the `source`
+    // applies explicit?
+    std::optional<AutofillPredictionSource> source;
+  };
+
   explicit AutofillField(FieldSignature field_signature);
 
   // Whether the heuristics or server predict a credit card field.
   bool IsCreditCardPrediction() const;
+
+  // Creates a union type that contains
+  // - the `primary_field_type` and
+  // - the Autofill AI FieldTypes in the `server_predictions_` (modulo conflict
+  //   resolution).
+  //
+  // A union type is an AutofillType that holds multiple FieldType.
+  // See AutofillType for details.
+  AutofillType MakeAutofillType(FieldType primary_field_type) const;
+
+  // Combines the server, heuristic and HTML type based predictions. Doesn't
+  // take server overwrites or rationalization into consideration.
+  PredictionResult GetComputedPredictionResult() const;
+
+  // Returns the GetComputedPredictionResult(), unless there is a server
+  // overwrite or the result was overwritten using `SetTypeTo()`.
+  PredictionResult GetOverallPredictionResult() const;
+
+  Section section_;
 
   std::optional<FieldSignature> field_signature_;
 
@@ -366,15 +492,12 @@ class AutofillField : public FormFieldData {
       AutofillQueryResponse::FormSuggestion::FieldSuggestion::FieldPrediction>
       experimental_server_predictions_;
 
-  // Whether the server-side classification believes that the field
-  // may be pre-filled with a placeholder in the value attribute.
-  // For autofillable types, `nullopt` indicates that there is no server-side
-  // classification. For PWM, `nullopt` and `false` are currently identical.
-  std::optional<bool> may_use_prefilled_placeholder_ = std::nullopt;
-
   // Requirements the site imposes to passwords (for password generation).
   // Corresponds to the requirements determined by the Autofill server.
   std::optional<PasswordRequirementsSpec> password_requirements_;
+
+  std::u16string format_string_;
+  FormatStringSource format_string_source_ = FormatStringSource::kUnset;
 
   // Predictions which where calculated on the client. This is initialized to
   // `NO_SERVER_DATA`, which means "NO_DATA", i.e. no classification was
@@ -382,15 +505,15 @@ class AutofillField : public FormFieldData {
   std::array<FieldType, static_cast<size_t>(HeuristicSource::kMaxValue) + 1>
       local_type_predictions_;
 
-  // The type of the field. Overrides all other types (html_type_,
-  // heuristic_type_).
-  // |AutofillType(NO_SERVER_DATA)| is used when this |overall_type_| has not
-  // been set.
-  // This field serves as a cache to prevent frequent re-evaluation of
-  // ComputedType(). It is invalidated when set_heuristic_type(),
-  // set_server_predictions() or SetHtmlType() is called and then set to a
-  // value during the rationalization.
-  AutofillType overall_type_;
+  // The rationalized `GetComputedPredictionResult()`. This is the type used for
+  // all autofilling operations. It defaults to `GetComputedPredictionResult()`
+  // and is invalidated when `set_heuristic_type()`, `set_server_predictions()`
+  // or `SetHtmlType()` are called. Rationalization potentially overwrites it
+  // using `SetTypeTo()`. The result is cached to prevent frequent re-evaluation
+  // of `GetComputedPredictionResult()`.
+  // Nullopt if no result is cached. If it has a value, the type is guaranteed
+  // to be different from NO_SERVER_DATA.
+  mutable std::optional<PredictionResult> overall_type_;
 
   // The type of the field, as specified by the site author in HTML.
   HtmlFieldType html_type_ = HtmlFieldType::kUnspecified;
@@ -399,22 +522,13 @@ class AutofillField : public FormFieldData {
   // Currently this is used to distinguish between billing and shipping fields.
   HtmlFieldMode html_mode_ = HtmlFieldMode::kNone;
 
-  // The set of possible types for this field.
+  // The set of possible types for this field. It is normally only populated on
+  // submission time.
   FieldTypeSet possible_types_;
 
-  // The set of possible types and their validity for this field.
-  FieldTypeValidityStatesMap possible_types_validities_;
-
-  // A low-entropy hash of the field's initial value before user-interactions or
-  // automatic fillings. This field is used to detect static placeholders.
-  std::optional<uint32_t> initial_value_hash_;
-
-  // On form submission, set to `true` if the field had a value on page load and
-  // it was changed between page load and form submission. Set to `false` if the
-  // pre-filled value wasn't changed. Not set if the field didn't have a
-  // pre-filled value.
-  // Currently not implemented for <select> fields.
-  std::optional<bool> initial_value_changed_;
+  // The field's initial value. By default, it's the same as the field's
+  // `value()`, but FormStructure::RetrieveFromCache() may override it.
+  std::u16string initial_value_ = value();
 
   // Used to hold the position of the first digit to be copied as a substring
   // from credit card number.
@@ -435,51 +549,16 @@ class AutofillField : public FormFieldData {
   // label when the label is divided between subsequent fields.
   std::u16string parseable_label_;
 
-  // The type of password generation event, if it happened.
-  AutofillUploadContents::Field::PasswordGenerationType generation_type_ =
-      AutofillUploadContents::Field::NO_GENERATION;
-
-  // Whether the generated password was changed by user.
-  bool generated_password_changed_ = false;
-
-  // The vote type, if the autofill type is USERNAME or any password vote.
-  // Otherwise, the field is ignored. |vote_type_| provides context as to what
-  // triggered the vote.
-  AutofillUploadContents::Field::VoteType vote_type_ =
-      AutofillUploadContents::Field::NO_INFORMATION;
-
-  // Denotes if |ADDRESS_HOME_STATE| should be added to |possible_types_|.
-  bool state_is_a_matching_type_ = false;
-
-  // Strength of the single username vote signal, if applicable.
-  std::optional<AutofillUploadContents::Field::SingleUsernameVoteType>
-      single_username_vote_type_;
-
-  // If set to `kMostRecentCandidate`, the field is candidate for username
-  // in Username First Flow and the field has no intermediate
-  // fields (like OTP/Captcha) between the candidate and the password form.
-  // If set to `kHasIntermediateValuesInBetween`, the field is candidate for
-  // username in Username First Flow, but has intermediate fields between the
-  // candidate and the password form.
-  // If set to `kNotPartOfUsernameFirstFlow`, the field is not part of Username
-  // First Flow.
-  IsMostRecentSingleUsernameCandidate
-      is_most_recent_single_username_candidate_ =
-          IsMostRecentSingleUsernameCandidate::kNotPartOfUsernameFirstFlow;
-
-  // Set to true if the context menu was triggered and shown on the field.
-  bool was_context_menu_shown_ = false;
-
   // A list of field log events, which record when user interacts the field
   // during autofill or editing, such as user clicks on the field, the
   // suggestion list is shown for the field, user accepts one suggestion to
   // fill the form and user edits the field.
-  std::vector<FieldLogEventType> field_log_events_;
+  std::optional<std::vector<FieldLogEventType>> field_log_events_ =
+      std::vector<FieldLogEventType>{};
 
   // The autofill profile's GUID that was used for field filling. It corresponds
-  // to the autofill profile's GUID for the current value if `is_autofilled` is
-  // set or for the previously autofilled value if the field was changed after
-  // filling. nullopt means the field wasn't autofilled.
+  // to the autofill profile's GUID for the last address filling value of the
+  // field. nullopt means the field was never autofilled with address data.
   // Note: `is_autofilled` is true for autocompleted fields. So `is_autofilled`
   // is not a sufficient condition for `autofill_source_profile_guid_` to have a
   // value. This is not tracked for fields filled with field by field filling.
@@ -491,6 +570,24 @@ class AutofillField : public FormFieldData {
   // than the classified one, based on country-specific rules.
   // This is not tracked for fields filled with field by field filling.
   std::optional<FieldType> autofilled_type_;
+
+  // Denotes the product last responsible for filling the field. If the field is
+  // autofilled, then it will correspond to the current filler, otherwise it
+  // would correspond to the last filler of the field before the field became
+  // not autofilled (due to user or JS edits). Note that this is not necessarily
+  // tied to the field type, as some filling mechanisms are independent of the
+  // field type (e.g. Autocomplete).
+  FillingProduct filling_product_ = FillingProduct::kNone;
+
+  // Denotes whether a user triggered suggestions from this field.
+  bool did_trigger_suggestions_ = false;
+
+  // True iff the field was ever focused.
+  bool was_focused_ = false;
+
+  // Field types that the ML model is able to output.
+  // Assigned by the model when it has classified the field.
+  std::optional<FieldTypeSet> ml_supported_types_;
 };
 
 }  // namespace autofill

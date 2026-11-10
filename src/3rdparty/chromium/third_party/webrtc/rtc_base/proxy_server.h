@@ -14,15 +14,14 @@
 #include <memory>
 #include <vector>
 
-#include "absl/memory/memory.h"
 #include "rtc_base/memory/fifo_buffer.h"
 #include "rtc_base/server_socket_adapters.h"
 #include "rtc_base/socket.h"
 #include "rtc_base/socket_address.h"
+#include "rtc_base/socket_factory.h"
+#include "rtc_base/third_party/sigslot/sigslot.h"
 
-namespace rtc {
-
-class SocketFactory;
+namespace webrtc {
 
 // ProxyServer is a base class that allows for easy construction of proxy
 // servers. With its helper class ProxyBinding, it contains all the necessary
@@ -89,22 +88,7 @@ class ProxyServer : public sigslot::has_slots<> {
   std::vector<std::unique_ptr<ProxyBinding>> bindings_;
 };
 
-// SocksProxyServer is a simple extension of ProxyServer to implement SOCKS.
-class SocksProxyServer : public ProxyServer {
- public:
-  SocksProxyServer(SocketFactory* int_factory,
-                   const SocketAddress& int_addr,
-                   SocketFactory* ext_factory,
-                   const SocketAddress& ext_ip)
-      : ProxyServer(int_factory, int_addr, ext_factory, ext_ip) {}
+}  //  namespace webrtc
 
-  SocksProxyServer(const SocksProxyServer&) = delete;
-  SocksProxyServer& operator=(const SocksProxyServer&) = delete;
-
- protected:
-  AsyncProxyServerSocket* WrapSocket(Socket* socket) override;
-};
-
-}  // namespace rtc
 
 #endif  // RTC_BASE_PROXY_SERVER_H_

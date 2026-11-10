@@ -27,6 +27,11 @@ TextFragmentAnchorTestBase::TextFragmentAnchorTestBase(
 
 void TextFragmentAnchorTestBase::SetUp() {
   SimTest::SetUp();
+  if (GetDocument().GetPage()) {
+    GetDocument()
+        .GetPage()
+        ->related_pages_mutation_from_previous_page_finalized_ = false;
+  }
   if (enable_virtual_time_) {
     // Most tests aren't concerned with the post-load task timers so use virtual
     // time so tests don't spend time waiting for the real-clock timers to fire.
@@ -42,17 +47,37 @@ void TextFragmentAnchorTestBase::TearDown() {
 }
 
 void TextFragmentAnchorTestBase::RunAsyncMatchingTasks() {
+  GetDocument()
+      .GetPage()
+      ->related_pages_mutation_from_previous_page_finalized_ = false;
+  test::RunPendingTasks();
+  GetDocument().EnqueueAnimationFrameTask(BindOnce([]() {}));
+  Compositor().BeginFrame();
+
+  GetDocument().GetPage()->NotifyRelatedPagesFinalized(false);
+  GetDocument().GetFrame()->Loader().ProcessPendingCrossDocumentFragment();
+
   ThreadScheduler::Current()
       ->ToMainThreadScheduler()
       ->StartIdlePeriodForTesting();
   if (enable_virtual_time_) {
     test::RunPendingTasks();
   } else {
-    task_environment()->FastForwardUntilNoTasksRemain();
+    task_environment().FastForwardUntilNoTasksRemain();
   }
 }
 
 void TextFragmentAnchorTestBase::RunUntilTextFragmentFinalization() {
+  GetDocument()
+      .GetPage()
+      ->related_pages_mutation_from_previous_page_finalized_ = false;
+  test::RunPendingTasks();
+  GetDocument().EnqueueAnimationFrameTask(BindOnce([]() {}));
+  Compositor().BeginFrame();
+
+  GetDocument().GetPage()->NotifyRelatedPagesFinalized(false);
+  GetDocument().GetFrame()->Loader().ProcessPendingCrossDocumentFragment();
+
   FragmentAnchor* base_anchor =
       GetDocument().GetFrame()->View()->GetFragmentAnchor();
   CHECK(base_anchor);
@@ -78,7 +103,7 @@ void TextFragmentAnchorTestBase::RunUntilTextFragmentFinalization() {
     if (enable_virtual_time_) {
       test::RunDelayedTasks(TextFragmentAnchor::PostLoadTaskTimeout());
     } else {
-      task_environment()->FastForwardBy(
+      task_environment().FastForwardBy(
           TextFragmentAnchor::PostLoadTaskTimeout());
     }
     // PostLoadTask schedules a new frame to perform the final text search.

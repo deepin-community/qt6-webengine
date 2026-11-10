@@ -1,13 +1,13 @@
 // Copyright (c) 2020 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+/* eslint-disable rulesdir/no-lit-render-outside-of-view */
 
-import * as LitHtml from '../../../ui/lit-html/lit-html.js';
-import * as ComponentHelpers from '../helpers/helpers.js';
+import * as Lit from '../../../ui/lit/lit.js';
 
 import nodeTextStyles from './nodeText.css.js';
 
-const {render, html} = LitHtml;
+const {render, html} = Lit;
 
 export interface NodeTextData {
   nodeTitle: string;
@@ -16,16 +16,11 @@ export interface NodeTextData {
 }
 
 export class NodeText extends HTMLElement {
-  static readonly litTagName = LitHtml.literal`devtools-node-text`;
 
   readonly #shadow = this.attachShadow({mode: 'open'});
-  #nodeTitle: string = '';
+  #nodeTitle = '';
   #nodeId?: string = '';
   #nodeClasses?: string[] = [];
-
-  connectedCallback(): void {
-    this.#shadow.adoptedStyleSheets = [nodeTextStyles];
-  }
 
   set data(data: NodeTextData) {
     this.#nodeTitle = data.nodeTitle;
@@ -43,7 +38,7 @@ export class NodeText extends HTMLElement {
     ];
 
     if (this.#nodeId) {
-      const classes = LitHtml.Directives.classMap({
+      const classes = Lit.Directives.classMap({
         'node-label-id': true,
         'node-multiple-descriptors': hasNodeClasses,
       });
@@ -52,7 +47,7 @@ export class NodeText extends HTMLElement {
 
     if (this.#nodeClasses && this.#nodeClasses.length > 0) {
       const text = this.#nodeClasses.map(c => `.${CSS.escape(c)}`).join('');
-      const classes = LitHtml.Directives.classMap({
+      const classes = Lit.Directives.classMap({
         'node-label-class': true,
         'node-multiple-descriptors': hasId,
       });
@@ -62,6 +57,7 @@ export class NodeText extends HTMLElement {
     // Disabled until https://crbug.com/1079231 is fixed.
     // clang-format off
     render(html`
+      <style>${nodeTextStyles}</style>
       ${parts}
     `, this.#shadow, {
       host: this,
@@ -70,10 +66,9 @@ export class NodeText extends HTMLElement {
   }
 }
 
-ComponentHelpers.CustomElements.defineComponent('devtools-node-text', NodeText);
+customElements.define('devtools-node-text', NodeText);
 
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface HTMLElementTagNameMap {
     'devtools-node-text': NodeText;
   }

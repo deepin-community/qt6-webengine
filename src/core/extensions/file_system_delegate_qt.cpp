@@ -1,5 +1,6 @@
 // Copyright (C) 2023 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "file_system_delegate_qt.h"
 
@@ -36,20 +37,18 @@ FileEntryPickerQt::FileEntryPickerQt(
         this, std::make_unique<QtWebEngineCore::SelectFilePolicyQt>(web_contents));
     m_selectFileDialog->SelectFile(
         picker_type, std::u16string(), suggested_name, file_type_info, 0,
-        base::FilePath::StringType(), nullptr, nullptr, &caller);
+        base::FilePath::StringType(), {}, &caller);
 }
 
 FileEntryPickerQt::~FileEntryPickerQt() = default;
 
-void FileEntryPickerQt::FileSelected(const ui::SelectedFileInfo &file, int index, void *params)
+void FileEntryPickerQt::FileSelected(const ui::SelectedFileInfo &file, int index)
 {
-    MultiFilesSelected({ file }, params);
+    MultiFilesSelected({ file });
 }
 
-void FileEntryPickerQt::MultiFilesSelected(const std::vector<ui::SelectedFileInfo> &files,
-                                           void *params)
+void FileEntryPickerQt::MultiFilesSelected(const std::vector<ui::SelectedFileInfo> &files)
 {
-    Q_UNUSED(params);
     std::vector<base::FilePath> paths;
     for (const auto &file : files) {
         paths.push_back(file.file_path);
@@ -58,7 +57,7 @@ void FileEntryPickerQt::MultiFilesSelected(const std::vector<ui::SelectedFileInf
     delete this;
 }
 
-void FileEntryPickerQt::FileSelectionCanceled(void *params)
+void FileEntryPickerQt::FileSelectionCanceled()
 {
     std::move(m_fileSelectionCanceledCallback).Run();
     delete this;

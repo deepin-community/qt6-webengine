@@ -6,12 +6,12 @@ import { SkipTestCase } from '../../../common/framework/fixture.js';
 import { makeTestGroup } from '../../../common/framework/test_group.js';
 import { timeout } from '../../../common/util/timeout.js';
 import { assert, unreachable } from '../../../common/util/util.js';
-import { GPUTest } from '../../gpu_test.js';
+import { AllFeaturesMaxLimitsGPUTest } from '../../gpu_test.js';
 import { kAllCanvasTypes, createCanvas, CanvasType } from '../../util/create_elements.js';
 
 const kFormat = 'bgra8unorm';
 
-class GPUContextTest extends GPUTest {
+class GPUContextTest extends AllFeaturesMaxLimitsGPUTest {
   initCanvasContext(canvasType: CanvasType = 'onscreen'): GPUCanvasContext {
     const canvas = createCanvas(this, canvasType, 2, 2);
     if (canvasType === 'onscreen') {
@@ -39,6 +39,27 @@ class GPUContextTest extends GPUTest {
     });
 
     return ctx;
+  }
+
+  expectTextureDestroyed(texture: GPUTexture, expectDestroyed = true) {
+    this.expectValidationError(() => {
+      // Try using the texture in a render pass. Because it's a canvas texture
+      // it should have RENDER_ATTACHMENT usage.
+      assert((texture.usage & GPUTextureUsage.RENDER_ATTACHMENT) !== 0);
+      const encoder = this.device.createCommandEncoder();
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: texture.createView(),
+            loadOp: 'clear',
+            storeOp: 'store',
+          },
+        ],
+      });
+      pass.end();
+      // Submitting should generate a validation error if the texture is destroyed.
+      this.queue.submit([encoder.finish()]);
+    }, expectDestroyed);
   }
 }
 
@@ -151,9 +172,14 @@ g.test('multiple_frames')
   )
   .beforeAllSubcases(t => {
     const { canvasType } = t.params;
-    if (canvasType === 'offscreen' && !('transferToImageBitmap' in OffscreenCanvas.prototype)) {
-      throw new SkipTestCase('transferToImageBitmap not supported');
-    }
+    t.skipIf(
+      canvasType === 'offscreen' && typeof OffscreenCanvas === 'undefined',
+      'OffscreenCanvas does not exist in this environment'
+    );
+    t.skipIf(
+      canvasType === 'offscreen' && !('transferToImageBitmap' in OffscreenCanvas.prototype),
+      'transferToImageBitmap not supported'
+    );
   })
   .fn(t => {
     const { canvasType, clearTexture } = t.params;
@@ -170,7 +196,7 @@ g.test('multiple_frames')
           // Ensure that each frame a new texture object is returned.
           t.expect(currentTexture !== prevTexture);
 
-          // Ensure that texture contents are transparent black.
+          // Ensure that the texture's initial contents are transparent black.
           t.expectSingleColor(currentTexture, currentTexture.format, {
             size: [currentTexture.width, currentTexture.height, 1],
             exp: { R: 0, G: 0, B: 0, A: 0 },
@@ -178,7 +204,8 @@ g.test('multiple_frames')
         }
 
         if (clearTexture) {
-          // Clear the texture to test that texture contents don't carry over from frame to frame.
+          // Fill the texture with a non-zero color, to test that texture
+          // contents don't carry over from frame to frame.
           const encoder = t.device.createCommandEncoder();
           const pass = encoder.beginRenderPass({
             colorAttachments: [
@@ -215,10 +242,8 @@ g.test('multiple_frames')
         }
       }
 
-      // Call frameCheck for the first time from requestAnimationFrame
-      // To make sure two frameChecks are run in different frames for onscreen canvas.
-      // offscreen canvas doesn't care.
-      requestAnimationFrame(frameCheck);
+      // Render the first frame immediately. The rest will be triggered recursively.
+      frameCheck();
     });
   });
 
@@ -234,6 +259,8 @@ g.test('resize')
 
     // Trigger a resize by changing the width.
     ctx.canvas.width = 4;
+
+    t.expectTextureDestroyed(prevTexture);
 
     // When the canvas resizes the texture returned by getCurrentTexture should immediately begin
     // returning a new texture matching the update dimensions.
@@ -263,7 +290,6 @@ g.test('resize')
     t.expect(currentTexture.height === ctx.canvas.height);
     t.expect(prevTexture.width === 4);
     t.expect(prevTexture.height === 2);
-    prevTexture = currentTexture;
 
     // Ensure that texture contents are transparent black.
     t.expectSingleColor(currentTexture, currentTexture.format, {
@@ -271,13 +297,31 @@ g.test('resize')
       exp: { R: 0, G: 0, B: 0, A: 0 },
     });
 
-    // Simply setting the canvas width and height values to their current values should not trigger
-    // a change in the texture.
-    ctx.canvas.width = 4;
-    ctx.canvas.height = 4;
+    // HTMLCanvasElement behaves differently than OffscreenCanvas
+    if (t.params.canvasType === 'onscreen') {
+      // Ensure canvas goes back to defaults when set to negative numbers.
+      ctx.canvas.width = -1;
+      currentTexture = ctx.getCurrentTexture();
+      t.expect(currentTexture.width === 300);
+      t.expect(currentTexture.height === 4);
 
-    currentTexture = ctx.getCurrentTexture();
-    t.expect(prevTexture === currentTexture);
+      ctx.canvas.height = -1;
+      currentTexture = ctx.getCurrentTexture();
+      t.expect(currentTexture.width === 300);
+      t.expect(currentTexture.height === 150);
+
+      // Setting the canvas width and height values to their current values should
+      // still trigger a change in the texture.
+      prevTexture = ctx.getCurrentTexture();
+      const { width, height } = ctx.canvas;
+      ctx.canvas.width = width;
+      ctx.canvas.height = height;
+
+      t.expectTextureDestroyed(prevTexture);
+
+      currentTexture = ctx.getCurrentTexture();
+      t.expect(prevTexture !== currentTexture);
+    }
   });
 
 g.test('expiry')
@@ -307,6 +351,14 @@ TODO: test more canvas types, and ways to update the rendering
       .combine('prevFrameCallsite', ['runInNewCanvasFrame', 'requestAnimationFrame'] as const)
       .combine('getCurrentTextureAgain', [true, false] as const)
   )
+  .beforeAllSubcases(t => {
+    if (
+      t.params.prevFrameCallsite === 'requestAnimationFrame' &&
+      typeof requestAnimationFrame === 'undefined'
+    ) {
+      throw new SkipTestCase('requestAnimationFrame not available');
+    }
+  })
   .fn(t => {
     const { canvasType, prevFrameCallsite, getCurrentTextureAgain } = t.params;
     const ctx = t.initCanvasContext(t.params.canvasType);

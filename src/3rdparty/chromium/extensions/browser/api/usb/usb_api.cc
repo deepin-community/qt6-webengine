@@ -137,7 +137,6 @@ bool ConvertDirectionFromApi(const Direction& input,
       return true;
     default:
       NOTREACHED();
-      return false;
   }
 }
 
@@ -158,7 +157,6 @@ bool ConvertRequestTypeFromApi(const RequestType& input,
       return true;
     default:
       NOTREACHED();
-      return false;
   }
 }
 
@@ -179,7 +177,6 @@ bool ConvertRecipientFromApi(const Recipient& input,
       return true;
     default:
       NOTREACHED();
-      return false;
   }
 }
 
@@ -213,7 +210,7 @@ const char* ConvertTransferStatusToApi(const UsbTransferStatus status) {
     case UsbTransferStatus::SHORT_PACKET:
       return kErrorTransferLength;
     default:
-      NOTREACHED();
+      DUMP_WILL_BE_NOTREACHED();
       return "";
   }
 }
@@ -240,7 +237,6 @@ TransferType ConvertTransferTypeToApi(const UsbTransferType& input) {
       return usb::TransferType::kBulk;
     default:
       NOTREACHED();
-      return usb::TransferType::kNone;
   }
 }
 
@@ -252,7 +248,6 @@ Direction ConvertDirectionToApi(const UsbTransferDirection& input) {
       return usb::Direction::kOut;
     default:
       NOTREACHED();
-      return usb::Direction::kNone;
   }
 }
 
@@ -269,7 +264,6 @@ SynchronizationType ConvertSynchronizationTypeToApi(
       return usb::SynchronizationType::kSynchronous;
     default:
       NOTREACHED();
-      return usb::SynchronizationType::kNone;
   }
 }
 
@@ -289,7 +283,6 @@ usb::UsageType ConvertUsageTypeToApi(const UsbUsageType& input) {
       return usb::UsageType::kNone;
     default:
       NOTREACHED();
-      return usb::UsageType::kNone;
   }
 }
 
@@ -492,8 +485,8 @@ void UsbTransferFunction::OnCompleted(UsbTransferStatus status,
     error_args.Append(std::move(transfer_info));
     // Using ErrorWithArguments is discouraged but required to provide the
     // detailed transfer info as the transfer may have partially succeeded.
-    Respond(ErrorWithArguments(std::move(error_args),
-                               ConvertTransferStatusToApi(status)));
+    Respond(ErrorWithArgumentsDoNotUse(std::move(error_args),
+                                       ConvertTransferStatusToApi(status)));
   }
 }
 
@@ -1290,7 +1283,7 @@ void UsbIsochronousTransferFunction::OnTransferInCompleted(
   buffer.reserve(length);
 
   UsbTransferStatus status = UsbTransferStatus::COMPLETED;
-  const char* data_ptr = reinterpret_cast<const char*>(data.data());
+  size_t index = 0;
   for (const auto& packet : packets) {
     // Capture the error status of the first unsuccessful packet.
     if (status == UsbTransferStatus::COMPLETED &&
@@ -1298,9 +1291,10 @@ void UsbIsochronousTransferFunction::OnTransferInCompleted(
       status = packet->status;
     }
 
-    buffer.insert(buffer.end(), data_ptr,
-                  data_ptr + packet->transferred_length);
-    data_ptr += packet->length;
+    buffer.insert(buffer.end(), reinterpret_cast<const char*>(&data[index]),
+                  reinterpret_cast<const char*>(
+                      &data[index + packet->transferred_length]));
+    index += packet->transferred_length;
   }
 
   base::Value::Dict transfer_info;
@@ -1351,7 +1345,8 @@ void UsbResetDeviceFunction::OnComplete(bool success) {
     error_args.Append(false);
     // Using ErrorWithArguments is discouraged but required to maintain
     // compatibility with existing applications.
-    Respond(ErrorWithArguments(std::move(error_args), kErrorResetDevice));
+    Respond(
+        ErrorWithArgumentsDoNotUse(std::move(error_args), kErrorResetDevice));
   }
 }
 

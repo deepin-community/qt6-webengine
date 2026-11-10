@@ -45,7 +45,7 @@ class Settings;
 class CORE_EXPORT WebSettingsImpl final : public WebSettings {
  public:
   WebSettingsImpl(Settings*, DevToolsEmulator*);
-  virtual ~WebSettingsImpl() = default;
+  ~WebSettingsImpl() = default;
 
   void SetFromStrings(const WebString& name, const WebString& value) override;
 
@@ -85,6 +85,7 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
   void SetDontSendKeyEventsToJavascript(bool) override;
   void SetDoubleTapToZoomEnabled(bool) override;
   void SetDownloadableBinaryFontsEnabled(bool) override;
+  void SetDynamicSafeAreaInsetsEnabled(bool) override;
   void SetEditingBehavior(mojom::blink::EditingBehavior) override;
   void SetEnableScrollAnimator(bool) override;
   void SetPrefersReducedMotion(bool) override;
@@ -126,6 +127,7 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
   void SetMinimumFontSize(int) override;
   void SetMinimumLogicalFontSize(int) override;
   void SetHideScrollbars(bool) override;
+  void SetPrefersDefaultScrollbarStyles(bool) override;
   void SetPasswordEchoDurationInSeconds(double) override;
   void SetPasswordEchoEnabled(bool) override;
   void SetPluginsEnabled(bool) override;
@@ -165,7 +167,7 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
   void SetSupportsMultipleWindows(bool) override;
   void SetSyncXHRInDocumentsEnabled(bool) override;
   void SetTargetBlankImpliesNoOpenerEnabledWillBeRemoved(bool) override;
-  void SetAllowNonEmptyNavigatorPlugins(bool) override;
+  void SetIgnorePermissionForDeviceChangedEvent(bool) override;
   void SetTextAreasAreResizable(bool) override;
   void SetTextAutosizingEnabled(bool) override;
   void SetAccessibilityFontScaleFactor(float) override;
@@ -205,12 +207,12 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
 
   // TODO(rajendrant): Remove these lazyload distance threshold settings for
   // frames and images, once the values are finalized from the experiment.
-  void SetLazyFrameLoadingDistanceThresholdPxUnknown(int) override;
-  void SetLazyFrameLoadingDistanceThresholdPxOffline(int) override;
-  void SetLazyFrameLoadingDistanceThresholdPxSlow2G(int) override;
-  void SetLazyFrameLoadingDistanceThresholdPx2G(int) override;
-  void SetLazyFrameLoadingDistanceThresholdPx3G(int) override;
-  void SetLazyFrameLoadingDistanceThresholdPx4G(int) override;
+  void SetLazyLoadingFrameMarginPxUnknown(int) override;
+  void SetLazyLoadingFrameMarginPxOffline(int) override;
+  void SetLazyLoadingFrameMarginPxSlow2G(int) override;
+  void SetLazyLoadingFrameMarginPx2G(int) override;
+  void SetLazyLoadingFrameMarginPx3G(int) override;
+  void SetLazyLoadingFrameMarginPx4G(int) override;
   void SetLazyLoadingImageMarginPxUnknown(int) override;
   void SetLazyLoadingImageMarginPxOffline(int) override;
   void SetLazyLoadingImageMarginPxSlow2G(int) override;
@@ -219,16 +221,22 @@ class CORE_EXPORT WebSettingsImpl final : public WebSettings {
   void SetLazyLoadingImageMarginPx4G(int) override;
 
   void SetForceDarkModeEnabled(bool) override;
+  void SetInForcedColors(bool) override;
+  void SetIsForcedColorsDisabled(bool) override;
+  void SetPreferredRootScrollbarColorScheme(
+      mojom::blink::PreferredColorScheme) override;
   void SetPreferredColorScheme(mojom::blink::PreferredColorScheme) override;
   void SetPreferredContrast(mojom::blink::PreferredContrast) override;
   void SetNavigationControls(NavigationControls) override;
 
   void SetAriaModalPrunesAXTree(bool) override;
-  void SetUseAXMenuList(bool) override;
   void SetSelectionClipboardBufferAvailable(bool) override;
   void SetAccessibilityIncludeSvgGElement(bool) override;
   void SetWebXRImmersiveArAllowed(bool webxr_immersive_ar_allowed) override;
   void SetModalContextMenu(bool) override;
+  void SetRequireTransientActivationAndAuthorizationForSubAppsAPIs(
+      bool) override;
+  void SetRootScrollbarThemeColor(std::optional<SkColor>) override;
 
   bool RenderVSyncNotificationEnabled() const {
     return render_v_sync_notification_enabled_;

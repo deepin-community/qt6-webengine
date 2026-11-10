@@ -11,6 +11,7 @@
 
 #include "include/core/SkCanvas.h"
 #include "include/core/SkFont.h"
+#include "include/core/SkFontMgr.h"
 #include "include/private/base/SkNoncopyable.h"
 #include "include/private/base/SkTPin.h"
 #include "modules/audioplayer/SkAudioPlayer.h"
@@ -127,6 +128,7 @@ public:
                                                   const char resource_name[],
                                                   const char /*resource_id*/[]) const override {
         auto data = this->load(resource_path, resource_name);
+        // Viewer should have already registered the codecs necessary for MultiFrameImageAsset
         return skresources::MultiFrameImageAsset::Make(data);
     }
 
@@ -516,6 +518,7 @@ void SkottieSlide::init() {
     }
     skottie::Animation::Builder builder(flags);
 
+    // Viewer should have already registered the codecs necessary for DataURIResourceProviderProxy
     auto predecode = skresources::ImageDecodeStrategy::kPreDecode;
     auto resource_provider =
             sk_make_sp<AudioProviderProxy>(skresources::DataURIResourceProviderProxy::Make(
@@ -542,13 +545,14 @@ void SkottieSlide::init() {
     fAnimationStats = builder.getStats();
     fTimeBase       = 0; // force a time reset
 
-    if (!fSlotManagerInterface) {
-        fSlotManagerInterface = std::make_unique<SlotManagerInterface>(builder.getSlotManager(), resource_provider);
-    }
-
-    fSlotManagerInterface->initializeSlotManagerUI();
-
     if (fAnimation) {
+        if (!fSlotManagerInterface) {
+            fSlotManagerInterface =
+                std::make_unique<SlotManagerInterface>(builder.getSlotManager(), resource_provider);
+        }
+
+        fSlotManagerInterface->initializeSlotManagerUI();
+
         fAnimation->seek(0);
         fFrameTimes.resize(SkScalarCeilToInt(fAnimation->duration() * fAnimation->fps()));
         SkDebugf("Loaded Bodymovin animation v: %s, size: [%f %f]\n",

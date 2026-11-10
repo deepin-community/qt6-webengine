@@ -7,26 +7,32 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <map>
 #include <memory>
-#include <set>
+#include <optional>
 #include <string>
 #include <utility>
-#include <vector>
 
+#include "quiche/quic/core/congestion_control/loss_detection_interface.h"
 #include "quiche/quic/core/congestion_control/pacing_sender.h"
 #include "quiche/quic/core/congestion_control/rtt_stats.h"
 #include "quiche/quic/core/congestion_control/send_algorithm_interface.h"
 #include "quiche/quic/core/congestion_control/uber_loss_algorithm.h"
-#include "quiche/quic/core/proto/cached_network_parameters_proto.h"
+#include "quiche/quic/core/crypto/quic_random.h"
+#include "quiche/quic/core/frames/quic_ack_frame.h"
+#include "quiche/quic/core/frames/quic_ack_frequency_frame.h"
+#include "quiche/quic/core/quic_bandwidth.h"
+#include "quiche/quic/core/quic_constants.h"
+#include "quiche/quic/core/quic_packet_number.h"
 #include "quiche/quic/core/quic_packets.h"
 #include "quiche/quic/core/quic_sustained_bandwidth_recorder.h"
+#include "quiche/quic/core/quic_tag.h"
 #include "quiche/quic/core/quic_time.h"
 #include "quiche/quic/core/quic_transmission_info.h"
 #include "quiche/quic/core/quic_types.h"
 #include "quiche/quic/core/quic_unacked_packet_map.h"
-#include "quiche/quic/platform/api/quic_export.h"
-#include "quiche/quic/platform/api/quic_flags.h"
+#include "quiche/quic/core/session_notifier_interface.h"
+#include "quiche/common/platform/api/quiche_export.h"
+#include "quiche/common/platform/api/quiche_logging.h"
 #include "quiche/common/quiche_circular_deque.h"
 
 namespace quic {
@@ -84,9 +90,6 @@ class QUICHE_EXPORT QuicSentPacketManager {
                                            QuicTime::Delta /*rtt*/,
                                            QuicByteCount /*old_cwnd*/,
                                            QuicByteCount /*new_cwnd*/) {}
-
-    virtual void OnAdjustBurstSize(int /*old_burst_size*/,
-                                   int /*new_burst_size*/) {}
 
     virtual void OnOvershootingDetected() {}
 
@@ -152,6 +155,20 @@ class QUICHE_EXPORT QuicSentPacketManager {
 
   void SetMaxPacingRate(QuicBandwidth max_pacing_rate) {
     pacing_sender_.set_max_pacing_rate(max_pacing_rate);
+  }
+
+  // Experimental, see b/364614652 for more context.
+  // This is only used by an experimental feature for bbr2_sender to support
+  // soft pacing based on application layer hints when there are signs of
+  // congestion.
+  void SetApplicationDrivenPacingRate(
+      QuicBandwidth application_driven_pacing_rate) {
+    pacing_sender_.set_application_driven_pacing_rate(
+        application_driven_pacing_rate);
+  }
+
+  QuicBandwidth ApplicationDrivenPacingRate() const {
+    return pacing_sender_.application_driven_pacing_rate();
   }
 
   // The delay to use for the send alarm. If zero, it essentially means
@@ -225,6 +242,11 @@ class QUICHE_EXPORT QuicSentPacketManager {
                     TransmissionType transmission_type,
                     HasRetransmittableData has_retransmittable_data,
                     bool measure_rtt, QuicEcnCodepoint ecn_codepoint);
+
+  // Informs the sent packet manager of a |packet| sent by the dispatcher. This
+  // should only be called before any packet is sent by the QuicConnection.
+  const QuicTransmissionInfo& AddDispatcherSentPacket(
+      const DispatcherSentPacket& packet);
 
   bool CanSendAckFrequency() const;
 
@@ -358,10 +380,6 @@ class QUICHE_EXPORT QuicSentPacketManager {
 
   void SetDebugDelegate(DebugDelegate* debug_delegate);
 
-  void SetPacingAlarmGranularity(QuicTime::Delta alarm_granularity) {
-    pacing_sender_.set_alarm_granularity(alarm_granularity);
-  }
-
   QuicPacketNumber GetLargestObserved() const {
     return unacked_packets_.largest_acked();
   }
@@ -400,8 +418,14 @@ class QUICHE_EXPORT QuicSentPacketManager {
 
   // Wrapper for SendAlgorithmInterface functions, since these functions are
   // not const.
-  bool EnableECT0() { return send_algorithm_->EnableECT0(); }
-  bool EnableECT1() { return send_algorithm_->EnableECT1(); }
+  bool EnableECT0() {
+    ecn_queried_ = send_algorithm_->EnableECT0();
+    return ecn_queried_;
+  }
+  bool EnableECT1() {
+    ecn_queried_ = send_algorithm_->EnableECT1();
+    return ecn_queried_;
+  }
 
   void SetSessionNotifier(SessionNotifierInterface* session_notifier) {
     unacked_packets_.SetSessionNotifier(session_notifier);
@@ -411,11 +435,6 @@ class QUICHE_EXPORT QuicSentPacketManager {
 
   QuicPacketCount initial_congestion_window() const {
     return initial_congestion_window_;
-  }
-
-  QuicPacketNumber largest_packet_peer_knows_is_acked() const {
-    QUICHE_DCHECK(!supports_multiple_packet_number_spaces());
-    return largest_packet_peer_knows_is_acked_;
   }
 
   size_t pending_timer_transmission_count() const {
@@ -493,6 +512,14 @@ class QUICHE_EXPORT QuicSentPacketManager {
   // kMinUntrustedInitialRoundTripTimeUs if not |trusted|.
   void SetInitialRtt(QuicTime::Delta rtt, bool trusted);
 
+  // Enables QUIC overhead measurement.
+  void EnableOverheadMeasurement() { measure_overhead_ = true; }
+
+  // Returns an estimate of overhead added by QUIC as a fraction of application
+  // payload sent to total data sent (total data includes everything inside UDP
+  // packets sent by QUIC, but excludes UDP headers and above).
+  float GetOverheadEstimate() const;
+
  private:
   friend class test::QuicConnectionPeer;
   friend class test::QuicSentPacketManagerPeer;
@@ -533,10 +560,14 @@ class QUICHE_EXPORT QuicSentPacketManager {
 
   // Removes the retransmittability and in flight properties from the packet at
   // |info| due to receipt by the peer.
+  // Note: The function may cause the QuicTransmissionInfo for |packet_number|
+  // to move, in that case, |info| will be updated to point to the new
+  // QuicTransmissionInfo when the function returns.
   void MarkPacketHandled(QuicPacketNumber packet_number,
-                         QuicTransmissionInfo* info, QuicTime ack_receive_time,
+                         QuicTime ack_receive_time,
                          QuicTime::Delta ack_delay_time,
-                         QuicTime receive_timestamp);
+                         QuicTime receive_timestamp,
+                         QuicTransmissionInfo*& info);
 
   // Request that |packet_number| be retransmitted after the other pending
   // retransmissions.  Does not add it to the retransmissions if it's already
@@ -599,6 +630,9 @@ class QUICHE_EXPORT QuicSentPacketManager {
   // Update counters for the number of ECN-marked packets sent.
   void RecordEcnMarkingSent(QuicEcnCodepoint ecn_codepoint,
                             EncryptionLevel level);
+
+  // Updates the QUIC overhead measurements if those are enabled.
+  void UpdateOverheadMeasurements(const SerializedPacket& packet);
 
   // Newly serialized retransmittable packets are added to this map, which
   // contains owning pointers to any contained frames.  If a packet is
@@ -715,6 +749,9 @@ class QUICHE_EXPORT QuicSentPacketManager {
   // Whether to ignore the ack_delay in received ACKs.
   bool ignore_ack_delay_;
 
+  // Whether to record stats necessary for the QUIC overhead estimation.
+  bool measure_overhead_;
+
   // The total number of packets sent with ECT(0) or ECT(1) in each packet
   // number space over the life of the connection.
   QuicPacketCount ect0_packets_sent_[NUM_PACKET_NUMBER_SPACES] = {0, 0, 0};
@@ -723,7 +760,17 @@ class QUICHE_EXPORT QuicSentPacketManager {
   // Most recent ECN codepoint counts received in an ACK frame sent by the peer.
   QuicEcnCounts peer_ack_ecn_counts_[NUM_PACKET_NUMBER_SPACES];
 
+  // The numerator and denominator used for overhead measurements. Only recorded
+  // if `measure_overhead_` is true.
+  QuicByteCount overhead_good_bytes_ = 0;
+  QuicByteCount overhead_total_bytes_ = 0;
+
   std::optional<QuicTime::Delta> deferred_send_alarm_delay_;
+
+  // If true, QuicConnection has called EnableECT0() or EnableECT1(). This is
+  // used to prevent the execution of ECN-specific code unless flag-protected
+  // code has explicitly enabled it.
+  bool ecn_queried_ = false;
 };
 
 }  // namespace quic

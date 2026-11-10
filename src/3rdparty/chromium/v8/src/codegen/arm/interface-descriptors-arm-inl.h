@@ -93,6 +93,21 @@ constexpr Register KeyedLoadWithVectorDescriptor::VectorRegister() {
 }
 
 // static
+constexpr Register EnumeratedKeyedLoadBaselineDescriptor::EnumIndexRegister() {
+  return r4;
+}
+
+// static
+constexpr Register EnumeratedKeyedLoadBaselineDescriptor::CacheTypeRegister() {
+  return r5;
+}
+
+// static
+constexpr Register EnumeratedKeyedLoadBaselineDescriptor::SlotRegister() {
+  return r2;
+}
+
+// static
 constexpr Register KeyedHasICBaselineDescriptor::ReceiverRegister() {
   return kInterpreterAccumulatorRegister;
 }
@@ -163,6 +178,11 @@ MaglevOptimizeCodeOrTailCallOptimizedCodeSlotDescriptor::FlagsRegister() {
 constexpr Register MaglevOptimizeCodeOrTailCallOptimizedCodeSlotDescriptor::
     FeedbackVectorRegister() {
   return r5;
+}
+// static
+constexpr Register
+MaglevOptimizeCodeOrTailCallOptimizedCodeSlotDescriptor::TemporaryRegister() {
+  return r4;
 }
 
 // static
@@ -323,12 +343,9 @@ CallApiCallbackOptimizedDescriptor::ActualArgumentsCountRegister() {
   return r2;
 }
 // static
-constexpr Register CallApiCallbackOptimizedDescriptor::CallDataRegister() {
+constexpr Register
+CallApiCallbackOptimizedDescriptor::FunctionTemplateInfoRegister() {
   return r3;
-}
-// static
-constexpr Register CallApiCallbackOptimizedDescriptor::HolderRegister() {
-  return r0;
 }
 
 // static
@@ -342,12 +359,9 @@ CallApiCallbackGenericDescriptor::TopmostScriptHavingContextRegister() {
   return r1;
 }
 // static
-constexpr Register CallApiCallbackGenericDescriptor::CallHandlerInfoRegister() {
+constexpr Register
+CallApiCallbackGenericDescriptor::FunctionTemplateInfoRegister() {
   return r3;
-}
-// static
-constexpr Register CallApiCallbackGenericDescriptor::HolderRegister() {
-  return r0;
 }
 
 // static

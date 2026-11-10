@@ -12,9 +12,11 @@
 // http://msdn.microsoft.com/library/default.asp?url=/library/en-us/shellcc/platform/commctls/userex/topics/partsandstates.asp
 #include <windows.h>
 
+#include <optional>
+
+#include "base/component_export.h"
 #include "base/no_destructor.h"
 #include "base/win/registry.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/sys_color_change_listener.h"
@@ -30,8 +32,9 @@ namespace ui {
 // of several PaintXXX methods to an API, inherited from the NativeTheme base
 // class, that consists of a single Paint() method with a argument to indicate
 // what kind of part to paint.
-class NATIVE_THEME_EXPORT NativeThemeWin : public NativeTheme,
-                                           public gfx::SysColorChangeListener {
+class COMPONENT_EXPORT(NATIVE_THEME) NativeThemeWin
+    : public NativeTheme,
+      public gfx::SysColorChangeListener {
  public:
   enum ThemeName {
     BUTTON,
@@ -67,7 +70,8 @@ class NATIVE_THEME_EXPORT NativeThemeWin : public NativeTheme,
              const gfx::Rect& rect,
              const ExtraParams& extra,
              ColorScheme color_scheme,
-             const absl::optional<SkColor>& accent_color) const override;
+             bool in_forced_colors,
+             const std::optional<SkColor>& accent_color) const override;
   bool SupportsNinePatch(Part part) const override;
   gfx::Size GetNinePatchCanvasSize(Part part) const override;
   gfx::Rect GetNinePatchAperture(Part part) const override;
@@ -90,6 +94,7 @@ class NATIVE_THEME_EXPORT NativeThemeWin : public NativeTheme,
 
   // NativeTheme:
   void ConfigureWebInstance() override;
+  std::optional<base::TimeDelta> GetPlatformCaretBlinkInterval() const override;
 
   NativeThemeWin(bool configure_web_instance, bool should_only_use_dark_colors);
   ~NativeThemeWin() override;

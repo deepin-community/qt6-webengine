@@ -1,3 +1,4 @@
+// clang-format off
 // Auto-generated file. Do not edit!
 //   Template: src/x32-transposec/wasmsimd.c.in
 //   Generator: tools/xngen
@@ -11,9 +12,9 @@
 
 #include <assert.h>
 
-#include <xnnpack/common.h>
-#include <xnnpack/math.h>
-#include <xnnpack/transpose.h>
+#include "src/xnnpack/common.h"
+#include "src/xnnpack/math.h"
+#include "src/xnnpack/transpose.h"
 
 void xnn_x32_transposec_ukernel__4x4_reuse_multi_wasmsimd(
     const uint32_t* input,
@@ -21,11 +22,10 @@ void xnn_x32_transposec_ukernel__4x4_reuse_multi_wasmsimd(
     size_t input_stride,
     size_t output_stride,
     size_t block_width,
-    size_t block_height,
-    const union xnn_x32_transpose_params params[restrict XNN_MIN_ELEMENTS(1)]) XNN_OOB_READS
+    size_t block_height) XNN_OOB_READS
 {
-  assert(output_stride >= block_height * sizeof(uint32_t));
-  assert(input_stride >= block_width * sizeof(uint32_t));
+  assert(block_width == 1 || output_stride >= block_height * sizeof(uint32_t));
+  assert(block_height == 1 || input_stride >= block_width * sizeof(uint32_t));
 
   const size_t tile_height = 4;
   const size_t tile_width = 4;

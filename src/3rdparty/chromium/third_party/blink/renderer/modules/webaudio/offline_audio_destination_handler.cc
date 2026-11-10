@@ -6,13 +6,16 @@
 
 #include <algorithm>
 
+#include "base/compiler_specific.h"
 #include "base/trace_event/typed_macros.h"
+#include "media/base/audio_glitch_info.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node_input.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_node_output.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_worklet.h"
 #include "third_party/blink/renderer/modules/webaudio/audio_worklet_messaging_proxy.h"
 #include "third_party/blink/renderer/modules/webaudio/base_audio_context.h"
+#include "third_party/blink/renderer/modules/webaudio/cross_thread_audio_worklet_processor_info.h"
 #include "third_party/blink/renderer/modules/webaudio/offline_audio_context.h"
 #include "third_party/blink/renderer/platform/audio/audio_bus.h"
 #include "third_party/blink/renderer/platform/audio/audio_utilities.h"
@@ -38,7 +41,7 @@ OfflineAudioDestinationHandler::OfflineAudioDestinationHandler(
   DCHECK(main_thread_task_runner_->BelongsToCurrentThread());
 
   channel_count_ = number_of_channels;
-  SetInternalChannelCountMode(kExplicit);
+  SetInternalChannelCountMode(V8ChannelCountMode::Enum::kExplicit);
   SetInternalChannelInterpretation(AudioBus::kSpeakers);
 }
 
@@ -138,9 +141,13 @@ void OfflineAudioDestinationHandler::InitializeOfflineRenderThread(
 
   shared_render_target_ = render_target->CreateSharedAudioBuffer();
   render_bus_ =
-      AudioBus::Create(render_target->numberOfChannels(),
-                       GetDeferredTaskHandler().RenderQuantumFrames());
-  DCHECK(render_bus_);
+      AudioBus::TryCreate(render_target->numberOfChannels(),
+                          GetDeferredTaskHandler().RenderQuantumFrames());
+  if (!render_bus_) {
+    Context()->SetAllocationFailed();
+    render_bus_ = AudioBus::TryCreate(render_target->numberOfChannels(), 0);
+    CHECK(render_bus_);
+  }
 
   PrepareTaskRunnerForRendering();
 }
@@ -192,8 +199,8 @@ void OfflineAudioDestinationHandler::DoOfflineRendering() {
     for (unsigned channel_index = 0; channel_index < number_of_channels;
          ++channel_index) {
       const float* source = render_bus_->Channel(channel_index)->Data();
-      memcpy(destinations[channel_index] + frames_processed_, source,
-             sizeof(float) * frames_available_to_copy);
+      UNSAFE_TODO(memcpy(destinations[channel_index] + frames_processed_,
+                         source, sizeof(float) * frames_available_to_copy));
     }
 
     frames_processed_ += frames_available_to_copy;
@@ -285,7 +292,9 @@ bool OfflineAudioDestinationHandler::RenderIfNotSuspended(
   // Take care pre-render tasks at the beginning of each render quantum. Then
   // it will stop the rendering loop if the context needs to be suspended
   // at the beginning of the next render quantum.
-  if (Context()->HandlePreRenderTasks(nullptr, nullptr)) {
+  if (Context()->HandlePreRenderTasks(number_of_frames, nullptr, nullptr,
+                                      base::TimeDelta(),
+                                      media::AudioGlitchInfo())) {
     SuspendOfflineRendering();
     return true;
   }
@@ -355,6 +364,15 @@ void OfflineAudioDestinationHandler::PrepareTaskRunnerForRendering() {
 
   // The task runner MUST be valid at this point.
   DCHECK(render_thread_task_runner_);
+}
+
+void OfflineAudioDestinationHandler::PrepareTaskRunnerForWorklet() {
+  CHECK(IsMainThread());
+
+  // Updates the render task runner to the AudioWorklet backing thread when a
+  // worklet becomes ready while the context is suspended, ensuring that
+  // rendering resumes on the correct thread.
+  PrepareTaskRunnerForRendering();
 }
 
 void OfflineAudioDestinationHandler::RestartRendering() {

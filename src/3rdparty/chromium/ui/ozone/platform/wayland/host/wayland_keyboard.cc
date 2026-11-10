@@ -15,6 +15,7 @@
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted_memory.h"
+#include "base/notimplemented.h"
 #include "base/unguessable_token.h"
 #include "ui/base/buildflags.h"
 #include "ui/events/base_event_utils.h"
@@ -83,7 +84,7 @@ class WaylandKeyboardHook final : public PlatformKeyboardHook {
   // is done through zcr-keyboard-extension in Lacros), so it's not possible to
   // implement this until the protocol supports it.
   //
-  // TODO(crbug.com/1408927): Update once it is supported in the protocol.
+  // TODO(crbug.com/40888760): Update once it is supported in the protocol.
   bool IsKeyLocked(DomCode dom_code) const final {
     NOTIMPLEMENTED_LOG_ONCE();
     return true;
@@ -192,35 +193,33 @@ void WaylandKeyboard::OnUnhandledKeyEvent(const KeyEvent& key_event) {
   extended_keyboard_->AckKey(serial, false);
 }
 
-// Two different behaviors are currently implemented for KeyboardLock support
-// on Wayland:
+// Keyboard shortcuts will be inhibited only when the following conditions are
+// met:
+// 1) A fullscreen window requested by the app is active.
+// 2) A WaylandKeyboardHook is in place for a given widget.
+// 3) Escape key is not requested as the only key (see comment below).
 //
-// 1. On Lacros, shortcuts are kept inhibited since the window initialization.
-// Such approach relies on the Exo-specific zcr-keyboard-extension protocol
-// extension, which allows Lacros (ozone/wayland based) to report back to the
-// Wayland compositor that a given key was not processed by the client, giving
-// it a chance of processing global shortcuts (even with a shortcuts inhibitor
-// in place), which is not currently possible with standard Wayland protocol
-// and extensions. That is also required to keep Lacros behaving just like Ash
-// Chrome's classic browser.
-//
-// 2. Otherwise, keyboard shortcuts will be inhibited only when in fullscreen
-// and when a WaylandKeyboardHook is in place for a given widget. See
-// KeyboardLock spec for more details: https://wicg.github.io/keyboard-lock
-//
-// TODO(https://crbug.com/1338554): Revisit once this scenario changes.
+// See KeyboardLock spec for more details: https://wicg.github.io/keyboard-lock
 std::unique_ptr<PlatformKeyboardHook> WaylandKeyboard::CreateKeyboardHook(
     WaylandWindow* window,
-    absl::optional<base::flat_set<DomCode>> dom_codes,
+    std::optional<base::flat_set<DomCode>> dom_codes,
     PlatformKeyboardHook::KeyEventCallback callback) {
   DCHECK(window);
-#if BUILDFLAG(IS_CHROMEOS_LACROS)
-  return std::make_unique<BaseKeyboardHook>(std::move(dom_codes),
-                                            std::move(callback));
-#else
+  if (dom_codes.has_value() && dom_codes->size() == 1 &&
+      *dom_codes->begin() == DomCode::ESCAPE) {
+    // TODO(crbug.com/40270434): The protocol doesn't support locking specific
+    // keys [1]. So when a lock is active, all keys are locked.
+    // An exception can be made just for escape key since this is typically done
+    // to avoid exiting fullscreen mode only instead of locking any other keys.
+    // And since the key would still be received by the foreground window, there
+    // is really no need to use the protocol in this case, which would lock all
+    // keys, when in fact other shortcuts (e.g. Alt+Tab) should continue to be
+    // handled by the compositor.
+    // [1] https://gitlab.freedesktop.org/wayland/wayland-protocols/-/issues/131
+    return nullptr;
+  }
   return std::make_unique<WaylandKeyboardHook>(
       CreateShortcutsInhibitor(window));
-#endif
 }
 
 wl::Object<zwp_keyboard_shortcuts_inhibitor_v1>
@@ -260,7 +259,7 @@ void WaylandKeyboard::OnKeymap(void* data,
 
   const char* keymap_string = static_cast<const char*>(keymap);
   if (!self->layout_engine_->SetCurrentLayoutFromBuffer(
-          keymap_string, strnlen(keymap_string, size))) {
+          keymap_string, UNSAFE_TODO(strnlen(keymap_string, size)))) {
     DLOG(ERROR) << "Failed to set XKB keymap.";
   }
   munmap(keymap, size);
@@ -288,6 +287,9 @@ void WaylandKeyboard::OnLeave(void* data,
   auto* self = static_cast<WaylandKeyboard*>(data);
   if (auto* window = wl::RootWindowFromWlSurface(surface))
     self->delegate_->OnKeyboardFocusChanged(window, /*focused=*/false);
+
+  // Upon window focus lose, reset modifier state.
+  self->delegate_->OnKeyboardModifiersChanged(0);
 
   // Upon window focus lose, reset the key repeat timers.
   self->auto_repeat_handler_.StopKeyRepeat();
@@ -367,7 +369,7 @@ void WaylandKeyboard::FlushInput(base::OnceClosure closure) {
   // wl_display_sync gives a chance for any key "up" events to arrive.
   // With a well behaved wayland compositor this should ensure we never
   // get spurious repeats.
-  sync_callback_.reset(wl_display_sync(connection_->display_wrapper()));
+  sync_callback_.reset(connection_->GetSyncCallback());
 
   static constexpr wl_callback_listener kSyncCallbackListener = {
       .done = &OnSyncDone,
@@ -385,7 +387,7 @@ void WaylandKeyboard::DispatchKey(unsigned int key,
                                   int flags) {
   // Key repeat is only triggered by wl_keyboard::key event, but not by
   // extended_keyboard::peek_key.
-  DispatchKey(key, scan_code, down, repeat, absl::nullopt, timestamp, device_id,
+  DispatchKey(key, scan_code, down, repeat, std::nullopt, timestamp, device_id,
               flags, KeyEventKind::kKey);
 }
 
@@ -417,7 +419,7 @@ void WaylandKeyboard::ProcessKey(uint32_t serial,
   }
 
   DispatchKey(
-      key, 0 /*scan_code*/, down, false /*repeat*/, absl::make_optional(serial),
+      key, 0 /*scan_code*/, down, false /*repeat*/, std::make_optional(serial),
       wl::EventMillisecondsToTimeTicks(time), device_id(), EF_NONE, kind);
 }
 
@@ -425,7 +427,7 @@ void WaylandKeyboard::DispatchKey(unsigned int key,
                                   unsigned int scan_code,
                                   bool down,
                                   bool repeat,
-                                  absl::optional<uint32_t> serial,
+                                  std::optional<uint32_t> serial,
                                   base::TimeTicks timestamp,
                                   int device_id,
                                   int flags,
@@ -437,8 +439,8 @@ void WaylandKeyboard::DispatchKey(unsigned int key,
   // Pass empty DomKey and KeyboardCode here so the delegate can pre-process
   // and decode it when needed.
   uint32_t result = delegate_->OnKeyboardKeyEvent(
-      down ? ET_KEY_PRESSED : ET_KEY_RELEASED, dom_code, repeat, serial,
-      timestamp, device_id, kind);
+      down ? EventType::kKeyPressed : EventType::kKeyReleased, dom_code, repeat,
+      serial, timestamp, device_id, kind);
 
   if (extended_keyboard_ && !(result & POST_DISPATCH_STOP_PROPAGATION) &&
       serial.has_value()) {

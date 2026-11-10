@@ -22,14 +22,13 @@
 
 namespace blink {
 
-typedef HeapVector<LayoutOpportunity, 8> LayoutOpportunityVector;
+typedef HeapVector<LayoutOpportunity, 1> LayoutOpportunityVector;
 
 // This class is an implementation detail. For use of the exclusion space,
 // see ExclusionSpace below. ExclusionSpace was designed to be cheap
 // to construct and cheap to copy if empty.
-class CORE_EXPORT ExclusionSpaceInternal final {
-  USING_FAST_MALLOC(ExclusionSpaceInternal);
-
+class CORE_EXPORT ExclusionSpaceInternal final
+    : public GarbageCollected<ExclusionSpaceInternal> {
  public:
   ExclusionSpaceInternal();
   ExclusionSpaceInternal(const ExclusionSpaceInternal&);
@@ -39,6 +38,11 @@ class CORE_EXPORT ExclusionSpaceInternal final {
   // See `ExclusionSpace::CopyFrom()`.
   void CopyFrom(const ExclusionSpaceInternal&);
   ~ExclusionSpaceInternal() = default;
+
+  void Trace(Visitor* visitor) const {
+    visitor->Trace(exclusions_);
+    visitor->Trace(derived_geometry_);
+  }
 
   void Add(const ExclusionArea* exclusion);
 
@@ -97,7 +101,6 @@ class CORE_EXPORT ExclusionSpaceInternal final {
         return std::max(left_clear_offset_, right_clear_offset_);
       default:
         NOTREACHED();
-        return LayoutUnit::Min();
     }
   }
 
@@ -119,7 +122,6 @@ class CORE_EXPORT ExclusionSpaceInternal final {
                         initial_letter_right_clear_offset_);
       default:
         NOTREACHED();
-        return LayoutUnit::Min();
     }
   }
 
@@ -130,11 +132,14 @@ class CORE_EXPORT ExclusionSpaceInternal final {
     return initial_letter_right_clear_offset_;
   }
 
+  LayoutUnit NonHiddenClearanceOffsetIncludingInitialLetter() const {
+    return non_hidden_clear_offset_;
+  }
+
   void SetHasBreakBeforeFloat(EFloat type) {
     switch (type) {
       default:
         NOTREACHED();
-        [[fallthrough]];
       case EFloat::kLeft:
         has_break_before_left_float_ = true;
         break;
@@ -148,7 +153,6 @@ class CORE_EXPORT ExclusionSpaceInternal final {
     switch (type) {
       default:
         NOTREACHED();
-        [[fallthrough]];
       case EFloat::kLeft:
         has_break_inside_left_float_ = true;
         break;
@@ -163,7 +167,6 @@ class CORE_EXPORT ExclusionSpaceInternal final {
     switch (type) {
       default:
         NOTREACHED();
-        [[fallthrough]];
       case EClear::kNone:
         return false;
       case EClear::kLeft:
@@ -419,7 +422,7 @@ class CORE_EXPORT ExclusionSpaceInternal final {
   //
   // `exclusions_` contains `ExclusionArea` in ascent order of block start
   // offset.
-  Persistent<ExclusionAreaPtrArray> exclusions_;
+  Member<GCedExclusionAreaPtrArray> exclusions_;
   wtf_size_t num_exclusions_ = 0;
 
   // These members are used for keeping track of the "lowest" offset for each
@@ -435,6 +438,11 @@ class CORE_EXPORT ExclusionSpaceInternal final {
   // These member are used for keeping track of initial letter box offset.
   LayoutUnit initial_letter_left_clear_offset_ = LayoutUnit::Min();
   LayoutUnit initial_letter_right_clear_offset_ = LayoutUnit::Min();
+
+  // The clear offset for both left and right, including both floats and initial
+  // letters, for only content that isn't hidden for paint. Relevant for
+  // line-clamp.
+  LayoutUnit non_hidden_clear_offset_ = LayoutUnit::Min();
 
   // In order to reduce the amount of copies related to bookkeeping shape data,
   // we initially ignore exclusions with shape data. When we first see an
@@ -538,7 +546,7 @@ class CORE_EXPORT ExclusionSpaceInternal final {
       LayoutUnit block_offset_limit) const;
 
   // See DerivedGeometry struct description.
-  mutable Persistent<DerivedGeometry> derived_geometry_;
+  mutable Member<DerivedGeometry> derived_geometry_;
 };
 
 // The exclusion space represents all of the exclusions within a block
@@ -553,17 +561,17 @@ class CORE_EXPORT ExclusionSpace {
   ExclusionSpace() = default;
   ExclusionSpace(const ExclusionSpace& other)
       : exclusion_space_(other.exclusion_space_
-                             ? std::make_unique<ExclusionSpaceInternal>(
+                             ? MakeGarbageCollected<ExclusionSpaceInternal>(
                                    *other.exclusion_space_)
                              : nullptr) {}
   ExclusionSpace(ExclusionSpace&& other) noexcept = default;
 
   // This moves the cached `derived_geometry_`, see also `CopyFrom()`.
   ExclusionSpace& operator=(const ExclusionSpace& other) {
-    exclusion_space_ =
-        other.exclusion_space_
-            ? std::make_unique<ExclusionSpaceInternal>(*other.exclusion_space_)
-            : nullptr;
+    exclusion_space_ = other.exclusion_space_
+                           ? MakeGarbageCollected<ExclusionSpaceInternal>(
+                                 *other.exclusion_space_)
+                           : nullptr;
     return *this;
   }
   ExclusionSpace& operator=(ExclusionSpace&& other) = default;
@@ -572,9 +580,11 @@ class CORE_EXPORT ExclusionSpace {
   // while `CopyFrom` doesn't.
   void CopyFrom(const ExclusionSpace&);
 
+  void Trace(Visitor* visitor) const { visitor->Trace(exclusion_space_); }
+
   void Add(const ExclusionArea* exclusion) {
     if (!exclusion_space_)
-      exclusion_space_ = std::make_unique<ExclusionSpaceInternal>();
+      exclusion_space_ = MakeGarbageCollected<ExclusionSpaceInternal>();
     exclusion_space_->Add(std::move(exclusion));
   }
 
@@ -651,6 +661,13 @@ class CORE_EXPORT ExclusionSpace {
     return exclusion_space_->ClearanceOffsetIncludingInitialLetter(clear_type);
   }
 
+  LayoutUnit NonHiddenClearanceOffsetIncludingInitialLetter() const {
+    if (!exclusion_space_) {
+      return LayoutUnit::Min();
+    }
+    return exclusion_space_->NonHiddenClearanceOffsetIncludingInitialLetter();
+  }
+
   LayoutUnit InitialLetterClearanceOffset(EClear clear_type) const {
     if (!exclusion_space_)
       return LayoutUnit::Min();
@@ -687,7 +704,7 @@ class CORE_EXPORT ExclusionSpace {
     if (!other.exclusion_space_)
       return;
 
-    exclusion_space_ = std::make_unique<ExclusionSpaceInternal>();
+    exclusion_space_ = MakeGarbageCollected<ExclusionSpaceInternal>();
     exclusion_space_->PreInitialize(*other.exclusion_space_);
   }
 
@@ -750,12 +767,13 @@ class CORE_EXPORT ExclusionSpace {
       return new_output;
 
     if (!new_output.exclusion_space_) {
-      new_output.exclusion_space_ = std::make_unique<ExclusionSpaceInternal>();
+      new_output.exclusion_space_ =
+          MakeGarbageCollected<ExclusionSpaceInternal>();
     }
 
     new_output.exclusion_space_->MergeExclusionSpaces(
         offset_delta, *old_output.exclusion_space_,
-        old_input.exclusion_space_.get());
+        old_input.exclusion_space_.Get());
 
     return new_output;
   }
@@ -780,7 +798,7 @@ class CORE_EXPORT ExclusionSpace {
 #endif
 
  private:
-  mutable std::unique_ptr<ExclusionSpaceInternal> exclusion_space_;
+  mutable Member<ExclusionSpaceInternal> exclusion_space_;
 };
 
 }  // namespace blink

@@ -22,7 +22,9 @@
 #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_HASH_MAP_H_
 
 #include <initializer_list>
+#include <iterator>
 
+#include "base/compiler_specific.h"
 #include "base/numerics/safe_conversions.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/partition_allocator.h"
@@ -30,8 +32,17 @@
 #include "third_party/blink/renderer/platform/wtf/construct_traits.h"
 #include "third_party/blink/renderer/platform/wtf/hash_table.h"
 #include "third_party/blink/renderer/platform/wtf/key_value_pair.h"
+#include "third_party/blink/renderer/platform/wtf/type_traits.h"
+#include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
 
-namespace WTF {
+// Templates in this file are instantiated many times with different types.
+// Adding the regular GC_PLUGIN_IGNORE annotations to fields in the templates
+// results in the annotation being duplicated many times, growing the debug
+// symbols, and regressing binary size. To avoid the binary size regression,
+// mark the file to ignore instead.
+GC_PLUGIN_IGNORE_FILE("crbug.com/428987863")
+
+namespace blink {
 
 template <typename KeyTraits, typename MappedTraits>
 struct HashMapValueTraits;
@@ -58,10 +69,10 @@ struct KeyValuePairExtractor {
   template <typename T>
   static void ClearValue(T& p) {
     using ValueType = typename T::ValueType;
-    if (IsTraceable<ValueType>::value) {
+    if (IsTraceableV<ValueType>) {
       AtomicMemzero<sizeof(ValueType), alignof(ValueType)>(&p.value);
     } else {
-      memset(static_cast<void*>(&p.value), 0, sizeof(p.value));
+      UNSAFE_TODO(memset(static_cast<void*>(&p.value), 0, sizeof(p.value)));
     }
   }
 };
@@ -71,6 +82,9 @@ struct KeyValuePairExtractor {
 // allowed; for integer keys 0 or -1 can't be used as a key. You can change
 // the restriction with a custom key hash traits. See hash_traits.h for how to
 // define hash traits.
+// Commonly used key types define their key hash traits separately from the
+// class itself, so e.g if you want a `blink::HashMap<blink::String, ...>` you
+// must include `string_hash.h`.
 template <typename KeyArg,
           typename MappedArg,
           typename KeyTraitsArg = HashTraits<KeyArg>,
@@ -108,16 +122,7 @@ class HashMap {
   class HashMapValuesProxy;
 
  public:
-  HashMap() {
-    static_assert(Allocator::kIsGarbageCollected ||
-                      !IsPointerToGarbageCollectedType<KeyArg>::value,
-                  "Cannot put raw pointers to garbage-collected classes into "
-                  "an off-heap HashMap.  Use HeapHashMap<> instead.");
-    static_assert(Allocator::kIsGarbageCollected ||
-                      !IsPointerToGarbageCollectedType<MappedArg>::value,
-                  "Cannot put raw pointers to garbage-collected classes into "
-                  "an off-heap HashMap.  Use HeapHashMap<> instead.");
-  }
+  HashMap() = default;
 
 #if DUMP_HASHTABLE_STATS_PER_TABLE
   void DumpStats() { impl_.DumpStats(); }
@@ -132,6 +137,11 @@ class HashMap {
   HashMap(std::initializer_list<ValueType> elements);
   HashMap& operator=(std::initializer_list<ValueType> elements);
 
+  // Useful for constructing from, for example, STL and base maps.
+  template <typename It>
+    requires(std::forward_iterator<It>)
+  HashMap(It begin, It end);
+
   typedef HashTableIteratorAdapter<HashTableType, ValueType> iterator;
   typedef HashTableConstIteratorAdapter<HashTableType, ValueType>
       const_iterator;
@@ -139,9 +149,9 @@ class HashMap {
 
   void swap(HashMap& ref) { impl_.swap(ref.impl_); }
 
-  unsigned size() const;
-  unsigned Capacity() const;
-  void ReserveCapacityForSize(unsigned size) {
+  wtf_size_t size() const;
+  wtf_size_t Capacity() const;
+  void ReserveCapacityForSize(wtf_size_t size) {
     impl_.ReserveCapacityForSize(size);
   }
 
@@ -183,12 +193,23 @@ class HashMap {
   template <typename IncomingKeyType, typename IncomingMappedType>
   AddResult insert(IncomingKeyType&&, IncomingMappedType&&);
 
+  // NOTE: You cannot continue using an iterator after erase()
+  // (no modifications are allowed during iteration). Consider erase_if()
+  // or RemoveAll().
   void erase(KeyPeekInType);
   void erase(iterator);
+
+  // Erases all elements for which pred(element) returns true.
+  //
+  // The predicate should have a signature compatible with:
+  //   bool pred(const WTF::KeyValuePair<KeyType, MappedType>&);
+  template <typename Pred>
+  void erase_if(Pred pred);
+
   void clear();
   template <typename Collection>
   void RemoveAll(const Collection& to_be_removed) {
-    WTF::RemoveAll(*this, to_be_removed);
+    blink::RemoveAll(*this, to_be_removed);
   }
 
   MappedType Take(KeyPeekInType);  // efficient combination of get with remove
@@ -222,6 +243,22 @@ class HashMap {
   AddResult InlineAdd(IncomingKeyType&&, IncomingMappedType&&);
 
   HashTableType impl_;
+
+  struct TypeConstraints {
+    constexpr TypeConstraints() {
+      static_assert(!IsStackAllocatedTypeV<KeyArg>);
+      static_assert(!IsStackAllocatedTypeV<MappedArg>);
+      static_assert(Allocator::kIsGarbageCollected ||
+                        !IsPointerToGarbageCollectedType<KeyArg>,
+                    "Cannot put raw pointers to garbage-collected classes into "
+                    "an off-heap HashMap.  Use HeapHashMap<> instead.");
+      static_assert(Allocator::kIsGarbageCollected ||
+                        !IsPointerToGarbageCollectedType<MappedArg>,
+                    "Cannot put raw pointers to garbage-collected classes into "
+                    "an off-heap HashMap.  Use HeapHashMap<> instead.");
+    }
+  };
+  NO_UNIQUE_ADDRESS TypeConstraints type_constraints_;
 };
 
 template <typename KeyArg,
@@ -238,18 +275,19 @@ class HashMap<KeyArg, MappedArg, KeyTraitsArg, MappedTraitsArg, Allocator>::
   DISALLOW_NEW();
 
  public:
-  typedef HashMap<KeyArg, MappedArg, KeyTraitsArg, MappedTraitsArg, Allocator>
-      HashMapType;
-  typedef typename HashMapType::iterator::KeysIterator iterator;
-  typedef typename HashMapType::const_iterator::KeysIterator const_iterator;
+  using HashMapType =
+      HashMap<KeyArg, MappedArg, KeyTraitsArg, MappedTraitsArg, Allocator>;
+  using iterator = HashMapType::iterator::KeysIterator;
+  using const_iterator = HashMapType::const_iterator::KeysIterator;
+  using value_type = HashMapType::KeyType;
 
   iterator begin() { return HashMapType::begin().Keys(); }
-
   iterator end() { return HashMapType::end().Keys(); }
 
   const_iterator begin() const { return HashMapType::begin().Keys(); }
-
   const_iterator end() const { return HashMapType::end().Keys(); }
+
+  wtf_size_t size() const { return HashMapType::size(); }
 
  private:
   friend class HashMap;
@@ -274,18 +312,19 @@ class HashMap<KeyArg, MappedArg, KeyTraitsArg, MappedTraitsArg, Allocator>::
   DISALLOW_NEW();
 
  public:
-  typedef HashMap<KeyArg, MappedArg, KeyTraitsArg, MappedTraitsArg, Allocator>
-      HashMapType;
-  typedef typename HashMapType::iterator::ValuesIterator iterator;
-  typedef typename HashMapType::const_iterator::ValuesIterator const_iterator;
+  using HashMapType =
+      HashMap<KeyArg, MappedArg, KeyTraitsArg, MappedTraitsArg, Allocator>;
+  using iterator = HashMapType::iterator::ValuesIterator;
+  using const_iterator = HashMapType::const_iterator::ValuesIterator;
+  using value_type = HashMapType::MappedType;
 
   iterator begin() { return HashMapType::begin().Values(); }
-
   iterator end() { return HashMapType::end().Values(); }
 
   const_iterator begin() const { return HashMapType::begin().Values(); }
-
   const_iterator end() const { return HashMapType::end().Values(); }
+
+  wtf_size_t size() const { return HashMapType::size(); }
 
  private:
   friend class HashMap;
@@ -330,8 +369,13 @@ struct HashMapTranslator {
   }
 };
 
-template <typename T, typename U, typename V, typename W, typename X>
-HashMap<T, U, V, W, X>::HashMap(std::initializer_list<ValueType> elements) {
+template <typename KeyArg,
+          typename MappedArg,
+          typename KeyTraitsArg,
+          typename MappedTraitsArg,
+          typename Allocator>
+HashMap<KeyArg, MappedArg, KeyTraitsArg, MappedTraitsArg, Allocator>::HashMap(
+    std::initializer_list<ValueType> elements) {
   if (elements.size()) {
     impl_.ReserveCapacityForSize(
         base::checked_cast<wtf_size_t>(elements.size()));
@@ -347,13 +391,31 @@ auto HashMap<T, U, V, W, X>::operator=(
   return *this;
 }
 
+template <typename KeyArg,
+          typename MappedArg,
+          typename KeyTraitsArg,
+          typename MappedTraitsArg,
+          typename Allocator>
+template <typename It>
+  requires(std::forward_iterator<It>)
+HashMap<KeyArg, MappedArg, KeyTraitsArg, MappedTraitsArg, Allocator>::HashMap(
+    It begin,
+    It end) {
+  if constexpr (std::random_access_iterator<It>) {
+    ReserveCapacityForSize(base::checked_cast<wtf_size_t>(end - begin));
+  }
+  for (; begin != end; ++begin) {
+    insert(begin->first, begin->second);
+  }
+}
+
 template <typename T, typename U, typename V, typename W, typename X>
-inline unsigned HashMap<T, U, V, W, X>::size() const {
+inline wtf_size_t HashMap<T, U, V, W, X>::size() const {
   return impl_.size();
 }
 
 template <typename T, typename U, typename V, typename W, typename X>
-inline unsigned HashMap<T, U, V, W, X>::Capacity() const {
+inline wtf_size_t HashMap<T, U, V, W, X>::Capacity() const {
   return impl_.Capacity();
 }
 
@@ -479,6 +541,12 @@ inline void HashMap<T, U, V, W, X>::erase(KeyPeekInType key) {
 }
 
 template <typename T, typename U, typename V, typename W, typename X>
+template <typename Pred>
+inline void HashMap<T, U, V, W, X>::erase_if(Pred pred) {
+  impl_.erase_if(std::forward<Pred>(pred));
+}
+
+template <typename T, typename U, typename V, typename W, typename X>
 inline void HashMap<T, U, V, W, X>::clear() {
   impl_.clear();
 }
@@ -524,59 +592,15 @@ inline bool operator!=(const HashMap<T, U, V, W, X>& a,
   return !(a == b);
 }
 
-template <typename T,
-          typename U,
-          typename V,
-          typename W,
-          typename X,
-          typename Z>
-inline void CopyKeysToVector(const HashMap<T, U, V, W, X>& collection,
-                             Z& vector) {
-  typedef
-      typename HashMap<T, U, V, W, X>::const_iterator::KeysIterator iterator;
-
-  {
-    // Disallow GC during resize allocation; see crbugs 568173 and 823612.
-    // The element copy doesn't need to be in this scope because garbage
-    // collection can only remove elements from collection if its keys are
-    // WeakMembers, in which case copying them doesn't perform a heap
-    // allocation.
-    typename Z::GCForbiddenScope scope;
-    vector.resize(collection.size());
-  }
-
-  iterator it = collection.begin().Keys();
-  iterator end = collection.end().Keys();
-  for (unsigned i = 0; it != end; ++it, ++i)
-    vector[i] = *it;
+template <typename T, typename U, typename V, typename W, typename X>
+inline void swap(HashMap<T, U, V, W, X>& a, HashMap<T, U, V, W, X>& b) {
+  a.swap(b);
 }
 
-template <typename T,
-          typename U,
-          typename V,
-          typename W,
-          typename X,
-          typename Z>
-inline void CopyValuesToVector(const HashMap<T, U, V, W, X>& collection,
-                               Z& vector) {
-  typedef
-      typename HashMap<T, U, V, W, X>::const_iterator::ValuesIterator iterator;
+}  // namespace blink
 
-  // Disallow GC during resize allocation and copy operations (which may also
-  // perform allocations and therefore cause elements of collection to be
-  // removed); see crbugs 568173 and 823612.
-  typename Z::GCForbiddenScope scope;
-
-  vector.resize(collection.size());
-
-  iterator it = collection.begin().Values();
-  iterator end = collection.end().Values();
-  for (unsigned i = 0; it != end; ++it, ++i)
-    vector[i] = *it;
-}
-
+namespace WTF {
+using blink::HashMap;
 }  // namespace WTF
-
-using WTF::HashMap;
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_HASH_MAP_H_

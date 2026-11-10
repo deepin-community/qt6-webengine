@@ -29,7 +29,6 @@
 #include "drawutils.h"
 #include "filters.h"
 #include "formats.h"
-#include "internal.h"
 #include "video.h"
 
 #define PLANE_R 0x01
@@ -53,14 +52,14 @@ typedef struct ExtractPlanesContext {
 #define OFFSET(x) offsetof(ExtractPlanesContext, x)
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM
 static const AVOption extractplanes_options[] = {
-    { "planes", "set planes",  OFFSET(requested_planes), AV_OPT_TYPE_FLAGS, {.i64=1}, 1, 0xff, FLAGS, "flags"},
-    {      "y", "set luma plane",  0, AV_OPT_TYPE_CONST, {.i64=PLANE_Y}, 0, 0, FLAGS, "flags"},
-    {      "u", "set u plane",     0, AV_OPT_TYPE_CONST, {.i64=PLANE_U}, 0, 0, FLAGS, "flags"},
-    {      "v", "set v plane",     0, AV_OPT_TYPE_CONST, {.i64=PLANE_V}, 0, 0, FLAGS, "flags"},
-    {      "r", "set red plane",   0, AV_OPT_TYPE_CONST, {.i64=PLANE_R}, 0, 0, FLAGS, "flags"},
-    {      "g", "set green plane", 0, AV_OPT_TYPE_CONST, {.i64=PLANE_G}, 0, 0, FLAGS, "flags"},
-    {      "b", "set blue plane",  0, AV_OPT_TYPE_CONST, {.i64=PLANE_B}, 0, 0, FLAGS, "flags"},
-    {      "a", "set alpha plane", 0, AV_OPT_TYPE_CONST, {.i64=PLANE_A}, 0, 0, FLAGS, "flags"},
+    { "planes", "set planes",  OFFSET(requested_planes), AV_OPT_TYPE_FLAGS, {.i64=1}, 1, 0xff, FLAGS, .unit = "flags"},
+    {      "y", "set luma plane",  0, AV_OPT_TYPE_CONST, {.i64=PLANE_Y}, 0, 0, FLAGS, .unit = "flags"},
+    {      "u", "set u plane",     0, AV_OPT_TYPE_CONST, {.i64=PLANE_U}, 0, 0, FLAGS, .unit = "flags"},
+    {      "v", "set v plane",     0, AV_OPT_TYPE_CONST, {.i64=PLANE_V}, 0, 0, FLAGS, .unit = "flags"},
+    {      "r", "set red plane",   0, AV_OPT_TYPE_CONST, {.i64=PLANE_R}, 0, 0, FLAGS, .unit = "flags"},
+    {      "g", "set green plane", 0, AV_OPT_TYPE_CONST, {.i64=PLANE_G}, 0, 0, FLAGS, .unit = "flags"},
+    {      "b", "set blue plane",  0, AV_OPT_TYPE_CONST, {.i64=PLANE_B}, 0, 0, FLAGS, .unit = "flags"},
+    {      "a", "set alpha plane", 0, AV_OPT_TYPE_CONST, {.i64=PLANE_A}, 0, 0, FLAGS, .unit = "flags"},
     { NULL }
 };
 
@@ -368,15 +367,7 @@ static int activate(AVFilterContext *ctx)
         return 0;
     }
 
-    for (int i = 0; i < ctx->nb_outputs; i++) {
-        if (ff_outlink_get_status(ctx->outputs[i]))
-            continue;
-
-        if (ff_outlink_frame_wanted(ctx->outputs[i])) {
-            ff_inlink_request_frame(inlink);
-            return 0;
-        }
-    }
+    FF_FILTER_FORWARD_WANTED_ANY(ctx, inlink);
 
     return FFERROR_NOT_READY;
 }
@@ -417,17 +408,17 @@ static const AVFilterPad extractplanes_inputs[] = {
     },
 };
 
-const AVFilter ff_vf_extractplanes = {
-    .name          = "extractplanes",
-    .description   = NULL_IF_CONFIG_SMALL("Extract planes as grayscale frames."),
+const FFFilter ff_vf_extractplanes = {
+    .p.name        = "extractplanes",
+    .p.description = NULL_IF_CONFIG_SMALL("Extract planes as grayscale frames."),
+    .p.priv_class  = &extractplanes_class,
+    .p.outputs     = NULL,
+    .p.flags       = AVFILTER_FLAG_DYNAMIC_OUTPUTS,
     .priv_size     = sizeof(ExtractPlanesContext),
-    .priv_class    = &extractplanes_class,
     .init          = init,
     .activate      = activate,
     FILTER_INPUTS(extractplanes_inputs),
-    .outputs       = NULL,
     FILTER_QUERY_FUNC(query_formats),
-    .flags         = AVFILTER_FLAG_DYNAMIC_OUTPUTS,
 };
 
 #if CONFIG_ALPHAEXTRACT_FILTER
@@ -450,9 +441,9 @@ static const AVFilterPad alphaextract_outputs[] = {
     },
 };
 
-const AVFilter ff_vf_alphaextract = {
-    .name           = "alphaextract",
-    .description    = NULL_IF_CONFIG_SMALL("Extract an alpha channel as a "
+const FFFilter ff_vf_alphaextract = {
+    .p.name         = "alphaextract",
+    .p.description  = NULL_IF_CONFIG_SMALL("Extract an alpha channel as a "
                       "grayscale image component."),
     .priv_size      = sizeof(ExtractPlanesContext),
     .init           = init_alphaextract,

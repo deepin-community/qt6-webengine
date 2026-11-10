@@ -5,6 +5,7 @@
 #include "BlinkGCPluginConsumer.h"
 
 #include <algorithm>
+#include <memory>
 #include <set>
 
 #include "BadPatternFinder.h"
@@ -18,7 +19,11 @@
 #include "JsonWriter.h"
 #include "RecordInfo.h"
 #include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/Basic/SourceLocation.h"
+#include "clang/Basic/SourceManager.h"
+#include "clang/Lex/Preprocessor.h"
 #include "clang/Sema/Sema.h"
+#include "llvm/Support/TimeProfiler.h"
 
 using namespace clang;
 
@@ -75,6 +80,28 @@ const CXXRecordDecl* GetFirstTemplateArgAsCXXRecordDecl(
   return nullptr;
 }
 
+class GCPluginIgnoreFileCollector : public clang::PragmaHandler {
+ public:
+  GCPluginIgnoreFileCollector(clang::SourceManager& source_manager,
+                              std::vector<clang::FileID>& ignored_files)
+      : PragmaHandler("blink_gc_plugin_ignore_file"),
+        source_manager_(source_manager),
+        ignored_files_(ignored_files) {}
+
+  void HandlePragma(clang::Preprocessor&,
+                    clang::PragmaIntroducer,
+                    clang::Token& first_token) override {
+    clang::SourceLocation source_location =
+        source_manager_.getExpansionLoc(first_token.getLocation());
+    clang::FileID file_id = source_manager_.getFileID(source_location);
+    ignored_files_.push_back(file_id);
+  }
+
+ private:
+  clang::SourceManager& source_manager_;
+  std::vector<clang::FileID>& ignored_files_;
+};
+
 }  // namespace
 
 BlinkGCPluginConsumer::BlinkGCPluginConsumer(
@@ -84,10 +111,15 @@ BlinkGCPluginConsumer::BlinkGCPluginConsumer(
       reporter_(instance),
       options_(options),
       cache_(instance),
-      json_(0) {
+      json_(0),
+      pragma_handler_(std::make_unique<GCPluginIgnoreFileCollector>(
+          instance_.getSourceManager(),
+          options_.ignored_files)) {
   // Only check structures in blink, cppgc and pdfium.
   options_.checked_namespaces.insert("blink");
   options_.checked_namespaces.insert("cppgc");
+  options_.checked_namespaces.insert("v8");
+  options_.checked_namespaces.insert("WTF");
 
   // Add Pdfium subfolders containing GCed classes.
   options_.checked_directories.push_back("fpdfsdk/");
@@ -99,9 +131,17 @@ BlinkGCPluginConsumer::BlinkGCPluginConsumer(
       "third_party/blink/renderer/platform/heap/collection_support/");
   options_.ignored_directories.push_back("v8/src/heap/cppgc/");
   options_.ignored_directories.push_back("v8/src/heap/cppgc-js/");
+
+  instance_.getPreprocessor().AddPragmaHandler(pragma_handler_.get());
+}
+
+BlinkGCPluginConsumer::~BlinkGCPluginConsumer() {
+  instance_.getPreprocessor().RemovePragmaHandler(pragma_handler_.get());
 }
 
 void BlinkGCPluginConsumer::HandleTranslationUnit(ASTContext& context) {
+  llvm::TimeTraceScope TimeScope(
+      "BlinkGCPluginConsumer::HandleTranslationUnit");
   // Don't run the plugin if the compilation unit is already invalid.
   if (reporter_.hasErrorOccurred())
     return;
@@ -202,11 +242,7 @@ void BlinkGCPluginConsumer::CheckClass(RecordInfo* info) {
   if (CXXMethodDecl* trace = info->GetTraceMethod()) {
     if (info->IsStackAllocated())
       reporter_.TraceMethodForStackAllocatedClass(info, trace);
-#if defined(LLVM_FORCE_HEAD_REVISION)
     if (trace->isPureVirtual())
-#else
-    if (trace->isPure())
-#endif
       reporter_.ClassDeclaresPureVirtualTrace(info, trace);
   } else if (info->RequiresTraceMethod()) {
     reporter_.ClassRequiresTraceMethod(info);
@@ -221,7 +257,7 @@ void BlinkGCPluginConsumer::CheckClass(RecordInfo* info) {
   }
 
   {
-    CheckFieldsVisitor visitor(options_);
+    CheckFieldsVisitor visitor;
     if (visitor.ContainsInvalidFields(info))
       reporter_.ClassContainsInvalidFields(info, visitor.invalid_fields());
   }
@@ -403,11 +439,7 @@ CXXRecordDecl* BlinkGCPluginConsumer::GetLeftMostBase(
 bool BlinkGCPluginConsumer::DeclaresVirtualMethods(CXXRecordDecl* decl) {
   CXXRecordDecl::method_iterator it = decl->method_begin();
   for (; it != decl->method_end(); ++it)
-#if defined(LLVM_FORCE_HEAD_REVISION)
     if (it->isVirtual() && !it->isPureVirtual())
-#else
-    if (it->isVirtual() && !it->isPure())
-#endif
       return true;
   return false;
 }
@@ -461,6 +493,14 @@ void BlinkGCPluginConsumer::CheckDispatch(RecordInfo* info) {
     visitor.TraverseStmt(defn->getBody());
     if (!visitor.dispatched_to_receiver())
       reporter_.MissingFinalizeDispatch(defn, info);
+  }
+
+  if (info->HasMultipleTraceDispatchMethods()) {
+    reporter_.RedundantTraceDispatchMethod(info, base);
+  }
+
+  if (info->HasMultipleFinalizeDispatchMethods()) {
+    reporter_.RedundantFinalizeDispatchMethod(info, base);
   }
 }
 
@@ -630,7 +670,7 @@ std::string BlinkGCPluginConsumer::GetLocString(SourceLocation loc) {
 
 bool BlinkGCPluginConsumer::IsIgnored(RecordInfo* record) {
   return (!record || !InCheckedNamespaceOrDirectory(record) ||
-          IsIgnoredClass(record) || InIgnoredDirectory(record));
+          IsIgnoredClass(record) || InIgnoredDirectoryOrFile(record));
 }
 
 bool BlinkGCPluginConsumer::IsIgnoredClass(RecordInfo* info) {
@@ -643,7 +683,17 @@ bool BlinkGCPluginConsumer::IsIgnoredClass(RecordInfo* info) {
           options_.ignored_classes.end());
 }
 
-bool BlinkGCPluginConsumer::InIgnoredDirectory(RecordInfo* info) {
+bool BlinkGCPluginConsumer::InIgnoredDirectoryOrFile(RecordInfo* info) {
+  std::vector<clang::FileID>& ignored_files = options_.ignored_files;
+  clang::SourceManager& source_manager = instance_.getSourceManager();
+  clang::SourceLocation location =
+      source_manager.getExpansionLoc(info->record()->getLocation());
+  clang::FileID file_id = source_manager.getFileID(location);
+  if (std::find(ignored_files.begin(), ignored_files.end(), file_id) !=
+      ignored_files.end()) {
+    return true;
+  }
+
   std::string filename;
   if (!GetFilename(info->record()->getBeginLoc(), &filename))
     return false;  // TODO: should we ignore non-existing file locations?

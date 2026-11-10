@@ -10,6 +10,8 @@
 #include <memory>
 #include <utility>
 
+#include "base/compiler_specific.h"
+#include "base/containers/heap_array.h"
 #include "base/values.h"
 #include "components/viz/common/surfaces/surface_info.h"
 #include "content/common/content_param_traits.h"
@@ -49,7 +51,7 @@ TEST(IPCMessageTest, Bitmap) {
   SkBitmap bitmap;
 
   bitmap.allocN32Pixels(10, 5);
-  memset(bitmap.getPixels(), 'A', bitmap.computeByteSize());
+  UNSAFE_TODO(memset(bitmap.getPixels(), 'A', bitmap.computeByteSize()));
 
   IPC::Message msg(1, 2, IPC::Message::PRIORITY_NORMAL);
   IPC::ParamTraits<SkBitmap>::Write(&msg, bitmap);
@@ -63,23 +65,27 @@ TEST(IPCMessageTest, Bitmap) {
   EXPECT_EQ(bitmap.height(), output.height());
   EXPECT_EQ(bitmap.rowBytes(), output.rowBytes());
   EXPECT_EQ(bitmap.computeByteSize(), output.computeByteSize());
-  EXPECT_EQ(
+  UNSAFE_TODO(EXPECT_EQ(
       memcmp(bitmap.getPixels(), output.getPixels(), bitmap.computeByteSize()),
-      0);
+      0));
 
   // Also test the corrupt case.
+
   IPC::Message bad_msg(1, 2, IPC::Message::PRIORITY_NORMAL);
+
   // Copy the first message block over to |bad_msg|.
   const char* fixed_data;
   size_t fixed_data_size;
   iter = base::PickleIterator(msg);
   EXPECT_TRUE(iter.ReadData(&fixed_data, &fixed_data_size));
   bad_msg.WriteData(fixed_data, fixed_data_size);
+
   // Add some bogus pixel data.
   const size_t bogus_pixels_size = bitmap.computeByteSize() * 2;
-  std::unique_ptr<char[]> bogus_pixels(new char[bogus_pixels_size]);
-  memset(bogus_pixels.get(), 'B', bogus_pixels_size);
-  bad_msg.WriteData(bogus_pixels.get(), bogus_pixels_size);
+  auto bogus_pixels = base::HeapArray<uint8_t>::Uninit(bogus_pixels_size);
+  std::ranges::fill(bogus_pixels, 'B');
+  bad_msg.WriteData(bogus_pixels);
+
   // Make sure we don't read out the bitmap!
   SkBitmap bad_output;
   iter = base::PickleIterator(bad_msg);
@@ -137,7 +143,7 @@ TEST(IPCMessageTest, SSLInfo) {
   in.client_cert_sent = true;
   in.handshake_type = net::SSLInfo::HANDSHAKE_FULL;
   const net::SHA256HashValue kCertPublicKeyHashValue = {{0x01, 0x02}};
-  in.public_key_hashes.push_back(net::HashValue(kCertPublicKeyHashValue));
+  in.public_key_hashes.push_back(kCertPublicKeyHashValue);
   in.encrypted_client_hello = true;
 
   scoped_refptr<net::ct::SignedCertificateTimestamp> sct(

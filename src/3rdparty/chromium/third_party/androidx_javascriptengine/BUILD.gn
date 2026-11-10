@@ -40,11 +40,11 @@ android_library("javascriptengine_common_java") {
 android_library("javascriptengine_java") {
   sources = [
     "src/main/java/androidx/javascriptengine/CloseGuardHelper.java",
+    "src/main/java/androidx/javascriptengine/DataInputException.java",
     "src/main/java/androidx/javascriptengine/EnvironmentDeadState.java",
     "src/main/java/androidx/javascriptengine/EvaluationFailedException.java",
     "src/main/java/androidx/javascriptengine/EvaluationResultSizeLimitExceededException.java",
     "src/main/java/androidx/javascriptengine/ExecutionErrorTypes.java",
-    "src/main/java/androidx/javascriptengine/FileDescriptorIOException.java",
     "src/main/java/androidx/javascriptengine/IsolateClosedState.java",
     "src/main/java/androidx/javascriptengine/IsolateStartupParameters.java",
     "src/main/java/androidx/javascriptengine/IsolateState.java",
@@ -84,7 +84,7 @@ instrumentation_test_apk("javascriptengine_test") {
     "//third_party/androidx:androidx_test_core_java",
     "//third_party/androidx:androidx_test_ext_junit_java",
     "//third_party/androidx:androidx_test_runner_java",
-    "//third_party/junit:junit",
+    "//third_party/junit",
   ]
 
   # Tell GN to ignore 'incremental_install' even if the user has it in their GN

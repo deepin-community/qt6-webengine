@@ -1,5 +1,6 @@
 // Copyright (C) 2018 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 // Portions copyright 2013 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
@@ -111,7 +112,7 @@ const GURL &ExtensionsClientQt::GetWebstoreBaseURL() const
 const GURL &ExtensionsClientQt::GetWebstoreUpdateURL() const
 {
     if (update_url_.is_empty())
-        update_url_ = GURL(extension_urls::GetWebstoreUpdateUrl());
+        update_url_ = GURL(extension_urls::kChromeWebstoreUpdateURL);
     return update_url_;
 }
 

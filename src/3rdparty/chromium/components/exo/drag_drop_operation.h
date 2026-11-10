@@ -91,14 +91,6 @@ class DragDropOperation : public DataSourceObserver,
   ~DragDropOperation() override;
 
   void OnDragIconCaptured(const SkBitmap& icon_bitmap);
-
-  // Called when the focused window is a Lacros window and a source
-  // DataTransferEndpoint is found in the available MIME types. This
-  // is currently used to synchronize drag source metadata from
-  // Lacros to Ash.
-  void OnDataTransferEndpointRead(const std::string& mime_type,
-                                  std::u16string data);
-
   void OnTextRead(const std::string& mime_type, std::u16string data);
   void OnHTMLRead(const std::string& mime_type, std::u16string data);
   void OnFilenamesRead(DataExchangeDelegate* data_exchange_delegate,
@@ -145,7 +137,7 @@ class DragDropOperation : public DataSourceObserver,
 
   raw_ptr<ExtendedDragSource> extended_drag_source_;
 
-  // TODO(crbug.com/1371493): Remove this once the issue is fixed.
+  // TODO(crbug.com/40061238): Remove this once the issue is fixed.
   base::OneShotTimer start_drag_drop_timer_;
   void DragDataReadTimeout();
 

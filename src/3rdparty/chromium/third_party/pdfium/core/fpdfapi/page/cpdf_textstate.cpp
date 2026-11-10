@@ -22,95 +22,91 @@ CPDF_TextState& CPDF_TextState::operator=(const CPDF_TextState&) = default;
 CPDF_TextState::~CPDF_TextState() = default;
 
 void CPDF_TextState::Emplace() {
-  m_Ref.Emplace();
+  ref_.Emplace();
 }
 
 RetainPtr<CPDF_Font> CPDF_TextState::GetFont() const {
-  return m_Ref.GetObject()->m_pFont;
+  return ref_.GetObject()->font_;
 }
 
-void CPDF_TextState::SetFont(RetainPtr<CPDF_Font> pFont) {
-  m_Ref.GetPrivateCopy()->SetFont(std::move(pFont));
+void CPDF_TextState::SetFont(RetainPtr<CPDF_Font> font) {
+  ref_.GetPrivateCopy()->SetFont(std::move(font));
 }
 
 float CPDF_TextState::GetFontSize() const {
-  return m_Ref.GetObject()->m_FontSize;
+  return ref_.GetObject()->font_size_;
 }
 
 void CPDF_TextState::SetFontSize(float size) {
-  if (!m_Ref || GetFontSize() != size) {
-    m_Ref.GetPrivateCopy()->m_FontSize = size;
+  if (!ref_ || GetFontSize() != size) {
+    ref_.GetPrivateCopy()->font_size_ = size;
   }
 }
 
 pdfium::span<const float> CPDF_TextState::GetMatrix() const {
-  return m_Ref.GetObject()->m_Matrix;
+  return ref_.GetObject()->matrix_;
 }
 
 pdfium::span<float> CPDF_TextState::GetMutableMatrix() {
-  return m_Ref.GetPrivateCopy()->m_Matrix;
+  return ref_.GetPrivateCopy()->matrix_;
 }
 
 float CPDF_TextState::GetCharSpace() const {
-  return m_Ref.GetObject()->m_CharSpace;
+  return ref_.GetObject()->char_space_;
 }
 
 void CPDF_TextState::SetCharSpace(float sp) {
-  if (!m_Ref || GetCharSpace() != sp) {
-    m_Ref.GetPrivateCopy()->m_CharSpace = sp;
+  if (!ref_ || GetCharSpace() != sp) {
+    ref_.GetPrivateCopy()->char_space_ = sp;
   }
 }
 
 float CPDF_TextState::GetWordSpace() const {
-  return m_Ref.GetObject()->m_WordSpace;
+  return ref_.GetObject()->word_space_;
 }
 
 void CPDF_TextState::SetWordSpace(float sp) {
-  if (!m_Ref || GetWordSpace() != sp) {
-    m_Ref.GetPrivateCopy()->m_WordSpace = sp;
+  if (!ref_ || GetWordSpace() != sp) {
+    ref_.GetPrivateCopy()->word_space_ = sp;
   }
 }
 
 float CPDF_TextState::GetFontSizeH() const {
-  return m_Ref.GetObject()->GetFontSizeH();
+  return ref_.GetObject()->GetFontSizeH();
 }
 
 TextRenderingMode CPDF_TextState::GetTextMode() const {
-  return m_Ref.GetObject()->m_TextMode;
+  return ref_.GetObject()->text_rendering_mode_;
 }
 
 void CPDF_TextState::SetTextMode(TextRenderingMode mode) {
-  if (!m_Ref || GetTextMode() != mode) {
-    m_Ref.GetPrivateCopy()->m_TextMode = mode;
+  if (!ref_ || GetTextMode() != mode) {
+    ref_.GetPrivateCopy()->text_rendering_mode_ = mode;
   }
 }
 
 pdfium::span<const float> CPDF_TextState::GetCTM() const {
-  return m_Ref.GetObject()->m_CTM;
+  return ref_.GetObject()->ctm_;
 }
 
 pdfium::span<float> CPDF_TextState::GetMutableCTM() {
-  return m_Ref.GetPrivateCopy()->m_CTM;
+  return ref_.GetPrivateCopy()->ctm_;
 }
 
 CPDF_TextState::TextData::TextData() = default;
 
 CPDF_TextState::TextData::TextData(const TextData& that)
-    : m_pFont(that.m_pFont),
-      m_pDocument(that.m_pDocument),
-      m_FontSize(that.m_FontSize),
-      m_CharSpace(that.m_CharSpace),
-      m_WordSpace(that.m_WordSpace),
-      m_TextMode(that.m_TextMode) {
-  for (int i = 0; i < 4; ++i)
-    m_Matrix[i] = that.m_Matrix[i];
-
-  for (int i = 0; i < 4; ++i)
-    m_CTM[i] = that.m_CTM[i];
-
-  if (m_pDocument && m_pFont) {
-    auto* pPageData = CPDF_DocPageData::FromDocument(m_pDocument);
-    m_pFont = pPageData->GetFont(m_pFont->GetMutableFontDict());
+    : font_(that.font_),
+      document_(that.document_),
+      font_size_(that.font_size_),
+      char_space_(that.char_space_),
+      word_space_(that.word_space_),
+      text_rendering_mode_(that.text_rendering_mode_),
+      matrix_(that.matrix_),
+      ctm_(that.ctm_) {
+  if (document_ && font_) {
+    auto* page_data = CPDF_DocPageData::FromDocument(document_);
+    font_ = page_data->GetFont(font_->GetMutableFontDict());
   }
 }
 
@@ -120,18 +116,19 @@ RetainPtr<CPDF_TextState::TextData> CPDF_TextState::TextData::Clone() const {
   return pdfium::MakeRetain<CPDF_TextState::TextData>(*this);
 }
 
-void CPDF_TextState::TextData::SetFont(RetainPtr<CPDF_Font> pFont) {
-  m_pDocument = pFont ? pFont->GetDocument() : nullptr;
-  m_pFont = std::move(pFont);
+void CPDF_TextState::TextData::SetFont(RetainPtr<CPDF_Font> font) {
+  document_ = font ? font->GetDocument() : nullptr;
+  font_ = std::move(font);
 }
 
 float CPDF_TextState::TextData::GetFontSizeH() const {
-  return fabs(FXSYS_sqrt2(m_Matrix[0], m_Matrix[2]) * m_FontSize);
+  return fabs(hypotf(matrix_[0], matrix_[2]) * font_size_);
 }
 
 bool SetTextRenderingModeFromInt(int iMode, TextRenderingMode* mode) {
-  if (iMode < 0 || iMode > 7)
+  if (iMode < 0 || iMode > 7) {
     return false;
+  }
   *mode = static_cast<TextRenderingMode>(iMode);
   return true;
 }

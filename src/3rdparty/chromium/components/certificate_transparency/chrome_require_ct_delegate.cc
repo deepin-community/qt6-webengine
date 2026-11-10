@@ -9,11 +9,11 @@
 #include <map>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "base/containers/contains.h"
-#include "base/containers/cxx20_erase.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/location.h"
@@ -21,6 +21,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/strings/string_util.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/types/zip.h"
 #include "base/values.h"
 #include "components/url_formatter/url_fixer.h"
 #include "components/url_matcher/url_matcher.h"
@@ -172,13 +173,13 @@ bool AreCertsSameOrganization(const bssl::RDNSequence& leaf_rdn_sequence,
 ChromeRequireCTDelegate::ChromeRequireCTDelegate()
     : url_matcher_(std::make_unique<url_matcher::URLMatcher>()), next_id_(0) {}
 
-ChromeRequireCTDelegate::~ChromeRequireCTDelegate() {}
+ChromeRequireCTDelegate::~ChromeRequireCTDelegate() = default;
 
-net::TransportSecurityState::RequireCTDelegate::CTRequirementLevel
+net::RequireCTDelegate::CTRequirementLevel
 ChromeRequireCTDelegate::IsCTRequiredForHost(
-    const std::string& hostname,
+    std::string_view hostname,
     const net::X509Certificate* chain,
-    const net::HashValueVector& spki_hashes) {
+    const std::vector<net::SHA256HashValue>& spki_hashes) const {
   if (MatchHostname(hostname) || MatchSPKI(chain, spki_hashes)) {
     return CTRequirementLevel::NOT_REQUIRED;
   }
@@ -190,8 +191,7 @@ ChromeRequireCTDelegate::IsCTRequiredForHost(
 
 void ChromeRequireCTDelegate::UpdateCTPolicies(
     const std::vector<std::string>& excluded_hosts,
-    const std::vector<std::string>& excluded_spkis,
-    const std::vector<std::string>& excluded_legacy_spkis) {
+    const std::vector<std::string>& excluded_spkis) {
   url_matcher_ = std::make_unique<url_matcher::URLMatcher>();
   filters_.clear();
   next_id_ = 0;
@@ -202,19 +202,9 @@ void ChromeRequireCTDelegate::UpdateCTPolicies(
   url_matcher_->AddConditionSets(all_conditions);
 
   ParseSpkiHashes(excluded_spkis, &spkis_);
-  ParseSpkiHashes(excluded_legacy_spkis, &legacy_spkis_);
-
-  // Filter out SPKIs that aren't for legacy CAs.
-  base::EraseIf(legacy_spkis_, [](const net::HashValue& hash) {
-    if (!net::IsLegacyPubliclyTrustedCA(hash)) {
-      LOG(ERROR) << "Non-legacy SPKI configured " << hash.ToString();
-      return true;
-    }
-    return false;
-  });
 }
 
-bool ChromeRequireCTDelegate::MatchHostname(const std::string& hostname) const {
+bool ChromeRequireCTDelegate::MatchHostname(std::string_view hostname) const {
   if (url_matcher_->IsEmpty())
     return false;
 
@@ -232,57 +222,30 @@ bool ChromeRequireCTDelegate::MatchHostname(const std::string& hostname) const {
 
 bool ChromeRequireCTDelegate::MatchSPKI(
     const net::X509Certificate* chain,
-    const net::HashValueVector& hashes) const {
-  // Try to scan legacy SPKIs first, if any, since they will only require
-  // comparing hash values.
-  if (!legacy_spkis_.empty()) {
-    for (const auto& hash : hashes) {
-      if (std::binary_search(legacy_spkis_.begin(), legacy_spkis_.end(),
-                             hash)) {
-        return true;
-      }
-    }
-  }
-
+    const std::vector<net::SHA256HashValue>& hashes) const {
   if (spkis_.empty())
     return false;
 
-  // Scan the constrained SPKIs via |hashes| first, as an optimization. If
-  // there are matches, the SPKI hash will have to be recomputed anyways to
-  // find the matching certificate, but avoid recomputing all the hashes for
-  // the case where there is no match.
-  net::HashValueVector matches;
-  for (const auto& hash : hashes) {
-    if (std::binary_search(spkis_.begin(), spkis_.end(), hash)) {
-      matches.push_back(hash);
-    }
-  }
-  if (matches.empty())
-    return false;
-
-  CRYPTO_BUFFER* leaf_cert = chain->cert_buffer();
-
-  // As an optimization, since the leaf is allowed to be listed as an SPKI,
-  // a match on the leaf's SPKI hash can return early, without comparing
-  // the organization information to itself.
-  net::HashValue hash;
-  if (net::x509_util::CalculateSha256SpkiHash(leaf_cert, &hash) &&
-      base::Contains(matches, hash)) {
+  if (spkis_.contains(hashes.front())) {
+    // As an optimization, since the leaf is allowed to be listed as an
+    // SPKI, a match on the leaf's SPKI hash can return early, without
+    // comparing the organization information to itself.
     return true;
   }
 
-  // If there was a match (or multiple matches), it's necessary to recompute
-  // the hashes to find the associated certificate.
   std::vector<CRYPTO_BUFFER*> candidates;
-  for (const auto& buffer : chain->intermediate_buffers()) {
-    if (net::x509_util::CalculateSha256SpkiHash(buffer.get(), &hash) &&
-        base::Contains(matches, hash)) {
-      candidates.push_back(buffer.get());
+  auto intermediate_hashes = base::span(hashes).subspan(1u);
+  for (auto [hash, cert_buffer] :
+       base::zip(intermediate_hashes, chain->intermediate_buffers())) {
+    if (spkis_.contains(hash)) {
+      candidates.push_back(cert_buffer.get());
     }
   }
-
-  if (candidates.empty())
+  if (candidates.empty()) {
     return false;
+  }
+
+  CRYPTO_BUFFER* leaf_cert = chain->cert_buffer();
 
   std::shared_ptr<const bssl::ParsedCertificate> parsed_leaf =
       bssl::ParsedCertificate::Create(bssl::UpRef(leaf_cert),
@@ -319,7 +282,7 @@ void ChromeRequireCTDelegate::AddFilters(
       continue;  // If there is no host to match, can't apply the filter.
 
     std::string lc_host = base::ToLowerASCII(
-        base::StringPiece(pattern).substr(parsed.host.begin, parsed.host.len));
+        std::string_view(pattern).substr(parsed.host.begin, parsed.host.len));
     if (lc_host == "*") {
       // Wildcard hosts are not allowed and ignored.
       continue;
@@ -366,16 +329,18 @@ void ChromeRequireCTDelegate::AddFilters(
 
 void ChromeRequireCTDelegate::ParseSpkiHashes(
     const std::vector<std::string> spki_list,
-    net::HashValueVector* hashes) const {
+    absl::flat_hash_set<net::SHA256HashValue>* hashes) const {
   hashes->clear();
   for (const auto& value : spki_list) {
     net::HashValue hash;
     if (!hash.FromString(value)) {
       continue;
     }
-    hashes->push_back(std::move(hash));
+    if (hash.tag() != net::HASH_VALUE_SHA256) {
+      continue;
+    }
+    hashes->insert(hash.sha256hashvalue());
   }
-  std::sort(hashes->begin(), hashes->end());
 }
 
 }  // namespace certificate_transparency

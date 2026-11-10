@@ -7,23 +7,27 @@
 
 #include "base/component_export.h"
 #include "base/memory/ref_counted.h"
-#include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
-#include "build/chromeos_buildflags.h"
 
-// Many APIs in ::dbus are required to be called from the same thread
-// (https://crbug.com/130984). Therefore, a SingleThreadedTaskRunner is
-// maintained and accessible through GetDBusTaskRunner(), from which all calls
-// to dbus on Linux have to be made.
-
-#if BUILDFLAG(IS_CHROMEOS_ASH)
+#if BUILDFLAG(IS_CHROMEOS)
 #error On ChromeOS, use DBusThreadManager instead.
 #endif
 
+namespace dbus {
+class Bus;
+}
+
 namespace dbus_thread_linux {
 
-COMPONENT_EXPORT(DBUS)
-scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner();
+// Obtains a shared session bus for usage on desktop Linux. The task runner is
+// the same as the one obtained from GetTaskRunner(). This should be used for
+// all session bus operations. Must be called on the UI thread.
+COMPONENT_EXPORT(COMPONENTS_DBUS)
+scoped_refptr<dbus::Bus> GetSharedSessionBus();
+
+// The same as GetSharedSessionBus(), but for the system bus.
+COMPONENT_EXPORT(COMPONENTS_DBUS)
+scoped_refptr<dbus::Bus> GetSharedSystemBus();
 
 }  // namespace dbus_thread_linux
 

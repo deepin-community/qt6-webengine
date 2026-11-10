@@ -4,37 +4,77 @@
 
 #include "components/autofill/core/browser/metrics/suggestions_list_metrics.h"
 
+#include <algorithm>
+
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/user_metrics.h"
-#include "components/autofill/core/browser/filling_product.h"
+#include "base/notreached.h"
+#include "base/strings/strcat.h"
+#include "components/autofill/core/browser/autofill_field.h"
+#include "components/autofill/core/browser/autofill_type.h"
+#include "components/autofill/core/browser/filling/filling_product.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics.h"
 
 namespace autofill::autofill_metrics {
-namespace {
 
-ManageSuggestionType ToManageSuggestionType(FillingProduct popup_type) {
-  switch (popup_type) {
+SuggestionRankingContext::SuggestionRankingContext() = default;
+SuggestionRankingContext::SuggestionRankingContext(
+    const SuggestionRankingContext&) = default;
+SuggestionRankingContext& SuggestionRankingContext::operator=(
+    const SuggestionRankingContext&) = default;
+SuggestionRankingContext::~SuggestionRankingContext() = default;
+
+// static
+SuggestionRankingContext::RelativePosition
+SuggestionRankingContext::GetRelativePositionEnum(size_t legacy_index,
+                                                  size_t new_index) {
+  // A lower index means that the suggestion was ranked higher.
+  if (new_index < legacy_index) {
+    return SuggestionRankingContext::RelativePosition::kRankedHigher;
+  } else if (new_index > legacy_index) {
+    return SuggestionRankingContext::RelativePosition::kRankedLower;
+  }
+  return SuggestionRankingContext::RelativePosition::kRankedSame;
+}
+
+bool SuggestionRankingContext::RankingsAreDifferent() const {
+  return std::ranges::any_of(
+      suggestion_rankings_difference_map, [](const auto& pair) {
+        return pair.second != RelativePosition::kRankedSame;
+      });
+}
+
+void LogSuggestionsCount(size_t num_suggestions,
+                         FillingProduct filling_product) {
+  switch (filling_product) {
     case FillingProduct::kAddress:
-      return ManageSuggestionType::kAddresses;
+      base::UmaHistogramCounts100("Autofill.SuggestionsCount.Address",
+                                  num_suggestions);
+      break;
     case FillingProduct::kCreditCard:
-      return ManageSuggestionType::kPaymentMethodsCreditCards;
-    case FillingProduct::kIban:
-      return ManageSuggestionType::kPaymentMethodsIbans;
-    case FillingProduct::kAutocomplete:
-    case FillingProduct::kCompose:
-    case FillingProduct::kMerchantPromoCode:
-    case FillingProduct::kPassword:
-    case FillingProduct::kPlusAddresses:
+      base::UmaHistogramCounts100("Autofill.SuggestionsCount.CreditCard",
+                                  num_suggestions);
+      break;
     case FillingProduct::kNone:
-      return ManageSuggestionType::kOther;
+    case FillingProduct::kMerchantPromoCode:
+    case FillingProduct::kIban:
+    case FillingProduct::kAutocomplete:
+    case FillingProduct::kPassword:
+    case FillingProduct::kCompose:
+    case FillingProduct::kPlusAddresses:
+    case FillingProduct::kAutofillAi:
+    case FillingProduct::kLoyaltyCard:
+    case FillingProduct::kIdentityCredential:
+    case FillingProduct::kDataList:
+    case FillingProduct::kOneTimePassword:
+      NOTREACHED();
   }
 }
 
-}  // anonymous namespace
-
-void LogAutofillSuggestionAcceptedIndex(int index,
-                                        FillingProduct filling_product,
-                                        bool off_the_record) {
+void LogSuggestionAcceptedIndex(int index,
+                                FillingProduct filling_product,
+                                bool off_the_record) {
+  const int kMaxBucketsCount = 50;
   const int uma_index = std::min(index, kMaxBucketsCount);
   base::UmaHistogramSparse("Autofill.SuggestionAcceptedIndex", uma_index);
 
@@ -47,18 +87,23 @@ void LogAutofillSuggestionAcceptedIndex(int index,
       base::UmaHistogramSparse("Autofill.SuggestionAcceptedIndex.Profile",
                                uma_index);
       break;
-    case FillingProduct::kPassword:
-    case FillingProduct::kNone:
-      base::UmaHistogramSparse("Autofill.SuggestionAcceptedIndex.Other",
+    case FillingProduct::kAutocomplete:
+      base::UmaHistogramSparse("Autofill.SuggestionAcceptedIndex.Autocomplete",
                                uma_index);
       break;
-    case FillingProduct::kAutocomplete:
     case FillingProduct::kIban:
+    case FillingProduct::kLoyaltyCard:
     case FillingProduct::kCompose:
     case FillingProduct::kPlusAddresses:
+    case FillingProduct::kAutofillAi:
     case FillingProduct::kMerchantPromoCode:
+    case FillingProduct::kIdentityCredential:
+    case FillingProduct::kPassword:
+    case FillingProduct::kNone:
+    case FillingProduct::kDataList:
+    case FillingProduct::kOneTimePassword:
       // It is NOTREACHED because all other types should be handled separately.
-      NOTREACHED_NORETURN();
+      NOTREACHED();
   }
 
   base::RecordAction(base::UserMetricsAction("Autofill_SelectedSuggestion"));
@@ -67,17 +112,33 @@ void LogAutofillSuggestionAcceptedIndex(int index,
                             off_the_record);
 }
 
-void LogAutofillSelectedManageEntry(FillingProduct filling_product) {
-  const ManageSuggestionType uma_type = ToManageSuggestionType(filling_product);
-  base::UmaHistogramEnumeration("Autofill.SuggestionsListManageClicked",
-                                uma_type);
+void LogAutofillRankingSuggestionDifference(
+    SuggestionRankingContext::RelativePosition ranking_difference) {
+  base::UmaHistogramEnumeration(
+      "Autofill.SuggestionAccepted.SuggestionRankingDifference.CreditCard",
+      ranking_difference);
 }
 
-void LogAutofillShowCardsFromGoogleAccountButtonEventMetric(
-    ShowCardsFromGoogleAccountButtonEvent event) {
+void LogAddressAutofillOnTypingSuggestionAccepted(
+    FieldType field_type_used,
+    const AutofillField* autofill_trigger_field) {
+  // TODO(crbug.com/381994105): Consider deleting this metric in favor or
+  // Autofill.AddressSuggestionOnTypingAcceptance.PerFieldType.
   base::UmaHistogramEnumeration(
-      "Autofill.ButterForPayments.ShowCardsFromGoogleAccountButtonEvents",
-      event);
+      "Autofill.AddressSuggestionOnTyping.AddressFieldTypeUsed",
+      field_type_used, FieldType::MAX_VALID_FIELD_TYPE);
+  FieldTypeSet field_types = autofill_trigger_field
+                                 ? autofill_trigger_field->Type().GetTypes()
+                                 : FieldTypeSet{};
+  base::UmaHistogramBoolean(
+      "Autofill.AddressSuggestionOnTypingAcceptance.FieldClassication",
+      !FieldTypeSet{NO_SERVER_DATA, UNKNOWN_TYPE, EMPTY_TYPE}.contains_all(
+          field_types));
+  if (autofill_trigger_field) {
+    base::UmaHistogramCounts100(
+        "Autofill.AddressSuggestionOnTypingAcceptance.NumberOfCharactersTyped",
+        autofill_trigger_field->value().length());
+  }
 }
 
 }  // namespace autofill::autofill_metrics

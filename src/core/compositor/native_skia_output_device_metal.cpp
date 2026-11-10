@@ -1,5 +1,6 @@
 // Copyright (C) 2024 The Qt Company Ltd.
 // SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+// Qt-Security score:significant reason:default
 
 #include "native_skia_output_device_metal.h"
 
@@ -18,11 +19,13 @@ NativeSkiaOutputDeviceMetal::NativeSkiaOutputDeviceMetal(
                              shared_image_factory, shared_image_representation_factory,
                              didSwapBufferCompleteCallback)
 {
+    qCDebug(lcWebEngineCompositor, "Native Skia Output Device: Metal");
+
     SkColorType skColorType = kRGBA_8888_SkColorType;
-    capabilities_.sk_color_types[static_cast<int>(gfx::BufferFormat::RGBA_8888)] = skColorType;
-    capabilities_.sk_color_types[static_cast<int>(gfx::BufferFormat::RGBX_8888)] = skColorType;
-    capabilities_.sk_color_types[static_cast<int>(gfx::BufferFormat::BGRA_8888)] = skColorType;
-    capabilities_.sk_color_types[static_cast<int>(gfx::BufferFormat::BGRX_8888)] = skColorType;
+    capabilities_.sk_color_type_map[viz::SinglePlaneFormat::kRGBA_8888] = skColorType;
+    capabilities_.sk_color_type_map[viz::SinglePlaneFormat::kRGBX_8888] = skColorType;
+    capabilities_.sk_color_type_map[viz::SinglePlaneFormat::kBGRA_8888] = skColorType;
+    capabilities_.sk_color_type_map[viz::SinglePlaneFormat::kBGRX_8888] = skColorType;
 }
 
 NativeSkiaOutputDeviceMetal::~NativeSkiaOutputDeviceMetal() { }
@@ -42,9 +45,11 @@ QSGTexture *NativeSkiaOutputDeviceMetal::texture(QQuickWindow *win, uint32_t tex
         return nullptr;
     }
 
+    qCDebug(lcWebEngineCompositor, "METAL: Importing IOSurface into Metal Texture.");
+
     // This is a workaround to not to release metal texture too early.
     // In RHI, QMetalTexture wraps MTLTexture. QMetalTexture seems to be only destructed after the
-    // next MTLTexture is imported. The "old" MTLTexture can be still pontentially used by RHI
+    // next MTLTexture is imported. The "old" MTLTexture can be still potentially used by RHI
     // while QMetalTexture is not destructed. Metal Validation Layer also warns about it.
     // Delay releasing MTLTexture after the next one is presented.
     if (m_currentMetalTexture) {

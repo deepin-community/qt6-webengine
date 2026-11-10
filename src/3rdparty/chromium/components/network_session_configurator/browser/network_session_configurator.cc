@@ -6,6 +6,7 @@
 
 #include <limits>
 #include <map>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -18,7 +19,6 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
@@ -27,6 +27,8 @@
 #include "components/variations/variations_switches.h"
 #include "net/base/features.h"
 #include "net/base/host_mapping_rules.h"
+#include "net/disk_cache/backend_experiment.h"
+#include "net/disk_cache/buildflags.h"
 #include "net/http/http_network_session.h"
 #include "net/http/http_stream_factory.h"
 #include "net/quic/quic_context.h"
@@ -34,9 +36,9 @@
 #include "net/spdy/spdy_session.h"
 #include "net/spdy/spdy_session_pool.h"
 #include "net/third_party/quiche/src/quiche/common/platform/api/quiche_flags.h"
+#include "net/third_party/quiche/src/quiche/http2/core/spdy_protocol.h"
 #include "net/third_party/quiche/src/quiche/quic/core/quic_packets.h"
 #include "net/third_party/quiche/src/quiche/quic/core/quic_tag.h"
-#include "net/third_party/quiche/src/quiche/spdy/core/spdy_protocol.h"
 
 #if BUILDFLAG(IS_MAC)
 #include "base/mac/mac_util.h"
@@ -78,14 +80,15 @@ const std::string& GetVariationParam(
 
 bool GetVariationBoolParamOrFeatureSetting(const VariationParameters& params,
                                            const std::string& key,
-                                           bool feature_setting) {
+                                           bool feature_setting,
+                                           const std::string& param_setting) {
   // Don't override feature setting if variation param doesn't exist.
   if (params.find(key) == params.end()) {
     return feature_setting;
   }
 
   return base::EqualsCaseInsensitiveASCII(GetVariationParam(params, key),
-                                          "true");
+                                          param_setting);
 }
 
 spdy::SettingsMap GetHttp2Settings(
@@ -128,7 +131,7 @@ int ConfigureSpdySessionMaxQueuedCappedFrames(
 }
 
 void ConfigureHttp2Params(const base::CommandLine& command_line,
-                          base::StringPiece http2_trial_group,
+                          std::string_view http2_trial_group,
                           const VariationParameters& http2_trial_params,
                           net::HttpNetworkSessionParams* params) {
   if (GetVariationParam(http2_trial_params, "http2_enabled") == "false") {
@@ -156,7 +159,7 @@ void ConfigureHttp2Params(const base::CommandLine& command_line,
     const uint8_t type = 0x0b + 0x1f * base::RandGenerator(8);
 
     uint8_t flags;
-    base::RandBytes(&flags, /* output_length = */ sizeof(flags));
+    base::RandBytes(base::byte_span_from_ref(flags));
 
     const size_t length = base::RandGenerator(7);
     // RandBytesAsString() does not support zero length.
@@ -164,7 +167,7 @@ void ConfigureHttp2Params(const base::CommandLine& command_line,
         (length > 0) ? base::RandBytesAsString(length) : std::string();
 
     params->greased_http2_frame =
-        absl::optional<net::SpdySessionPool::GreasedHttp2Frame>(
+        std::optional<net::SpdySessionPool::GreasedHttp2Frame>(
             {type, flags, payload});
   }
 
@@ -179,7 +182,7 @@ void ConfigureHttp2Params(const base::CommandLine& command_line,
                                                 http2_trial_params);
 }
 
-bool ShouldDisableQuic(base::StringPiece quic_trial_group,
+bool ShouldDisableQuic(std::string_view quic_trial_group,
                        const VariationParameters& quic_trial_params,
                        bool is_quic_force_disabled) {
   if (is_quic_force_disabled)
@@ -187,14 +190,6 @@ bool ShouldDisableQuic(base::StringPiece quic_trial_group,
 
   return base::EqualsCaseInsensitiveASCII(
       GetVariationParam(quic_trial_params, "enable_quic"), "false");
-}
-
-bool ShouldEnableQuicProxiesForHttpsUrls(
-    const VariationParameters& quic_trial_params) {
-  return base::EqualsCaseInsensitiveASCII(
-      GetVariationParam(quic_trial_params,
-                        "enable_quic_proxies_for_https_urls"),
-      "true");
 }
 
 bool ShouldRetryWithoutAltSvcOnQuicErrors(
@@ -239,7 +234,7 @@ bool ShouldQuicGoAwaySessionsOnIpChange(
       "true");
 }
 
-absl::optional<bool> GetExponentialBackOffOnInitialDelay(
+std::optional<bool> GetExponentialBackOffOnInitialDelay(
     const VariationParameters& quic_trial_params) {
   if (base::EqualsCaseInsensitiveASCII(
           GetVariationParam(quic_trial_params,
@@ -253,7 +248,7 @@ absl::optional<bool> GetExponentialBackOffOnInitialDelay(
           "true")) {
     return true;
   }
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 int GetQuicIdleConnectionTimeoutSeconds(
@@ -313,14 +308,16 @@ bool ShouldQuicMigrateSessionsOnNetworkChangeV2(
   return GetVariationBoolParamOrFeatureSetting(
       quic_trial_params, "migrate_sessions_on_network_change_v2",
       base::FeatureList::IsEnabled(
-          net::features::kMigrateSessionsOnNetworkChangeV2));
+          net::features::kMigrateSessionsOnNetworkChangeV2),
+      "true");
 }
 
 bool ShouldQuicUseNewAlpsCodepoint(
     const VariationParameters& quic_trial_params) {
-  return GetVariationBoolParamOrFeatureSetting(
+  return !GetVariationBoolParamOrFeatureSetting(
       quic_trial_params, "use_new_alps_codepoint",
-      base::FeatureList::IsEnabled(net::features::kUseNewAlpsCodepointQUIC));
+      !base::FeatureList::IsEnabled(net::features::kUseNewAlpsCodepointQUIC),
+      "false");
 }
 
 bool ShouldQuicMigrateSessionsEarlyV2(
@@ -475,6 +472,30 @@ bool DelayMainJobWithAvailableSpdySession(
       "true");
 }
 
+bool IsOriginFrameEnabled(const VariationParameters& quic_trial_params) {
+  return !base::EqualsCaseInsensitiveASCII(
+      GetVariationParam(quic_trial_params, "enable_origin_frame"), "false");
+}
+
+bool IsDnsSkippedWithOriginFrame(const VariationParameters& quic_trial_params) {
+  return !base::EqualsCaseInsensitiveASCII(
+      GetVariationParam(quic_trial_params, "skip_dns_with_origin_frame"),
+      "false");
+}
+
+bool IgnoreIpMatchingWhenFindingExistingSessions(
+    const VariationParameters& quic_trial_params) {
+  return base::EqualsCaseInsensitiveASCII(
+      GetVariationParam(quic_trial_params,
+                        "ignore_ip_matching_when_finding_existing_sessions"),
+      "true");
+}
+
+bool AllowServerMigration(const VariationParameters& quic_trial_params) {
+  return !base::EqualsCaseInsensitiveASCII(
+      GetVariationParam(quic_trial_params, "allow_server_migration"), "false");
+}
+
 void SetQuicFlags(const VariationParameters& quic_trial_params) {
   std::string flags_list =
       GetVariationParam(quic_trial_params, "set_quic_flags");
@@ -520,7 +541,7 @@ quic::ParsedQuicVersionVector GetQuicVersions(
 }
 
 bool AreQuicParamsValid(const base::CommandLine& command_line,
-                        base::StringPiece quic_trial_group,
+                        std::string_view quic_trial_group,
                         const VariationParameters& quic_trial_params) {
   if (command_line.HasSwitch(variations::switches::kForceFieldTrialParams)) {
     // Skip validation of params from the command line.
@@ -557,7 +578,7 @@ bool AreQuicParamsValid(const base::CommandLine& command_line,
 }
 
 void ConfigureQuicParams(const base::CommandLine& command_line,
-                         base::StringPiece quic_trial_group,
+                         std::string_view quic_trial_group,
                          const VariationParameters& quic_trial_params,
                          bool is_quic_force_disabled,
                          net::HttpNetworkSessionParams* params,
@@ -579,8 +600,6 @@ void ConfigureQuicParams(const base::CommandLine& command_line,
       ShouldRetryWithoutAltSvcOnQuicErrors(quic_trial_params);
 
   if (params->enable_quic) {
-    params->enable_quic_proxies_for_https_urls =
-        ShouldEnableQuicProxiesForHttpsUrls(quic_trial_params);
     quic_params->connection_options =
         GetQuicConnectionOptions(quic_trial_params);
     quic_params->client_connection_options =
@@ -690,6 +709,13 @@ void ConfigureQuicParams(const base::CommandLine& command_line,
     if (DelayMainJobWithAvailableSpdySession(quic_trial_params)) {
       quic_params->delay_main_job_with_available_spdy_session = true;
     }
+    quic_params->enable_origin_frame = IsOriginFrameEnabled(quic_trial_params);
+    quic_params->skip_dns_with_origin_frame =
+        IsDnsSkippedWithOriginFrame(quic_trial_params);
+    quic_params->ignore_ip_matching_when_finding_existing_sessions =
+        IgnoreIpMatchingWhenFindingExistingSessions(quic_trial_params);
+    quic_params->allow_server_migration =
+        AllowServerMigration(quic_trial_params);
     SetQuicFlags(quic_trial_params);
   }
 
@@ -806,32 +832,25 @@ void ParseCommandLineAndFieldTrials(const base::CommandLine& command_line,
 }
 
 net::URLRequestContextBuilder::HttpCacheParams::Type ChooseCacheType() {
-#if !BUILDFLAG(IS_ANDROID)
-  const std::string experiment_name =
-      base::FieldTrialList::FindFullName("SimpleCacheTrial");
-  if (base::StartsWith(experiment_name, "Disable",
-                       base::CompareCase::INSENSITIVE_ASCII)) {
-    return net::URLRequestContextBuilder::HttpCacheParams::DISK_BLOCKFILE;
+  if (base::FeatureList::IsEnabled(
+          net::features::kDiskCacheBackendExperiment)) {
+    switch (net::features::kDiskCacheBackendParam.Get()) {
+      case net::features::DiskCacheBackend::kDefault:
+        break;
+      case net::features::DiskCacheBackend::kSimple:
+        return net::URLRequestContextBuilder::HttpCacheParams::DISK_SIMPLE;
+      case net::features::DiskCacheBackend::kBlockfile:
+        return net::URLRequestContextBuilder::HttpCacheParams::DISK_BLOCKFILE;
+#if BUILDFLAG(ENABLE_DISK_CACHE_SQL_BACKEND)
+      case net::features::DiskCacheBackend::kSql:
+        return net::URLRequestContextBuilder::HttpCacheParams::
+            DISK_EXPERIMENTAL_SQL;
+#endif  // ENABLE_DISK_CACHE_SQL_BACKEND
+    }
   }
-
-  if (base::StartsWith(experiment_name, "ExperimentYes",
-                       base::CompareCase::INSENSITIVE_ASCII)) {
-    return net::URLRequestContextBuilder::HttpCacheParams::DISK_SIMPLE;
-  }
-#endif  // #if !BUILDFLAG(IS_ANDROID)
-
-  // Blockfile breaks on macOS 10.14 (see https://crbug.com/899874); so use
-  // SimpleCache even when we don't enable it via experiment, as long as we
-  // don't force it off (not used at this time). This unfortunately
-  // muddles the experiment data, but as this was written to be considered for
-  // backport, having it behave differently than in stable would be a bigger
-  // problem. TODO: Does this work in later macOS releases?
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || \
-    BUILDFLAG(IS_MAC)
-  return net::URLRequestContextBuilder::HttpCacheParams::DISK_SIMPLE;
-#else
-  return net::URLRequestContextBuilder::HttpCacheParams::DISK_BLOCKFILE;
-#endif
+  return disk_cache::IsSimpleBackendEnabledByDefaultPlatform()
+             ? net::URLRequestContextBuilder::HttpCacheParams::DISK_SIMPLE
+             : net::URLRequestContextBuilder::HttpCacheParams::DISK_BLOCKFILE;
 }
 
 }  // namespace network_session_configurator

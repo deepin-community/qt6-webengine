@@ -2,16 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+
 #include "services/accessibility/features/text_decoder.h"
 
 #include <memory>
 
 #include "base/logging.h"
+#include "base/types/fixed_array.h"
 #include "gin/arguments.h"
 #include "gin/converter.h"
 #include "gin/data_object_builder.h"
-#include "gin/handle.h"
 #include "gin/public/wrapper_info.h"
+#include "v8/include/cppgc/allocation.h"
+#include "v8/include/v8-cppgc.h"
 #include "v8/include/v8-isolate.h"
 #include "v8/include/v8-local-handle.h"
 #include "v8/include/v8-primitive.h"
@@ -19,17 +22,20 @@
 namespace ax {
 
 // static
-gin::WrapperInfo TextDecoder::kWrapperInfo = {gin::kEmbedderNativeGin};
-
-// static
-gin::Handle<TextDecoder> TextDecoder::Create(v8::Local<v8::Context> context) {
-  return gin::CreateHandle(context->GetIsolate(), new TextDecoder(context));
+v8::Local<v8::Object> TextDecoder::Create(v8::Isolate* isolate) {
+  auto* decoder = cppgc::MakeGarbageCollected<TextDecoder>(
+      isolate->GetCppHeap()->GetAllocationHandle());
+  return decoder->GetWrapper(isolate).ToLocalChecked();
 }
 
 gin::ObjectTemplateBuilder TextDecoder::GetObjectTemplateBuilder(
     v8::Isolate* isolate) {
   return gin::Wrappable<TextDecoder>::GetObjectTemplateBuilder(isolate)
       .SetMethod("decode", &TextDecoder::Decode);
+}
+
+const gin::WrapperInfo* TextDecoder::wrapper_info() const {
+  return &kWrapperInfo;
 }
 
 // See third_party/blink/renderer/modules/encoding/text_decoder.h
@@ -42,29 +48,24 @@ void TextDecoder::Decode(gin::Arguments* arguments) {
   // Note: We do not support a TextDecoderOptions parameter.
   CHECK_GT(args.size(), 0u);
   CHECK(args[0]->IsArrayBuffer() || args[0]->IsArrayBufferView());
-  void* bytes = nullptr;
-  size_t num_bytes = 0;
+
+  v8::Local<v8::ArrayBufferView> view;
   if (args[0]->IsArrayBuffer()) {
     v8::Local<v8::ArrayBuffer> array = args[0].As<v8::ArrayBuffer>();
-    bytes = array->Data();
-    num_bytes = array->ByteLength();
+    view = v8::DataView::New(array, 0, array->ByteLength());
   } else {
-    v8::Local<v8::ArrayBufferView> view = args[0].As<v8::ArrayBufferView>();
-    num_bytes = view->ByteLength();
-    void* bites[num_bytes];
-    view->CopyContents(bites, num_bytes);
-    bytes = bites;
+    view = args[0].As<v8::ArrayBufferView>();
   }
-  char result[num_bytes + 1];
-  for (size_t i = 0; i < num_bytes; i++) {
-    result[i] = *(static_cast<char*>(bytes) + i);
-  }
-  result[num_bytes] = 0;
 
-  arguments->Return(std::string(result));
+  base::FixedArray<char> bytes(view->ByteLength() + 1);
+  view->CopyContents(bytes.data(), view->ByteLength());
+  bytes[view->ByteLength()] = 0;
+
+  arguments->Return(std::string(bytes.data()));
 }
 
-TextDecoder::TextDecoder(v8::Local<v8::Context> context)
-    : RegisteredWrappable(context) {}
+TextDecoder::TextDecoder() = default;
+
+TextDecoder::~TextDecoder() = default;
 
 }  // namespace ax

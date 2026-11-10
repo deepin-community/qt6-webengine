@@ -15,6 +15,7 @@
 #include "absl/types/span.h"
 #include "quiche/common/platform/api/quiche_export.h"
 #include "quiche/common/quiche_callbacks.h"
+#include "quiche/common/quiche_mem_slice.h"
 
 namespace quiche {
 
@@ -131,13 +132,21 @@ class QUICHE_EXPORT StreamWriteOptions {
  public:
   StreamWriteOptions() = default;
 
-  // If send_fin() is sent to true, the write operation also sends a FIN on the
+  // If send_fin() is set to true, the write operation also sends a FIN on the
   // stream.
   bool send_fin() const { return send_fin_; }
   void set_send_fin(bool send_fin) { send_fin_ = send_fin; }
 
+  // If buffer_unconditionally() is set to true, the write operation will buffer
+  // data even if the internal buffer limit is exceeded.
+  bool buffer_unconditionally() const { return buffer_unconditionally_; }
+  void set_buffer_unconditionally(bool value) {
+    buffer_unconditionally_ = value;
+  }
+
  private:
   bool send_fin_ = false;
+  bool buffer_unconditionally_ = false;
 };
 
 inline constexpr StreamWriteOptions kDefaultStreamWriteOptions =
@@ -153,51 +162,51 @@ class QUICHE_EXPORT WriteStream {
  public:
   virtual ~WriteStream() {}
 
-  // Writes |data| into the stream.
-  virtual absl::Status Writev(absl::Span<const absl::string_view> data,
+  // Writes `data` into the stream.  If the write succeeds, the ownership is
+  // transferred to the stream; if it does not, the behavior is undefined -- the
+  // users of this API should check `CanWrite()` before calling `Writev()`.
+  virtual absl::Status Writev(absl::Span<QuicheMemSlice> data,
                               const StreamWriteOptions& options) = 0;
 
   // Indicates whether it is possible to write into stream right now.
   virtual bool CanWrite() const = 0;
 
   // Legacy convenience method for writing a single string_view.  New users
-  // should use quiche::WriteIntoStream instead, since this method does not
+  // should use quiche::SendFinOnStream instead, since this method does not
   // return useful failure information.
   [[nodiscard]] bool SendFin() {
     StreamWriteOptions options;
     options.set_send_fin(true);
-    return Writev(absl::Span<const absl::string_view>(), options).ok();
+    return Writev(absl::Span<QuicheMemSlice>(), options).ok();
   }
 
   // Legacy convenience method for writing a single string_view.  New users
   // should use quiche::WriteIntoStream instead, since this method does not
   // return useful failure information.
   [[nodiscard]] bool Write(absl::string_view data) {
-    return Writev(absl::MakeSpan(&data, 1), kDefaultStreamWriteOptions).ok();
+    QuicheMemSlice slice = QuicheMemSlice::Copy(data);
+    return Writev(absl::MakeSpan(&slice, 1), kDefaultStreamWriteOptions).ok();
   }
 };
 
 // Convenience methods to write a single chunk of data into the stream.
 inline absl::Status WriteIntoStream(
+    WriteStream& stream, QuicheMemSlice slice,
+    const StreamWriteOptions& options = kDefaultStreamWriteOptions) {
+  return stream.Writev(absl::MakeSpan(&slice, 1), options);
+}
+inline absl::Status WriteIntoStream(
     WriteStream& stream, absl::string_view data,
     const StreamWriteOptions& options = kDefaultStreamWriteOptions) {
-  return stream.Writev(absl::MakeSpan(&data, 1), options);
+  QuicheMemSlice slice = QuicheMemSlice::Copy(data);
+  return stream.Writev(absl::MakeSpan(&slice, 1), options);
 }
 
 // Convenience methods to send a FIN on the stream.
 inline absl::Status SendFinOnStream(WriteStream& stream) {
   StreamWriteOptions options;
   options.set_send_fin(true);
-  return stream.Writev(absl::Span<const absl::string_view>(), options);
-}
-
-inline size_t TotalStringViewSpanSize(
-    absl::Span<const absl::string_view> span) {
-  size_t total = 0;
-  for (absl::string_view view : span) {
-    total += view.size();
-  }
-  return total;
+  return stream.Writev(absl::Span<QuicheMemSlice>(), options);
 }
 
 }  // namespace quiche

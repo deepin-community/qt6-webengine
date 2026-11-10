@@ -7,9 +7,11 @@
 #ifndef CORE_FXGE_DIB_CFX_BITMAPSTORER_H_
 #define CORE_FXGE_DIB_CFX_BITMAPSTORER_H_
 
+#include <stdint.h>
+
 #include "core/fxcrt/retain_ptr.h"
+#include "core/fxcrt/span.h"
 #include "core/fxge/dib/scanlinecomposer_iface.h"
-#include "third_party/base/containers/span.h"
 
 class CFX_DIBitmap;
 
@@ -25,12 +27,12 @@ class CFX_BitmapStorer final : public ScanlineComposerIface {
                FXDIB_Format src_format,
                DataVector<uint32_t> src_palette) override;
 
-  RetainPtr<CFX_DIBitmap> GetBitmap() { return m_pBitmap; }
+  RetainPtr<CFX_DIBitmap> GetBitmap() { return bitmap_; }
   RetainPtr<CFX_DIBitmap> Detach();
   void Replace(RetainPtr<CFX_DIBitmap>&& pBitmap);
 
  private:
-  RetainPtr<CFX_DIBitmap> m_pBitmap;
+  RetainPtr<CFX_DIBitmap> bitmap_;
 };
 
 #endif  // CORE_FXGE_DIB_CFX_BITMAPSTORER_H_
