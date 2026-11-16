@@ -1,3 +1,20 @@
+qt6-webengine (6.140.0+dfsg-0deepin1) unstable; urgency=medium
+
+  * Team upload.
+  * Add loong64 and sw64 architecture support:
+    - new patches support-loong64.patch and support-sw64.patch (ported from
+      the deepin 6.8 arch patch, adapted to Chromium 140 / V8 6.140: V8 sw64
+      backend enablement incl. full Turboshaft instruction selector, sandbox
+      kernel_statx/mseal handling, node.py rollup-wasm fallbacks, -mno-relax
+      link-flag gating)
+    - enable loong64/sw64 in binary package Architecture lists
+    - debian/rules: loong64/sw64 build tweaks (-j2, --no-keep-memory,
+      NODE_OPTIONS=--jitless on sw64)
+    - verified by full cleanroom builds producing all 35 binary packages on
+      loong64 (sw_64 6.140.0~rc toolchain) and sw64
+
+ -- pengfeixx <63588879+pengfeixx@users.noreply.github.com>  Mon, 16 Nov 2026 11:55:04 +0800
+
 qt6-webengine (6.140.0+dfsg-0deepin0) unstable; urgency=medium
 
   * Trial packaging of the first standalone Qt WebEngine release (6.140.0-rc,
