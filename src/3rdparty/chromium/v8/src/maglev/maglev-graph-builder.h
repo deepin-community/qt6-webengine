@@ -1317,6 +1317,7 @@ class MaglevGraphBuilder {
   MaybeReduceResult TryBuildGetKeyedPropertyWithEnumeratedKey(
       ValueNode* object, const compiler::FeedbackSource& feedback_source,
       const compiler::ProcessedFeedback& processed_feedback);
+  ReduceResult VisitDefineNamedOwnPropertyHelper(bool in_literal);
   ReduceResult BuildGetKeyedProperty(
       ValueNode* object, const compiler::FeedbackSource& feedback_source,
       const compiler::ProcessedFeedback& processed_feedback);
@@ -2036,6 +2037,9 @@ class MaglevGraphBuilder {
 
   // When set, inline only small functions.
   bool only_inline_small_ = false;
+
+  bool may_have_changed_maps() const { return may_have_changed_maps_; }
+  bool may_have_changed_maps_ = false;
 };
 
 template <bool is_possible_map_change>
@@ -2046,6 +2050,7 @@ void MaglevGraphBuilder::ResetBuilderCachedState() {
   // TODO(leszeks): Track this on merge states / known node aspects, rather
   // than on the graph, so that it can survive control flow.
   if constexpr (is_possible_map_change) {
+    may_have_changed_maps_ = true;
     current_for_in_state.receiver_needs_map_check = true;
   }
 }

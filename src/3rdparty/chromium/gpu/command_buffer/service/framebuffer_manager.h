@@ -96,14 +96,21 @@ class GPU_GLES2_EXPORT Framebuffer : public base::RefCounted<Framebuffer> {
   bool HasSRGBAttachments() const;
   bool HasDepthStencilFormatAttachment() const;
 
-  void ClearUnclearedIntOr3DTexturesOrPartiallyClearedTextures(
+  bool ClearUnclearedIntOr3DTexturesOrPartiallyClearedTextures(
       GLES2Decoder* decoder,
       TextureManager* texture_manager);
 
   bool HasUnclearedIntRenderbufferAttachments() const;
 
-  void ClearUnclearedIntRenderbufferAttachments(
-    RenderbufferManager* renderbuffer_manager);
+  // Clears uncleared integer renderbuffer attachments and marks the ones that
+  // were successfully cleared as cleared. Returns GL_NO_ERROR if every such
+  // attachment is now cleared, otherwise the GL error that prevented it. A
+  // caller must not mark attachments as cleared when this fails, since a
+  // failed clear leaves the renderbuffer holding uninitialized GPU memory.
+  // The caller must drain the real GL error queue first, so that the errors
+  // observed here can be attributed to the clears issued by this function.
+  [[nodiscard]] GLenum ClearUnclearedIntRenderbufferAttachments(
+      RenderbufferManager* renderbuffer_manager);
 
   void MarkAttachmentAsCleared(
     RenderbufferManager* renderbuffer_manager,
@@ -118,6 +125,13 @@ class GPU_GLES2_EXPORT Framebuffer : public base::RefCounted<Framebuffer> {
 
   // Re-attaches all current attachments for recreateFbo workaround.
   void ReattachAttachments(GLenum framebuffer_target);
+
+  // Binds |attachment| at |attachment_point| on the framebuffer currently
+  // bound at |target|, or detaches whatever is at |attachment_point| if
+  // |attachment| is null. Only modifies driver-side state.
+  static void BindAttachmentToPoint(GLenum target,
+                                    GLenum attachment_point,
+                                    const Attachment* attachment);
 
   // Attaches a renderbuffer to a particlar attachment.
   // Pass null to detach.

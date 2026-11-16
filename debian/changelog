@@ -1,3 +1,26 @@
+qt6-webengine (6.140.0+dfsg-0deepin2) unstable; urgency=medium
+
+  * Team upload.
+  * Sync source from 6.140.0-rc to the upstream 6.140.0 final release
+    (tag v6.140.0, published 2026-11-13):
+    - chromium: 454 commits incl. security patches up to Chromium
+      152.0.7977.83 and several CVE fixes (FileSystem authorization,
+      WebGPU API surface removal), ffmpeg build-list rework, lzma_sdk
+      moved under src/
+    - top level: 41 commits incl. FileSystem permission-context fixes,
+      DisplaySoftwareOutputSurface::swapFrame() crash fix, touch dismiss
+      for <select> dialogs, version/CMake metadata
+    - the whole debian series re-verified to apply cleanly on the release
+      tree (strict quilt push/pop round-trip)
+  * support-loong64.patch: adapt to the release tree:
+    - ffmpeg_generated.gni hunk recontexted for the upstream rework that
+      merged the arm_use_neon conditions and introduced *_deps lists
+    - drop 140 stale *.orig removal hunks; remove the corresponding
+      Cargo.toml.orig leftovers committed with the rc import instead
+      (the tree now matches upstream v6.140.0 outside debian/)
+
+ -- pengfeixx <63588879+pengfeixx@users.noreply.github.com>  Sun, 16 Nov 2026 20:00:00 +0800
+
 qt6-webengine (6.140.0+dfsg-0deepin1) unstable; urgency=medium
 
   * Team upload.

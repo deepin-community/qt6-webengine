@@ -936,8 +936,11 @@ MaybeDirectHandle<String> Factory::NewStringFromTwoByteLittleEndian(
 #endif  // V8_ENABLE_WEBASSEMBLY
 
 DirectHandle<String> Factory::NewInternalizedStringImpl(
-    DirectHandle<String> string, int len, uint32_t hash_field) {
-  if (string->IsOneByteRepresentation()) {
+    DirectHandle<String> string, int len, uint32_t hash_field,
+    bool known_one_byte_content) {
+  const bool one_byte =
+      string->IsOneByteRepresentation() || known_one_byte_content;
+  if (one_byte) {
     DirectHandle<SeqOneByteString> result =
         AllocateRawOneByteInternalizedString(len, hash_field);
     DisallowGarbageCollection no_gc;
@@ -953,7 +956,8 @@ DirectHandle<String> Factory::NewInternalizedStringImpl(
 }
 
 StringTransitionStrategy Factory::ComputeInternalizationStrategyForString(
-    DirectHandle<String> string, MaybeDirectHandle<Map>* internalized_map) {
+    DirectHandle<String> string, MaybeDirectHandle<Map>* internalized_map,
+    bool known_one_byte_content) {
   // The serializer requires internalized strings to be in ReadOnlySpace s.t.
   // other objects referencing the string can be allocated in RO space
   // themselves.
@@ -979,6 +983,14 @@ StringTransitionStrategy Factory::ComputeInternalizationStrategyForString(
   Tagged<Map> map = string->map();
   *internalized_map = GetInPlaceInternalizedStringMap(map);
   if (!internalized_map->is_null()) {
+    // The map says 2-byte but the caller verified the content fits in one
+    // byte; fall back to kCopy so NewInternalizedStringImpl can allocate a
+    // one-byte internalized string. Otherwise the in-place map swap would
+    // lock the wider representation in for the lifetime of the intern entry.
+    if (known_one_byte_content && !InstanceTypeChecker::IsOneByteString(map)) {
+      *internalized_map = MaybeDirectHandle<Map>();
+      return StringTransitionStrategy::kCopy;
+    }
     return StringTransitionStrategy::kInPlace;
   }
   if (InstanceTypeChecker::IsInternalizedString(map)) {
@@ -3479,13 +3491,13 @@ DirectHandle<SourceTextModule> Factory::NewSourceTextModule(
       New(source_text_module_map(), AllocationType::kOld));
   DisallowGarbageCollection no_gc;
   module->set_code(*sfi);
+  module->set_status(Module::kUnlinked);
+  module->set_module_namespace(roots.undefined_value(), SKIP_WRITE_BARRIER);
   module->set_exports(*exports);
   module->set_regular_exports(*regular_exports);
   module->set_regular_imports(*regular_imports);
   module->set_hash(isolate()->GenerateIdentityHash(Smi::kMaxValue));
-  module->set_module_namespace(roots.undefined_value(), SKIP_WRITE_BARRIER);
   module->set_requested_modules(*requested_modules);
-  module->set_status(Module::kUnlinked);
   module->set_exception(roots.the_hole_value(), SKIP_WRITE_BARRIER);
   module->set_top_level_capability(roots.undefined_value(), SKIP_WRITE_BARRIER);
   module->set_import_meta(roots.the_hole_value(), kReleaseStore,

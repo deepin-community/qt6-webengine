@@ -10,6 +10,7 @@
 #include "file_system_access_permission_context_qt.h"
 
 #include "base/base_paths.h"
+#include "base/files/file_util.h"
 #include "base/path_service.h"
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
@@ -29,7 +30,109 @@ namespace QtWebEngineCore {
 // the struct below.
 constexpr const int kNoBasePathKey = -1;
 
-enum BlockType { kBlockAllChildren, kBlockNestedDirectories, kDontBlockChildren, kDontBlockAppFolder };
+// Essentially copies of the same functions from
+// chrome/browser/file_system_access/chrome_file_system_access_permission_context.cc
+// Windows and the WSL seem to have special requirements when trying to access local files.
+#if BUILDFLAG(IS_WIN)
+bool ContainsInvalidDNSCharacter(base::FilePath::StringType hostname) {
+    for (base::FilePath::CharType c : hostname) {
+        if (!((c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z') ||
+              (c >= L'0' && c <= L'9') || (c == L'.') || (c == L'-') ||
+              (c == L'_'))) {
+            return true;
+        }
+    }
+  return false;
+}
+
+bool IsLocalUNCServer(base::FilePath::StringViewType server) {
+  if (server.size() > 1 && server.back() == FILE_PATH_LITERAL('.')) {
+    server.remove_suffix(1);
+  }
+  static constexpr base::FilePath::StringViewType kLocalServers[] = {
+      FILE_PATH_LITERAL("localhost"),
+      FILE_PATH_LITERAL("wsl.localhost"),
+      // Hypervisor host-share redirectors (Parallels, VMware, VirtualBox).
+      FILE_PATH_LITERAL("mac"),
+      FILE_PATH_LITERAL("psf"),
+      FILE_PATH_LITERAL("vmware-host"),
+      FILE_PATH_LITERAL(".host"),
+      FILE_PATH_LITERAL("vboxsvr"),
+      FILE_PATH_LITERAL("vboxsrv"),
+  };
+  for (const auto& candidate : kLocalServers) {
+    if (base::FilePath::CompareEqualIgnoreCase(server, candidate)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Returns true if the path is a Universal Naming Convention (UNC) path pointing
+// to a local system path, device namespace, WSL loopback redirector, or
+// hypervisor host-share namespac
+bool MaybeIsLocalUNCPath(const base::FilePath& path) {
+    if (!path.IsNetwork()) {
+        return false;
+    }
+
+    const std::vector<base::FilePath::StringType> components =
+        path.GetComponents();
+
+    // Check for server name that could represent a local system. We only
+    // check for a very short list, as it is impossible to cover all different
+    // variants on Windows.
+    if (components.size() >= 2 &&
+        (IsLocalUNCServer(components[1]) ||
+         components[1] == FILE_PATH_LITERAL("127.0.0.1") ||
+         components[1] == FILE_PATH_LITERAL(".") ||
+         components[1] == FILE_PATH_LITERAL("?") ||
+         ContainsInvalidDNSCharacter(components[1]))) {
+        return true;
+    }
+
+    // Check *admin* shares only (drive admin like "C$" and named admin).
+    // Note: the share component is typically components[2], but we scan all
+    // components defensively in case the structure changes.
+    for (size_t i = 2; i < components.size(); ++i) {
+        const auto& component = components[i];
+
+        // component ends with "$"
+        if (!component.empty() && component.back() == L'$') {
+            // Drive admin share: "C$".."Z$" (case-insensitive on the letter).
+            if (component.size() == 2 &&
+                ((component[0] >= L'A' && component[0] <= L'Z') ||
+                 (component[0] >= L'a' && component[0] <= L'z'))) {
+                return true;
+            }
+
+            // Named admin shares: "ADMIN$", "IPC$", "PRINT$", and "FAX$"
+            if (base::FilePath::CompareEqualIgnoreCase(component,
+                                                       FILE_PATH_LITERAL("ADMIN$")) ||
+                base::FilePath::CompareEqualIgnoreCase(component,
+                                                       FILE_PATH_LITERAL("IPC$")) ||
+                base::FilePath::CompareEqualIgnoreCase(component,
+                                                       FILE_PATH_LITERAL("PRINT$")) ||
+                base::FilePath::CompareEqualIgnoreCase(component,
+                                                       FILE_PATH_LITERAL("FAX$"))) {
+                return true;
+            }
+
+            // Otherwise, it is just a hidden share (e.g. "Share$")—do not block.
+        }
+    }
+
+    return false;
+}
+#endif
+
+enum BlockType {
+    kBlockAllChildren,
+    kBlockNestedDirectories,
+    kDontBlockChildren,
+    kDontBlockAppFolder,
+    kBlockWrite
+};
 
 const struct
 {
@@ -77,6 +180,22 @@ const struct
     { base::DIR_HOME, FILE_PATH_LITERAL(".ssh"), kBlockAllChildren },
     // And limit access to ~/.gnupg as well.
     { base::DIR_HOME, FILE_PATH_LITERAL(".gnupg"), kBlockAllChildren },
+    // ~/.config holds configuration for many cross-platform tools, so block
+    // it on all platforms, see crbug.com/569012015.
+    { base::DIR_HOME, FILE_PATH_LITERAL(".config"), kBlockAllChildren },
+    // Shell startup files in the home directory, including the ones read by
+    // Git Bash on Windows, see crbug.com/558362029.
+    // ~/.cache holds caches and virtual environments for cross-platform
+    // tools, so block it on all platforms, see crbug.com/577400245.
+    { base::DIR_HOME, FILE_PATH_LITERAL(".cache"), kBlockAllChildren },
+    { base::DIR_HOME, FILE_PATH_LITERAL(".bash_profile"), kBlockAllChildren },
+    { base::DIR_HOME, FILE_PATH_LITERAL(".bash_login"), kBlockAllChildren },
+    { base::DIR_HOME, FILE_PATH_LITERAL(".bashrc"), kBlockAllChildren },
+    { base::DIR_HOME, FILE_PATH_LITERAL(".profile"), kBlockAllChildren },
+    { base::DIR_HOME, FILE_PATH_LITERAL(".zshenv"), kBlockAllChildren },
+    { base::DIR_HOME, FILE_PATH_LITERAL(".zprofile"), kBlockAllChildren },
+    { base::DIR_HOME, FILE_PATH_LITERAL(".zshrc"), kBlockAllChildren },
+    { base::DIR_HOME, FILE_PATH_LITERAL(".zlogin"), kBlockAllChildren },
 #if defined(OS_WIN)
     // Some Windows specific directories to block, basically all apps, the
     // operating system itself, as well as configuration data for apps.
@@ -102,6 +221,10 @@ const struct
     { base::DIR_HOME, FILE_PATH_LITERAL("Library"), kBlockAllChildren },
     // Allow access to iCloud files.
     { base::DIR_HOME, FILE_PATH_LITERAL("Library/Mobile Documents"), kDontBlockChildren },
+    { kNoBasePathKey, FILE_PATH_LITERAL("/System/Volumes"), kBlockAllChildren },
+    // Block access to devices via /dev, matching Linux, see
+    // crbug.com/569012543.
+    { kNoBasePathKey, FILE_PATH_LITERAL("/dev"),kBlockAllChildren },
 #endif
 #if defined(OS_LINUX) || defined(OS_CHROMEOS)
     // On Linux also block access to devices via /dev, as well as security
@@ -109,25 +232,140 @@ const struct
     { kNoBasePathKey, FILE_PATH_LITERAL("/dev"), kBlockAllChildren },
     { kNoBasePathKey, FILE_PATH_LITERAL("/sys"), kBlockAllChildren },
     { kNoBasePathKey, FILE_PATH_LITERAL("/proc"), kBlockAllChildren },
-    // And block all of ~/.config, matching the similar restrictions on mac
-    // and windows.
-    { base::DIR_HOME, FILE_PATH_LITERAL(".config"), kBlockAllChildren },
     // Block ~/.dbus as well, just in case, although there probably isn't much a
     // website can do with access to that directory and its contents.
     { base::DIR_HOME, FILE_PATH_LITERAL(".dbus"), kBlockAllChildren },
+    // Block per-user application data, see crbug.com/561996724.
+    { base::DIR_HOME, FILE_PATH_LITERAL(".local/share"), kBlockAllChildren },
+    // Block the legacy per-user fontconfig configuration, see
+    // crbug.com/559780982. The current location is under ~/.config.
+    { base::DIR_HOME, FILE_PATH_LITERAL(".fonts.conf"), kBlockAllChildren },
+    { base::DIR_HOME, FILE_PATH_LITERAL(".fonts.conf.d"), kBlockAllChildren },
+      // Block the per-user NSS database, see crbug.com/557367241.
+    { base::DIR_HOME, FILE_PATH_LITERAL(".pki"), kBlockAllChildren },
 #endif
     // TODO(https://crbug.com/984641): Refine this list, for example add
     // XDG_CONFIG_HOME when it is not set ~/.config?
 };
 
-bool ShouldBlockAccessToPath(const base::FilePath &check_path, HandleType handle_type)
+const struct
+{
+    // Explicit path to block instead of using |base_path_key|. Set to nullptr to
+    // use |base_path_key| on its own. If both |base_path_key| and |path| are set,
+    // |path| is treated relative to the path |base_path_key| resolves to.
+    const base::FilePath::CharType *path;
+
+    // If this is set to kDontBlockChildren, only the given path and its parents
+    // are blocked. If this is set to kBlockAllChildren, all children of the given
+    // path are blocked as well. Finally if this is set to kBlockNestedDirectories
+    // access is allowed to individual files in the directory, but nested
+    // directories are still blocked.
+    // The BlockType of the nearest ancestor of a path to check is what ultimately
+    // determines if a path is blocked or not. If a blocked path is a descendent
+    // of another blocked path, then it may override the child-blocking policy of
+    // its ancestor. For example, if /home blocks all children, but
+    // /home/downloads does not, then /home/downloads/file.ext will *not* be
+    // blocked.
+    BlockType type;
+} kBlockedSuffixes[] = {
+    { FILE_PATH_LITERAL(".git/hooks"), kBlockWrite },
+    // Block write access to the repository config and to submodule git
+    // directories, which have their own hooks and config, see
+    // crbug.com/572269631 and crbug.com/571913154.
+    { FILE_PATH_LITERAL(".git/config"), kBlockWrite },
+    { FILE_PATH_LITERAL(".git/modules"), kBlockWrite },
+    // Block write access to */.mvn, which holds Maven project and JVM
+    // configuration (such as jvm.config, maven.config, and extensions.xml),
+    // see crbug.com/578500839.
+    { FILE_PATH_LITERAL(".mvn"), kBlockWrite },
+};
+
+#if defined(OS_MAC)
+// Returns a file path with the "/System/Volumes/Data" firmlink prefix stripped,
+// mapping paths on the macOS Data volume back to the root "/" namespace.
+//
+// On macOS 10.15+, storage is split into a read-only System volume mounted at
+// "/" and a read-write Data volume mounted at "/System/Volumes/Data". APFS
+// firmlinks map system directories (e.g., "/Users", "/Applications",
+// "/Library") between the two volumes without modifying standard POSIX
+// `realpath` representations. Stripping this prefix allows blocklist rules
+// defined against root-relative paths to match targets accessed through the
+// Data volume firmlink path.
+base::FilePath MaybeStripMacDataVolumePrefix(const base::FilePath& path) {
+  static constexpr base::FilePath::CharType kDataVolumePrefix[] =
+      FILE_PATH_LITERAL("/System/Volumes/Data");
+  base::FilePath data_volume_prefix(kDataVolumePrefix);
+  if (path == data_volume_prefix) {
+    return base::FilePath(FILE_PATH_LITERAL("/"));
+  }
+  base::FilePath stripped_path(FILE_PATH_LITERAL("/"));
+  if (data_volume_prefix.AppendRelativePath(path, &stripped_path)) {
+    return stripped_path;
+  }
+  return path;
+}
+#endif
+
+// A wrapper around `base::NormalizeFilePath` that returns its result instead of
+// using an out parameter.
+base::FilePath NormalizeFilePath(const base::FilePath& path) {
+  base::FilePath absolute_path = path;
+  if (!absolute_path.IsAbsolute()) {
+    absolute_path = base::MakeAbsoluteFilePath(absolute_path);
+  }
+
+  if (absolute_path.empty()) {
+    return absolute_path;
+  }
+
+  // TODO(crbug.com/368130513O): On Windows, this call will fail if the target
+  // file path is greater than MAX_PATH. We should decide how to handle this
+  // scenario.
+  // If the path is invalid, the `base::NormalizeFilePath` will also return
+  // false, so we return the empty path.
+  base::FilePath normalized_path;
+  if (!base::NormalizeFilePath(absolute_path, &normalized_path)) {
+    return absolute_path;
+  }
+  CHECK_EQ(path.empty(), normalized_path.empty());
+  return normalized_path;
+}
+
+// Normalizes `path` for sensitive directory blocklist checking. Resolves
+// symbolic links and canonicalizes the path when `should_normalize_file_path`
+// is true. On macOS, additionally strips the "/System/Volumes/Data" firmlink
+// prefix so paths on the Data volume map onto the root "/" blocklist namespace.
+base::FilePath NormalizeFilePathForBlocklist(const base::FilePath& path,
+                                             bool should_normalize_file_path = true) {
+  base::FilePath normalized_path =
+      should_normalize_file_path ? NormalizeFilePath(path) : path;
+#if BUILDFLAG(IS_MAC)
+  normalized_path = MaybeStripMacDataVolumePrefix(normalized_path);
+#endif
+  return normalized_path;
+}
+
+bool ShouldBlockAccessToPath(const base::FilePath &check_path,
+                             HandleType handle_type,
+                             FileSystemAccessPermissionContextQt::UserAction user_action)
 {
     DCHECK(!check_path.empty());
     DCHECK(check_path.IsAbsolute());
 
+#if BUILDFLAG(IS_WIN)
+    // On Windows, local UNC paths are rejected, as UNC path can be written in a
+    // way that can bypass the blocklist.
+    // Copied from chrome/browser/file_system_access/chrome_file_system_access_permission_context.cc
+    if (MaybeIsLocalUNCPath(check_path)) {
+        return true;
+    }
+#endif
+
     base::FilePath nearest_ancestor;
     int nearest_ancestor_path_key = kNoBasePathKey;
     BlockType nearest_ancestor_block_type = kDontBlockChildren;
+
+    base::FilePath checked_path = check_path;
     for (const auto &block : kBlockedPaths) {
         base::FilePath blocked_path;
         if (block.base_path_key != kNoBasePathKey) {
@@ -140,18 +378,77 @@ bool ShouldBlockAccessToPath(const base::FilePath &check_path, HandleType handle
             blocked_path = base::FilePath(block.path);
         }
 
-        if (check_path == blocked_path || check_path.IsParent(blocked_path)) {
-            VLOG(1) << "Blocking access to " << check_path << " because it is a parent of "
+       blocked_path = NormalizeFilePathForBlocklist(blocked_path);
+       checked_path = NormalizeFilePathForBlocklist(checked_path);
+
+        if (checked_path == blocked_path || checked_path.IsParent(blocked_path)) {
+            VLOG(1) << "Blocking access to " << checked_path << " because it is a parent of "
                     << blocked_path << " (" << block.base_path_key << ")";
             return true;
         }
 
-        if (blocked_path.IsParent(check_path)
+        if (blocked_path.IsParent(checked_path)
             && (nearest_ancestor.empty() || nearest_ancestor.IsParent(blocked_path))) {
             nearest_ancestor = blocked_path;
             nearest_ancestor_path_key = block.base_path_key;
             nearest_ancestor_block_type = block.type;
         }
+    }
+
+    std::vector<base::FilePath::StringType> check_path_components =
+        check_path.GetComponents();
+
+    // Checks if the path components contain the components of the suffix rule.
+    // For example, if the rule is `.git/hooks`, it will block paths like
+    // `/foo/bar/.git/hooks`. The `std::search` identifies the matching subrange
+    // using case-insensitive comparison and constructs a `current_path` from the
+    // root up to the end of the matched subrange (e.g., `/foo/bar/.git/hooks`).
+    // This path is then evaluated against the regular block rules.
+    for (const auto& suffix : kBlockedSuffixes) {
+      base::FilePath suffix_path(suffix.path);
+      std::vector<base::FilePath::StringType> suffix_components =
+          suffix_path.GetComponents();
+      if (suffix_components.empty()) {
+        continue;
+      }
+
+      auto suffix_it = check_path_components.begin();
+      while (true) {
+        suffix_it = std::search(suffix_it, check_path_components.end(), suffix_components.begin(),
+                         suffix_components.end(),
+                         base::FilePath::CompareEqualIgnoreCase);
+        if (suffix_it == check_path_components.end()) {
+          break;
+        }
+
+        base::FilePath current_path = base::FilePath(check_path_components[0]);
+        for (auto path_it = check_path_components.begin() + 1;
+             path_it != suffix_it + suffix_components.size(); ++path_it) {
+          current_path = current_path.Append(*path_it);
+        }
+
+        if (suffix.type == BlockType::kBlockWrite &&
+            user_action != FileSystemAccessPermissionContextQt::UserAction::kSave &&
+            user_action != FileSystemAccessPermissionContextQt::UserAction::kDragAndDrop) {
+          ++suffix_it;
+          continue;
+        }
+
+        if (check_path == current_path || check_path.IsParent(current_path)) {
+          LOG(ERROR) << "Blocking access to " << check_path
+                   << " because it is a parent of " << current_path;
+          return true;
+        }
+
+        if (current_path.IsParent(check_path) &&
+            (nearest_ancestor.empty() || nearest_ancestor.IsParent(current_path))) {
+          nearest_ancestor = current_path;
+          nearest_ancestor_block_type = suffix.type;
+        }
+        return false;
+
+        ++suffix_it;
+      }
     }
 
     // The path we're checking is not in a potentially blocked directory, or the
@@ -167,7 +464,7 @@ bool ShouldBlockAccessToPath(const base::FilePath &check_path, HandleType handle
     if (nearest_ancestor_block_type == kDontBlockAppFolder) {
         // Relative path from the nearest blocklisted ancestor
         base::FilePath diff;
-        nearest_ancestor.AppendRelativePath(check_path, &diff);
+        nearest_ancestor.AppendRelativePath(checked_path, &diff);
 
         auto diff_components = diff.GetComponents();
         if (diff_components.size() > 0 && toQt(diff_components[0]).contains(QCoreApplication::applicationName())) {
@@ -177,7 +474,7 @@ bool ShouldBlockAccessToPath(const base::FilePath &check_path, HandleType handle
     }
 
     // The nearest ancestor blocks access to its children, so block access.
-    VLOG(1) << "Blocking access to " << check_path << " because it is inside " << nearest_ancestor
+    VLOG(1) << "Blocking access to " << checked_path << " because it is inside " << nearest_ancestor
             << " (" << nearest_ancestor_path_key << ")";
     return true;
 }
@@ -308,7 +605,7 @@ void FileSystemAccessPermissionContextQt::ConfirmSensitiveEntryAccess(
 
     base::ThreadPool::PostTaskAndReplyWithResult(
             FROM_HERE, { base::MayBlock(), base::TaskPriority::USER_VISIBLE },
-            base::BindOnce(&ShouldBlockAccessToPath, info.path, handle_type),
+            base::BindOnce(&ShouldBlockAccessToPath, info.path, handle_type, user_action),
             base::BindOnce(&FileSystemAccessPermissionContextQt::DidConfirmSensitiveDirectoryAccess,
                            m_weakFactory.GetWeakPtr(), origin, info.path, handle_type, user_action, frame_id,
                            std::move(callback)));

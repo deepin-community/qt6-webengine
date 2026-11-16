@@ -27,7 +27,6 @@
 #include "base/values.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
-#include "net/base/proxy_chain.h"
 #include "net/base/proxy_server.h"
 #include "net/log/net_log.h"
 #include "net/log/net_log_event_type.h"
@@ -440,8 +439,7 @@ int TransportClientSocketPool::RequestSocketInternal(
       // still one in this group, but we got here due to preconnecting
       // bypassing idle sockets, or because there's an idle socket in another
       // group.
-      bool closed = CloseOneIdleSocketExceptInGroup(group);
-      if (preconnecting && !closed)
+      if (preconnecting && !CloseOneIdleSocketExceptInGroup(group))
         return ERR_PRECONNECT_MAX_SOCKET_LIMIT;
     } else {
       // We could check if we really have a stalled group here, but it
@@ -457,10 +455,9 @@ int TransportClientSocketPool::RequestSocketInternal(
   // so allocate and connect a new one.
   group = GetOrCreateGroup(group_id,
                            !request.fail_if_alias_requires_proxy_override());
-  std::unique_ptr<ConnectJob> connect_job(
-      CreateConnectJob(group_id, request.socket_params(), proxy_chain_,
-                       request.proxy_annotation_tag(), request.priority(),
-                       request.socket_tag(), group));
+  std::unique_ptr<ConnectJob> connect_job(CreateConnectJob(
+      group_id, request.socket_params(), request.proxy_annotation_tag(),
+      request.priority(), request.socket_tag(), group));
   connect_job->net_log().AddEvent(
       NetLogEventType::SOCKET_POOL_CONNECT_JOB_CREATED, [&] {
         return NetLogCreateConnectJobParams(false /* backup_job */, &group_id);
@@ -523,6 +520,7 @@ bool TransportClientSocketPool::AssignIdleSocketToRequest(
       it->socket->NetLog().AddEventWithStringParams(
           NetLogEventType::SOCKET_POOL_CLOSING_SOCKET, "reason",
           net_log_reason_utf8);
+      QueueDestroySocket(std::move(it->socket));
       DecrementIdleCount();
       it = idle_sockets->erase(it);
       continue;
@@ -651,6 +649,7 @@ void TransportClientSocketPool::CancelRequest(const GroupId& group_id,
 void TransportClientSocketPool::CloseIdleSockets(
     const char* net_log_reason_utf8) {
   CleanupIdleSockets(true, net_log_reason_utf8);
+  DestroyQueuedSockets();
   DCHECK_EQ(0, idle_socket_count_);
 }
 
@@ -797,14 +796,14 @@ TransportClientSocketPool::TransportClientSocketPool(
     std::unique_ptr<ConnectJobFactory> connect_job_factory,
     SSLClientContext* ssl_client_context,
     bool connect_backup_jobs_enabled)
-    : ClientSocketPool(is_for_websockets,
+    : ClientSocketPool(proxy_chain,
+                       is_for_websockets,
                        common_connect_job_params,
                        std::move(connect_job_factory)),
       max_sockets_(max_sockets),
       max_sockets_per_group_(max_sockets_per_group),
       unused_idle_socket_timeout_(unused_idle_socket_timeout),
       used_idle_socket_timeout_(used_idle_socket_timeout),
-      proxy_chain_(proxy_chain),
       cleanup_on_ip_address_change_(cleanup_on_ip_address_change),
       connect_backup_jobs_enabled_(connect_backup_jobs_enabled &&
                                    g_connect_backup_jobs_enabled),
@@ -858,7 +857,7 @@ void TransportClientSocketPool::OnSSLConfigForServersChanged(
   // If the proxy chain includes a server from `servers` and uses SSL settings
   // (HTTPS or QUIC), refresh every group.
   bool proxy_matches = false;
-  for (const ProxyServer& proxy_server : proxy_chain_.proxy_servers()) {
+  for (const ProxyServer& proxy_server : GetProxyChain().proxy_servers()) {
     if (proxy_server.is_secure_http_like() &&
         servers.contains(proxy_server.host_port_pair())) {
       proxy_matches = true;
@@ -965,6 +964,7 @@ void TransportClientSocketPool::CleanupIdleSocketsInGroup(
       idle_socket_it->socket->NetLog().AddEventWithStringParams(
           NetLogEventType::SOCKET_POOL_CLOSING_SOCKET, "reason",
           reason_for_closing_socket);
+      QueueDestroySocket(std::move(idle_socket_it->socket));
       idle_socket_it = group->mutable_idle_sockets()->erase(idle_socket_it);
       DecrementIdleCount();
     } else {
@@ -1069,7 +1069,7 @@ void TransportClientSocketPool::ReleaseSocket(
         not_reusable_reason);
     if (group->IsEmpty())
       RemoveGroup(i);
-    socket.reset();
+    QueueDestroySocket(std::move(socket));
   }
 
   CheckForStalledSocketGroups();
@@ -1308,6 +1308,7 @@ bool TransportClientSocketPool::CloseOneIdleSocketExceptInGroup(
     std::list<IdleSocket>* idle_sockets = group->mutable_idle_sockets();
 
     if (!idle_sockets->empty()) {
+      QueueDestroySocket(std::move(idle_sockets->front().socket));
       idle_sockets->pop_front();
       DecrementIdleCount();
       if (group->IsEmpty())
@@ -1498,6 +1499,27 @@ TransportClientSocketPool::RefreshGroup(GroupMap::iterator it,
   return ++it;
 }
 
+void TransportClientSocketPool::QueueDestroySocket(
+    std::unique_ptr<StreamSocket> socket) {
+  if (GetProxyChain().is_direct()) {
+    return;
+  }
+  if (sockets_queued_for_destruction_.empty()) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&TransportClientSocketPool::DestroyQueuedSockets,
+                       weak_factory_.GetWeakPtr()));
+  }
+  sockets_queued_for_destruction_.emplace_back(std::move(socket));
+}
+
+void TransportClientSocketPool::DestroyQueuedSockets() {
+  // Move into a local vector before destroying elements in case a socket's
+  // destructor reentrantly calls QueueDestroySocket().
+  std::vector<std::unique_ptr<StreamSocket>> sockets =
+      std::move(sockets_queued_for_destruction_);
+}
+
 TransportClientSocketPool::Group::Group(
     const GroupId& group_id,
     TransportClientSocketPool* client_socket_pool)
@@ -1652,9 +1674,8 @@ void TransportClientSocketPool::Group::OnBackupJobTimerFired(
   Request* request = unbound_requests_.FirstMax().value().get();
   std::unique_ptr<ConnectJob> owned_backup_job =
       client_socket_pool_->CreateConnectJob(
-          group_id, request->socket_params(), client_socket_pool_->proxy_chain_,
-          request->proxy_annotation_tag(), request->priority(),
-          request->socket_tag(), this);
+          group_id, request->socket_params(), request->proxy_annotation_tag(),
+          request->priority(), request->socket_tag(), this);
   owned_backup_job->net_log().AddEvent(
       NetLogEventType::SOCKET_POOL_CONNECT_JOB_CREATED, [&] {
         return NetLogCreateConnectJobParams(true /* backup_job */, &group_id_);

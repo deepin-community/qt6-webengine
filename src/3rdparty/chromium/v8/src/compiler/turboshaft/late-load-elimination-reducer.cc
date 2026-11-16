@@ -482,11 +482,6 @@ void LateLoadEliminationAnalyzer::ProcessCall(OpIndex op_idx,
   // Some builtins do not create aliases and do not invalidate existing
   // memory, and some even return fresh objects. For such cases, we don't
   // invalidate the state, and record the non-alias if any.
-  if (!op.Effects().can_write()) {
-    TRACE(">> Call doesn't write, skipping");
-    return;
-  }
-
   auto builtin_id = TryGetBuiltinId(callee.TryCast<ConstantOp>(), broker_);
 
   if (builtin_id) {
@@ -508,19 +503,29 @@ void LateLoadEliminationAnalyzer::ProcessCall(OpIndex op_idx,
     }
   }
 
-  // Not a builtin call, or not a builtin that we know doesn't invalidate
-  // memory.
-  InvalidateAllNonAliasingInputs(op);
-
   if (builtin_id) {
     switch (*builtin_id) {
       case Builtin::kCreateShallowObjectLiteral:
         // This builtin creates a fresh non-aliasing object.
         non_aliasing_objects_.Set(op_idx, true);
-        break;
+        return;
       default:
         break;
     }
+  }
+
+  // Not a builtin call, or not a builtin that we know doesn't invalidate
+  // memory.
+  InvalidateAllNonAliasingInputs(op);
+
+  // Keep in mind that "can_write" really means "can write to already allocated
+  // memory" and excludes writes to memory that the call itself allocates.
+  // Hence, InvalidateAllNonAliasingInputs must be called before this can_write
+  // bailout, to account for the fact that some builtins may create fresh
+  // objects that copy their inputs, thus creating aliases.
+  if (!op.Effects().can_write()) {
+    TRACE(">> Call doesn't write, skipping");
+    return;
   }
 
   // The call could modify arbitrary memory, so we invalidate every
@@ -718,13 +723,7 @@ bool LateLoadEliminationAnalyzer::BeginBlock(const Block* block) {
       // edge of the inner loop should reflect this restriction.
       predecessor_alias_snapshots_.push_back(pred_snapshots->alias_snapshot);
       predecessor_memory_snapshots_.push_back(pred_snapshots->memory_snapshot);
-      if (p->NeighboringPredecessor() != nullptr || !block->IsLoop() ||
-          block->LastPredecessor() != p) {
-        // We only add a MapSnapshot predecessor for non-backedge predecessor.
-        // This is because maps coming from inside of the loop may be wrong
-        // until a specific check has been executed.
-        predecessor_maps_snapshots_.push_back(pred_snapshots->maps_snapshot);
-      }
+      predecessor_maps_snapshots_.push_back(pred_snapshots->maps_snapshot);
     }
   }
 
@@ -757,9 +756,13 @@ bool LateLoadEliminationAnalyzer::BeginBlock(const Block* block) {
       if (is_empty(pred)) {
         // One of the predecessors doesn't have maps for this object, so we have
         // to assume that this object could have any map.
-        return MapMaskAndOr{};
+        minmax = MapMaskAndOr{};
+        break;
       }
       minmax = CombineMinMax(minmax, pred);
+    }
+    if (for_loop_revisit && minmax != predecessors[kForwardEdgeOffset]) {
+      loop_needs_revisit = true;
     }
     return minmax;
   };

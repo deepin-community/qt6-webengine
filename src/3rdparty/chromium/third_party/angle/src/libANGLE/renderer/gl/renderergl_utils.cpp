@@ -162,6 +162,12 @@ bool IsAdreno5xx(const FunctionsGL *functions)
     return number != 0 && number >= 500 && number < 600;
 }
 
+bool IsAdreno6xxOrOlder(const FunctionsGL *functions)
+{
+    int number = getAdrenoNumber(functions);
+    return number != 0 && number < 700;
+}
+
 bool IsMaliT8xxOrOlder(const FunctionsGL *functions)
 {
     int number = getMaliTNumber(functions);
@@ -2240,7 +2246,12 @@ void GenerateCaps(const FunctionsGL *functions,
 
     if (features.limitMaxBufferSizeTo1gb.enabled)
     {
-        limitations->bufferSizeLimit = 1 << 30;
+        limitations->maxBufferBytes = 1 << 30;
+    }
+
+    if (features.roundUp3dTextureSizeToPOTForLimit.enabled)
+    {
+        limitations->roundUp3DTextureSizeToPOTForLimit = true;
     }
 }
 
@@ -2390,6 +2401,10 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
     ANGLE_FEATURE_CONDITION(features, splitLevel0PboFullSubImage2D,
                             isPowerVRDriver && powerVRVersion < (std::array<int, 2>{26, 2}));
 
+    // TODO(crbug.com/548127218): conditionalize this workaround on PowerVR
+    // driver version.
+    ANGLE_FEATURE_CONDITION(features, uploadOversizedMipLevelsViaUnpackBuffer, isPowerVRDriver);
+
     ANGLE_FEATURE_CONDITION(features, initializeCurrentVertexAttributes, isNvidia);
 
     ANGLE_FEATURE_CONDITION(features, unpackLastRowSeparatelyForPaddingInclusion,
@@ -2443,6 +2458,8 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
                             IsAndroid() || (IsApple() && (isIntel || isAMD || isNvidia)));
     ANGLE_FEATURE_CONDITION(features, limitMax3dArrayTextureSizeTo1024,
                             isIntelLinuxLessThanKernelVersion5);
+    ANGLE_FEATURE_CONDITION(features, roundUp3dTextureSizeToPOTForLimit,
+                            isPowerVRDriver && powerVRVersion < (std::array<int, 2>{26, 2}));
 
     ANGLE_FEATURE_CONDITION(features, allowClearForRobustResourceInit, IsApple());
 
@@ -2462,10 +2479,15 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
     ANGLE_FEATURE_CONDITION(features, resetTexImage2DBaseLevel,
                             IsApple() && isIntel && GetMacOSVersion() >= OSVersion(10, 12, 4));
 
-    ANGLE_FEATURE_CONDITION(features, resetBaseLevelForASTCSubImage, IsPowerVR(vendor));
+    ANGLE_FEATURE_CONDITION(features, resetBaseLevelForASTCImage, IsPowerVR(vendor));
 
     ANGLE_FEATURE_CONDITION(features, recreateImmutableTextureOnBaseLevelIncrease,
                             IsPowerVR(vendor));
+    
+    ANGLE_FEATURE_CONDITION(features, resetTexStorage2DBaseLevel, IsPowerVR(vendor));
+
+    ANGLE_FEATURE_CONDITION(features, recreateTextureOnTexImage3dDepthIncrease,
+                             isQualcomm && IsAndroid());
 
     ANGLE_FEATURE_CONDITION(features, useTempForNonZeroBaseLevelGenMipmapUsingCopyImageSubData,
                             IsPowerVR(vendor));
@@ -2710,6 +2732,16 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
     // http://crbug.com/534468209
     ANGLE_FEATURE_CONDITION(features, flushQueriesBeforeDeletingOrUnbindingFbo, isMali);
 
+    // http://crbug.com/546252753
+    ANGLE_FEATURE_CONDITION(features, finishBeforeBlitFramebufferMultiAttachment, isMali);
+
+    // http://crbug.com/558870371
+    ANGLE_FEATURE_CONDITION(features, deferGlDeleteBuffers, isMali);
+
+    // http://crbug.com/550489336
+    ANGLE_FEATURE_CONDITION(features, doubleClearForRobustInit,
+                            isMali || IsAdreno6xxOrOlder(functions));
+
     // https://crbug.com/40264674
     ANGLE_FEATURE_CONDITION(features, disableClipControl, IsMaliG72OrG76OrG51(functions));
 
@@ -2792,13 +2824,16 @@ void InitializeFeatures(const FunctionsGL *functions, angle::FeaturesGL *feature
     // coverage each time FBO changes.
     ANGLE_FEATURE_CONDITION(features, resetSampleCoverageOnFBOChange, isQualcomm);
 
-    // Forces a flush before generating a mipmap, which avoids a bad state in the IMG driver if
-    // the texture's base level is still bound to an active FBO.
+    // Forces a flush before generating a mipmap, which avoids bad states in the IMG driver.
     ANGLE_FEATURE_CONDITION(features, flushBeforeGenerateMipmap, IsPowerVR(vendor));
 
     // Some drivers have compilation issues when shaders declare too many output varyings.
     // crbug.com/529991907
     ANGLE_FEATURE_CONDITION(features, limitOutputVaryingsTo256AtCompileTime, IsPowerVR(vendor));
+
+    // crbug.com/553172761
+    ANGLE_FEATURE_CONDITION(features, useTexSubImageForClientDataNpotUploads,
+                            false /* IsPowerVR(vendor) */);
 
     // Mac Intel drivers are unable to allocate buffers larger than ~1gb
     ANGLE_FEATURE_CONDITION(features, limitMaxBufferSizeTo1gb, isApple && isIntel);

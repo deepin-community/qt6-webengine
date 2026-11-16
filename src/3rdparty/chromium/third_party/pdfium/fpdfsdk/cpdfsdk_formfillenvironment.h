@@ -85,6 +85,8 @@ class CPDFSDK_FormFillEnvironment final
   bool HasPermissions(uint32_t flags) const override;
   void OnChange() override;
 
+  bool InPassiveFFICallback() const { return in_passive_ffi_callback_; }
+
   CPDFSDK_PageView* GetPageViewAtIndex(int nIndex);
   void RemovePageView(IPDF_Page* pUnderlyingPage);
   void UpdateAllViews(CPDFSDK_Annot* pAnnot);
@@ -146,7 +148,7 @@ class CPDFSDK_FormFillEnvironment final
 
 #ifdef PDF_ENABLE_V8
   CPDFSDK_PageView* GetCurrentView();
-  IPDF_Page* GetCurrentPage() const;
+  IPDF_Page* GetCurrentPage();
 
   WideString GetLanguage();
   WideString GetPlatform();
@@ -189,7 +191,7 @@ class CPDFSDK_FormFillEnvironment final
                     double top,
                     double right,
                     double bottom);
-  int GetCurrentPageIndex() const;
+  int GetCurrentPageIndex();
   void SetCurrentPage(int iCurPage);
 
   // TODO(dsinclair): This should probably change to PDFium?
@@ -220,7 +222,7 @@ class CPDFSDK_FormFillEnvironment final
                           const WideString& wsData,
                           const WideString& wsEncode);
 
-  void PageEvent(int iPageCount, uint32_t dwEventType) const;
+  void PageEvent(int iPageCount, uint32_t dwEventType);
 #endif  // PDF_ENABLE_XFA
 #endif  // PDF_ENABLE_V8
 
@@ -248,7 +250,7 @@ class CPDFSDK_FormFillEnvironment final
  private:
   using RunScriptCallback = std::function<void(IJS_EventContext* context)>;
 
-  IPDF_Page* GetPage(int nIndex) const;
+  IPDF_Page* GetPage(int nIndex);
   void OnSetFieldInputFocusInternal(const WideString& text, bool bFocus);
   void SendOnFocusChange(ObservedPtr<CPDFSDK_Annot>& pAnnot);
 
@@ -286,6 +288,8 @@ class CPDFSDK_FormFillEnvironment final
   std::unique_ptr<CFFL_InteractiveFormFiller> interactive_form_filler_;
   bool change_mask_ = false;
   bool being_destroyed_ = false;
+  bool in_active_ffi_callback_ = false;
+  bool in_passive_ffi_callback_ = false;
 
   // Holds the list of focusable annot types.
   // Annotations of type WIDGET are by default focusable.

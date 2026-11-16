@@ -1136,6 +1136,28 @@ TEST_F(WebMediaPlayerImplTest, LoadPreloadMetadataSuspend) {
             data_source_size);
 }
 
+// Verify that re-entrant Shutdown() during OnPipelineSuspended() does not
+// destroy `pipeline_controller_` while it is still on the call stack.
+TEST_F(WebMediaPlayerImplTest, ShutdownDuringOnPipelineSuspended) {
+  InitializeWebMediaPlayerImpl();
+  base::RunLoop loop;
+  EXPECT_CALL(*client_, CouldPlayIfEnoughData())
+      .WillOnce(Return(false))
+      .WillOnce([&]() {
+        EXPECT_CALL(*client_, SetCcLayer(nullptr));
+        EXPECT_CALL(*client_, MediaRemotingStopped(_));
+        wmpi_->Shutdown();
+        loop.Quit();
+        return true;
+      });
+  wmpi_->SetPreload(WebMediaPlayer::kPreloadMetaData);
+  Load(kAudioOnlyTestFile);
+  loop.Run();
+
+  wmpi_.reset();
+  CycleThreads();
+}
+
 // Verify that Play() before kReadyStateHaveEnough doesn't increase buffer size.
 TEST_F(WebMediaPlayerImplTest, NoBufferSizeIncreaseUntilHaveEnough) {
   InitializeWebMediaPlayerImpl();
@@ -1219,6 +1241,45 @@ TEST_F(WebMediaPlayerImplTest, LazyLoadPreloadMetadataSuspend) {
             data_source_size);
 
   EXPECT_CALL(*surface_layer_bridge_ptr_, ClearObserver());
+}
+
+// Verify that shutting down WebMediaPlayerImpl before destroying it cancels the
+// delayed lazy load StopPreloading callback before DemuxerManager is destroyed.
+TEST_F(WebMediaPlayerImplTest,
+       LazyLoadPreloadMetadataSuspendShutdownBeforeDestroy) {
+  InitializeWebMediaPlayerImpl();
+  EXPECT_CALL(*client_, CouldPlayIfEnoughData()).WillRepeatedly(Return(false));
+  wmpi_->SetPreload(WebMediaPlayer::kPreloadMetaData);
+
+  LoadAndWaitForReadyState(kVideoOnlyTestFile,
+                           WebMediaPlayer::kReadyStateHaveMetadata);
+  testing::Mock::VerifyAndClearExpectations(client_.Get());
+  EXPECT_CALL(*client_, ReadyStateChanged()).Times(AnyNumber());
+  CycleThreads();
+  EXPECT_TRUE(IsSuspended());
+  EXPECT_TRUE(wmpi_->DidLazyLoad());
+  EXPECT_FALSE(ShouldCancelUponDefer());
+
+  EXPECT_CALL(*surface_layer_bridge_ptr_, ClearObserver());
+  EXPECT_CALL(*client_, SetCcLayer(nullptr));
+  EXPECT_CALL(*client_, MediaRemotingStopped(_));
+
+  // Shut down the player without destroying it yet, then cycle threads so
+  // DestructionHelper deletes `demuxer_manager_`.
+  wmpi_->Shutdown();
+  CycleThreads();
+
+  // Wait past the 250ms delay used by `have_enough_after_lazy_load_cb_` while
+  // `wmpi_` is still alive.
+  base::RunLoop loop;
+  GetWebLocalFrame()
+      ->Scheduler()
+      ->GetTaskRunner(TaskType::kMediaElementEvent)
+      ->PostDelayedTask(FROM_HERE, loop.QuitClosure(), base::Milliseconds(300));
+  loop.Run();
+
+  wmpi_.reset();
+  CycleThreads();
 }
 
 // Verify that lazy load is skipped when rVFC has been requested.
@@ -2106,6 +2167,56 @@ TEST_F(WebMediaPlayerImplTest, PipelineErrorHardwareContextReset_Twice) {
   renderer_factory_selector_->SetBaseRendererType(media::RendererType::kTest);
 
   Load(kVideoOnlyTestFile);
+  run_loop.Run();
+}
+
+TEST_F(WebMediaPlayerImplTest,
+       PipelineErrorHardwareContextReset_TwoRenderersCreated) {
+  InitializeWebMediaPlayerImpl();
+  // To avoid PreloadMetadataLazyLoad.
+  wmpi_->SetPreload(WebMediaPlayer::kPreloadAuto);
+
+  base::RunLoop run_loop;
+
+  // Use MockRendererFactory which will create two MediaFoundation renderers.
+  // The first one will report a PIPELINE_ERROR_HARDWARE_CONTEXT_RESET after
+  // initialization. The second one will initialize normally and quit the loop
+  // to complete the test.
+  auto mock_renderer_factory = std::make_unique<media::MockRendererFactory>();
+  EXPECT_CALL(*mock_renderer_factory, CreateRenderer(_, _, _, _, _, _))
+      .WillOnce(testing::WithoutArgs([]() {
+        auto mock_renderer = std::make_unique<NiceMock<media::MockRenderer>>(
+            media::RendererType::kMediaFoundation);
+        EXPECT_CALL(*mock_renderer, OnSetCdm(_, _))
+            .WillOnce(RunOnceCallback<1>(true));
+        EXPECT_CALL(*mock_renderer, OnInitialize(_, _, _))
+            .WillOnce(DoAll(RunOnceCallback<2>(media::PIPELINE_OK),
+                            WithArg<1>(ReportHardwareContextReset())));
+        return mock_renderer;
+      }))
+      .WillOnce(testing::WithoutArgs([&]() {
+        auto mock_renderer = std::make_unique<NiceMock<media::MockRenderer>>(
+            media::RendererType::kMediaFoundation);
+        EXPECT_CALL(*mock_renderer, OnInitialize(_, _, _))
+            .WillOnce(DoAll(RunOnceCallback<2>(media::PIPELINE_OK),
+                            RunClosure(run_loop.QuitClosure())));
+        return mock_renderer;
+      }));
+
+  renderer_factory_selector_->AddFactory(media::RendererType::kMediaFoundation,
+                                         std::move(mock_renderer_factory));
+
+  // Create and set CDM. The CDM doesn't support a Decryptor and requires Media
+  // Foundation Renderer.
+  EXPECT_CALL(mock_cdm_context_, GetDecryptor())
+      .WillRepeatedly(Return(nullptr));
+  EXPECT_CALL(mock_cdm_context_, RequiresMediaFoundationRenderer())
+      .WillRepeatedly(Return(true));
+
+  CreateCdm();
+  SetCdm();
+
+  Load(kEncryptedVideoOnlyTestFile);
   run_loop.Run();
 }
 

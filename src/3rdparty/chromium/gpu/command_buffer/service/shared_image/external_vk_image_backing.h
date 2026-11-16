@@ -226,8 +226,8 @@ class ExternalVkImageBacking final : public ClearTrackingSharedImageBacking {
   // mapping VkImage.
   std::pair<std::vector<MapPlaneData>, size_t> GetMapPlaneData() const;
 
-  void CopyPixelsFromGLTextureToVkImage();
-  void CopyPixelsFromVkImageToGLTexture();
+  [[nodiscard]] bool CopyPixelsFromGLTextureToVkImage();
+  [[nodiscard]] bool CopyPixelsFromVkImageToGLTexture();
 
   scoped_refptr<SharedContextState> context_state_;
   std::vector<TextureHolderVk> vk_textures_;
@@ -240,6 +240,7 @@ class ExternalVkImageBacking final : public ClearTrackingSharedImageBacking {
 
   bool is_write_in_progress_ = false;
   uint32_t reads_in_progress_ = 0;
+  bool is_updating_content_ = false;
   uint32_t gl_reads_in_progress_ = 0;
 
   std::vector<GLTextureHolder> gl_textures_;

@@ -12,6 +12,7 @@
 #include "third_party/blink/renderer/core/css_value_keywords.h"
 #include "third_party/blink/renderer/platform/bindings/exception_messages.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/wtf/wtf.h"
 
 namespace blink {
 
@@ -137,16 +138,27 @@ IndexedPropertySetterResult CSSUnparsedValue::AnonymousIndexedSetter(
 }
 
 const CSSValue* CSSUnparsedValue::ToCSSValue() const {
-  String unparsed_string = ToUnparsedString();
-  CSSParserTokenStream stream(unparsed_string);
+  CHECK(IsMainThread());
+  String unparsed_string = toString();
 
-  if (stream.AtEnd()) {
+  if (unparsed_string.empty()) {
     return MakeGarbageCollected<CSSUnparsedDeclarationValue>(
         MakeGarbageCollected<CSSVariableData>());
   }
 
-  // The string we just parsed has /**/ inserted between every token
-  // to make sure we get back the correct sequence of tokens.
+  // TODO(crbug.com/985028): We should probably propagate the CSSParserContext
+  // to here.
+  return MakeGarbageCollected<CSSUnparsedDeclarationValue>(
+      CSSVariableData::Create(unparsed_string, false /* is_animation_tainted */,
+                              false /* is_attr_tainted */,
+                              false /* needs_variable_resolution */));
+}
+
+String CSSUnparsedValue::toString() const {
+  String serialized = SerializeSegments();
+
+  // The serialization above defensively inserted /**/ between segments
+  // to make sure that e.g. ['foo', 'bar'] does not collapse into 'foobar'.
   // The spec mentions nothing of the sort:
   // https://drafts.css-houdini.org/css-typed-om-1/#unparsedvalue-serialization
   //
@@ -160,6 +172,10 @@ const CSSValue* CSSUnparsedValue::ToCSSValue() const {
   // the original contents of any comments will be lost, but Typed OM does
   // not have anywhere to store that kind of data, so it is expected.
   StringBuilder builder;
+  CSSParserTokenStream stream(serialized);
+  if (stream.AtEnd()) {
+    return g_empty_atom;
+  }
   CSSParserToken token = stream.ConsumeRaw();
   token.Serialize(builder);
   while (!stream.Peek().IsEOF()) {
@@ -169,17 +185,10 @@ const CSSValue* CSSUnparsedValue::ToCSSValue() const {
     token = stream.ConsumeRaw();
     token.Serialize(builder);
   }
-  String original_text = builder.ReleaseString();
-
-  // TODO(crbug.com/985028): We should probably propagate the CSSParserContext
-  // to here.
-  return MakeGarbageCollected<CSSUnparsedDeclarationValue>(
-      CSSVariableData::Create(original_text, false /* is_animation_tainted */,
-                              false /* is_attr_tainted */,
-                              false /* needs_variable_resolution */));
+  return builder.ReleaseString();
 }
 
-String CSSUnparsedValue::ToUnparsedString() const {
+String CSSUnparsedValue::SerializeSegments() const {
   StringBuilder builder;
   HeapHashSet<Member<const CSSUnparsedValue>> values_on_stack;
   if (AppendUnparsedString(builder, values_on_stack)) {

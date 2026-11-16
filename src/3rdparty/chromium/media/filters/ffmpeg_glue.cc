@@ -20,6 +20,10 @@
 #include "media/base/supported_types.h"
 #include "media/ffmpeg/ffmpeg_common.h"
 
+#if BUILDFLAG(IS_QTWEBENGINE) && BUILDFLAG(USE_SYSTEM_FFMPEG)
+#include "base/logging.h"
+#endif
+
 namespace media {
 
 // Internal buffer size used by AVIO for reading.
