@@ -512,6 +512,13 @@ angle::Result Image9::loadData(const gl::Context *context,
     return angle::Result::Continue;
 }
 
+angle::Result Image9::initializeContents(const gl::Context *context)
+{
+    // This should never be called, but in case it is, stop as things might not be
+    // right.
+    return angle::Result::Stop;
+}
+
 angle::Result Image9::loadCompressedData(const gl::Context *context,
                                          const gl::Box &area,
                                          const void *input)
@@ -944,6 +951,14 @@ angle::Result Image9::copyFromTexStorage(const gl::Context *context,
 {
     RenderTargetD3D *renderTarget = nullptr;
     ANGLE_TRY(source->getRenderTarget(context, imageIndex, 0, &renderTarget));
+
+    // TextureD3D may now request a backup from non-render-target storage. D3D9 storage only
+    // provides render targets for render-target textures, and D3D9 has no setData fast path, so
+    // the image already holds the data in that case.
+    if (!renderTarget)
+    {
+        return angle::Result::Continue;
+    }
 
     gl::Rectangle sourceArea(0, 0, mWidth, mHeight);
     return copyFromRTInternal(GetImplAs<Context9>(context), gl::Offset(), sourceArea, renderTarget);

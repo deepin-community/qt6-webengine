@@ -10,6 +10,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
 #include "base/thread_annotations.h"
+#include "base/types/expected.h"
 #include "content/browser/file_system_access/file_system_access_error.h"
 #include "content/browser/file_system_access/file_system_access_lock_manager.h"
 #include "content/browser/file_system_access/file_system_access_manager_impl.h"
@@ -75,6 +76,30 @@ class CONTENT_EXPORT FileSystemAccessHandleBase {
   // `GetWritePermissionStatus()` if appropriate. Returns the permission status
   // for reading and writing.
   PermissionStatus GetReadWritePermissionStatus();
+
+  // Checks whether the handle currently allows read operations. Returns
+  // base::ok() if read access is permitted, or an error status on failure.
+  //
+  // Distinction from `GetReadPermissionStatus()`:
+  // - `GetReadPermissionStatus()` queries only whether the underlying
+  //   permission grant is GRANTED, ASK, or DENIED.
+  // - `CheckReadAccess()` is the authorization check for actual read
+  //   operations (e.g. AsBlob, GetEntries). A GRANTED status from
+  //   `GetReadPermissionStatus()` is necessary but not always sufficient: read
+  //   operations may still be blocked by broader context or security
+  //   constraints even when the underlying grant is GRANTED. Callers
+  //   executing read operations should always call `CheckReadAccess()`.
+  // - Use `DoGetPermissionStatus()` to handle the renderer's
+  //   `queryPermission()` API call.
+  base::expected<void, blink::mojom::FileSystemAccessErrorPtr>
+  CheckReadAccess();
+
+  // Checks whether a file system URL and storage key represent a non-sandboxed
+  // file system path bound to a third-party execution context. Sandboxed file
+  // systems (OPFS) are partitioned by storage key and exempt from third-party
+  // restrictions.
+  static bool IsThirdPartyContext(const storage::FileSystemURL& url,
+                                  const blink::StorageKey& storage_key);
   storage::FileSystemURL GetParentURLForTesting() { return GetParentURL(); }
 
   // Implementation for the GetPermissionStatus method in the
@@ -150,6 +175,11 @@ class CONTENT_EXPORT FileSystemAccessHandleBase {
 
  protected:
   virtual base::WeakPtr<FileSystemAccessHandleBase> AsWeakPtr() = 0;
+
+  // Checks whether the handle represents a non-sandboxed file system path
+  // bound to a third-party execution context. Sandboxed file systems (OPFS)
+  // are partitioned by storage key and exempt from third-party restrictions.
+  bool IsThirdPartyContext() const;
 
   SEQUENCE_CHECKER(sequence_checker_);
 

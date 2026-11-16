@@ -21,6 +21,7 @@
 #include "libANGLE/renderer/gl/FunctionsGL.h"
 #include "libANGLE/renderer/gl/StateManagerGL.h"
 #include "libANGLE/renderer/gl/renderergl_utils.h"
+#include "libANGLE/renderer/renderer_utils.h"
 
 using namespace gl;
 
@@ -58,11 +59,6 @@ bool SameAttribPointer(const VertexAttributeGL &a, const VertexAttribute &b)
 bool IsVertexAttribPointerSupported(size_t attribIndex, const VertexAttribute &attrib)
 {
     return (attribIndex == attrib.bindingIndex && attrib.relativeOffset == 0);
-}
-
-GLuint GetAdjustedDivisor(GLuint numViews, GLuint divisor)
-{
-    return numViews * divisor;
 }
 
 static angle::Result ValidateStateHelperGetIntegerv(const gl::Context *context,
@@ -152,11 +148,11 @@ void VertexArrayGL::destroy(const gl::Context *context)
         binding.set(context, nullptr);
     }
 
-    stateManager->deleteBuffer(mStreamingElementArrayBuffer);
+    stateManager->deleteBuffer(mStreamingElementArrayBuffer, 0, context->isHardenedContext());
     mStreamingElementArrayBufferSize = 0;
     mStreamingElementArrayBuffer     = 0;
 
-    stateManager->deleteBuffer(mStreamingArrayBuffer);
+    stateManager->deleteBuffer(mStreamingArrayBuffer, 0, context->isHardenedContext());
     mStreamingArrayBufferSize = 0;
     mStreamingArrayBuffer     = 0;
 
@@ -186,7 +182,8 @@ angle::Result VertexArrayGL::updateElementArrayBufferBinding(const gl::Context *
             elementArrayBuffer ? GetNativeBufferID(elementArrayBuffer) : 0;
 
         StateManagerGL *stateManager = GetStateManagerGL(context);
-        stateManager->bindBuffer(gl::BufferBinding::ElementArray, elementArrayBufferId);
+        stateManager->bindBuffer(gl::BufferBinding::ElementArray, elementArrayBufferId,
+                                 context->isHardenedContext());
         mElementArrayBuffer.set(context, elementArrayBuffer);
         mNativeState->elementArrayBuffer = elementArrayBufferId;
     }
@@ -333,7 +330,8 @@ angle::Result VertexArrayGL::syncIndexData(const gl::Context *context,
 
         stateManager->bindVertexArray(mVertexArrayID, mNativeState);
 
-        stateManager->bindBuffer(gl::BufferBinding::ElementArray, mStreamingElementArrayBuffer);
+        stateManager->bindBuffer(gl::BufferBinding::ElementArray, mStreamingElementArrayBuffer,
+                                 context->isHardenedContext());
         mElementArrayBuffer.set(context, nullptr);
         mNativeState->elementArrayBuffer = mStreamingElementArrayBuffer;
 
@@ -388,7 +386,8 @@ void VertexArrayGL::computeStreamingAttributeSizes(
         // and how much slack space at the beginning of the buffer will be required by determining
         // the attribute with the largest data size.
         size_t typeSize        = ComputeVertexAttributeTypeSize(attrib);
-        GLuint adjustedDivisor = GetAdjustedDivisor(mAppliedNumViews, binding.getDivisor());
+        GLuint adjustedDivisor =
+            GetMultiviewAdjustedDivisor(mAppliedNumViews, binding.getDivisor());
         size_t streamedVertexCount = ComputeVertexBindingElementCount(
             adjustedDivisor, indexRange.vertexCount(), instanceCount);
         if (applyExtraOffsetWorkaroundForInstancedAttributes && adjustedDivisor > 0)
@@ -436,7 +435,8 @@ angle::Result VertexArrayGL::streamAttributes(
         attribsToStream.count() * maxAttributeDataSize * indexRange.start();
     const size_t requiredBufferSize = streamingDataSize + bufferEmptySpace;
 
-    stateManager->bindBuffer(gl::BufferBinding::Array, mStreamingArrayBuffer);
+    stateManager->bindBuffer(gl::BufferBinding::Array, mStreamingArrayBuffer,
+                             context->isHardenedContext());
     if (requiredBufferSize > mStreamingArrayBufferSize)
     {
         ANGLE_GL_TRY_ALWAYS_CHECK(
@@ -468,7 +468,8 @@ angle::Result VertexArrayGL::streamAttributes(
 
             const auto &binding = bindings[attrib.bindingIndex];
 
-            GLuint adjustedDivisor = GetAdjustedDivisor(mAppliedNumViews, binding.getDivisor());
+            GLuint adjustedDivisor =
+                GetMultiviewAdjustedDivisor(mAppliedNumViews, binding.getDivisor());
             // streamedVertexCount is only going to be modified by
             // shiftInstancedArrayDataWithOffset workaround, otherwise it's const
             size_t streamedVertexCount = ComputeVertexBindingElementCount(
@@ -517,7 +518,8 @@ angle::Result VertexArrayGL::streamAttributes(
                 {
                     needsUnmapAndRebindStreamingAttributeBuffer = true;
                     const auto buffer = GetImplAs<BufferGL>(bindingBufferPointer);
-                    stateManager->bindBuffer(gl::BufferBinding::Array, buffer->getBufferID());
+                    stateManager->bindBuffer(gl::BufferBinding::Array, buffer->getBufferID(),
+                                             context->isHardenedContext());
                     // The workaround is only for latest Mac Intel so glMapBufferRange should be
                     // supported
                     ASSERT(CanMapBufferForRead(functions));
@@ -562,7 +564,8 @@ angle::Result VertexArrayGL::streamAttributes(
             if (needsUnmapAndRebindStreamingAttributeBuffer)
             {
                 ANGLE_GL_TRY(context, functions->unmapBuffer(GL_ARRAY_BUFFER));
-                stateManager->bindBuffer(gl::BufferBinding::Array, mStreamingArrayBuffer);
+                stateManager->bindBuffer(gl::BufferBinding::Array, mStreamingArrayBuffer,
+                                         context->isHardenedContext());
             }
 
             // Compute where the 0-index vertex would be.
@@ -627,7 +630,8 @@ angle::Result VertexArrayGL::recoverForcedStreamingAttributesForDrawArraysInstan
         const auto &binding = bindings[attrib.bindingIndex];
         gl::Buffer *buffer       = getVertexArrayBuffer(attrib.bindingIndex);
         const BufferGL *bufferGL = GetImplAs<BufferGL>(buffer);
-        stateManager->bindBuffer(gl::BufferBinding::Array, bufferGL->getBufferID());
+        stateManager->bindBuffer(gl::BufferBinding::Array, bufferGL->getBufferID(),
+                                 context->isHardenedContext());
 
         ANGLE_TRY(callVertexAttribPointer(context, static_cast<GLuint>(idx), attrib,
                                           static_cast<GLsizei>(binding.getStride()),
@@ -738,7 +742,7 @@ angle::Result VertexArrayGL::updateAttribPointer(const gl::Context *context, siz
 
         BufferGL *bufferGL = GetImplAs<BufferGL>(arrayBuffer);
         bufferId           = bufferGL->getBufferID();
-        stateManager->bindBuffer(gl::BufferBinding::Array, bufferId);
+        stateManager->bindBuffer(gl::BufferBinding::Array, bufferId, context->isHardenedContext());
         if (features.ensureNonEmptyBufferIsBoundForDraw.enabled && bufferGL->getBufferSize() == 0)
         {
             BufferFeedback feedback;
@@ -753,7 +757,7 @@ angle::Result VertexArrayGL::updateAttribPointer(const gl::Context *context, siz
     else
     {
         ASSERT(canUseClientArrays);
-        stateManager->bindBuffer(gl::BufferBinding::Array, 0);
+        stateManager->bindBuffer(gl::BufferBinding::Array, 0, context->isHardenedContext());
         ANGLE_TRY(callVertexAttribPointer(context, static_cast<GLuint>(attribIndex), attrib,
                                           binding.getStride(),
                                           reinterpret_cast<uintptr_t>(attrib.pointer)));
@@ -891,8 +895,8 @@ angle::Result VertexArrayGL::updateBindingBuffer(const gl::Context *context, siz
 
 angle::Result VertexArrayGL::updateBindingDivisor(const gl::Context *context, size_t bindingIndex)
 {
-    GLuint adjustedDivisor =
-        GetAdjustedDivisor(mAppliedNumViews, mState.getVertexBinding(bindingIndex).getDivisor());
+    GLuint adjustedDivisor = GetMultiviewAdjustedDivisor(
+        mAppliedNumViews, mState.getVertexBinding(bindingIndex).getDivisor());
     if (mNativeState->bindings[bindingIndex].divisor == adjustedDivisor)
     {
         return angle::Result::Continue;

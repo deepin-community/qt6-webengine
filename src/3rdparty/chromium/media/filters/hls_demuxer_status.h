@@ -76,8 +76,11 @@ struct HlsDemuxerStatusTraits {
     // error during initialization.
     kNoDataEverAppended = 18,
 
+    // the file:// data scheme is not allowed in HLS.
+    kInvalidContentScheme = 19,
+
     // Keep this at the end and equal to the highest value ever used.
-    kMaxValue = kNoDataEverAppended,
+    kMaxValue = kInvalidContentScheme,
   };
 
   static constexpr StatusGroupType Group() { return "HlsDemuxerStatus"; }
@@ -122,18 +125,8 @@ struct HlsDemuxerStatusTraits {
         return "Could not append data to ChunkDemuxer";
       case Codes::kNoDataEverAppended:
         return "Segment queue never had any data";
-    }
-  }
-
-  static TypedStatus<HlsDemuxerStatusTraits> FromReadStatus(
-      HlsDataSourceProvider::ReadStatus&& s) {
-    switch (s.code()) {
-      case HlsDataSourceProvider::ReadStatus::Codes::kError:
-        return {Codes::kNetworkReadError, std::move(s)};
-      case HlsDataSourceProvider::ReadStatus::Codes::kAborted:
-        return {Codes::kNetworkReadAborted, std::move(s)};
-      case HlsDataSourceProvider::ReadStatus::Codes::kStopped:
-        return {Codes::kNetworkReadStopped, std::move(s)};
+      case Codes::kInvalidContentScheme:
+        return "The content scheme is disallowed in HLS.";
     }
   }
 };

@@ -236,8 +236,8 @@ struct FeaturesGL : FeatureSetBase
         &members,
     };
 
-    FeatureInfo resetBaseLevelForASTCSubImage = {
-        "resetBaseLevelForASTCSubImage",
+    FeatureInfo resetBaseLevelForASTCImage = {
+        "resetBaseLevelForASTCImage",
         FeatureCategory::OpenGLWorkarounds,
         &members,
     };
@@ -248,14 +248,32 @@ struct FeaturesGL : FeatureSetBase
         &members,
     };
 
+    FeatureInfo resetTexStorage2DBaseLevel = {
+        "resetTexStorage2DBaseLevel",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
     FeatureInfo useTempForNonZeroBaseLevelGenMipmapUsingCopyImageSubData = {
         "useTempForNonZeroBaseLevelGenMipmapUsingCopyImageSubData",
         FeatureCategory::OpenGLWorkarounds,
         &members,
     };
 
+    FeatureInfo recreateTextureOnTexImage3dDepthIncrease = {
+        "recreateTextureOnTexImage3dDepthIncrease",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
     FeatureInfo limitMax3dArrayTextureSizeTo1024 = {
         "limitMax3dArrayTextureSizeTo1024",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
+    FeatureInfo roundUp3dTextureSizeToPOTForLimit = {
+        "roundUp3dTextureSizeToPOTForLimit",
         FeatureCategory::OpenGLWorkarounds,
         &members,
     };
@@ -703,6 +721,37 @@ struct FeaturesGL : FeatureSetBase
         FeatureCategory::OpenGLWorkarounds,
         &members,
     };
+
+    FeatureInfo uploadOversizedMipLevelsViaUnpackBuffer = {
+        "uploadOversizedMipLevelsViaUnpackBuffer",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
+    FeatureInfo finishBeforeBlitFramebufferMultiAttachment = {
+        "finishBeforeBlitFramebufferMultiAttachment",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
+    FeatureInfo useTexSubImageForClientDataNpotUploads = {
+        "useTexSubImageForClientDataNpotUploads",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
+    FeatureInfo deferGlDeleteBuffers = {
+        "deferGlDeleteBuffers",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
+    FeatureInfo doubleClearForRobustInit = {
+        "doubleClearForRobustInit",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
 };
 
 inline FeaturesGL::FeaturesGL()  = default;

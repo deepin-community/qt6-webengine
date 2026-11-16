@@ -10,6 +10,7 @@
 #include "third_party/blink/renderer/core/css/css_keyframe_rule.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_fast_paths.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_impl.h"
+#include "third_party/blink/renderer/core/css/parser/css_parser_local_context.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_token_stream.h"
 #include "third_party/blink/renderer/core/css/parser/css_property_parser.h"
 #include "third_party/blink/renderer/core/css/parser/css_selector_parser.h"
@@ -17,6 +18,7 @@
 #include "third_party/blink/renderer/core/css/parser/css_tokenizer.h"
 #include "third_party/blink/renderer/core/css/parser/css_variable_parser.h"
 #include "third_party/blink/renderer/core/css/properties/css_parsing_utils.h"
+#include "third_party/blink/renderer/core/css/properties/shorthands.h"
 #include "third_party/blink/renderer/core/css/style_color.h"
 #include "third_party/blink/renderer/core/css/style_rule.h"
 #include "third_party/blink/renderer/core/css/style_sheet_contents.h"
@@ -132,35 +134,45 @@ MutableCSSPropertyValueSet::SetResult CSSParser::ParseValue(
       static_cast<StyleSheetContents*>(nullptr), execution_context);
 }
 
-static inline const CSSParserContext* GetParserContext(
-    SecureContextMode secure_context_mode,
-    StyleSheetContents* style_sheet,
-    const ExecutionContext* execution_context,
-    CSSParserMode parser_mode) {
-  if (style_sheet) {
-    if (style_sheet->ParserContext()->GetMode() == parser_mode) {
-      // We can reuse this, to save on the construction.
-      return style_sheet->ParserContext();
-    } else {
-      // This can happen when parsing e.g. SVG attributes in the context of
-      // an HTML document.
-      CSSParserContext* mutable_context =
-          MakeGarbageCollected<CSSParserContext>(style_sheet->ParserContext());
+namespace {
+
+// Prepares a CSSParserContext based on the specified parameters.
+class LocalCSSParserContext {
+  STACK_ALLOCATED();
+
+ public:
+  LocalCSSParserContext(SecureContextMode secure_context_mode,
+                        StyleSheetContents* style_sheet,
+                        const ExecutionContext* execution_context,
+                        CSSParserMode parser_mode) {
+    if (style_sheet) {
+      context_ = style_sheet->ParserContext();
+      if (context_->GetMode() != parser_mode) {
+        // This can happen when parsing e.g. SVG attributes in the context of
+        // an HTML document.
+        overriding_scope_.emplace(*context_, parser_mode);
+      }
+    } else if (auto* window = DynamicTo<LocalDOMWindow>(execution_context)) {
+      // Create a parser context using document if it exists so it can check
+      // for origin trial enabled property/value.
+      auto* mutable_context =
+          MakeGarbageCollected<CSSParserContext>(*window->document());
       mutable_context->SetMode(parser_mode);
-      return mutable_context;
+      context_ = mutable_context;
+    } else {
+      context_ = MakeGarbageCollected<CSSParserContext>(parser_mode,
+                                                        secure_context_mode);
     }
-  } else if (IsA<LocalDOMWindow>(execution_context)) {
-    // Create parser context using document if it exists so it can check for
-    // origin trial enabled property/value.
-    CSSParserContext* mutable_context = MakeGarbageCollected<CSSParserContext>(
-        *To<LocalDOMWindow>(execution_context)->document());
-    mutable_context->SetMode(parser_mode);
-    return mutable_context;
-  } else {
-    return MakeGarbageCollected<CSSParserContext>(parser_mode,
-                                                  secure_context_mode);
   }
-}
+
+  const CSSParserContext* GetParserContext() const { return context_; }
+
+ private:
+  std::optional<CSSParserContext::ParserModeOverridingScope> overriding_scope_;
+  const CSSParserContext* context_;
+};
+
+}  // namespace
 
 MutableCSSPropertyValueSet::SetResult CSSParser::ParseValue(
     MutableCSSPropertyValueSet* declaration,
@@ -175,10 +187,12 @@ MutableCSSPropertyValueSet::SetResult CSSParser::ParseValue(
     return MutableCSSPropertyValueSet::kParseError;
   }
 
-  CSSPropertyID resolved_property = ResolveCSSPropertyID(unresolved_property);
   CSSParserMode parser_mode = declaration->CssParserMode();
-  const CSSParserContext* context = GetParserContext(
+  const LocalCSSParserContext local_parser_context(
       secure_context_mode, style_sheet, execution_context, parser_mode);
+  const CSSParserContext* context = local_parser_context.GetParserContext();
+
+  CSSPropertyID resolved_property = ResolveCSSPropertyID(unresolved_property);
 
   // See if this property has a specific fast-path parser.
   const CSSValue* value =
@@ -214,7 +228,7 @@ MutableCSSPropertyValueSet::SetResult CSSParser::ParseValue(
 }
 
 // NOTE: This follows pretty much the exact same structure as ParseValue(),
-// above.ParseValue(), above.ParseValue(), above.ParseValue(), above.
+// above.
 unsigned CSSParser::ParseForPresentationStyle(
     HeapVector<CSSPropertyValue, 8>& result,
     CSSPropertyID resolved_property,
@@ -230,8 +244,10 @@ unsigned CSSParser::ParseForPresentationStyle(
   SecureContextMode secure_context_mode =
       execution_context ? execution_context->GetSecureContextMode()
                         : SecureContextMode::kInsecureContext;
-  const CSSParserContext* context = GetParserContext(
+
+  const LocalCSSParserContext local_parser_context(
       secure_context_mode, context_sheet, execution_context, parser_mode);
+  const CSSParserContext* context = local_parser_context.GetParserContext();
 
   // Fast-path parser.
   const CSSValue* value =
@@ -459,22 +475,28 @@ MutableCSSPropertyValueSet* CSSParser::ParseFont(
     const String& string,
     const ExecutionContext* execution_context) {
   DCHECK(ThreadState::Current()->IsAllocationAllowed());
-  auto* set =
-      MakeGarbageCollected<MutableCSSPropertyValueSet>(kHTMLStandardMode);
-  ParseValue(set, CSSPropertyID::kFont, string, true /* important */,
-             execution_context);
-  if (set->IsEmpty()) {
-    return nullptr;
+
+  LocalCSSParserContext context(execution_context
+                                    ? execution_context->GetSecureContextMode()
+                                    : SecureContextMode::kInsecureContext,
+                                static_cast<StyleSheetContents*>(nullptr),
+                                execution_context, kHTMLStandardMode);
+  const auto local_context =
+       CSSParserLocalContext().WithCurrentShorthand(CSSPropertyID::kFont);
+
+  CSSParserTokenStream stream(string);
+  HeapVector<CSSPropertyValue, 64> parsed_properties;
+
+  if (GetCSSPropertyFont().ParseShorthand(/*important=*/true, stream,
+                                          *context.GetParserContext(),
+                                          local_context, parsed_properties) &&
+      stream.AtEnd()) {
+    auto* set =
+        MakeGarbageCollected<MutableCSSPropertyValueSet>(kHTMLStandardMode);
+    set->AddParsedProperties(parsed_properties);
+    return set;
   }
-  const CSSValue* font_size =
-      set->GetPropertyCSSValue(CSSPropertyID::kFontSize);
-  if (!font_size || font_size->IsCSSWideKeyword()) {
-    return nullptr;
-  }
-  if (font_size->IsPendingSubstitutionValue()) {
-    return nullptr;
-  }
-  return set;
+  return nullptr;
 }
 
 }  // namespace blink

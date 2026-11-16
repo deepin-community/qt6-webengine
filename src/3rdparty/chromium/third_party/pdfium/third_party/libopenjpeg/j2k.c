@@ -8546,7 +8546,11 @@ OPJ_BOOL opj_j2k_read_header(opj_stream_private_t *p_stream,
     }
 
     /* Copy codestream image information to the output image */
-    opj_copy_image_header(p_j2k->m_private_image, *p_image);
+    if (!opj_copy_image_header(p_j2k->m_private_image, *p_image)) {
+        opj_image_destroy(*p_image);
+        *p_image = NULL;
+        return OPJ_FALSE;
+    }
 
     return OPJ_TRUE;
 }
@@ -9246,8 +9250,10 @@ static OPJ_BOOL opj_j2k_copy_default_tcp_and_create_tcd(opj_j2k_t * p_j2k,
         /* Remove memory not owned by this tile in case of early error return. */
         l_tcp->m_mct_decoding_matrix = 00;
         l_tcp->m_nb_max_mct_records = 0;
+        l_tcp->m_nb_mct_records = 0;
         l_tcp->m_mct_records = 00;
         l_tcp->m_nb_max_mcc_records = 0;
+        l_tcp->m_nb_mcc_records = 0;
         l_tcp->m_mcc_records = 00;
         /* Reconnect the tile-compo coding parameters pointer to the current tile coding parameters*/
         l_tcp->tccps = l_current_tccp;
@@ -9270,6 +9276,7 @@ static OPJ_BOOL opj_j2k_copy_default_tcp_and_create_tcd(opj_j2k_t * p_j2k,
             return OPJ_FALSE;
         }
         memcpy(l_tcp->m_mct_records, l_default_tcp->m_mct_records, l_mct_records_size);
+        l_tcp->m_nb_max_mct_records = l_default_tcp->m_nb_max_mct_records;
 
         /* Copy the mct record data from dflt_tile_cp to the current tile*/
         l_src_mct_rec = l_default_tcp->m_mct_records;
@@ -9290,7 +9297,7 @@ static OPJ_BOOL opj_j2k_copy_default_tcp_and_create_tcd(opj_j2k_t * p_j2k,
             ++l_src_mct_rec;
             ++l_dest_mct_rec;
             /* Update with each pass to free exactly what has been allocated on early return. */
-            l_tcp->m_nb_max_mct_records += 1;
+            l_tcp->m_nb_mct_records += 1;
         }
 
         /* Get the mcc_record of the dflt_tile_cp and copy them into the current tile cp*/
@@ -9303,6 +9310,7 @@ static OPJ_BOOL opj_j2k_copy_default_tcp_and_create_tcd(opj_j2k_t * p_j2k,
         }
         memcpy(l_tcp->m_mcc_records, l_default_tcp->m_mcc_records, l_mcc_records_size);
         l_tcp->m_nb_max_mcc_records = l_default_tcp->m_nb_max_mcc_records;
+        l_tcp->m_nb_mcc_records = l_default_tcp->m_nb_mcc_records;
 
         /* Copy the mcc record data from dflt_tile_cp to the current tile*/
         l_src_mcc_rec = l_default_tcp->m_mcc_records;
@@ -12411,7 +12419,9 @@ OPJ_BOOL opj_j2k_decode(void * j2k,
                         opj_event_mgr_t * p_manager)
 {
     opj_j2k_t* p_j2k = (opj_j2k_t*)j2k;
-    if (!p_image) {
+    /* The tile decoder uses the codestream component indices. */
+    if (!p_image || !p_image->comps || !p_j2k->m_private_image ||
+            p_image->numcomps != p_j2k->m_private_image->numcomps) {
         return OPJ_FALSE;
     }
 
@@ -12446,7 +12456,9 @@ OPJ_BOOL opj_j2k_decode(void * j2k,
             return OPJ_FALSE;
         }
     }
-    opj_copy_image_header(p_image, p_j2k->m_output_image);
+    if (!opj_copy_image_header(p_image, p_j2k->m_output_image)) {
+        return OPJ_FALSE;
+    }
 
     /* customization of the decoding */
     if (!opj_j2k_setup_decoding(p_j2k, p_manager)) {
@@ -12475,7 +12487,7 @@ OPJ_BOOL opj_j2k_get_tile(void *j2k,
     OPJ_UINT32 l_tile_x, l_tile_y;
     opj_image_comp_t* l_img_comp;
 
-    if (!p_image) {
+    if (!p_image || !p_image->comps || !p_j2k->m_private_image) {
         opj_event_msg(p_manager, EVT_ERROR, "We need an image previously created.\n");
         return OPJ_FALSE;
     }
@@ -12558,7 +12570,9 @@ OPJ_BOOL opj_j2k_get_tile(void *j2k,
     if (!(p_j2k->m_output_image)) {
         return OPJ_FALSE;
     }
-    opj_copy_image_header(p_image, p_j2k->m_output_image);
+    if (!opj_copy_image_header(p_image, p_j2k->m_output_image)) {
+        return OPJ_FALSE;
+    }
 
     p_j2k->m_specific_param.m_decoder.m_tile_ind_to_dec = (OPJ_INT32)tile_index;
 
@@ -12818,7 +12832,9 @@ OPJ_BOOL opj_j2k_start_compress(void *j2k,
         opj_event_msg(p_manager, EVT_ERROR, "Failed to allocate image header.");
         return OPJ_FALSE;
     }
-    opj_copy_image_header(p_image, p_j2k->m_private_image);
+    if (!opj_copy_image_header(p_image, p_j2k->m_private_image)) {
+        return OPJ_FALSE;
+    }
 
     /* TODO_MSD: Find a better way */
     if (p_image->comps) {

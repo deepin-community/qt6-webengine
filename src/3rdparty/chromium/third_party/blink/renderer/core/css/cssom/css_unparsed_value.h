@@ -62,20 +62,15 @@ class CORE_EXPORT CSSUnparsedValue final : public CSSStyleValue {
 
   wtf_size_t length() const { return tokens_.size(); }
 
+  String toString() const override;
+
   void Trace(Visitor* visitor) const override {
     visitor->Trace(tokens_);
     CSSStyleValue::Trace(visitor);
   }
 
-  // Unlike CSSStyleValue::toString(), this returns tokens without
-  // substituting variables. There are extra /**/ inserted between
-  // every token to ensure there are no ambiguities, which is fine
-  // because this value is never presented directly to the user
-  // (ToCSSValue() will parse to a token range and then re-serialize
-  // using extra /**/ only where needed).
-  String ToUnparsedString() const;
-
  private:
+  String SerializeSegments() const;
   // Return 'false' if there is a cycle in the serialization.
   bool AppendUnparsedString(
       StringBuilder&,

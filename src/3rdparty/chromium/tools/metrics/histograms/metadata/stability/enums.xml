@@ -504,6 +504,9 @@ Called by update_bad_message_reasons.py.-->
   <int value="336" label="RFH_INVALID_NAVIGATION_HEADERS"/>
   <int value="337" label="RWH_POINTER_LOCK_FROM_SANDBOXED_FRAME"/>
   <int value="338" label="RFH_DID_COMMIT_NAVIGATION_WHILE_BFCACHED"/>
+  <int value="339" label="RFH_BLOB_URL_STORE_ASSOCIATED_PDF_PROCESS_BLOCKED"/>
+  <int value="340" label="RFH_BLOB_URL_STORE_RECEIVER_PDF_PROCESS_BLOCKED"/>
+  <int value="341" label="RFHI_SYNCHRONOUS_COMMIT_ORIGIN_MISMATCH"/>
 </enum>
 
 <enum name="BadMessageReasonExtensions">
@@ -550,6 +553,7 @@ Called by update_bad_message_reasons.py.-->
   <int value="35" label="ER_INVALID_EXTENSION_ID_FOR_PROCESS"/>
   <int value="36" label="CEFH_INVALID_EXTENSION_ID_FOR_SCRIPT_INJECT_REQUEST"/>
   <int value="37" label="EMF_INVALID_MESSAGE_FROM_SANDBOXED_PROCESS"/>
+  <int value="38" label="AER_INVALID_PROCESS_FOR_AUTOMATION_BINDING"/>
 </enum>
 
 <enum name="BadMessageReasonGuestView">

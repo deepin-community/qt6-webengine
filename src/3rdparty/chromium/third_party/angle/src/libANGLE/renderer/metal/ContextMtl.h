@@ -307,10 +307,6 @@ class ContextMtl : public ContextImpl, public mtl::Context
     // Disable the occlusion query in the current render pass.
     // The render pass must already started.
     void disableActiveOcclusionQueryInRenderPass();
-    // Re-enable the occlusion query in the current render pass.
-    // The render pass must already started.
-    // NOTE: the old query's result will be retained and combined with the new result.
-    angle::Result restartActiveOcclusionQueryInRenderPass();
 
     // Invoke by TransformFeedbackMtl
     void onTransformFeedbackActive(const gl::Context *context, TransformFeedbackMtl *xfb);
@@ -351,6 +347,7 @@ class ContextMtl : public ContextImpl, public mtl::Context
     void flushCommandBuffer(mtl::CommandBufferFinishOperation operation);
     void present(const gl::Context *context, id<CAMetalDrawable> presentationDrawable);
     angle::Result finishCommandBuffer();
+    angle::Result checkCommandBufferError();
 
     // Check whether compatible render pass has been started. Compatible render pass is a render
     // pass having the same attachments, and possibly having different load/store options.
@@ -534,8 +531,6 @@ class ContextMtl : public ContextImpl, public mtl::Context
 
     angle::Result startOcclusionQueryInRenderPass(QueryMtl *query, bool clearOldValue);
 
-    angle::Result checkCommandBufferError();
-
     // Dirty bits.
     enum DirtyBitType : size_t
     {
@@ -650,6 +645,8 @@ class ContextMtl : public ContextImpl, public mtl::Context
     ProvokingVertexHelper mProvokingVertexHelper;
 
     mtl::ContextDevice mContextDevice;
+
+    bool mContextLost = false;
 };
 
 }  // namespace rx

@@ -219,7 +219,8 @@ void SVGResourceDocumentContent::NotifyObserver(
 }
 
 void SVGResourceDocumentContent::NotifyObservers() {
-  for (auto& observer : observers_) {
+  HeapVector<Member<SVGResourceDocumentObserver>> observer_list(observers_);
+  for (auto& observer : observer_list) {
     observer->ResourceNotifyFinished(this);
   }
 }
@@ -258,7 +259,8 @@ void SVGResourceDocumentContent::ContentChanged() {
   if (inhibit_content_change_) {
     return;
   }
-  for (auto& observer : observers_) {
+  HeapVector<Member<SVGResourceDocumentObserver>> observer_list(observers_);
+  for (auto& observer : observer_list) {
     observer->ResourceContentChanged(this);
   }
 }
@@ -298,6 +300,9 @@ SVGResourceDocumentContent* SVGResourceDocumentContent::Fetch(
 
   Page* page = document.GetPage();
   auto& cache = page->GetSVGResourceDocumentCache();
+  if (cache.IsDisposed()) {
+    return nullptr;
+  }
 
   const SVGResourceDocumentCache::CacheKey key =
       SVGResourceDocumentCache::MakeCacheKey(params);

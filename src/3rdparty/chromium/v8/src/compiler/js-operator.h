@@ -7,6 +7,7 @@
 
 #include "src/base/compiler-specific.h"
 #include "src/codegen/tnode.h"
+#include "src/common/globals.h"
 #include "src/compiler/common-operator.h"
 #include "src/compiler/feedback-source.h"
 #include "src/compiler/globals.h"
@@ -14,6 +15,7 @@
 #include "src/compiler/node.h"
 #include "src/compiler/opcodes.h"
 #include "src/compiler/operator-properties.h"
+#include "src/objects/bytecode-array.h"
 #include "src/objects/feedback-cell.h"
 #include "src/objects/oddball.h"
 #include "src/runtime/runtime.h"
@@ -400,13 +402,16 @@ CreateFunctionContextParameters const& CreateFunctionContextParametersOf(
 // Defines parameters for JSDefineNamedOwnProperty operator.
 class DefineNamedOwnPropertyParameters final {
  public:
-  DefineNamedOwnPropertyParameters(NameRef name, FeedbackSource const& feedback)
-      : name_(name), feedback_(feedback) {}
+  DefineNamedOwnPropertyParameters(bool in_literal, NameRef name,
+                                   FeedbackSource const& feedback)
+      : in_literal_(in_literal), name_(name), feedback_(feedback) {}
 
   NameRef name() const { return name_; }
   FeedbackSource const& feedback() const { return feedback_; }
+  bool in_literal() const { return in_literal_; }
 
  private:
+  bool in_literal_;
   const NameRef name_;
   FeedbackSource const feedback_;
 
@@ -472,6 +477,26 @@ class NamedAccess final {
 
 const NamedAccess& NamedAccessOf(const Operator* op);
 
+struct CreateGeneratorObjectParameters final {
+  IndirectHandle<BytecodeArray> bytecode_array;
+
+  explicit CreateGeneratorObjectParameters(
+      IndirectHandle<BytecodeArray> bytecode_array)
+      : bytecode_array(bytecode_array) {}
+
+  friend bool operator==(CreateGeneratorObjectParameters const&,
+                         CreateGeneratorObjectParameters const&);
+  friend bool operator!=(CreateGeneratorObjectParameters const&,
+                         CreateGeneratorObjectParameters const&);
+
+  friend size_t hash_value(CreateGeneratorObjectParameters const&);
+
+  friend std::ostream& operator<<(std::ostream&,
+                                  CreateGeneratorObjectParameters const&);
+};
+
+const CreateGeneratorObjectParameters& CreateGeneratorObjectParametersOf(
+    const Operator* op);
 
 // Defines the property being loaded from an object by a named load. This is
 // used as a parameter by JSLoadGlobal operator.
@@ -1030,7 +1055,7 @@ class V8_EXPORT_PRIVATE JSOperatorBuilder final
   const Operator* SetNamedProperty(LanguageMode language_mode, NameRef name,
                                    FeedbackSource const& feedback);
 
-  const Operator* DefineNamedOwnProperty(NameRef name,
+  const Operator* DefineNamedOwnProperty(bool in_literal, NameRef name,
                                          FeedbackSource const& feedback);
   const Operator* DefineKeyedOwnPropertyInLiteral(
       const FeedbackSource& feedback);
@@ -1044,7 +1069,8 @@ class V8_EXPORT_PRIVATE JSOperatorBuilder final
 
   const Operator* FindNonDefaultConstructorOrConstruct();
 
-  const Operator* CreateGeneratorObject();
+  const Operator* CreateGeneratorObject(
+      IndirectHandle<BytecodeArray> bytecode_array);
 
   const Operator* LoadGlobal(NameRef name, const FeedbackSource& feedback,
                              TypeofMode typeof_mode = TypeofMode::kNotInside);

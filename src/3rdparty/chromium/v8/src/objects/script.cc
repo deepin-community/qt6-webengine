@@ -13,6 +13,22 @@
 
 namespace v8::internal {
 
+const char* ToString(Script::CompilationKind type) {
+  switch (type) {
+    case Script::CompilationKind::kHost:
+      return "host";
+    case Script::CompilationKind::kDirectEval:
+      return "direct-eval";
+    case Script::CompilationKind::kIndirectEval:
+      return "indirect-eval";
+    case Script::CompilationKind::kFunctionConstructor:
+      return "function-constructor";
+    case Script::CompilationKind::kWrapped:
+      return "wrapped";
+  }
+  UNREACHABLE();
+}
+
 template <typename IsolateT>
 MaybeHandle<SharedFunctionInfo> Script::FindSharedFunctionInfo(
     DirectHandle<Script> script, IsolateT* isolate,
@@ -38,6 +54,8 @@ MaybeHandle<SharedFunctionInfo> Script::FindSharedFunctionInfo(
   CHECK_EQ(result->EndPosition(), function_literal->end_position());
   CHECK_EQ(result->function_literal_id(kRelaxedLoad),
            function_literal->function_literal_id());
+  CHECK_EQ(result->syntax_kind(), function_literal->syntax_kind());
+  CHECK_EQ(result->kind(), function_literal->kind());
   function_literal->set_shared_function_info(result);
   return result;
 }

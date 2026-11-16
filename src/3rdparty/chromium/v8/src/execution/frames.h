@@ -1466,6 +1466,7 @@ class WasmLiftoffSetupFrame : public TypedFrame {
 
   FullObjectSlot wasm_instance_data_slot() const;
 
+  Address CallingPC() const;
   int GetDeclaredFunctionIndex() const;
 
   wasm::NativeModule* GetNativeModule() const;
@@ -1480,6 +1481,8 @@ class WasmLiftoffSetupFrame : public TypedFrame {
 
  protected:
   inline explicit WasmLiftoffSetupFrame(StackFrameIteratorBase* iterator);
+
+  void ComputeCallerState(State* state) const override;
 
  private:
   friend class StackFrameIteratorBase;

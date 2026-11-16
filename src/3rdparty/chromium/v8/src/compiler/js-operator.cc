@@ -221,7 +221,8 @@ CreateFunctionContextParameters const& CreateFunctionContextParametersOf(
 
 bool operator==(DefineNamedOwnPropertyParameters const& lhs,
                 DefineNamedOwnPropertyParameters const& rhs) {
-  return lhs.name_.object().location() == rhs.name_.object().location() &&
+  return lhs.in_literal() == rhs.in_literal() &&
+         lhs.name_.object().location() == rhs.name_.object().location() &&
          lhs.feedback() == rhs.feedback();
 }
 
@@ -231,7 +232,7 @@ bool operator!=(DefineNamedOwnPropertyParameters const& lhs,
 }
 
 size_t hash_value(DefineNamedOwnPropertyParameters const& p) {
-  return base::hash_combine(p.name_.object().location(),
+  return base::hash_combine(p.in_literal(), p.name_.object().location(),
                             FeedbackSource::Hash()(p.feedback()));
 }
 
@@ -333,6 +334,30 @@ size_t hash_value(PropertyAccess const& p) {
                             FeedbackSource::Hash()(p.feedback()));
 }
 
+bool operator==(CreateGeneratorObjectParameters const& lhs,
+                CreateGeneratorObjectParameters const& rhs) {
+  return lhs.bytecode_array.location() == rhs.bytecode_array.location();
+}
+
+bool operator!=(CreateGeneratorObjectParameters const& lhs,
+                CreateGeneratorObjectParameters const& rhs) {
+  return !(lhs == rhs);
+}
+
+size_t hash_value(CreateGeneratorObjectParameters const& p) {
+  return base::hash_combine(p.bytecode_array.location());
+}
+
+std::ostream& operator<<(std::ostream& os,
+                         CreateGeneratorObjectParameters const& p) {
+  return os << Brief(*p.bytecode_array);
+}
+
+const CreateGeneratorObjectParameters& CreateGeneratorObjectParametersOf(
+    const Operator* op) {
+  DCHECK_EQ(IrOpcode::kJSCreateGeneratorObject, op->opcode());
+  return OpParameter<CreateGeneratorObjectParameters>(op);
+}
 
 bool operator==(LoadGlobalParameters const& lhs,
                 LoadGlobalParameters const& rhs) {
@@ -1186,12 +1211,12 @@ const Operator* JSOperatorBuilder::DefineKeyedOwnProperty(
 }
 
 const Operator* JSOperatorBuilder::DefineNamedOwnProperty(
-    NameRef name, FeedbackSource const& feedback) {
+    bool in_literal, NameRef name, FeedbackSource const& feedback) {
   static constexpr int kObject = 1;
   static constexpr int kValue = 1;
   static constexpr int kFeedbackVector = 1;
   static constexpr int kArity = kObject + kValue + kFeedbackVector;
-  DefineNamedOwnPropertyParameters parameters(name, feedback);
+  DefineNamedOwnPropertyParameters parameters(in_literal, name, feedback);
   return zone()->New<Operator1<DefineNamedOwnPropertyParameters>>(   // --
       IrOpcode::kJSDefineNamedOwnProperty, Operator::kNoProperties,  // opcode
       "JSDefineNamedOwnProperty",                                    // name
@@ -1206,11 +1231,14 @@ const Operator* JSOperatorBuilder::DeleteProperty() {
       3, 1, 1, 1, 1, 2);                                     // counts
 }
 
-const Operator* JSOperatorBuilder::CreateGeneratorObject() {
-  return zone()->New<Operator>(                                     // --
-      IrOpcode::kJSCreateGeneratorObject, Operator::kEliminatable,  // opcode
-      "JSCreateGeneratorObject",                                    // name
-      2, 1, 1, 1, 1, 0);                                            // counts
+const Operator* JSOperatorBuilder::CreateGeneratorObject(
+    IndirectHandle<BytecodeArray> bytecode_array) {
+  CreateGeneratorObjectParameters parameters(bytecode_array);
+  return zone()->New<Operator1<CreateGeneratorObjectParameters>>(  // --
+      IrOpcode::kJSCreateGeneratorObject, Operator::kNoThrow,      // opcode
+      "JSCreateGeneratorObject",                                   // name
+      2, 1, 1, 1, 1, 0,                                            // counts
+      parameters);                                                 // parameters
 }
 
 const Operator* JSOperatorBuilder::LoadGlobal(NameRef name,
@@ -1445,7 +1473,7 @@ const Operator* JSOperatorBuilder::GetTemplateObject(
   GetTemplateObjectParameters parameters(description, shared, feedback);
   return zone()->New<Operator1<GetTemplateObjectParameters>>(  // --
       IrOpcode::kJSGetTemplateObject,                          // opcode
-      Operator::kEliminatable,                                 // properties
+      Operator::kNoDeopt | Operator::kNoThrow,                 // properties
       "JSGetTemplateObject",                                   // name
       1, 1, 1, 1, 1, 0,                                        // counts
       parameters);                                             // parameter

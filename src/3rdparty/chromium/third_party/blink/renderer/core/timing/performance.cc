@@ -329,6 +329,10 @@ MemoryInfo* Performance::memory(ScriptState*) const {
   return nullptr;
 }
 
+SpeculationData* Performance::getSpeculations() {
+  return nullptr;
+}
+
 EventCounts* Performance::eventCounts() {
   return nullptr;
 }
@@ -1288,8 +1292,10 @@ DOMHighResTimeStamp Performance::now() const {
 
 // static
 bool Performance::CanExposeNode(Node* node) {
-  if (!node || !node->isConnected() || node->IsInShadowTree())
+  if (!node || !node->isConnected() || node->IsInShadowTree() ||
+      node->IsPseudoElement()) {
     return false;
+  }
 
   // Do not expose |node| when the document is not 'fully active'.
   const Document& document = node->GetDocument();

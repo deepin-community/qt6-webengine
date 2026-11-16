@@ -806,6 +806,19 @@ GLES2Decoder::Error GLES2DecoderPassthroughImpl::DoCommandsImpl(
       result = DoCommonCommand(command, arg_count, cmd_data);
     }
 
+    // A command must not leave a different GL context or surface current. If
+    // one did, subsequent commands would operate on the wrong context or
+    // surface, so treat it as a lost context. This only checks Chromium's
+    // bookkeeping, which is cheap enough to do per command.
+    if (result == error::kNoError && !context_lost_ &&
+        (gl::GLContext::GetCurrent() != context_.get() ||
+         gl::GLSurface::GetCurrent() != surface_.get())) {
+      LOG(ERROR) << "GLES2DecoderPassthroughImpl: context or surface is no "
+                    "longer current after command "
+                 << GetCommandName(command);
+      MarkContextLost(error::kMakeCurrentFailed);
+    }
+
     if (result == error::kNoError && context_lost_) {
       result = error::kLostContext;
     }
@@ -2484,6 +2497,18 @@ error::Error GLES2DecoderPassthroughImpl::ProcessReadPixels(bool did_finish) {
         api()->glDeleteBuffersARBFn(1, &pending_read_pixels.buffer_service_id);
         pending_read_pixels_.pop_front();
         break;
+      }
+
+      // If the context was reset while this readback was queued, the pack
+      // buffer's backing store was never written; mapping it may deliver
+      // uninitialized driver memory on certain GPUs. The sync readback lane is
+      // covered inside ANGLE (checkGraphicsResetStatusAfterReadback).
+      if (feature_info_->workarounds()
+              .check_graphics_reset_status_after_readback &&
+          !WasContextLost() && CheckResetStatus()) {
+        pending_read_pixels_.pop_front();
+        group_->LoseContexts(error::kUnknown);
+        return error::kLostContext;
       }
 
       api()->glBindBufferFn(GL_PIXEL_PACK_BUFFER,

@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/auto_reset.h"
 #include "base/bits.h"
 #include "base/memory/raw_ptr.h"
 #include "base/notimplemented.h"
@@ -165,6 +166,8 @@ std::unique_ptr<ExternalVkImageBacking> ExternalVkImageBacking::Create(
     std::string debug_label,
     const base::flat_map<VkFormat, VkImageUsageFlags>& image_usage_cache,
     base::span<const uint8_t> pixel_data) {
+  bool use_separate_gl_texture =
+        UseSeparateGLTexture(context_state.get(), format);
   bool is_external = context_state->support_vulkan_external_object();
 
   auto* device_queue = context_state->vk_context_provider()->GetDeviceQueue();
@@ -229,6 +232,11 @@ std::unique_ptr<ExternalVkImageBacking> ExternalVkImageBacking::Create(
                                   VK_IMAGE_TILING_OPTIMAL);
     }
     if (!image) {
+      // VulkanImages must be explicitly destroyed, so release the images
+      // already allocated for earlier planes.
+      for (auto& texture : textures) {
+        texture.vulkan_image->Destroy();
+      }
       return nullptr;
     }
 
@@ -236,8 +244,6 @@ std::unique_ptr<ExternalVkImageBacking> ExternalVkImageBacking::Create(
     textures.emplace_back(std::move(image), format, color_space);
   }
 
-  bool use_separate_gl_texture =
-      UseSeparateGLTexture(context_state.get(), format);
   auto backing = std::make_unique<ExternalVkImageBacking>(
       base::PassKey<ExternalVkImageBacking>(), mailbox, format, size,
       color_space, surface_origin, alpha_type, usage, std::move(debug_label),
@@ -281,6 +287,9 @@ std::unique_ptr<ExternalVkImageBacking> ExternalVkImageBacking::CreateFromGMB(
     return nullptr;
   }
 
+  bool use_separate_gl_texture =
+      UseSeparateGLTexture(context_state.get(), format);
+
   auto* vulkan_implementation =
       context_state->vk_context_provider()->GetVulkanImplementation();
   auto* device_queue = context_state->vk_context_provider()->GetDeviceQueue();
@@ -305,8 +314,6 @@ std::unique_ptr<ExternalVkImageBacking> ExternalVkImageBacking::CreateFromGMB(
   textures.reserve(1);
   textures.emplace_back(std::move(image), format, color_space);
 
-  bool use_separate_gl_texture =
-      UseSeparateGLTexture(context_state.get(), format);
   auto backing = std::make_unique<ExternalVkImageBacking>(
       base::PassKey<ExternalVkImageBacking>(), mailbox, format, size,
       color_space, surface_origin, alpha_type, usage, std::move(debug_label),
@@ -314,6 +321,7 @@ std::unique_ptr<ExternalVkImageBacking> ExternalVkImageBacking::CreateFromGMB(
       command_pool, use_separate_gl_texture, std::move(handle),
       std::move(buffer_usage));
   backing->SetCleared();
+  backing->latest_content_ = kInVkImage;
   return backing;
 }
 
@@ -469,11 +477,21 @@ bool ExternalVkImageBacking::BeginAccess(
     return true;
   }
 
+  if (is_write_in_progress_ || (!readonly && reads_in_progress_)) {
+    DLOG(ERROR) << "Unable to begin read or write access because another "
+                   "conflicting access is in progress";
+    return false;
+  }
+
   if (readonly && !reads_in_progress_) {
-    UpdateContent(kInVkImage);
-    if (!gl_textures_.empty()) {
+    if (!is_updating_content_) {
+      UpdateContent(kInVkImage);
+    }
+    if (!gl_textures_.empty() && !is_updating_content_) {
       UpdateContent(kInGLTexture);
     }
+  } else if (!readonly && !is_updating_content_) {
+    UpdateContent(is_gl ? kInGLTexture : kInVkImage);
   }
 
   if (gl_reads_in_progress_ && need_synchronization()) {
@@ -944,6 +962,12 @@ ExternalVkImageBacking::ProduceOverlay(SharedImageManager* manager,
 }
 
 void ExternalVkImageBacking::UpdateContent(uint32_t content_flags) {
+  // This flag is used in order to avoid infinite recursion for cases when
+  // ::BeginAccess() will call UpdateContent(kInGLTexture) which would call
+  // ::CopyPixelsFromVkImageToGLTexture, which now will call ReadbackToMemory,
+  // which will call ::BeginAccess() again.
+  base::AutoReset<bool> auto_reset(&is_updating_content_, true);
+
   // Only support one backing for now.
   DCHECK(content_flags == kInVkImage || content_flags == kInGLTexture);
 
@@ -956,13 +980,15 @@ void ExternalVkImageBacking::UpdateContent(uint32_t content_flags) {
 
   if (content_flags == kInVkImage) {
     if ((latest_content_ & kInGLTexture)) {
-      CopyPixelsFromGLTextureToVkImage();
-      latest_content_ |= kInVkImage;
+      if (CopyPixelsFromGLTextureToVkImage()) {
+        latest_content_ |= kInVkImage;
+      }
     }
   } else if (content_flags == kInGLTexture) {
     if (latest_content_ & kInVkImage) {
-      CopyPixelsFromVkImageToGLTexture();
-      latest_content_ |= kInGLTexture;
+      if(CopyPixelsFromVkImageToGLTexture()) {
+        latest_content_ |= kInGLTexture;
+      }
     }
   }
 }
@@ -987,7 +1013,7 @@ ExternalVkImageBacking::GetMapPlaneData() const {
   return {data, total_data_bytes};
 }
 
-void ExternalVkImageBacking::CopyPixelsFromGLTextureToVkImage() {
+bool ExternalVkImageBacking::CopyPixelsFromGLTextureToVkImage() {
   DCHECK(use_separate_gl_texture());
   DCHECK_EQ(vk_textures_.size(), gl_textures_.size());
 
@@ -997,7 +1023,7 @@ void ExternalVkImageBacking::CopyPixelsFromGLTextureToVkImage() {
   // Make sure a gl context is current, since textures are shared between all gl
   // contexts, we don't care which gl context is current.
   if (!MakeGLContextCurrent()) {
-    return;
+    return false;
   }
 
   auto [plane_data, total_data_bytes] = GetMapPlaneData();
@@ -1018,7 +1044,7 @@ void ExternalVkImageBacking::CopyPixelsFromGLTextureToVkImage() {
                                       0, &stage_buffer, &stage_allocation);
   if (result != VK_SUCCESS) {
     DLOG(ERROR) << "vkCreateBuffer() failed." << result;
-    return;
+    return false;
   }
 
   absl::Cleanup destroy_buffer = [&]() {
@@ -1029,7 +1055,7 @@ void ExternalVkImageBacking::CopyPixelsFromGLTextureToVkImage() {
   result = vma::MapMemory(allocator, stage_allocation, &buffer);
   if (result != VK_SUCCESS) {
     DLOG(ERROR) << "vma::MapMemory() failed. " << result;
-    return;
+    return false;
   }
 
   for (size_t plane = 0; plane < vk_textures_.size(); ++plane) {
@@ -1040,7 +1066,7 @@ void ExternalVkImageBacking::CopyPixelsFromGLTextureToVkImage() {
     if (!gl_textures_[plane].ReadbackToMemory(pixmap)) {
       DLOG(ERROR) << "GL readback failed";
       vma::UnmapMemory(allocator, stage_allocation);
-      return;
+      return false;
     }
   }
 
@@ -1049,7 +1075,7 @@ void ExternalVkImageBacking::CopyPixelsFromGLTextureToVkImage() {
   std::vector<ExternalSemaphore> external_semaphores;
   if (!BeginAccessInternal(/*readonly=*/false, &external_semaphores)) {
     DLOG(ERROR) << "BeginAccess() failed.";
-    return;
+    return false;
   }
 
   // Everything was successful so `stage_buffer` + `stage_allocation` ownership
@@ -1089,7 +1115,7 @@ void ExternalVkImageBacking::CopyPixelsFromGLTextureToVkImage() {
         std::move(command_buffer));
     fence_helper()->EnqueueBufferCleanupForSubmittedWork(stage_buffer,
                                                          stage_allocation);
-    return;
+    return false;
   }
 
   std::vector<VkSemaphore> begin_access_semaphores;
@@ -1113,9 +1139,11 @@ void ExternalVkImageBacking::CopyPixelsFromGLTextureToVkImage() {
       std::move(command_buffer));
   fence_helper()->EnqueueBufferCleanupForSubmittedWork(stage_buffer,
                                                        stage_allocation);
+
+  return true;
 }
 
-void ExternalVkImageBacking::CopyPixelsFromVkImageToGLTexture() {
+bool ExternalVkImageBacking::CopyPixelsFromVkImageToGLTexture() {
   DCHECK(use_separate_gl_texture());
   DCHECK_EQ(vk_textures_.size(), gl_textures_.size());
 
@@ -1125,7 +1153,7 @@ void ExternalVkImageBacking::CopyPixelsFromVkImageToGLTexture() {
   // Make sure a gl context is current, since textures are shared between all gl
   // contexts, we don't care which gl context is current.
   if (!MakeGLContextCurrent()) {
-    return;
+    return false;
   }
 
   auto [plane_data, total_data_bytes] = GetMapPlaneData();
@@ -1146,7 +1174,7 @@ void ExternalVkImageBacking::CopyPixelsFromVkImageToGLTexture() {
                                       0, &stage_buffer, &stage_allocation);
   if (result != VK_SUCCESS) {
     DLOG(ERROR) << "vkCreateBuffer() failed." << result;
-    return;
+    return false;
   }
 
   absl::Cleanup destroy_buffer = [&]() {
@@ -1159,7 +1187,7 @@ void ExternalVkImageBacking::CopyPixelsFromVkImageToGLTexture() {
   std::vector<ExternalSemaphore> external_semaphores;
   if (!BeginAccessInternal(/*readonly=*/true, &external_semaphores)) {
     DLOG(ERROR) << "BeginAccess() failed.";
-    return;
+    return false;
   }
   DCHECK(external_semaphores.empty());
 
@@ -1196,8 +1224,8 @@ void ExternalVkImageBacking::CopyPixelsFromVkImageToGLTexture() {
   result = vma::MapMemory(allocator, stage_allocation, &buffer);
   if (result != VK_SUCCESS) {
     DLOG(ERROR) << "vma::MapMemory() failed. " << result;
-    return;
-  }
+    return false;
+ }
 
   for (size_t plane = 0; plane < vk_textures_.size(); ++plane) {
     auto& sk_image_info = plane_data[plane].image_info;
@@ -1209,6 +1237,8 @@ void ExternalVkImageBacking::CopyPixelsFromVkImageToGLTexture() {
   }
 
   vma::UnmapMemory(allocator, stage_allocation);
+
+  return true;
 }
 
 bool ExternalVkImageBacking::UploadToVkImage(
