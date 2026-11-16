@@ -21,6 +21,19 @@ ifeq (i386, $(DEB_HOST_ARCH))
 	export NINJAJOBS = -j2
 endif
 
+ifeq (loong64, $(DEB_HOST_ARCH))
+	export LDFLAGS+=-Wl,--no-keep-memory -mno-relax
+	export NINJAJOBS = -j2
+	export NINJAFLAGS = -j2
+endif
+
+ifeq (sw64, $(DEB_HOST_ARCH))
+	export LDFLAGS+=-Wl,--no-keep-memory
+	export NINJAJOBS = -j2
+	export NINJAFLAGS = -j2
+	export NODE_OPTIONS="--jitless"
+endif
+
 ifeq (i386, $(DEB_HOST_ARCH_CPU))
 	export DEB_CFLAGS_MAINT_APPEND = -msse -msse2
 	export DEB_CXXFLAGS_MAINT_APPEND = -msse -msse2

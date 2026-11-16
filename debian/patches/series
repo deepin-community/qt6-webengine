@@ -28,3 +28,10 @@ hunspell-bdic.patch
 
 # fix build with ccache
 ccache.diff
+
+# loong64 architecture support (ported from deepin 6.8 patch, adapted to 6.140)
+support-loong64.patch
+
+# sw64 architecture support (V8 sw64 backend, sandbox statx/mseal,
+# node rollup/svg fallbacks, -mno-relax gating; on top of support-loong64.patch)
+support-sw64.patch
