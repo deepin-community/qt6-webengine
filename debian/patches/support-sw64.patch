@@ -9,19 +9,6 @@ diff -ruN -x debian -x 'obj-*' a/src/3rdparty/chromium/content/browser/BUILD.gn 
      "//components/sqlite_proto",
      "//components/system_media_controls",
      "//components/tracing:tracing_config",
-diff -ruN -x debian -x 'obj-*' a/src/3rdparty/chromium/sandbox/linux/seccomp-bpf-helpers/syscall_sets.cc b/src/3rdparty/chromium/sandbox/linux/seccomp-bpf-helpers/syscall_sets.cc
---- a/src/3rdparty/chromium/sandbox/linux/seccomp-bpf-helpers/syscall_sets.cc	2026-11-16 09:28:45.258034013 +0800
-+++ b/src/3rdparty/chromium/sandbox/linux/seccomp-bpf-helpers/syscall_sets.cc	2026-11-14 21:22:25.954168074 +0800
-@@ -558,7 +558,9 @@
-     case __NR_mlock:
-     case __NR_munlock:
-     case __NR_munmap:
-+#if defined(__NR_mseal)
-     case __NR_mseal:
-+#endif
-       return true;
-     case __NR_madvise:
-     case __NR_mincore:
 diff -ruN -x debian -x 'obj-*' a/src/3rdparty/chromium/sandbox/linux/system_headers/linux_stat.h b/src/3rdparty/chromium/sandbox/linux/system_headers/linux_stat.h
 --- a/src/3rdparty/chromium/sandbox/linux/system_headers/linux_stat.h	2026-11-16 09:28:45.259034017 +0800
 +++ b/src/3rdparty/chromium/sandbox/linux/system_headers/linux_stat.h	2026-11-14 20:53:24.147580976 +0800

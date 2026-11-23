@@ -1,0 +1,19 @@
+Description: exclude asm/unistd_64.h include on loong64
+ loong64 kernel uapi headers follow the asm-generic layout (like arm64)
+ and do not provide asm/unistd_64.h at all; __NR_* come from
+ sys/syscall.h -> asm/unistd.h -> asm-generic/unistd.h. Upstream webrtc
+ only excludes ARM from this include, so loong64 fails with
+ "fatal error: asm/unistd_64.h: No such file or directory".
+Author: pengfeixx
+Forwarded: no
+--- a/src/3rdparty/chromium/third_party/webrtc/rtc_base/platform_thread_types.cc
++++ b/src/3rdparty/chromium/third_party/webrtc/rtc_base/platform_thread_types.cc
+@@ -16,7 +16,7 @@
+ #include <sys/prctl.h>
+ #include <sys/syscall.h>
+ 
+-#if !defined(WEBRTC_ARCH_ARM) && !defined(WEBRTC_ARCH_ARM64)
++#if !defined(WEBRTC_ARCH_ARM) && !defined(WEBRTC_ARCH_ARM64) && !defined(__loongarch64)
+ #include <asm/unistd_64.h>
+ #endif
+ #endif

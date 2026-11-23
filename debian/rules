@@ -16,6 +16,12 @@ ifeq (armhf, $(DEB_HOST_ARCH))
 	export NINJAJOBS = -j2
 endif
 
+# arm64 builders have enough cores/memory for a 16-way chromium build
+ifeq (arm64, $(DEB_HOST_ARCH))
+	export NINJAJOBS = -j16
+	export NINJAFLAGS = -j16
+endif
+
 ifeq (i386, $(DEB_HOST_ARCH))
 	export LDFLAGS+=-Wl,--no-keep-memory
 	export NINJAJOBS = -j2
@@ -50,8 +56,69 @@ endif
 touch_files = src/3rdparty/chromium/third_party/devtools-frontend/src/front_end/third_party/lighthouse/lighthouse-dt-bundle.js \
 	      src/3rdparty/chromium/third_party/devtools-frontend/src/front_end/third_party/lighthouse/report-assets/report-generator.js
 
+# Per-arch patches (same pattern as master): each architecture loads only
+# its own patch set. support-loong64.patch and support-sw64.patch are NOT
+# in debian/patches/series. NOTE: support-sw64.patch is layered on top of
+# support-loong64.patch (shared V8/GN base), so sw64 loads base + sw64.
+# A stamp file tracks the applied set because layered patches touch the
+# same files, so per-patch `patch -R` probing cannot detect applied state;
+# revert on clean follows the stamp in reverse order.
+ifeq (loong64, $(DEB_HOST_ARCH))
+	TARGET_PATCH = patch_loong64
+else ifeq (sw64, $(DEB_HOST_ARCH))
+	TARGET_PATCH = patch_sw64
+endif
+
+STAMP = .arch-patches-stamp
+
+.PHONY: patch_loong64 patch_sw64
+patch_loong64:
+	@if [ "$$(cat $(STAMP) 2>/dev/null || echo none)" = "loong64" ]; then \
+		echo "arch patches: loong64 already applied"; \
+	elif [ "$$(cat $(STAMP) 2>/dev/null || echo none)" != "none" ]; then \
+		echo "ERROR: tree patched for '$$(cat $(STAMP))', run debian/rules clean first" >&2; exit 1; \
+	else \
+		echo "arch patches: applying support-loong64.patch"; \
+		patch -p1 < debian/patches/support-loong64.patch && \
+		echo "arch patches: loong64 done" && echo loong64 > $(STAMP); \
+	fi
+
+patch_sw64:
+	@if [ "$$(cat $(STAMP) 2>/dev/null || echo none)" = "sw64" ]; then \
+		echo "arch patches: sw64 already applied"; \
+	elif [ "$$(cat $(STAMP) 2>/dev/null || echo none)" = "loong64" ]; then \
+		echo "arch patches: applying support-sw64.patch (on loong64 base)"; \
+		patch -p1 < debian/patches/support-sw64.patch && \
+		echo "arch patches: sw64 done" && echo sw64 > $(STAMP); \
+	elif [ "$$(cat $(STAMP) 2>/dev/null || echo none)" != "none" ]; then \
+		echo "ERROR: unknown patch stamp, run debian/rules clean first" >&2; exit 1; \
+	else \
+		echo "arch patches: applying support-loong64.patch (base for sw64)"; \
+		patch -p1 < debian/patches/support-loong64.patch && \
+		echo "arch patches: base applied, applying support-sw64.patch" && \
+		patch -p1 < debian/patches/support-sw64.patch && \
+		echo "arch patches: sw64 done" && echo sw64 > $(STAMP); \
+	fi
+
 override_dh_auto_clean:
 	dh_auto_clean
+	@if [ -f $(STAMP) ]; then \
+		s=$$(cat $(STAMP)); \
+		echo "reverting arch patches for $$s"; \
+		if [ "$$s" = "sw64" ]; then patch -R -p1 < debian/patches/support-sw64.patch; fi; \
+		if [ "$$s" = "loong64" ] || [ "$$s" = "sw64" ]; then patch -R -p1 < debian/patches/support-loong64.patch; fi; \
+		rm -f $(STAMP); \
+	fi
+	# NOTE: do not blanket-delete *.orig/*.rej — the chromium rust vendor
+	# tree carries legitimate tracked Cargo.toml.orig files.
+
+# Apply arch patches BEFORE dh_update_autotools_config: it overwrites the
+# bundled config.guess/config.sub with the system copies, and the arch
+# patches edit those files — patching after that step makes patch see the
+# system content and misjudge hunks as "previously applied" (same stage as
+# the old series-based application, which ran via dpkg-source before dh).
+override_dh_update_autotools_config: $(TARGET_PATCH)
+	dh_update_autotools_config
 
 # Turn on system FFmpeg libraries for 6.3
 override_dh_auto_configure:
