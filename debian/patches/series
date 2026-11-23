@@ -29,9 +29,14 @@ hunspell-bdic.patch
 # fix build with ccache
 ccache.diff
 
-# loong64 architecture support (ported from deepin 6.8 patch, adapted to 6.140)
-support-loong64.patch
+# NOTE: support-loong64.patch / support-sw64.patch are applied per-arch from
+# debian/rules (patch_loong64 / patch_sw64 targets), following the master
+# branch pattern. Do not re-add them here — quilt applies series to ALL arches.
 
-# sw64 architecture support (V8 sw64 backend, sandbox statx/mseal,
-# node rollup/svg fallbacks, -mno-relax gating; on top of support-loong64.patch)
-support-sw64.patch
+# loong64: webrtc includes x86-style asm/unistd_64.h which loong64
+# (asm-generic layout) does not provide; exclude it like ARM
+loong64-webrtc-unistd-header.patch
+
+# sandbox: guard bare __NR_mseal case (kernel 6.10+ syscall) — older
+# UOS kernel uapi headers do not define it, same fix as sw64 patch
+sandbox-mseal-syscall-guard.patch
