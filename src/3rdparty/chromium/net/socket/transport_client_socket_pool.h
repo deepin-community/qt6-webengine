@@ -30,7 +30,6 @@
 #include "net/base/net_export.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/priority_queue.h"
-#include "net/base/proxy_chain.h"
 #include "net/base/request_priority.h"
 #include "net/log/net_log_with_source.h"
 #include "net/socket/client_socket_handle.h"
@@ -47,6 +46,7 @@ struct CommonConnectJobParams;
 class ConnectJobFactory;
 struct NetLogSource;
 struct NetworkTrafficAnnotationTag;
+class ProxyChain;
 
 // TransportClientSocketPool establishes network connections through using
 // ConnectJobs, and maintains a list of idle persistent sockets available for
@@ -791,6 +791,13 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
                                   const base::TimeTicks& now,
                                   const char* net_log_reason_utf8);
 
+  // Destroys |socket| immediately for direct connections, or queues it for
+  // asynchronous destruction when using a proxy, where destroying a tunneled
+  // socket can synchronously drain a shared session and reentrantly complete
+  // ConnectJobs in |this|.
+  void QueueDestroySocket(std::unique_ptr<StreamSocket> socket);
+  void DestroyQueuedSockets();
+
   GroupMap group_map_;
 
   // Map of the ClientSocketHandles for which we have a pending Task to invoke a
@@ -817,8 +824,6 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
   const base::TimeDelta unused_idle_socket_timeout_;
   const base::TimeDelta used_idle_socket_timeout_;
 
-  const ProxyChain proxy_chain_;
-
   const bool cleanup_on_ip_address_change_;
 
   // TODO(vandebo) Remove when backup jobs move to TransportClientSocketPool
@@ -829,6 +834,8 @@ class NET_EXPORT_PRIVATE TransportClientSocketPool
   std::set<raw_ptr<HigherLayeredPool, SetExperimental>> higher_pools_;
 
   const raw_ptr<SSLClientContext> ssl_client_context_;
+
+  std::vector<std::unique_ptr<StreamSocket>> sockets_queued_for_destruction_;
 
 #if DCHECK_IS_ON()
   // Reentrancy guard for RequestSocketInternal().

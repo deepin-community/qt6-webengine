@@ -10,6 +10,7 @@
 
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkSpan.h"
+#include "include/gpu/ganesh/GrDirectContext.h"
 #include "include/private/base/SkDebug.h"
 #include "include/private/base/SkTArray.h"
 #include "src/gpu/AtlasTypes.h"
@@ -42,6 +43,7 @@ class GrResourceAllocator;
 class GrSemaphore;
 class GrSurfaceProxyView;
 class GrTextureResolveRenderTask;
+class GrTransferFromRenderTask;
 class SkData;
 enum GrSurfaceOrigin : int;
 enum class GrColorType;
@@ -102,9 +104,13 @@ public:
     // to be copied. The surfaceColorType says how we should interpret the data when reading back
     // from the source. DstColorType describes how the data should be stored in the dstBuffer.
     // DstOffset is the offset into the dstBuffer where we will start writing data.
-    void newTransferFromRenderTask(const sk_sp<GrSurfaceProxy>& srcProxy, const SkIRect& srcRect,
-                                   GrColorType surfaceColorType, GrColorType dstColorType,
-                                   sk_sp<GrGpuBuffer> dstBuffer, size_t dstOffset);
+    sk_sp<GrTransferFromRenderTask> newTransferFromRenderTask(
+            const sk_sp<GrSurfaceProxy>& srcProxy,
+            const SkIRect& srcRect,
+            GrColorType surfaceColorType,
+            GrColorType dstColorType,
+            sk_sp<GrGpuBuffer> dstBuffer,
+            size_t dstOffset);
 
     // Creates a new render task which copies a pixel rectangle from srcView into dstView. The src
     // pixels copied are specified by srcRect. They are copied to the dstRect in dstProxy. Some
@@ -173,10 +179,10 @@ public:
 
     static bool ProgramUnitTest(GrDirectContext*, int maxStages, int maxLevels);
 
-    GrSemaphoresSubmitted flushSurfaces(SkSpan<GrSurfaceProxy*>,
-                                        SkSurfaces::BackendSurfaceAccess,
-                                        const GrFlushInfo&,
-                                        const skgpu::MutableTextureState* newState);
+    GrDirectContext::FlushResult flushSurfaces(SkSpan<GrSurfaceProxy*>,
+                                               SkSurfaces::BackendSurfaceAccess,
+                                               const GrFlushInfo&,
+                                               const skgpu::MutableTextureState* newState);
 
     void addOnFlushCallbackObject(GrOnFlushCallbackObject*);
 
@@ -197,10 +203,10 @@ public:
 
     // This is public so it can be called by an SkImage factory (in SkImages namespace).
     // It is not meant to be directly called in other situations.
-    bool flush(SkSpan<GrSurfaceProxy*> proxies,
-               SkSurfaces::BackendSurfaceAccess access,
-               const GrFlushInfo&,
-               const skgpu::MutableTextureState* newState);
+    GrDirectContext::FlushResult flush(SkSpan<GrSurfaceProxy*> proxies,
+                                       SkSurfaces::BackendSurfaceAccess access,
+                                       const GrFlushInfo&,
+                                       const skgpu::MutableTextureState* newState);
 
 private:
     GrDrawingManager(GrRecordingContext*,
@@ -211,8 +217,7 @@ private:
 
     void closeActiveOpsTask();
 
-    // return true if any GrRenderTasks were actually executed; false otherwise
-    bool executeRenderTasks(GrOpFlushState*);
+    GrRenderTask::ExecutionResult executeRenderTasks(GrOpFlushState*);
 
     void removeRenderTasks();
 

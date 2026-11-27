@@ -23678,10 +23678,10 @@ diff -ruN -x debian -x 'obj-*' a/src/3rdparty/chromium/third_party/ffmpeg/chromi
 diff -ruN -x debian -x 'obj-*' a/src/3rdparty/chromium/third_party/ffmpeg/ffmpeg_generated.gni b/src/3rdparty/chromium/third_party/ffmpeg/ffmpeg_generated.gni
 --- a/src/3rdparty/chromium/third_party/ffmpeg/ffmpeg_generated.gni	2026-09-27 18:44:57.000000000 +0800
 +++ b/src/3rdparty/chromium/third_party/ffmpeg/ffmpeg_generated.gni	2026-11-16 10:19:52.102643846 +0800
-@@ -440,6 +440,19 @@
-   ]
+@@ -552,5 +552,18 @@
+  ]
  }
- 
+
 +if (use_linux_config && current_cpu == "loong64") {
 +  ffmpeg_c_sources += [
 +    "libavutil/loongarch/cpu.c",
@@ -23695,8 +23695,7 @@ diff -ruN -x debian -x 'obj-*' a/src/3rdparty/chromium/third_party/ffmpeg/ffmpeg
 +  ]
 +}
 +
- if ((is_android && current_cpu == "arm" && arm_use_neon) ||
-     (use_linux_config && current_cpu == "arm" && arm_use_neon) ||
+ if ((is_android && current_cpu == "arm") ||
      (use_linux_config && current_cpu == "arm")) {
 diff -ruN -x debian -x 'obj-*' a/src/3rdparty/chromium/third_party/icu/source/config.guess b/src/3rdparty/chromium/third_party/icu/source/config.guess
 --- a/src/3rdparty/chromium/third_party/icu/source/config.guess	2026-09-27 18:44:57.000000000 +0800

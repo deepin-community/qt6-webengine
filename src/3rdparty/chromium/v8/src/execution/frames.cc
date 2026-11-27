@@ -1806,10 +1806,35 @@ void WasmFrame::Iterate(RootVisitor* v) const {
   bool has_tagged_outgoing_params =
       wasm_code->kind() != wasm::WasmCode::kWasmFunction &&
       wasm_code->kind() != wasm::WasmCode::kWasmToCapiWrapper;
-  if (!InFastCCall() && has_tagged_outgoing_params) {
-    FullObjectSlot parameters_base(&Memory<Address>(sp()));
-    v->VisitRootPointers(Root::kStackRoots, nullptr, parameters_base,
-                         parameters_limit);
+  if (!InFastCCall()) {
+    if (has_tagged_outgoing_params) {
+      FullObjectSlot parameters_base(&Memory<Address>(sp()));
+      v->VisitRootPointers(Root::kStackRoots, nullptr, parameters_base,
+                           parameters_limit);
+    } else if (wasm_code->kind() == wasm::WasmCode::kWasmFunction &&
+               callee_pc() != kNullAddress) {
+      // If a Wasm function calls a builtin with tagged stack parameters,
+      // visit those parameters. (Calls to other Wasm functions or to
+      // WasmToJsWrapperCSA have their tagged stack parameters visited by the
+      // callee frame instead.)
+      Builtin builtin =
+          OffHeapInstructionStream::TryLookupCode(isolate(), callee_pc());
+      if (Builtins::IsBuiltinId(builtin)) {
+        CallInterfaceDescriptor descriptor =
+            Builtins::CallInterfaceDescriptorFor(builtin);
+        DCHECK(!descriptor.AllowVarArgs());
+        if (!(descriptor.flags() & CallInterfaceDescriptorData::kNoStackScan)) {
+          int stack_params = descriptor.GetStackParameterCount();
+          DCHECK_IMPLIES(builtin == Builtin::kWasmToJsWrapperCSA,
+                         stack_params == 0);
+          if (stack_params > 0) {
+            FullObjectSlot parameters_base(&Memory<Address>(sp()));
+            v->VisitRootPointers(Root::kStackRoots, nullptr, parameters_base,
+                                 parameters_base + stack_params);
+          }
+        }
+      }
+    }
   }
 
   // Visit pointer spill slots and locals.
@@ -3863,6 +3888,22 @@ FullObjectSlot WasmLiftoffSetupFrame::wasm_instance_data_slot() const {
       sp() + WasmLiftoffSetupFrameConstants::kWasmInstanceDataOffset));
 }
 
+Address WasmLiftoffSetupFrame::CallingPC() const {
+  return ReadPC(reinterpret_cast<Address*>(
+      fp() + WasmLiftoffSetupFrameConstants::kCallingPCOffset));
+}
+
+void WasmLiftoffSetupFrame::ComputeCallerState(State* state) const {
+  TypedFrame::ComputeCallerState(state);
+  // Unlike {CallingPC}, which only runs at safepoints, this can run on a
+  // profiler tick: the setup builtin sets the frame marker a few instructions
+  // before it signs and spills the calling PC, so the slot can still be
+  // unsigned here. Don't authenticate it; {callee_pc} is only a lookup key,
+  // never a branch target.
+  state->callee_pc = unauthenticated_pc(reinterpret_cast<Address*>(
+      fp() + WasmLiftoffSetupFrameConstants::kCallingPCOffset));
+}
+
 void WasmLiftoffSetupFrame::Iterate(RootVisitor* v) const {
   FullObjectSlot spilled_instance_slot(&Memory<Address>(
       fp() + WasmLiftoffSetupFrameConstants::kInstanceSpillOffset));
@@ -3915,7 +3956,8 @@ void WasmLiftoffSetupFrame::Iterate(RootVisitor* v) const {
   }
 
   // Next we scan the slots of stack parameters.
-  wasm::WasmCode* wasm_code = native_module->GetCode(func_index);
+  wasm::WasmCode* wasm_code =
+      wasm::GetWasmCodeManager()->LookupCode(isolate(), CallingPC());
   uint32_t first_tagged_stack_slot = wasm_code->first_tagged_parameter_slot();
   uint32_t num_tagged_stack_slots = wasm_code->num_tagged_parameter_slots();
 

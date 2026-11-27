@@ -5,12 +5,15 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_INSPECTOR_INSPECT_TOOLS_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_INSPECTOR_INSPECT_TOOLS_H_
 
+#include <v8-inspector.h>
+
 #include <vector>
 
-#include <v8-inspector.h>
 #include "third_party/blink/renderer/bindings/core/v8/script_value.h"
 #include "third_party/blink/renderer/core/inspector/inspector_overlay_agent.h"
 #include "third_party/blink/renderer/core/inspector/node_content_visibility_state.h"
+#include "third_party/blink/renderer/core/inspector/v8_session_holder.h"
+#include "third_party/blink/renderer/platform/heap/weak_cell.h"
 
 namespace blink {
 
@@ -230,21 +233,28 @@ class PausedInDebuggerTool : public InspectTool {
  public:
   PausedInDebuggerTool(InspectorOverlayAgent* overlay,
                        OverlayFrontend* frontend,
-                       v8_inspector::V8InspectorSession* v8_session,
+                       V8SessionHolder v8_session,
                        const String& message)
       : InspectTool(overlay, frontend),
-        v8_session_(v8_session),
+        v8_session_(std::move(v8_session)),
         message_(message) {}
   PausedInDebuggerTool(const PausedInDebuggerTool&) = delete;
   PausedInDebuggerTool& operator=(const PausedInDebuggerTool&) = delete;
+  void Trace(Visitor* visitor) const override;
 
  private:
+  enum class Action { kResume, kStepOver };
+
   void Draw(float scale) override;
   void Dispatch(const ScriptValue& message,
                 ExceptionState& exception_state) override;
   String GetOverlayName() override;
-  v8_inspector::V8InspectorSession* v8_session_;
+  void Dispose() override;
+  void ExecuteOnV8Session(Action action);
+
+  V8SessionHolder v8_session_;
   String message_;
+  WeakCellFactory<PausedInDebuggerTool> weak_factory_{this};
 };
 
 // -----------------------------------------------------------------------------

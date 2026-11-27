@@ -1352,6 +1352,7 @@ bool ValidImageDataSize(const Context *context,
                         GLsizei width,
                         GLsizei height,
                         GLsizei depth,
+                        bool isSubImage,
                         GLenum format,
                         GLenum type,
                         const void *pixels,
@@ -1405,6 +1406,25 @@ bool ValidImageDataSize(const Context *context,
                                    kPixelUnpackBufferBoundForTransformFeedback);
             return false;
         }
+        // ...data is not evenly divisible into the number of bytes needed to store in memory a
+        // datum indicated by type.
+        {
+            size_t offset            = reinterpret_cast<size_t>(pixels);
+            size_t dataBytesPerPixel = static_cast<size_t>(GetTypeInfo(type).bytes);
+
+            if ((offset % dataBytesPerPixel) != 0)
+            {
+                ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kDataTypeNotAligned);
+                return false;
+            }
+        }
+
+        // ...the buffer object's data store is currently mapped but not persistently.
+        if (pixelUnpackBuffer->isMapped() && !pixelUnpackBuffer->isPersistentlyMapped())
+        {
+            ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kBufferMapped);
+            return false;
+        }
     }
     else
     {
@@ -1420,6 +1440,84 @@ bool ValidImageDataSize(const Context *context,
             ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kImageSizeTooSmall);
             return false;
         }
+    }
+
+    if (context->isHardenedContext())
+    {
+        // Define:
+        //   DataStoreWidth  = (GL_UNPACK_ROW_LENGTH ? GL_UNPACK_ROW_LENGTH : width)
+        //   DataStoreHeight = (GL_UNPACK_IMAGE_HEIGHT ? GL_UNPACK_IMAGE_HEIGHT : height)
+        //
+        // WebGL 2.0 / hardened contexts impose the following additional constraints:
+        //
+        // 1) texImage2D and texSubImage2D generate INVALID_OPERATION if:
+        //      GL_UNPACK_SKIP_PIXELS + width > DataStoreWidth
+        //    except for texImage2D if no GL_PIXEL_UNPACK_BUFFER is
+        //    bound and _pixels_ is null.
+        //
+        // 2) texImage3D and texSubImage3D generate INVALID_OPERATION if:
+        //      GL_UNPACK_SKIP_PIXELS + width > DataStoreWidth
+        //      GL_UNPACK_SKIP_ROWS + height > DataStoreHeight
+        //    except for texImage3D if no GL_PIXEL_UNPACK_BUFFER is
+        //    bound and _pixels_ is null.
+        if (!pixelUnpackBuffer && !pixels && !isSubImage)
+        {
+            // Exception case for texImage2D or texImage3D, above.
+        }
+        else
+        {
+            GLint dataStoreWidth = unpack.rowLength ? unpack.rowLength : width;
+            if (unpack.skipPixels + width > dataStoreWidth)
+            {
+                ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kInvalidUnpackParametersForWebGL);
+                return false;
+            }
+            if (texType == TextureType::_3D || texType == TextureType::_2DArray)
+            {
+                // Note that CubeMapArray is not supported as a texture target in WebGL.
+                GLint dataStoreHeight = unpack.imageHeight ? unpack.imageHeight : height;
+                if (unpack.skipRows + height > dataStoreHeight)
+                {
+                    ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kInvalidUnpackParametersForWebGL);
+                    return false;
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
+Extents RoundImageAllocationExtentIfNeeded(const Context *context,
+                                           GLsizei width,
+                                           GLsizei height,
+                                           GLsizei depth)
+{
+    if (context->getLimitations().roundUp3DTextureSizeToPOTForLimit && depth > 1)
+    {
+        return Extents(gl::clampCast<GLsizei>(gl::ceilPow2(width)),
+                       gl::clampCast<GLsizei>(gl::ceilPow2(height)),
+                       gl::clampCast<GLsizei>(gl::ceilPow2(depth)));
+    }
+    return Extents(width, height, depth);
+}
+
+bool ValidImageAllocationSize(const Context *context,
+                              angle::EntryPoint entryPoint,
+                              GLsizei width,
+                              GLsizei height,
+                              GLsizei depth,
+                              GLsizei samples,
+                              GLenum sizedInternalFormat)
+{
+    const InternalFormat &formatInfo = GetSizedInternalFormatInfo(sizedInternalFormat);
+    GLuint allocationSize            = 0;
+    Extents extents = RoundImageAllocationExtentIfNeeded(context, width, height, depth);
+    if (!formatInfo.computeImageSize(extents, samples, &allocationSize) ||
+        allocationSize > context->getLimitations().maxTextureBytes)
+    {
+        ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kTextureSizeLimitation);
+        return false;
     }
 
     return true;
@@ -1659,6 +1757,13 @@ bool ValidateRenderbufferStorageParametersBase(const Context *context,
     if (std::max(width, height) > context->getCaps().maxRenderbufferSize)
     {
         ANGLE_VALIDATION_ERROR(GL_INVALID_VALUE, kResourceMaxRenderbufferSize);
+        return false;
+    }
+
+    if (!ValidImageAllocationSize(context, entryPoint, width, height, 1, samples,
+                                  formatInfo.sizedInternalFormat))
+    {
+        // error already generated.
         return false;
     }
 
@@ -4065,6 +4170,13 @@ bool ValidateCopyTexImageParametersBase(const Context *context,
             static_cast<int>(height) > maxLevelDimension)
         {
             ANGLE_VALIDATION_ERROR(GL_INVALID_VALUE, kResourceMaxTextureSize);
+            return false;
+        }
+
+        if (!ValidImageAllocationSize(context, entryPoint, width, height, 1, 0,
+                                      formatInfo.sizedInternalFormat))
+        {
+            // Error already generated
             return false;
         }
     }
@@ -8624,7 +8736,8 @@ bool ValidateTexStorageMultisample(const Context *context,
                                    GLsizei samples,
                                    GLint internalFormat,
                                    GLsizei width,
-                                   GLsizei height)
+                                   GLsizei height,
+                                   GLsizei depth)
 {
     const Caps &caps = context->getCaps();
     if (width > caps.max2DTextureSize || height > caps.max2DTextureSize)
@@ -8673,6 +8786,14 @@ bool ValidateTexStorageMultisample(const Context *context,
         ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kImmutableTextureBound);
         return false;
     }
+
+    if (!ValidImageAllocationSize(context, entryPoint, width, height, depth, samples,
+                                  internalFormat))
+    {
+        // Error already generated.
+        return false;
+    }
+
     return true;
 }
 
@@ -8697,7 +8818,7 @@ bool ValidateTexStorage2DMultisampleBase(const Context *context,
     }
 
     return ValidateTexStorageMultisample(context, entryPoint, target, samples, internalFormat,
-                                         width, height);
+                                         width, height, 1);
 }
 
 bool ValidateTexStorage3DMultisampleBase(const Context *context,
@@ -8728,7 +8849,7 @@ bool ValidateTexStorage3DMultisampleBase(const Context *context,
     }
 
     return ValidateTexStorageMultisample(context, entryPoint, target, samples, internalformat,
-                                         width, height);
+                                         width, height, depth);
 }
 
 bool ValidateGetTexLevelParameterBase(const Context *context,

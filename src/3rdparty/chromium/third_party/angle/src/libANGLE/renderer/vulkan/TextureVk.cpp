@@ -164,11 +164,25 @@ bool CanCopyWithTransferForCopyTexture(vk::Renderer *renderer,
     const bool destHasA8    = destAngleFormat.alphaBits == 8;
     const bool destIsSigned = destAngleFormat.isSnorm() || destAngleFormat.isSint();
 
+    // CHROMIUM_copy_texture frontend validation (Tables 1.0 and 1.1) disallows compressed block
+    // formats as source or destination textures.
+    ASSERT(!srcAngleFormat.isBlock);
+    ASSERT(!destAngleFormat.isBlock);
+
+    // Every uncompressed color format in GLES has homogeneous channel bit-widths (except packed
+    // formats like RGB565, RGB5_A1, RGB10_A2, or R11F_G11F_B10F, where redBits is never 8) and
+    // starts with the Red channel (R8, RG8, RGB8, RGBA8, BGRA8; A8/L8/LA8 are emulated on Vulkan
+    // and rejected above). Thus checking srcHasR8 is sufficient to guarantee all present channels
+    // are 8-bit, and prevent two non-8-bit formats (such as RGBA16F and RGBA4, where all *Has*8
+    // booleans are false) from comparing equal on the channel checks below.
+    const bool is8BitChannelFormat = srcHasR8 && !srcAngleFormat.isYUV && !destAngleFormat.isYUV;
+
     // Copy is allowed as long as they have the same number, ordering and sign of (8-bit) channels.
     // CHROMIUM_copy_texture expects verbatim copy between these format, so this copy is done
     // regardless of sRGB, normalized, etc.
-    return srcIsBGRA == destIsBGRA && srcHasR8 == destHasR8 && srcHasG8 == destHasG8 &&
-           srcHasB8 == destHasB8 && srcHasA8 == destHasA8 && srcIsSigned == destIsSigned;
+    return is8BitChannelFormat && srcIsBGRA == destIsBGRA && srcHasR8 == destHasR8 &&
+           srcHasG8 == destHasG8 && srcHasB8 == destHasB8 && srcHasA8 == destHasA8 &&
+           srcIsSigned == destIsSigned;
 }
 
 bool CanCopyWithDraw(vk::Renderer *renderer,
@@ -1158,12 +1172,21 @@ angle::Result TextureVk::ghostOnOverwrite(ContextVk *contextVk,
     }
 
     // Size check: Can only ghost the image if the area being overwritten covers the entire image.
+    // Base level check: If base level has changed, don't attempt to ghost it as
+    //                   getBaseLevelFormat() and initImage() will be wrong below, but also it's
+    //                   possible the texture has to be reallocated anyway later.
     //
     // As a targeted optimization, only limit to non-array 2D color textures.  Other texture types
     // can be very easily added if need, but need additional tests similar to those that have landed
     // in http://anglebug.com/42265356 for 2D textures.
     const gl::LevelIndex overwriteLevel = gl::LevelIndex(index.getLevelIndex());
     const gl::LevelIndex imageLevel     = mImage->getFirstAllocatedLevel();
+
+    const gl::LevelIndex baseLevel = gl::LevelIndex(mState.getBaseLevel());
+    if (baseLevel != imageLevel)
+    {
+        return angle::Result::Continue;
+    }
 
     const bool is2DImage = mImage->getLevelCount() == 1 && mImage->getLayerCount() == 1 &&
                            mImage->getType() == VK_IMAGE_TYPE_2D;
@@ -1363,6 +1386,18 @@ angle::Result TextureVk::copyImage(const gl::Context *context,
 
     if (isSelfCopy)
     {
+        // The front-end is unable to stage a robust init clear during self-copies because that
+        // would clear the source (which is the same as destination) before the copy.  That has to
+        // be done by the front-end.
+        // Do this even though we do not implement self copy, to prevent that stale bytes get read
+        // somehow.
+        if (mImage && (context->isWebGL() || contextVk->isRobustResourceInitEnabled()))
+        {
+            ANGLE_TRY(mImage->stageRobustResourceClearWithFormat(
+                contextVk, index, newImageSize, vkFormat.getIntendedFormat(),
+                vkFormat.getActualImageFormat(getRequiredImageAccess())));
+        }
+
         UNIMPLEMENTED();
         return angle::Result::Continue;
     }

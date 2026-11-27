@@ -21,14 +21,18 @@ void GrTransferFromRenderTask::gatherProxyIntervals(GrResourceAllocator* alloc) 
     alloc->incOps();
 }
 
-bool GrTransferFromRenderTask::onExecute(GrOpFlushState* flushState) {
+GrRenderTask::ExecutionResult GrTransferFromRenderTask::onExecute(GrOpFlushState* flushState) {
+    SkASSERT(!fWasExecuted); // These are one-time tasks
+    SkDEBUGCODE(fWasExecuted = true;)
+
     if (!fSrcProxy->isInstantiated()) {
-        return false;
+        return ExecutionResult::RanButFailed();
     }
-    return flushState->gpu()->transferPixelsFrom(fSrcProxy->peekSurface(),
-                                                 fSrcRect,
-                                                 fSurfaceColorType,
-                                                 fDstColorType,
-                                                 fDstBuffer,
-                                                 fDstOffset);
+    fExecutionSuccess = flushState->gpu()->transferPixelsFrom(fSrcProxy->peekSurface(),
+                                                              fSrcRect,
+                                                              fSurfaceColorType,
+                                                              fDstColorType,
+                                                              fDstBuffer,
+                                                              fDstOffset);
+    return ExecutionResult::Ran(fExecutionSuccess);
 }

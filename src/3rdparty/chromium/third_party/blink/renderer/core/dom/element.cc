@@ -3821,12 +3821,15 @@ Node::InsertionNotificationRequest Element::InsertedInto(
     return kInsertionDone;
   }
 
-  const AtomicString& id_value = GetIdAttribute();
+  const AtomicString id_value = GetIdAttribute();
   if (!id_value.IsNull()) {
+    // UpdateId() notifies id observers, which can update style and layout.
+    // That can synchronize the lazy style attribute, which can reallocate the
+    // attribute storage, invalidating references from GetIdAttribute().
     UpdateId(scope, g_null_atom, id_value);
   }
 
-  const AtomicString& name_value = GetNameAttribute();
+  AtomicString name_value = GetNameAttribute();
   if (!name_value.IsNull()) {
     UpdateName(g_null_atom, name_value);
   }
@@ -3955,12 +3958,14 @@ void Element::RemovedFrom(ContainerNode& insertion_point) {
   SetSavedLayerScrollOffset(ScrollOffset());
 
   if (insertion_point.IsInTreeScope() && GetTreeScope() == document) {
-    const AtomicString& id_value = GetIdAttribute();
+    const AtomicString id_value = GetIdAttribute();
     if (!id_value.IsNull()) {
+      // UpdateId() can invalidate references from GetIdAttribute(). See the
+      // comment in InsertedInto().
       UpdateId(insertion_point.GetTreeScope(), id_value, g_null_atom);
     }
 
-    const AtomicString& name_value = GetNameAttribute();
+    AtomicString name_value = GetNameAttribute();
     if (!name_value.IsNull()) {
       UpdateName(name_value, g_null_atom);
     }
@@ -7122,8 +7127,7 @@ void Element::setAttributeNS(const AtomicString& namespace_uri,
 
 void Element::RemoveAttributeInternal(wtf_size_t index,
                                       AttributeModificationReason reason) {
-  MutableAttributeCollection attributes =
-      EnsureUniqueElementData().Attributes();
+  AttributeCollection attributes = GetElementData()->Attributes();
   SECURITY_DCHECK(index < attributes.size());
 
   QualifiedName name = attributes[index].GetName();
@@ -7140,11 +7144,21 @@ void Element::RemoveAttributeInternal(wtf_size_t index,
     }
   }
 
+  MutableAttributeCollection mutable_attributes =
+      EnsureUniqueElementData().Attributes();
   if (Attr* attr_node = AttrIfExists(name)) {
-    DetachAttrNodeFromElementWithValue(attr_node, attributes[index].Value());
+    DetachAttrNodeFromElementWithValue(attr_node, value_being_removed);
   }
 
-  attributes.Remove(index);
+  // WillModifyAttribute() may pause in the debugger and allow script to mutate
+  // attributes, invalidating `index`.
+  if (index >= mutable_attributes.size() ||
+      mutable_attributes[index].GetName() != name) {
+    index = mutable_attributes.FindIndex(name);
+  }
+  if (index != kNotFound) {
+    mutable_attributes.Remove(index);
+  }
 
   if (reason !=
       AttributeModificationReason::kBySynchronizationOfLazyAttribute) {
@@ -10279,7 +10293,7 @@ bool Element::HasNamedNodeMap() const {
 
 inline void Element::UpdateName(const AtomicString& old_name,
                                 const AtomicString& new_name) {
-  if (!IsInDocumentTree()) {
+  if (!IsInDocumentTree() || IsPseudoElement()) {
     return;
   }
 
@@ -10295,7 +10309,7 @@ inline void Element::UpdateName(const AtomicString& old_name,
 
 inline void Element::UpdateId(const AtomicString& old_id,
                               const AtomicString& new_id) {
-  if (!IsInTreeScope()) {
+  if (!IsInTreeScope() || IsPseudoElement()) {
     return;
   }
 
@@ -10310,6 +10324,9 @@ inline void Element::UpdateId(const AtomicString& old_id,
 inline void Element::UpdateId(TreeScope& scope,
                               const AtomicString& old_id,
                               const AtomicString& new_id) {
+  if (IsPseudoElement()) {
+    return;
+  }
   DCHECK(IsInTreeScope());
   DCHECK_NE(old_id, new_id);
 
@@ -10675,15 +10692,15 @@ void Element::CloneAttributesFrom(const Element& other) {
     return;
   }
 
-  const AtomicString& old_id = GetIdAttribute();
-  const AtomicString& new_id = other.GetIdAttribute();
+  AtomicString old_id = GetIdAttribute();
+  AtomicString new_id = other.GetIdAttribute();
 
   if (!old_id.IsNull() || !new_id.IsNull()) {
     UpdateId(old_id, new_id);
   }
 
-  const AtomicString& old_name = GetNameAttribute();
-  const AtomicString& new_name = other.GetNameAttribute();
+  AtomicString old_name = GetNameAttribute();
+  AtomicString new_name = other.GetNameAttribute();
 
   if (!old_name.IsNull() || !new_name.IsNull()) {
     UpdateName(old_name, new_name);
@@ -10720,7 +10737,7 @@ void Element::CloneAttributesFrom(const Element& other) {
   }
 
   for (wtf_size_t i = 0; i < element_data_->Attributes().size(); ++i) {
-    const Attribute& attr = element_data_->Attributes().at(i);
+    const Attribute attr = element_data_->Attributes().at(i);
     AttributeChanged(
         AttributeModificationParams(attr.GetName(), g_null_atom, attr.Value(),
                                     AttributeModificationReason::kByCloning));
@@ -12125,14 +12142,25 @@ ALWAYS_INLINE void Element::SetAttributeInternal(
       DidModifyAttribute(existing_attribute_name, new_value, new_value, reason);
     }
   } else {
-    Attribute& new_attribute = EnsureUniqueElementData().Attributes().at(index);
-    AtomicString existing_attribute_value = std::move(new_attribute.Value());
+    AtomicString existing_attribute_value = existing_attribute.Value();
     if (reason !=
         AttributeModificationReason::kBySynchronizationOfLazyAttribute) {
       WillModifyAttribute(existing_attribute_name, existing_attribute_value,
                           new_value);
     }
-    new_attribute.SetValue(new_value);
+    MutableAttributeCollection mutable_attributes =
+        EnsureUniqueElementData().Attributes();
+    // WillModifyAttribute() may pause in the debugger and allow script to
+    // mutate attributes, invalidating `index`.
+    if (index >= mutable_attributes.size() ||
+        mutable_attributes[index].GetName() != existing_attribute_name) {
+      index = mutable_attributes.FindIndex(existing_attribute_name);
+    }
+    if (index != kNotFound) {
+      mutable_attributes[index].SetValue(new_value);
+    } else {
+      mutable_attributes.Append(existing_attribute_name, new_value);
+    }
     if (reason !=
         AttributeModificationReason::kBySynchronizationOfLazyAttribute) {
       DidModifyAttribute(existing_attribute_name, existing_attribute_value,

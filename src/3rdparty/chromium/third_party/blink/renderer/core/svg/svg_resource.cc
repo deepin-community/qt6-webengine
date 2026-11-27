@@ -141,16 +141,19 @@ LayoutSVGResourceContainer* SVGResource::ResourceContainer(
   auto* container = ResourceContainerNoCycleCheck();
   if (!container)
     return nullptr;
-  ClientEntry& entry = it->value;
-  if (entry.cached_cycle_check == kNeedCheck) {
-    entry.cached_cycle_check = kPerformingCheck;
+  if (it->value.cached_cycle_check == kNeedCheck) {
+    it->value.cached_cycle_check = kPerformingCheck;
     bool has_cycle = container->FindCycle();
-    DCHECK_EQ(entry.cached_cycle_check, kPerformingCheck);
-    entry.cached_cycle_check = has_cycle ? kHasCycle : kNoCycle;
+    // FindCycle() can modify clients_ and invalidate the iterator
+    it = clients_.find(&client);
+    CHECK(it != clients_.end());
+    DCHECK_EQ(it->value.cached_cycle_check, kPerformingCheck);
+    it->value.cached_cycle_check = has_cycle ? kHasCycle : kNoCycle;
   }
-  if (entry.cached_cycle_check == kHasCycle)
+  if (it->value.cached_cycle_check == kHasCycle) {
     return nullptr;
-  DCHECK_EQ(entry.cached_cycle_check, kNoCycle);
+  }
+  DCHECK_EQ(it->value.cached_cycle_check, kNoCycle);
   return container;
 }
 
@@ -161,23 +164,28 @@ bool SVGResource::FindCycle(SVGResourceClient& client) const {
   auto* container = ResourceContainerNoCycleCheck();
   if (!container)
     return false;
-  ClientEntry& entry = it->value;
-  switch (entry.cached_cycle_check) {
+  switch (it->value.cached_cycle_check) {
     case kNeedCheck: {
-      entry.cached_cycle_check = kPerformingCheck;
+      it->value.cached_cycle_check = kPerformingCheck;
       bool has_cycle = container->FindCycle();
-      DCHECK_EQ(entry.cached_cycle_check, kPerformingCheck);
+      // FindCycle() can modify clients_ and invalidate the iterator
+      it = clients_.find(&client);
+      CHECK(it != clients_.end());
+      DCHECK_EQ(it->value.cached_cycle_check, kPerformingCheck);
       // Update our cached state based on the result of FindCycle(), but don't
       // signal a cycle since ResourceContainer() will consider the resource
       // invalid if one is present, thus we break the cycle at this resource.
-      entry.cached_cycle_check = has_cycle ? kHasCycle : kNoCycle;
+      it->value.cached_cycle_check = has_cycle ? kHasCycle : kNoCycle;
       return false;
     }
     case kNoCycle: {
-      entry.cached_cycle_check = kPerformingCheck;
+      it->value.cached_cycle_check = kPerformingCheck;
       bool has_cycle = container->FindCycle();
-      DCHECK_EQ(entry.cached_cycle_check, kPerformingCheck);
-      entry.cached_cycle_check = kNoCycle;
+      // FindCycle() can modify clients_ and invalidate the iterator
+      it = clients_.find(&client);
+      CHECK(it != clients_.end());
+      DCHECK_EQ(it->value.cached_cycle_check, kPerformingCheck);
+      it->value.cached_cycle_check = kNoCycle;
       return has_cycle;
     }
     case kPerformingCheck:

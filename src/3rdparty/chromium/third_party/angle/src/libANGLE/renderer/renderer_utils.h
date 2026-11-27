@@ -17,6 +17,7 @@
 
 #include "GLSLANG/ShaderLang.h"
 #include "common/angleutils.h"
+#include "common/hash_containers.h"
 #include "common/utilities.h"
 #include "libANGLE/ImageIndex.h"
 #include "libANGLE/angletypes.h"
@@ -330,6 +331,16 @@ void GetUniform(const gl::ProgramExecutable *executable,
                 GLenum entryPointType,
                 const DefaultUniformBlockMap *defaultUniformBlocks);
 
+// Remove `[*]` from uniform names
+std::string RemoveArraySubscripts(const std::string &uniformName);
+
+// Maps sampler-in-struct uniform names to extracted sampler names, matching the transformation done
+// by the translator (RewriteStructSamplers).  Indices must have already been stripped from the
+// uniformName.
+std::string GetExtractedStructSamplerName(
+    const std::string uniformNameWithoutIndices,
+    angle::HashMap<std::string, size_t> *extractedSamplerIndices);
+
 const angle::Format &GetFormatFromFormatType(GLenum format, GLenum type);
 
 angle::Result ComputeStartVertex(ContextImpl *contextImpl,
@@ -620,6 +631,12 @@ inline size_t PackSampleCount(int32_t sampleCount)
     ASSERT(1 <= sampleCount && sampleCount <= 16);
     ASSERT(gl::isPow2(sampleCount));
     return gl::ScanForward(static_cast<uint32_t>(sampleCount));
+}
+
+inline GLuint GetMultiviewAdjustedDivisor(int numViews, GLuint divisor)
+{
+    uint64_t adjusted = static_cast<uint64_t>(numViews) * static_cast<uint64_t>(divisor);
+    return static_cast<GLuint>(std::min<uint64_t>(adjusted, std::numeric_limits<GLuint>::max()));
 }
 
 }  // namespace rx

@@ -140,9 +140,11 @@ Reduction JSIntrinsicLowering::ReduceCreateJSGeneratorObject(Node* node) {
   Node* const context = NodeProperties::GetContextInput(node);
   Node* const effect = NodeProperties::GetEffectInput(node);
   Node* const control = NodeProperties::GetControlInput(node);
-  Operator const* const op = javascript()->CreateGeneratorObject();
-  Node* create_generator =
-      graph()->NewNode(op, closure, receiver, context, effect, control);
+  FrameState frame_state{NodeProperties::GetFrameStateInput(node)};
+  Operator const* const op = javascript()->CreateGeneratorObject(
+      frame_state.frame_state_info().bytecode_array().ToHandleChecked());
+  Node* create_generator = graph()->NewNode(op, closure, receiver, context,
+                                            frame_state, effect, control);
   ReplaceWithValue(node, create_generator, create_generator);
   return Changed(create_generator);
 }

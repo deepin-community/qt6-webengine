@@ -540,9 +540,7 @@ MaybeHandle<Map> Map::CopyWithField(Isolate* isolate, DirectHandle<Map> map,
 
   Descriptor d = Descriptor::DataField(name, index, attributes, constness,
                                        representation, wrapped_type);
-  Handle<Map> new_map = Map::CopyAddDescriptor(isolate, map, &d, flag);
-  new_map->AccountAddedPropertyField();
-  return new_map;
+  return Map::CopyAddDescriptor(isolate, map, &d, flag);
 }
 
 MaybeHandle<Map> Map::CopyWithConstant(Isolate* isolate, DirectHandle<Map> map,
@@ -1306,8 +1304,10 @@ Handle<Map> Map::Normalize(Isolate* isolate, DirectHandle<Map> fast_map,
   }
   DirectHandle<NormalizedMapCache> cache;
   if (use_cache) {
+    Tagged<Object> maybe_native_context = meta_map->native_context_or_null();
+    DCHECK(!IsNull(maybe_native_context));
     Tagged<Object> normalized_map_cache =
-        meta_map->native_context()->normalized_map_cache();
+        Cast<NativeContext>(maybe_native_context)->normalized_map_cache();
     use_cache = !IsUndefined(normalized_map_cache, isolate);
     if (use_cache) {
       cache = Cast<NormalizedMapCache>(
@@ -1537,6 +1537,10 @@ Handle<Map> Map::ShareDescriptor(Isolate* isolate, DirectHandle<Map> map,
     DisallowGarbageCollection no_gc;
     descriptors->Append(descriptor);
     result->InitializeDescriptors(isolate, *descriptors);
+    // Account for the field before publishing the transition.
+    if (descriptor->GetDetails().location() == PropertyLocation::kField) {
+      result->AccountAddedPropertyField();
+    }
   }
 
   DCHECK(result->NumberOfOwnDescriptors() == map->NumberOfOwnDescriptors() + 1);
@@ -1770,6 +1774,9 @@ DirectHandle<Map> Map::AsLanguageMode(
     Isolate* isolate, DirectHandle<Map> initial_map,
     DirectHandle<SharedFunctionInfo> shared_info) {
   DCHECK(InstanceTypeChecker::IsJSFunction(initial_map->instance_type()));
+#ifndef V8_FUNCTION_ARGUMENTS_CALLER_ARE_OWN_PROPS
+  return initial_map;
+#else
   // Initial map for sloppy mode function is stored in the function
   // constructor. Initial maps for strict mode are cached as special transitions
   // using |strict_function_transition_symbol| as a key.
@@ -1805,6 +1812,7 @@ DirectHandle<Map> Map::AsLanguageMode(
                            SPECIAL_TRANSITION);
   }
   return map;
+#endif  // !V8_FUNCTION_ARGUMENTS_CALLER_ARE_OWN_PROPS
 }
 
 Handle<Map> Map::CopyForElementsTransition(Isolate* isolate,
@@ -2236,7 +2244,12 @@ Handle<Map> Map::CopyAddDescriptor(Isolate* isolate, DirectHandle<Map> map,
       DescriptorArray::CopyUpTo(isolate, descriptors, nof, 1);
   new_descriptors->Append(descriptor);
 
-  return CopyReplaceDescriptors(isolate, map, new_descriptors, flag,
+  auto InitMap = [&](DirectHandle<Map> new_map) {
+    if (descriptor->GetDetails().location() == PropertyLocation::kField) {
+      new_map->AccountAddedPropertyField();
+    }
+  };
+  return CopyReplaceDescriptors(isolate, map, new_descriptors, flag, InitMap,
                                 descriptor->GetKey(), "CopyAddDescriptor",
                                 SIMPLE_PROPERTY_TRANSITION);
 }

@@ -17,6 +17,7 @@
 #include "base/types/expected.h"
 #include "base/types/expected_macros.h"
 #include "gpu/command_buffer/common/mailbox.h"
+#include "gpu/command_buffer/service/gl_utils.h"
 #include "gpu/command_buffer/service/graphite_shared_context.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_factory.h"
@@ -147,7 +148,7 @@ bool CopyPixelsToTexture(
 
   gfx::Size source_size = source_shared_image->size();
   gfx::Rect source_rect(x, y, width, height);
-  if (!gfx::Rect(source_size).Contains(source_rect)) {
+  if (source_rect.IsEmpty() || !gfx::Rect(source_size).Contains(source_rect)) {
     return false;
   }
 
@@ -254,7 +255,7 @@ base::expected<void, GLError> CopySharedImageHelper::CopySharedImage(
 
   gfx::Size dest_size = dest_shared_image->size();
   gfx::Rect dest_rect(xoffset, yoffset, width, height);
-  if (!gfx::Rect(dest_size).Contains(dest_rect)) {
+  if (dest_rect.IsEmpty() || !gfx::Rect(dest_size).Contains(dest_rect)) {
     return base::unexpected(GLError(GL_INVALID_VALUE, "glCopySubTexture",
                                     "destination texture bad dimensions."));
   }
@@ -337,7 +338,7 @@ base::expected<void, GLError> CopySharedImageHelper::CopySharedImage(
 
   gfx::Size source_size = source_shared_image->size();
   gfx::Rect source_rect(x, y, width, height);
-  if (!gfx::Rect(source_size).Contains(source_rect)) {
+  if (source_rect.IsEmpty() || !gfx::Rect(source_size).Contains(source_rect)) {
     return base::unexpected(GLError(GL_INVALID_VALUE, "glCopySubTexture",
                                     "source texture bad dimensions."));
   }
@@ -499,7 +500,7 @@ base::expected<void, GLError> CopySharedImageHelper::CopySharedImageToGLTexture(
 
   gfx::Size source_size = source_shared_image->size();
   gfx::Rect source_rect(src_x, src_y, width, height);
-  if (!gfx::Rect(source_size).Contains(source_rect)) {
+  if (source_rect.IsEmpty() || !gfx::Rect(source_size).Contains(source_rect)) {
     return base::unexpected<GLError>(GLError(GL_INVALID_VALUE,
                                              "glCopySharedImageToTexture",
                                              "source texture bad dimensions."));
@@ -637,6 +638,10 @@ bool GraphiteImageReadPixels(GraphiteSharedContext* graphite_shared_context,
     return false;
   }
 
+  if (!context.finished && graphite_shared_context->IsContextLost()) {
+    return false;
+  }
+
   CHECK(context.finished);
   if (!context.async_result) {
     return false;
@@ -757,6 +762,15 @@ base::expected<void, GLError> CopySharedImageHelper::WritePixelsYUV(
   auto* gr_context = shared_context_state_->gr_context();
   const bool need_graphite_submit =
       dest_scoped_access->NeedGraphiteContextSubmit();
+  const bool check_gl_upload_errors = !dest_shared_image->IsCleared() &&
+                                      shared_context_state_->GrContextIsGL() &&
+                                      !shared_context_state_->context_lost();
+  gl::GLApi* const gl_api =
+      check_gl_upload_errors ? gl::g_current_gl_context : nullptr;
+  if (gl_api) {
+    DrainGLErrors(gl_api);
+  }
+
   for (int plane = 0; plane < dest_format.NumberOfPlanes(); plane++) {
     bool written = false;
     if (gr_context) {
@@ -794,6 +808,14 @@ base::expected<void, GLError> CopySharedImageHelper::WritePixelsYUV(
                                            need_graphite_submit);
 
   if (success && !dest_shared_image->IsCleared()) {
+    if (gl_api) {
+      GLenum error = DrainGLErrors(gl_api);
+      if (error != GL_NO_ERROR) {
+        return base::unexpected(
+            GLError(error, "WritePixelsYUV",
+                    "GL driver reported an error during texture upload"));
+      }
+    }
     dest_shared_image->SetClearedRect(gfx::Rect(src_width, src_height));
   }
   return base::ok();

@@ -590,6 +590,13 @@
       origin_trial_feature_name: "AutoDarkMode",
     },
     {
+      // Pins a generic font-family on the autofill preview pseudo-elements so
+      // an author @font-face cannot oracle the previewed text.
+      // crbug.com/517710554.
+      name: "AutofillPreviewGenericFontFamily",
+      status: "stable",
+    },
+    {
       name: "AutomationControlled",
       base_feature: "none",
       public: true,
@@ -1261,6 +1268,13 @@
       // https://drafts.csswg.org/css-images-4/#cross-fade-function
       name: "CSSCrossFade",
       status: "experimental",
+    },
+    {
+      // Killswitch for preventing cross-origin relatedTarget on boundary
+      // events.
+      // https://issues.chromium.org/issues/574379564
+      name: "ClearCrossOriginRelatedTarget",
+      status: "stable",
     },
     {
       name: "CSSCustomMedia",
@@ -2997,6 +3011,11 @@
       status: "test",
     },
     {
+      // https://crbug.com/572893186
+      name: "LongPressHitTestInFrame",
+      status: "stable",
+    },
+    {
       // Long press on a link selects the link text instead of bringing up
       // context menu. Enabled only on Android AuthView.
       name: "LongPressLinkSelectText",
@@ -3518,6 +3537,11 @@
       base_feature: "none",
       origin_trial_feature_name: "FrobulateThirdParty",
       origin_trial_allows_third_party: true,
+    },
+    {
+      // crbug.com/570740320
+      name: "FrameCaretSkipHiddenCheck",
+      status: "stable",
     },
     {
       name: "OverscrollCustomization",
@@ -4479,10 +4503,19 @@
       status: "experimental",
     },
     {
+      // V8 Code Cache for resource requests passing through Service Worker.
+      name: "ServiceWorkerCodeCache",
+    },
+    {
       // Support for Service Worker APIs in Dedicated Workers.
       // See https://chromestatus.com/feature/6497653025931264
       // See https://issues.chromium.org/issues/40364838
       name: "ServiceWorkerInDedicatedWorker",
+    },
+    {
+      // Killswitch for crbug.com/552757015.
+      name: "ServiceWorkerScriptEncoding",
+      status: "stable",
     },
     {
       name: "ServiceWorkerStaticRouterTimingInfo",
@@ -5432,6 +5465,12 @@
         "Mac": "stable",
         "Linux": "stable",
       },
+    },
+    {
+      // Exposes speculation measurement data (preloads, prefetches, prerenders)
+      // on performance.speculations.
+      name: "SpeculationMeasurement",
+      status: "experimental",
     },
     {
       // https://chromestatus.com/feature/5077691662073856

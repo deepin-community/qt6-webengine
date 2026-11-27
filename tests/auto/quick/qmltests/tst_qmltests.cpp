@@ -165,7 +165,7 @@ public:
         QWindowList allWindows = QGuiApplication::allWindows();
 
         for (auto *win : allWindows) {
-            if (win->type() == Qt::Popup
+            if (win->type() == Qt::ToolTip
                     && win->transientParent() != nullptr) {
                 return static_cast<QQuickWindow *>(win);
             }
@@ -252,7 +252,6 @@ int main(int argc, char **argv)
     sigaction(SIGSEGV, &sigAction, 0);
 #endif
     qputenv("QTWEBENGINE_UI_DELEGATE_MODULE", "QtWebEngine.TestMockDelegates");
-    QtWebEngineQuick::initialize();
     // Force to use English language for testing due to error message checks
     QLocale::setDefault(QLocale("en"));
 

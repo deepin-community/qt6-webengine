@@ -683,7 +683,11 @@ void WidgetBase::OnCommitRequested() {
 }
 
 void WidgetBase::DidBeginMainFrame() {
+  base::WeakPtr<WidgetBase> weak_this = weak_ptr_factory_.GetWeakPtr();
   UpdateTextInputState();
+  if (!weak_this) {
+    return;
+  }
   client_->DidBeginMainFrame();
 }
 
@@ -1159,7 +1163,11 @@ void WidgetBase::UpdateTextInputStateInternal(bool show_virtual_keyboard,
       ime_event_guard_->set_show_virtual_keyboard(true);
     return;
   }
+  base::WeakPtr<WidgetBase> weak_this = weak_ptr_factory_.GetWeakPtr();
   ui::TextInputType new_type = GetTextInputType();
+  if (!weak_this) {
+    return;
+  }
   if (IsDateTimeInput(new_type))
     return;  // Not considered as a text input field in WebKit/Chromium.
 
@@ -1171,7 +1179,6 @@ void WidgetBase::UpdateTextInputStateInternal(bool show_virtual_keyboard,
   std::optional<gfx::Rect> control_bounds;
   std::optional<gfx::Rect> selection_bounds;
   if (frame_widget) {
-    base::WeakPtr<WidgetBase> weak_this = weak_ptr_factory_.GetWeakPtr();
     new_info = frame_widget->TextInputInfo();
     if (!weak_this) {
       return;
@@ -1295,6 +1302,7 @@ void WidgetBase::ClearTextInputState() {
 }
 
 void WidgetBase::ShowVirtualKeyboardOnElementFocus() {
+  base::WeakPtr<WidgetBase> weak_this = weak_ptr_factory_.GetWeakPtr();
 #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_IOS_TVOS)
   // On ChromeOS, virtual keyboard is triggered only when users leave the
   // mouse button or the finger and a text input element is focused at that
@@ -1306,6 +1314,9 @@ void WidgetBase::ShowVirtualKeyboardOnElementFocus() {
 #else
   ShowVirtualKeyboard();
 #endif
+  if (!weak_this) {
+    return;
+  }
 
 // TODO(rouslan): Fix ChromeOS and Windows 8 behavior of autofill popup with
 // virtual keyboard.
@@ -1350,11 +1361,16 @@ void WidgetBase::UpdateCompositionInfo(bool immediate_request) {
   gfx::Range range;
   Vector<gfx::Rect> character_bounds;
 
-  if (GetTextInputType() == ui::TextInputType::TEXT_INPUT_TYPE_NONE) {
+  base::WeakPtr<WidgetBase> weak_this = weak_ptr_factory_.GetWeakPtr();
+  ui::TextInputType text_input_type = GetTextInputType();
+  if (!weak_this) {
+    return;
+  }
+
+  if (text_input_type == ui::TextInputType::TEXT_INPUT_TYPE_NONE) {
     // Composition information is only available on editable node.
     range = gfx::Range::InvalidRange();
   } else {
-    base::WeakPtr<WidgetBase> weak_this = weak_ptr_factory_.GetWeakPtr();
     GetCompositionRange(&range);
     if (!weak_this) {
       return;
@@ -1378,8 +1394,7 @@ void WidgetBase::UpdateCompositionInfo(bool immediate_request) {
     frame_widget->UpdateCursorAnchorInfo(/*update_requested=*/true);
     return;
   }
-  if (mojom::blink::WidgetInputHandlerHost* host =
-          widget_input_handler_manager_->GetWidgetInputHandlerHost()) {
+  if (auto host = widget_input_handler_manager_->GetWidgetInputHandlerHost()) {
     host->ImeCompositionRangeChanged(composition_range_,
                                      composition_character_bounds_);
   }
@@ -1552,7 +1567,7 @@ void WidgetBase::ImeSetComposition(
     // If we failed to set the composition text, then we need to let the browser
     // process to cancel the input method's ongoing composition session, to make
     // sure we are in a consistent state.
-    if (mojom::blink::WidgetInputHandlerHost* host =
+    if (auto host =
             widget_input_handler_manager_->GetWidgetInputHandlerHost()) {
       host->ImeCancelComposition();
     }
@@ -1653,7 +1668,7 @@ void WidgetBase::FlushInputProcessedCallback() {
 }
 
 void WidgetBase::CancelCompositionForPepper() {
-  if (mojom::blink::WidgetInputHandlerHost* host =
+  if (auto host =
           widget_input_handler_manager_->GetWidgetInputHandlerHost()) {
     host->ImeCancelComposition();
   }

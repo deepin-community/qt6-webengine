@@ -63,6 +63,18 @@ class WebAudioSourceProviderImpl::TeeFilter
     const int num_rendered_frames =
         renderer_->Render(delay, delay_timestamp, glitch_info, audio_bus);
 
+    // Bitstream (passthrough) formats are not supported here.
+    CHECK(!audio_bus->is_bitstream_format());
+
+    // `Render()` only guarantees that the first `num_rendered_frames` frames
+    // are written. The rest of `audio_bus` may hold stale data from buffers
+    // reused by the caller (e.g. `AudioConverter`), so zero it before it is
+    // copied below or consumed downstream.
+    if (num_rendered_frames < audio_bus->frames()) {
+      audio_bus->ZeroFramesPartial(num_rendered_frames,
+                                   audio_bus->frames() - num_rendered_frames);
+    }
+
     // Avoid taking the copy lock for the vast majority of cases.
     if (copy_required_) {
       base::AutoLock auto_lock(copy_lock_);
@@ -199,14 +211,12 @@ void WebAudioSourceProviderImpl::ProvideInput(
 
   // Use a try lock to avoid contention in the real-time audio thread.
   base::AutoTryLock auto_try_lock(sink_lock_);
-  if (!auto_try_lock.is_acquired() || state_ != kPlaying) {
-    // Provide silence if we failed to acquire the lock or the source is not
-    // running.
+  if (!auto_try_lock.is_acquired() || state_ != kPlaying || !client_) {
+    // Provide silence if we failed to acquire the lock, the source is not
+    // running, or the client has been disconnected.
     bus_wrapper_->Zero();
     return;
   }
-
-  DCHECK(client_);
 
   // It may be the case that the given |audio_data| doesn't have the same number
   // of channels as we were expecting, due to a race condition. In that case,
@@ -219,17 +229,14 @@ void WebAudioSourceProviderImpl::ProvideInput(
 
   // TODO(fhernqvist): If we need glitches propagated through WebAudio, plumb
   // them through here.
-  const int frames = tee_filter_->Render(
-      base::TimeDelta(), base::TimeTicks::Now(), {}, bus_wrapper_.get());
+  tee_filter_->Render(base::TimeDelta(), base::TimeTicks::Now(), {},
+                      bus_wrapper_.get());
 
   // Zero out frames after rendering for tainted origins.
   if (tee_filter_->is_tainted()) {
     bus_wrapper_->Zero();
     return;
   }
-
-  if (frames < number_of_frames)
-    bus_wrapper_->ZeroFramesPartial(frames, number_of_frames - frames);
 
   bus_wrapper_->Scale(volume_);
 }

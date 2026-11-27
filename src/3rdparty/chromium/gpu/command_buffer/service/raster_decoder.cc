@@ -809,10 +809,10 @@ class RasterDecoderImpl final : public RasterDecoder,
   void RestoreStateForAttrib(GLuint attrib, bool restore_array_binding);
   void DeletePaintCachePathsINTERNALHelper(
       GLsizei n,
-      const volatile GLuint* paint_cache_ids);
+      const volatile GLuint64* paint_cache_ids);
   void DeletePaintCacheEffectsINTERNALHelper(
       GLsizei n,
-      const volatile GLuint* paint_cache_ids);
+      const volatile GLuint64* paint_cache_ids);
   void DoClearPaintCacheINTERNAL();
 
 #if defined(NDEBUG)
@@ -2079,6 +2079,15 @@ void RasterDecoderImpl::DoWritePixelsINTERNAL(GLint x_offset,
     return;
   }
 
+  const bool check_gl_upload_errors = !dest_shared_image->IsCleared() &&
+                                      shared_context_state_->GrContextIsGL() &&
+                                      !WasContextLost();
+  gl::GLApi* const gl_api =
+      check_gl_upload_errors ? gl::g_current_gl_context : nullptr;
+  if (gl_api) {
+    DrainGLErrors(gl_api);
+  }
+
   // Try a direct texture upload without using SkSurface.
   if (gfx::Size(src_width, src_height) == dest_shared_image->size() &&
       x_offset == 0 && y_offset == 0 &&
@@ -2090,10 +2099,25 @@ void RasterDecoderImpl::DoWritePixelsINTERNAL(GLint x_offset,
       DoWritePixelsINTERNALDirectTextureUpload(
           dest_shared_image.get(), src_info, pixel_data, row_bytes)) {
     if (!dest_shared_image->IsCleared()) {
+      if (gl_api) {
+        GLenum error = DrainGLErrors(gl_api);
+        if (error != GL_NO_ERROR) {
+          LOCAL_SET_GL_ERROR(
+              error, "glWritePixels",
+              "GL driver reported an error during texture upload");
+          return;
+        }
+      }
       dest_shared_image->SetClearedRect(
           gfx::Rect(src_info.width(), src_info.height()));
     }
     return;
+  }
+
+  // If direct upload was skipped or failed, drain any errors from the attempt
+  // before proceeding with the SkSurface fallback.
+  if (gl_api) {
+    DrainGLErrors(gl_api);
   }
 
   std::vector<GrBackendSemaphore> begin_semaphores;
@@ -2140,6 +2164,14 @@ void RasterDecoderImpl::DoWritePixelsINTERNAL(GLint x_offset,
       dest_scoped_access->NeedGraphiteContextSubmit());
 
   if (success && !dest_shared_image->IsCleared()) {
+    if (gl_api) {
+      GLenum error = DrainGLErrors(gl_api);
+      if (error != GL_NO_ERROR) {
+        LOCAL_SET_GL_ERROR(error, "glWritePixels",
+                           "GL driver reported an error during texture upload");
+        return;
+      }
+    }
     dest_shared_image->SetClearedRect(
         gfx::Rect(x_offset, y_offset, src_width, src_height));
   }
@@ -2520,6 +2552,23 @@ void RasterDecoderImpl::DoReadbackARGBImagePixelsINTERNAL(
   auto helper_result =
       helper.ReadPixels(src_x, src_y, plane_index, row_bytes, dst_info,
                         pixel_address, std::move(source_shared_image));
+  // A device reset that occurs while the readback executes can complete it
+  // without error while the destination was never written on certain GPUs. If
+  // the robustness extension reports a reset, scrub the destination and refuse
+  // to publish the result instead of delivering unwritten allocation
+  // contents. CheckResetStatus() marks the context lost when it returns
+  // true.
+  if (workarounds().check_graphics_reset_status_after_readback &&
+      !WasContextLost() && CheckResetStatus()) {
+    // SAFETY: `pixel_address` was validated against shared memory for
+    // exactly `byte_size` bytes earlier in this function.
+    std::ranges::fill(UNSAFE_BUFFERS(base::span(
+                          static_cast<uint8_t*>(pixel_address), byte_size)),
+                      0);
+    LOCAL_SET_GL_ERROR(GL_INVALID_OPERATION, "glReadbackImagePixels",
+                       "readback aborted: device reset detected");
+    return;
+  }
   if (!helper_result.has_value()) {
     LOCAL_SET_GL_ERROR(helper_result.error().gl_error,
                        helper_result.error().function_name.c_str(),
@@ -2715,6 +2764,7 @@ void RasterDecoderImpl::DoReadbackYUVImagePixelsINTERNAL(
   // While this function indicates it's asynchronous, the DoFinish() call below
   // ensures it completes synchronously.
   YUVReadbackResult yuv_result;
+  bool is_context_lost = false;
   if (graphite_shared_context()) {
     // SkImage/SkSurface asyncRescaleAndReadPixels methods won't be implemented
     // for Graphite. Instead the equivalent methods will be on Graphite Context.
@@ -2723,6 +2773,8 @@ void RasterDecoderImpl::DoReadbackYUVImagePixelsINTERNAL(
         src_rect, dst_size, SkImage::RescaleGamma::kSrc,
         SkImage::RescaleMode::kRepeatedLinear,
         base::BindOnce(&OnReadYUVImagePixelsDone), &yuv_result);
+    is_context_lost =
+        !yuv_result.finished && graphite_shared_context()->IsContextLost();
   } else {
     CHECK(gr_context());
     sk_image->asyncRescaleAndReadPixelsYUV420(
@@ -2746,11 +2798,24 @@ void RasterDecoderImpl::DoReadbackYUVImagePixelsINTERNAL(
   DoFinish();
 
   // The call above will sync up gpu and CPU, resulting in callback being run
-  // during DoFinish(). To prevent UAF make sure it indeed happened.
-  CHECK(yuv_result.finished);
-  if (!yuv_result.async_result) {
+  // during DoFinish(). To prevent UAF make sure it indeed happened or context
+  // was lost.
+  CHECK(yuv_result.finished || is_context_lost);
+  if (!yuv_result.async_result || is_context_lost) {
     LOCAL_SET_GL_ERROR(GL_INVALID_OPERATION, "glReadbackYUVImagePixels",
                        "Failed to read pixels from SkImage");
+    return;
+  }
+
+  // Refuse to deliver readback results after a device reset — a reset can fire
+  // the async-read completion over never-written buffers. The plane
+  // destinations have not been written yet on this path, so there is nothing to
+  // scrub; the shm result stays 0. CheckResetStatus() marks the context lost
+  // when it returns true.
+  if (workarounds().check_graphics_reset_status_after_readback &&
+      !WasContextLost() && CheckResetStatus()) {
+    LOCAL_SET_GL_ERROR(GL_INVALID_OPERATION, "glReadbackYUVImagePixels",
+                       "readback aborted: device reset detected");
     return;
   }
 
@@ -2791,7 +2856,7 @@ class TransferCacheDeserializeHelperImpl final
   ~TransferCacheDeserializeHelperImpl() override = default;
 
   void CreateLocalEntry(
-      uint32_t id,
+      uint64_t id,
       std::unique_ptr<cc::ServiceTransferCacheEntry> entry) override {
     auto type = entry->Type();
     transfer_cache_->CreateLocalEntry(
@@ -2802,7 +2867,7 @@ class TransferCacheDeserializeHelperImpl final
  private:
   cc::ServiceTransferCacheEntry* GetEntryInternal(
       cc::TransferCacheEntryType entry_type,
-      uint32_t entry_id) override {
+      uint64_t entry_id) override {
     return transfer_cache_->GetEntry(ServiceTransferCache::EntryKey(
         raster_decoder_id_, entry_type, entry_id));
   }
@@ -2815,7 +2880,7 @@ class TransferCacheDeserializeHelperImpl final
 
 void RasterDecoderImpl::DeletePaintCachePathsINTERNALHelper(
     GLsizei n,
-    const volatile GLuint* paint_cache_ids) {
+    const volatile GLuint64* paint_cache_ids) {
   if (!use_gpu_raster_) {
     LOCAL_SET_GL_ERROR(GL_INVALID_OPERATION,
                        "glDeletePaintCacheEntriesINTERNAL",
@@ -2828,7 +2893,7 @@ void RasterDecoderImpl::DeletePaintCachePathsINTERNALHelper(
 
 void RasterDecoderImpl::DeletePaintCacheEffectsINTERNALHelper(
     GLsizei n,
-    const volatile GLuint* paint_cache_ids) {
+    const volatile GLuint64* paint_cache_ids) {
   if (!use_gpu_raster_) {
     LOCAL_SET_GL_ERROR(GL_INVALID_OPERATION,
                        "glDeletePaintCacheEntriesINTERNAL",
@@ -3022,13 +3087,10 @@ void RasterDecoderImpl::DoBeginRasterCHROMIUM(GLfloat r,
   // incorrect.
   if (needs_clear) {
     raster_canvas_->drawColor(sk_color_4f, SkBlendMode::kSrc);
-    if (graphite_shared_context()) {
-      should_clear_shared_image_ = true;
-    } else {
-      shared_image_->SetCleared();
-    }
+    // Remember that we can mark the shared image as cleared if the deferred
+    // GPU work is flushed successfully.
+    should_clear_shared_image_ = true;
   }
-  DCHECK(graphite_shared_context() || shared_image_->IsCleared());
 }
 
 scoped_refptr<Buffer> RasterDecoderImpl::GetShmBuffer(uint32_t shm_id) {

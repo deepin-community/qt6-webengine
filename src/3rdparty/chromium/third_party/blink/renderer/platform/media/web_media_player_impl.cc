@@ -685,6 +685,7 @@ void WebMediaPlayerImpl::Shutdown() {
   simple_watch_timer_.Stop();
   memory_usage_reporting_timer_.Stop();
   background_pause_timer_.Stop();
+  have_enough_after_lazy_load_cb_.Cancel();
   media_log_->OnWebMediaPlayerDestroyed();
 
   demuxer_manager_->StopAndResetClient();
@@ -705,13 +706,6 @@ void WebMediaPlayerImpl::Shutdown() {
   if (observer_)
     observer_->SetClient(nullptr);
 
-  // Explicitly reset `pipeline_controller_` to guarantee its destruction
-  // before DestructionHelper runs on `media_task_runner_`.
-  // This prevents possible dangling ptr's if `compositor` is destroyed
-  // before `pipeline_controller_`, which holds a VideoRendererSink
-  // in MediaFoundationRendererClient.
-  pipeline_controller_.reset();
-
   client_ = nullptr;
   encrypted_client_ = nullptr;
   frame_ = nullptr;
@@ -721,7 +715,6 @@ void WebMediaPlayerImpl::Shutdown() {
 
   // Handle destruction of things that need to be destructed after the pipeline
   // completes stopping on the media thread.
-  // TODO(crbug.com/482958590): This may not be necessary anymore.
   PostCrossThreadTask(
       *media_task_runner_, FROM_HERE,
       CrossThreadBindOnce(
@@ -1923,9 +1916,9 @@ void WebMediaPlayerImpl::OnPipelineSuspended() {
       // connection, briefly (250ms chosen arbitrarily) delay signaling "have
       // enough" to the MultiBufferDataSource.
       //
-      // WTF::Unretained() is safe here since the base::CancelableOnceClosure
-      // will cancel upon destruction of this class and `demuxer_manager_` is
-      // gauranteeed to outlive us as a result of the DestructionHelper.
+      // Unretained() is safe here since `have_enough_after_lazy_load_cb_` is
+      // cancelled in Shutdown() before `demuxer_manager_` is destroyed via
+      // DestructionHelper.
       have_enough_after_lazy_load_cb_.Reset(
           WTF::BindOnce(&media::DemuxerManager::StopPreloading,
                         WTF::Unretained(demuxer_manager_.get())));
@@ -3434,7 +3427,7 @@ void WebMediaPlayerImpl::FinishMemoryUsageReport(int64_t demuxer_memory_usage) {
 
   const auto stats = GetPipelineStatistics();
   const int64_t data_source_memory_usage =
-      demuxer_manager_->GetDataSourceMemoryUsage();
+      demuxer_manager_ ? demuxer_manager_->GetDataSourceMemoryUsage() : 0;
 
   // If we have video and no video memory usage and we've rendered the first
   // frame, assume the VideoFrameCompositor is holding onto the last frame after

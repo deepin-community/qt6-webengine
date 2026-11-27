@@ -386,7 +386,6 @@ class InspectorOverlayAgent::InspectorOverlayChromeClient final
 InspectorOverlayAgent::InspectorOverlayAgent(
     WebLocalFrameImpl* frame_impl,
     InspectedFrames* inspected_frames,
-    v8_inspector::V8InspectorSession* v8_session,
     InspectorDOMAgent* dom_agent)
     : frame_impl_(frame_impl),
       inspected_frames_(inspected_frames),
@@ -396,7 +395,6 @@ InspectorOverlayAgent::InspectorOverlayAgent(
           this,
           &InspectorOverlayAgent::OnResizeTimer),
       disposed_(false),
-      v8_session_(v8_session),
       dom_agent_(dom_agent),
       swallow_next_mouse_up_(false),
       backend_node_id_to_inspect_(0),
@@ -529,6 +527,9 @@ protocol::Response InspectorOverlayAgent::disable() {
 
   persistent_tool_ = nullptr;
   hinge_ = nullptr;
+  if (inspect_tool_) {
+    inspect_tool_->Dispose();
+  }
   PickTheRightTool();
   SetNeedsUnbufferedInput(false);
   document_to_ax_context_.clear();
@@ -1621,7 +1622,7 @@ void InspectorOverlayAgent::PickTheRightTool() {
     inspect_tool = MakeGarbageCollected<ScreenshotTool>(this, GetFrontend());
   } else if (!paused_in_debugger_message_.Get().IsNull()) {
     inspect_tool = MakeGarbageCollected<PausedInDebuggerTool>(
-        this, GetFrontend(), v8_session_, paused_in_debugger_message_.Get());
+        this, GetFrontend(), V8Session(), paused_in_debugger_message_.Get());
   } else if (persistent_tool_) {
     inspect_tool = persistent_tool_;
   }
@@ -1654,6 +1655,15 @@ void InspectorOverlayAgent::EnsureEnableFrameOverlay() {
 }
 
 void InspectorOverlayAgent::ClearInspectTool() {
+  if (inspect_tool_) {
+    // Notify the outgoing tool that it is being uninstalled so that it drops
+    // its unowned reference to the V8 inspector session. Otherwise a
+    // PausedInDebuggerTool orphaned here can still be reached by a pending
+    // ExecuteOnV8Session task (bound through its WeakCell) and perform a
+    // virtual call through a raw v8_inspector::V8InspectorSession pointer
+    // that dangles once DevToolsSession::Detach() destroys the session.
+    inspect_tool_->Dispose();
+  }
   inspect_tool_ = nullptr;
   if (!hinge_) {
     DisableFrameOverlay();

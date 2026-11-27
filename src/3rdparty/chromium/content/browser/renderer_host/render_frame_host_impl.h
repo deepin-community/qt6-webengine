@@ -308,10 +308,6 @@ typedef base::RepeatingCallback<
     void(RenderFrameHostImpl*, ax::mojom::Event, int)>
     AccessibilityCallbackForTesting;
 
-using CachedPermissionMap =
-    std::optional<base::flat_map<blink::mojom::PermissionName,
-                                 blink::mojom::PermissionStatus>>;
-
 class CONTENT_EXPORT RenderFrameHostImpl
     : public RenderFrameHost,
       public base::SupportsUserData,
@@ -3266,12 +3262,6 @@ class CONTENT_EXPORT RenderFrameHostImpl
   // this instance's AXNodeIdDelegate implementation.
   size_t GetAxUniqueIdCountForTesting() const { return ax_unique_ids_.size(); }
 
-  // Query necessary permission statues in order to propagate to the renderer.
-  // Right now, we're only caring about permissions for Geolocation, Camera, and
-  // Microphone. The permission statuses already take into account the device's
-  // status.
-  CachedPermissionMap GetCachedPermissionStatuses();
-
   // Allows tests to disable the unload event timer to simulate bugs that
   // happen before it fires (to avoid flakiness).
   void DisableUnloadTimerForTesting();
@@ -3844,6 +3834,7 @@ class CONTENT_EXPORT RenderFrameHostImpl
   CreateNavigationRequestForSynchronousRendererCommit(
       const GURL& url,
       const url::Origin& origin,
+      const std::optional<url::Origin>& initiator_origin,
       const std::optional<GURL>& initiator_base_url,
       blink::mojom::ReferrerPtr referrer,
       const ui::PageTransition& transition,
@@ -5547,6 +5538,9 @@ class CONTENT_EXPORT RenderFrameHostImpl
   std::string crash_reporting_group_ = "default";
 
   base::OnceClosure on_process_before_unload_completed_for_testing_;
+
+  // True if this rfh was created via a window creation with user activation.
+  bool opener_had_user_gesture_ = false;
 
   // WeakPtrFactories are the last members, to ensure they are destroyed before
   // all other fields of `this`.

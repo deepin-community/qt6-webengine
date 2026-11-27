@@ -33,6 +33,7 @@
 
 #include "base/files/file.h"
 #include "base/files/file_error_or.h"
+#include "base/functional/callback.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "mojo/public/cpp/base/big_buffer.h"
@@ -59,6 +60,16 @@ struct CrossThreadCopier<scoped_refptr<T>> {
                 "ThreadSafeRefCounted or base::RefCountedThreadSafe.");
   using Type = scoped_refptr<T>;
   static scoped_refptr<T> Copy(scoped_refptr<T> pointer) { return pointer; }
+};
+
+template <typename T>
+struct CrossThreadCopier<base::internal::RetainedRefWrapper<T>>
+    : public CrossThreadCopierByValuePassThrough<
+          base::internal::RetainedRefWrapper<T>> {
+  STATIC_ONLY(CrossThreadCopier);
+  static_assert(IsSubclassOfTemplate<T, base::RefCountedThreadSafe>::value,
+                "scoped_refptr<T> can be passed across threads only if T is "
+                "ThreadSafeRefCounted or base::RefCountedThreadSafe.");
 };
 
 template <typename T>

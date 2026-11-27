@@ -1558,11 +1558,15 @@ angle::Result Texture::copyImage(Context *context,
         const FramebufferAttachment *sourceReadAttachment = source->getReadColorAttachment();
         Extents fbSize                                    = sourceReadAttachment->getSize();
         // Force using copySubImage when the source area is out of bounds AND
-        // we're not copying to and from the same texture
-        forceCopySubImage = ((sourceArea.x < 0) || (sourceArea.y < 0) ||
-                             ((sourceArea.x + sourceArea.width) > fbSize.width) ||
-                             ((sourceArea.y + sourceArea.height) > fbSize.height)) &&
-                            (sourceReadAttachment->getResource() != this);
+        // we're not copying to and from the same texture.  When
+        // noRobustInitOnOOBCopyTexImageSameTexture is set, copySubImage is used also when copying
+        // between different subresources of the same texture.
+        forceCopySubImage = (sourceArea.x < 0 || sourceArea.y < 0 ||
+                             sourceArea.x + sourceArea.width > fbSize.width ||
+                             sourceArea.y + sourceArea.height > fbSize.height) &&
+                            (sourceReadAttachment->getResource() != this ||
+                             (context->getLimitations().noRobustInitOnOOBCopyTexImageSameTexture &&
+                              sourceReadAttachment->getTextureImageIndex() != index));
         Rectangle clippedArea;
         if (ClipRectangle(sourceArea, Rectangle(0, 0, fbSize.width, fbSize.height), &clippedArea))
         {
@@ -1717,7 +1721,7 @@ angle::Result Texture::copyTexture(Context *context,
 
     // Initialize source texture.
     // Note: we don't have a way to notify which portions of the image changed currently.
-    ANGLE_TRY(source->ensureInitialized(context));
+    ANGLE_TRY(source->ensureInitialized(context, EnsureInitializedLevels::AllEnabledLevels));
 
     ImageIndex index = ImageIndex::MakeFromTarget(target, level, ImageIndex::kEntireLevel);
 
@@ -1750,7 +1754,7 @@ angle::Result Texture::copySubTexture(const Context *context,
     ASSERT(TextureTargetToType(target) == mState.mType);
 
     // Ensure source is initialized.
-    ANGLE_TRY(source->ensureInitialized(context));
+    ANGLE_TRY(source->ensureInitialized(context, EnsureInitializedLevels::AllEnabledLevels));
 
     Box destBox(destOffset.x, destOffset.y, destOffset.z, sourceBox.width, sourceBox.height,
                 sourceBox.depth);
@@ -2468,7 +2472,11 @@ angle::Result Texture::syncState(const Context *context, Command source)
 {
     ASSERT(hasAnyDirtyBit() || source == Command::GenerateMipmap ||
            (context->isRobustResourceInitEnabled() && mState.mInitState == InitState::MayNeedInit));
-    ANGLE_TRY(ensureInitialized(context));
+    // During glGenerateMipmap, robust initialization of levels i > baseLevel can be skipped
+    // because they will be completely overwritten by the generated mipmaps.
+    ANGLE_TRY(ensureInitialized(context, source == Command::GenerateMipmap
+                                             ? EnsureInitializedLevels::BaseOnly
+                                             : EnsureInitializedLevels::AllEnabledLevels));
     ANGLE_TRY(mTexture->syncState(context, mDirtyBits, source));
     mDirtyBits.reset();
     return angle::Result::Continue;
@@ -2516,22 +2524,34 @@ void Texture::invalidateCompletenessCache() const
     mCompletenessCache.context = {0};
 }
 
-angle::Result Texture::ensureInitialized(const Context *context)
+angle::Result Texture::ensureInitialized(const Context *context, EnsureInitializedLevels levels)
 {
     if (!context->isRobustResourceInitEnabled() || mState.mInitState == InitState::Initialized)
     {
         return angle::Result::Continue;
     }
 
+    const bool initializeBaseOnly = levels == EnsureInitializedLevels::BaseOnly;
+    const GLint baseLevel         = mState.getEffectiveBaseLevel();
+    // Start initializing from baseLevel if specifically requested or if the texture is mutable.  If
+    // the texture is immutable, initialize all the levels because framebuffers outside [BASE, MAX]
+    // range are complete for immutable textures.
+    const GLint initFirstLevel = (initializeBaseOnly || !getImmutableFormat()) ? baseLevel : 0;
+
     bool anyDirty = false;
-    bool allInitialized = (mState.getEffectiveBaseLevel() == 0);
+    bool allInitialized =
+        levels == EnsureInitializedLevels::AllEnabledLevels && initFirstLevel == 0;
 
     ImageIndexIterator it = ImageIndexIterator::MakeGeneric(
-        mState.mType, static_cast<GLint>(mState.getEffectiveBaseLevel()),
-        IMPLEMENTATION_MAX_TEXTURE_LEVELS + 1, ImageIndex::kEntireLevel, ImageIndex::kEntireLevel);
+        mState.mType, initFirstLevel, IMPLEMENTATION_MAX_TEXTURE_LEVELS + 1,
+        ImageIndex::kEntireLevel, ImageIndex::kEntireLevel);
     while (it.hasNext())
     {
         const ImageIndex index = it.next();
+        if (initializeBaseOnly && index.getLevelIndex() != baseLevel)
+        {
+            break;
+        }
         ImageDesc &desc =
             mState.mImageDescs[GetImageDescIndex(index.getTarget(), index.getLevelIndex())];
         if (desc.initState == InitState::MayNeedInit && !desc.size.empty())
